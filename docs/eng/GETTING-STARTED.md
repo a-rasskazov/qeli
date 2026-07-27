@@ -33,11 +33,14 @@ run as root (or via `sudo`).
 
 ## 1. What you need
 
-- A **Linux x86-64 server** (**Debian 10+ / Ubuntu 20.04+**), root, a public IP.
-  The `.deb` is a portable build (`make deb-portable`, guarded by `check-abi`) and needs
-  only `libc6 >= 2.28`, so it installs out of the box on Debian 10/11/12 and Ubuntu
-  20.04/22.04/24.04. Only genuinely old systems (glibc < 2.28) need option B (build from
-  source on the machine itself) or option C (Docker — the runtime is inside the image).
+- A **Linux x86-64 server** (**Debian 11+ / Ubuntu 20.04+**), root, a public IP.
+  The `.deb` is a portable build (`make deb-portable`, guarded by `check-abi`); the
+  package depends on `libc6 >= 2.28`, `libgcc-s1`, `iptables`, `iproute2` and
+  `libcap2-bin`. It installs out of the box on Debian 11/12 and Ubuntu
+  20.04/22.04/24.04. **Debian 10 (Buster) does not work**: it ships `libgcc1`, and
+  `libgcc-s1` only arrived in Debian 11, so `apt` refuses on the dependency. For Buster
+  and for systems with glibc < 2.28, use option B (build from source on the machine
+  itself) or option C (Docker — the runtime is inside the image).
 - An **open port** for the VPN (TCP `443` by default) and, if you enable the panel,
   its port (`8080` by default). Open them in your cloud firewall / security group.
 - A kernel with **TUN** support (`/dev/net/tun` — present almost everywhere; some VPS
@@ -66,9 +69,16 @@ A single `qeli` binary plays both roles: `qeli server` and `qeli client`.
 > - **System-wide network tuning**: writes `/etc/sysctl.d/99-qeli-perf.conf` and switches
 >   congestion control to **BBR** — this affects **all** TCP on the host, not just qeli.
 > - **Loads the `tcp_bbr` module on every boot** via `/etc/modules-load.d/qeli-bbr.conf`.
-> - **Adds a permanent MSS rule** in `mangle/OUTPUT` and **persists the firewall**. With
+> - **Adds an MSS rule** in `mangle/OUTPUT` and tries to **persist the firewall**. With
 >   no `netfilter-persistent` it snapshots to `/etc/iptables/rules.v4` — and that snapshot
 >   is the host's **entire** current ruleset, not just its own rule.
+>   **Persisting is best-effort, not a guarantee.** Every step runs with `|| true`, so it
+>   continues silently on failure. And `/etc/iptables/rules.v4` restores nothing by itself:
+>   the file is read at boot by the `iptables-persistent` (`netfilter-persistent`) package,
+>   and **without it the MSS rule is gone after a reboot**. Check once you have rebooted:
+>   `iptables -t mangle -S OUTPUT | grep TCPMSS` — if it prints nothing, install
+>   `iptables-persistent` or reinstate the rule from your own unit. The symptom of a
+>   missing clamp is downloads that stall dead for mobile clients.
 > - **Enables the HTTPS web panel and binds it to `0.0.0.0:8080`**, generating a password
 >   and printing it **once** at the end. That is the only time you see it — save it right
 >   away. If you don't want the panel, disable it afterwards (`[web] enabled = false`) or

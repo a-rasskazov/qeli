@@ -52,6 +52,25 @@ stays short and byte-identical to what earlier versions produced.
 
 **`mode` aliases.** Two "transport + obfuscation" shorthands are accepted:
 `udp-quic` = `proto=udp` + `mode=fake-tls` + `quic=1`; `udp-obfs` = `proto=udp` + `mode=obfs`.
+They are expanded by the **Rust CLI, the desktop (C#) clients and iOS**, and by **Android
+from 0.7.13 on**. In 0.7.12 Android keeps the alias as the literal `mode` value: such a
+profile imports without an error and then never connects, so hand Android users on 0.7.12
+links with `proto` and `mode` spelled out separately.
+
+> **The set in this table is exhaustive and identical across all four clients.** The
+> reference implementation is `config/share.rs` (the server and the panel generate links
+> through it); the other three are checked against it by the shared fixtures in
+> `conformance/qeli-links.json`.
+>
+> **`bind_static` and `mtu_probe` are deliberately NOT in the link.** They are local device
+> policy rather than a property of the server, and the link by definition carries only what
+> the client cannot learn any other way; on top of that, `bind_static=0` inside a
+> forwardable QR hands out a weakened security setting. Set both in the client's own file
+> (see the `[qeli]` key reference below). Before 0.7.13 Android put them in the link while
+> the other three dropped them as unknown params, so an Android link arrived elsewhere with
+> `bind_static` silently back to `true` — which demands a pinned `key`. From 0.7.13 Android
+> no longer emits them, but still **parses** them so links it issued earlier import as
+> intended.
 
 **About `quic`.** The server **mirrors the client's choice per-connection** — it sniffs QUIC
 from the first packet's signature, so `udp-quic` works even when the server profile's
@@ -343,6 +362,15 @@ black-hole the client's DNS.
 
 ### Routes (`route`) in detail
 
+> ⚠️ **`gateway` and `metric` do not reach every client.** All of them apply the CIDR, but
+> the optional fields differ. The **Rust client** honours both the next hop and the metric.
+> **Android** reads them. The **desktop (C#)** clients read them but cannot apply them —
+> their routes are scoped to the tunnel interface — and they say so in the log
+> (`next-hop/metric not settable here`); traffic still enters the tunnel and the server
+> forwards it. **iOS** takes only `cidr` from the push and drops both fields **silently**.
+> Practical consequence: do not rely on a pushed next hop or metric as a route-priority
+> mechanism — on some clients it simply is not there.
+
 **Where to put it.** Inside `[profile:<name>]`. The key is **repeatable** (several lines = several routes):
 
 ```ini
@@ -564,10 +592,22 @@ is at parity (the TUN pump is the ceiling); on a lossy/latent link it scales:
 | RTT 40 ms, 0.05% loss | ~225–420 | ~692–704 | ~1.6–3× |
 | RTT 80 ms, 0.1% loss | ~50–65 | ~260–305 | **~5×** |
 
-Note the distribution is **per-flow** — each inner flow is pinned to one connection
-by a flow hash (`flow_hash % streams`) to avoid reordering (which only hurts the
-inner TCP). So only traffic with **several concurrent connections** (like a browser's
-6+ TLS) speeds up; a single lone flow won't.
+Note that in the **Rust client** the distribution is **per-flow** — each inner flow is
+pinned to one connection by a flow hash (`flow_hash % streams`) to avoid reordering (which
+only hurts the inner TCP). So only traffic with **several concurrent connections** (like a
+browser's 6+ TLS) speeds up; a single lone flow won't.
+
+> ⚠️ **Rust only.** The desktop (C#), Android and iOS clients spread **individual packets**
+> round-robin over the live connections, with no flow affinity. The inner TCP sees the
+> reordering, reads it as loss, sends duplicate ACKs and collapses its window — precisely
+> what per-flow pinning exists to prevent. The measurements above were taken with the Rust
+> client and do not carry over to the GUI clients, where bonding may be neutral or harmful,
+> especially when the connections differ in RTT.
+>
+> The per-client **cap** differs too: Rust clamps the pushed `max_streams` to 16, the
+> desktop (C#) to 8, Android and iOS to 64. The effective count still cannot exceed the
+> server's `max_streams` (it rejects the extras), so the cap only shows up with very large
+> values in the profile.
 
 ## Flow shaping — cover traffic (`obf.traffic_shaping.*`)
 
@@ -1001,87 +1041,93 @@ allowed_networks = 0.0.0.0/0
 ### Full `[qeli]` key reference and client matrix
 
 A client config is a single `[qeli]` section (plus an optional `[logging]`). The same file
-is read by four clients, but **the set of supported keys differs between them** — the
+is read by five clients, but **the set of supported keys differs between them** — the
 platform dictates what is even applicable (a phone has no iptables, the Rust CLI has no
 Wintun adapter, and so on). An unknown key is silently ignored.
 
 Clients: **CLI** — Rust `qeli client` / `qeli-client` (Linux, routers, headless);
-**Win** — Windows desktop (C#); **mac** — macOS desktop (C#); **And** — Android (Kotlin).
+**Win** — Windows desktop (C#); **mac** — macOS desktop (C#); **And** — Android (Kotlin);
+**iOS** — iPhone (Swift).
 Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (footnote).
+
+> The **iOS** column states what is **implemented in code**, not what was verified on a
+> device — that client has never been run on hardware (see
+> [qeli-ios/README.md](../../qeli-ios/README.md)).
 
 **Connection & transport**
 
-| Key | Default | CLI | Win | mac | And | Purpose |
-|---|---|:-:|:-:|:-:|:-:|---|
-| `server` | — | ✓ | ✓ | ✓ | ✓ | server address `host:port` (**required**) |
-| `proto` | `tcp` | ✓ | ✓ | ✓ | ✓ | transport: `tcp` / `udp` |
-| `keepalive` | `60` | ✓ | — | — | — | TCP keepalive probe interval (s). Hardcoded on in the GUIs |
-| `tcp_nodelay` | `true` | ✓ | — | — | — | disable Nagle's algorithm. Hardcoded on in the GUIs |
+| Key | Default | CLI | Win | mac | And | iOS | Purpose |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| `server` | — | ✓ | ✓ | ✓ | ✓ | ✓ | server address `host:port` (**required**) |
+| `proto` | `tcp` | ✓ | ✓ | ✓ | ✓ | ✓ | transport: `tcp` / `udp` |
+| `keepalive` | `60` | ✓ | — | — | — | — | TCP keepalive probe interval (s). Hardcoded on in the GUIs |
+| `tcp_nodelay` | `true` | ✓ | — | — | — | — | disable Nagle's algorithm. Hardcoded on in the GUIs |
 
 **Authentication**
 
-| Key | Default | CLI | Win | mac | And | Purpose |
-|---|---|:-:|:-:|:-:|:-:|---|
-| `user` | `client` | ✓ | ✓ | ✓ | ✓ | username |
-| `pass` | — | ✓ | ✓ | ✓ | ✓ | password (inline) |
-| `password_file` | — | ✓ | — | — | — | read the password from a file (headless) |
-| `password_command` | — | ✓ | — | — | — | password from an `sh -c` command (trusted config only) |
-| `key` | — | ✓ | ✓ | ✓ | ✓ | pin the server's public key (hex) |
-| `bind_static` | `true` | ✓ | ✓ | ✓ | ✓ | H-1: bind the session to the static identity (requires `key`) |
-| `allow_unpinned_tofu` | `false` | ✓ | — | — | — | allow accept-any TOFU with no pin (escape hatch) |
+| Key | Default | CLI | Win | mac | And | iOS | Purpose |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| `user` | `client` | ✓ | ✓ | ✓ | ✓ | ✓ | username |
+| `pass` | — | ✓ | ✓ | ✓ | ✓ | ✓ | password (inline) |
+| `password_file` | — | ✓ | — | — | — | — | read the password from a file (headless) |
+| `password_command` | — | ✓ | — | — | — | — | password from an `sh -c` command (trusted config only) |
+| `key` | — | ✓ | ✓ | ✓ | ✓ | ✓ | pin the server's public key (hex) |
+| `bind_static` | `true` | ✓ | ✓ | ✓ | ✓ | ✓ | H-1: bind the session to the static identity (requires `key`) |
+| `allow_unpinned_tofu` | `false` | ✓ | — | — | — | — | allow accept-any TOFU with no pin (escape hatch) |
 
 **Obfuscation** (must match the server profile)
 
-| Key | Default | CLI | Win | mac | And | Purpose |
-|---|---|:-:|:-:|:-:|:-:|---|
-| `mode` | `fake-tls` | ✓ | ✓ | ✓ | ✓ | wire mode: `fake-tls`/`obfs`/`reality-tls`/`plain` |
-| `sni` | — | ✓ | ✓ | ✓ | ✓ | SNI for fake-tls / reality-tls |
-| `obfs_key` | — | ✓ | ✓ | ✓ | ✓ | PSK for `mode = obfs` |
-| `front` | `websocket` | ✓ | ✓ | ✓ | ✓ | anti-FET fronting for obfs: `websocket`/`none` |
-| `reality_sid` | — | ✓ | ✓ | ✓ | ✓ | REALITY short_id for `reality-tls` |
-| `quic` | `false` | ✓ | ✓ | ✓ | ✓\* | QUIC masking for UDP (Android — via `mode = udp-quic`) |
-| `awg` `jc` `jmin` `jmax` | off/0 | ✓ | ✓ | ✓ | ✓ | AmneziaWG junk preamble (`jc` must match the server) |
+| Key | Default | CLI | Win | mac | And | iOS | Purpose |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| `mode` | `fake-tls` | ✓ | ✓ | ✓ | ✓ | ✓ | wire mode: `fake-tls`/`obfs`/`reality-tls`/`plain` |
+| `sni` | — | ✓ | ✓ | ✓ | ✓ | ✓ | SNI for fake-tls / reality-tls |
+| `obfs_key` | — | ✓ | ✓ | ✓ | ✓ | ✓ | PSK for `mode = obfs` |
+| `front` | `websocket` | ✓ | ✓ | ✓ | ✓ | ✓ | anti-FET fronting for obfs: `websocket`/`none` |
+| `reality_sid` | — | ✓ | ✓ | ✓ | ✓ | ✓ | REALITY short_id for `reality-tls` |
+| `quic` | `false` | ✓ | ✓ | ✓ | ✓\* | ✓ | QUIC masking for UDP (Android — via `mode = udp-quic`) |
+| `awg` `jc` `jmin` `jmax` | off/0 | ✓ | ✓ | ✓ | ✓ | ✓ | AmneziaWG junk preamble (`jc` must match the server) |
 
 **TUN & routing**
 
-| Key | Default | CLI | Win | mac | And | Purpose |
-|---|---|:-:|:-:|:-:|:-:|---|
-| `dev` | `vpn0` | ✓ | ✓ | — | — | interface name (mac: `utun` is kernel-assigned; Android: VpnService) |
-| `dev_attach` | `false` | ✓ | — | — | — | attach to a pre-existing interface (don't create one) |
-| `mtu` | `0`=auto | ✓ | ✓ | ✓ | ✓ | tunnel MTU; `0` = adopt the server push |
-| `mtu_probe` | `true` | ✓\* | ✓\* | ✓\* | ✓\* | active path-MTU probe — **UDP with `mtu=0` only** |
-| `gateway` | \* | ✓ | ✓ | ✓ | ✓ | full-tunnel. Default: split on CLI/desktop, full on phones; `gateway=false` = split |
-| `route_local` | `false` | ✓ | ✓ | ✓ | ✓ | pull the broad RFC1918 ranges into the tunnel |
-| `include` | — | ✓ | ✓ | ✓ | ✓\* | CIDR list forced **into** the tunnel (Android — split-tunnel only) |
-| `exclude` | — | ✓ | ✓ | ✓ | ✓\* | CIDR list carved **out** of the tunnel (Android — API 33+ only) |
-| `route_file` | — | — | ✓ | ✓ | — | split routes from a file (on the CLI use `include`/`exclude`) |
-| `dns` | `tunnel` | ✓ | ✓ | ✓ | ✓ | DNS mode: `tunnel` / `off` (desktop/Android also accept a resolver list) |
-| `kill_switch` | `false` | ✓ | ✓ | ✓ | — | fail-closed firewall (iptables / WFP / pf; Android — system always-on VPN) |
-| `allow_ipv6_leak` | `false` | ✓ | ✓ | ✓ | ✓ | don't block IPv6 in a full tunnel / under the kill-switch |
-| `gateway_nat` | `false` | ✓ | — | — | — | router NAT (`MASQUERADE`) out the tun (Linux) |
-| `forward` | `false` | ✓ | ✓ | ✓ | — | site-to-site forwarding **without** NAT (iptables / netsh / sysctl) |
-| `lan_subnet` | — | ✓ | — | — | — | restrict `gateway_nat` to one source subnet |
-| `post_up` / `post_down` | — | ✓ | — | — | — | commands at start / clean stop (root, trusted config) |
-| `allow_lan` | `false` | — | — | — | ✓ | carve RFC1918 out of the full tunnel — reach the home LAN (Android) |
+| Key | Default | CLI | Win | mac | And | iOS | Purpose |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| `dev` | `vpn0` | ✓ | ✓ | — | — | — | interface name (mac: `utun` is kernel-assigned; Android: VpnService) |
+| `dev_attach` | `false` | ✓ | — | — | — | — | attach to a pre-existing interface (don't create one) |
+| `mtu` | `0`=auto | ✓ | ✓ | ✓ | ✓ | ✓ | tunnel MTU; `0` = adopt the server push |
+| `mtu_probe` | `true` | ✓\* | ✓\* | ✓\* | ✓\* | ✓\* | active path-MTU probe — **UDP with `mtu=0` only** |
+| `gateway` | \* | ✓ | ✓ | ✓ | ✓ | ✓ | full-tunnel. Default: split on CLI/desktop, full on phones; `gateway=false` = split |
+| `route_local` | `false` | ✓ | ✓ | ✓ | ✓ | ✓ | pull the broad RFC1918 ranges into the tunnel |
+| `include` | — | ✓ | ✓ | ✓ | ✓\* | ✓ | CIDR list forced **into** the tunnel (Android — split-tunnel only) |
+| `exclude` | — | ✓ | ✓ | ✓ | ✓\* | ✓ | CIDR list carved **out** of the tunnel (Android — API 33+ only) |
+| `route_file` | — | — | ✓ | ✓ | — | — | split routes from a file (on the CLI use `include`/`exclude`) |
+| `dns` | `tunnel` | ✓ | ✓ | ✓ | ✓ | ✓ | DNS mode: `tunnel` / `off` (desktop/Android also accept a resolver list) |
+| `kill_switch` | `false` | ✓ | ✓ | ✓ | — | —\* | fail-closed firewall (iptables / WFP / pf; Android — system always-on VPN) |
+| `allow_ipv6_leak` | `false` | ✓ | ✓ | ✓ | ✓ | ✓ | don't block IPv6 in a full tunnel / under the kill-switch |
+| `gateway_nat` | `false` | ✓ | — | — | — | — | router NAT (`MASQUERADE`) out the tun (Linux) |
+| `forward` | `false` | ✓ | ✓ | ✓ | — | — | site-to-site forwarding **without** NAT (iptables / netsh / sysctl) |
+| `lan_subnet` | — | ✓ | — | — | — | — | restrict `gateway_nat` to one source subnet |
+| `exit_node` | `false` | ✓ | — | — | — | — | mirror of `gateway_nat`: this client is an internet **exit** for other tunnel clients (`MASQUERADE` out the physical WAN) |
+| `post_up` / `post_down` | — | ✓ | — | — | — | — | commands at start / clean stop (root, trusted config) |
+| `allow_lan` | `false` | — | — | — | ✓ | ✓ | carve RFC1918 out of the full tunnel — reach the home LAN (Android) |
 
 **OpenVPN parity — desktop only** (no UI form; set via the manual INI editor)
 
-| Key | Default | CLI | Win | mac | And | Purpose |
-|---|---|:-:|:-:|:-:|:-:|---|
-| `persist_tun` | `false` | — | ✓ | ✓ | — | keep the TUN + routes across reconnects (fail-closed in the window) |
-| `local` | — | — | ✓ | ✓ | — | bind the carrier socket's source address (matters when the server is on-link) |
-| `lport` | — | — | ✓ | ✓ | — | fixed local source port |
-| `dev_node` | — | — | ✓ | —\* | — | Wintun adapter name (**Windows**; mac parses but never applies) |
-| `metric` | — | — | ✓ | —\* | — | interface metric (**Windows**; mac parses but never applies) |
+| Key | Default | CLI | Win | mac | And | iOS | Purpose |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| `persist_tun` | `false` | — | ✓ | ✓ | — | — | keep the TUN + routes across reconnects (fail-closed in the window) |
+| `local` | — | — | ✓ | ✓ | — | — | bind the carrier socket's source address (matters when the server is on-link) |
+| `lport` | — | — | ✓ | ✓ | — | — | fixed local source port |
+| `dev_node` | — | — | ✓ | —\* | — | — | Wintun adapter name (**Windows**; mac parses but never applies) |
+| `metric` | — | — | ✓ | —\* | — | — | interface metric (**Windows**; mac parses but never applies) |
 
 **Misc & platform-specific**
 
-| Key | Default | CLI | Win | mac | And | Purpose |
-|---|---|:-:|:-:|:-:|:-:|---|
-| `name` | — | — | ✓ | ✓ | ✓ | profile display label (GUI) |
-| `autostart` | `false` | ✓\* | — | — | — | auto-connect when the supervisor/panel starts (GUIs use their own OS autostart) |
-| `apps_mode` / `apps` | — | — | — | — | ✓ | per-app split tunnel: `all`/`include`/`exclude` + a package list (Android) |
-| `reconnect` · `reconnect_retries` · `reconnect_base_delay` · `reconnect_max_delay` · `timeout` | — | — | — | — | ✓ | reconnect/timeout tuning (Android; CLI/desktop use built-in backoff defaults) |
+| Key | Default | CLI | Win | mac | And | iOS | Purpose |
+|---|---|:-:|:-:|:-:|:-:|:-:|---|
+| `name` | — | — | ✓ | ✓ | ✓ | —\* | profile display label (GUI) |
+| `autostart` | `false` | ✓\* | — | — | — | — | auto-connect when the supervisor/panel starts (GUIs use their own OS autostart) |
+| `apps_mode` / `apps` | — | — | — | — | ✓ | ✓ | per-app split tunnel: `all`/`include`/`exclude` + a package list (Android) |
+| `reconnect` · `reconnect_retries` · `reconnect_base_delay` · `reconnect_max_delay` · `timeout` | — | — | — | — | ✓ | ✓ | reconnect/timeout tuning (Android; CLI/desktop use built-in backoff defaults) |
 
 **The `[logging]` section** (`level`, `file`, `time_format`): read by **CLI only**. The GUI
 clients keep this choice in their own settings and do **not** read it from an imported
@@ -1093,6 +1139,14 @@ in split-tunnel and `exclude` only on Android 13+ (API 33). `quic` on Android is
 `mode = udp-quic`. `dev_node`/`metric` are parsed and round-tripped by mac but **not applied**
 (Wintun/Windows-specific). `autostart` is read by the panel/supervisor; the `qeli client`
 runtime ignores it.
+
+**iOS footnotes.** `kill_switch` is not supported: on iOS the fail-closed role belongs to
+the system's **VPN On Demand** (rules set in the app or via MDM), not to a config key.
+`name` in `[qeli]` is **not read** — iOS keeps the profile name in a leading comment line
+(`# Name`) and writes it back the same way, so an INI from the desktop arrives on the
+iPhone unnamed and an INI from the iPhone loses its name on the desktop; a `qeli://` link
+carries the label correctly either way. `mtu_probe` is parsed and stored but, as everywhere
+else, only takes effect on UDP with `mtu = 0`.
 
 ### Precedence: which source wins
 
@@ -1184,6 +1238,7 @@ Client-side routing keys in flat-INI (`[qeli]`, file-only — not carried in a
 | `gateway_nat` | router mode (Linux/iptables): the client programs `ip_forward` + `MASQUERADE` out the tun (+FORWARD +MSS-clamp) so a LAN **behind** it reaches the internet through the tunnel — no manual iptables. Idempotent, kept across reconnects, removed on a clean stop (a crash leaves it, like the kill-switch) |
 | `lan_subnet` | restrict `gateway_nat` to one source CIDR (`-s <CIDR>`); empty = masquerade everything leaving the tun |
 | `forward` (default `false`) | site-to-site **without NAT**: forward traffic between the tun and the LAN behind the client while preserving the original source IP (unlike `gateway_nat`, which masquerades it). Use it when a routed network sits behind the client and its addresses must stay visible on the server. See "Routing networks behind nodes WITHOUT NAT" below |
+| `exit_node` (default `false`) | **mirror of `gateway_nat`.** `gateway_nat` masquerades a LAN behind the client INTO the tunnel; `exit_node` masquerades traffic that arrived FROM the tunnel out the physical WAN — so other clients reach the internet under THIS host's IP (e.g. behind a grey/NAT'd line). See "Exit node (`exit_node`)" below. Linux/router-only |
 | `dev_attach = <name>` | **attach to a pre-existing** interface instead of creating one. qeli only opens it for packet IO: it does **not** create, address, route, or delete it — an external manager (router firmware, your own script) owns all of that. The assigned tunnel IP is written to `$QELI_TUNIP_FILE` (if set in the environment) so the external script can bring up the address/routes itself |
 | `post_up` / `post_down` | command run at start / clean stop (Linux, root) for custom routing/firewall. **SECURITY:** honoured ONLY from a trusted file (root-owned, not group/world-writable); the panel/API never write them (else RCE). Env: `QELI_TUN`, `QELI_SERVER`, `QELI_SERVER_PORT`, `QELI_LAN_SUBNET` |
 | `dns` | client DNS mode. `tunnel` (default) = route DNS through the tunnel: the client **rewrites `/etc/resolv.conf`** (Linux) to the tunnel resolver to prevent DNS leaks. `off` = **leave the system resolver untouched**, use the host's DNS as-is (for routers and any Linux host that already has DNS configured and shouldn't have `resolv.conf` touched). File-only; emitted to INI only when `!= tunnel` |
@@ -1290,6 +1345,70 @@ It is removed automatically on a **clean** stop (Ctrl+C / SIGTERM); a crash leav
 chain in place (fail-safe). **Never drop it with `iptables -F`** — that flushes the entire
 `filter` table. The surgical manual teardown (OUTPUT + FORWARD + ip6tables) is in
 [GETTING-STARTED.md](GETTING-STARTED.md) §13.2.
+
+## Exit node (`exit_node`)
+
+Topology: `Win client → server (public IP) → exit client (grey IP behind NAT) → internet`.
+Some clients' traffic exits under **another** client's IP — e.g. a home/NAT'd line. It is the
+mirror of `gateway_nat`: that pushes a LAN behind the client INTO the tunnel; `exit_node`
+lets traffic that arrived FROM the tunnel out the client's own physical WAN.
+
+### What to set where (three nodes)
+
+**Exit client** (Linux; server/router/RPi), split-tunnel:
+```ini
+[qeli]
+server    = <public-IP-of-server>:443
+user      = exit
+pass      = ...
+gateway   = false     # keep this host's own internet on the WAN — it is the exit
+exit_node = true
+```
+
+**Server** — register the exit behind the exit user and allow client-to-client:
+```ini
+[user:exit]
+password_hash = ...
+client_subnet = 0.0.0.0/0    # "the whole internet is behind this client" (inbound iroute)
+
+[profile:tcp]
+routing.client_to_client = true
+```
+
+**Consumer** (Win/any client) — just receives a default route; knows nothing about the exit:
+```ini
+[qeli]
+gateway = true
+```
+Who gets the exit is decided on the server: push the default (`route = 0.0.0.0/0` in `[user:*]`)
+only to the users who need it, so one exit node serves a chosen few, not everyone.
+
+### How it works and what the flag programs
+
+Trace a packet Win→8.8.8.8: Win sends its default into the tunnel → the server forwards it to
+the exit client's session via `client_to_client` (the exit registered `0.0.0.0/0`) → the exit
+client forwards it out its WAN and **masquerades** it; the reply returns the same way. **The
+internet sees the exit node's IP** — that is the point.
+
+`exit_node = true` installs (idempotent, by interface name, kept across reconnects, removed on
+a clean stop):
+- `net.ipv4.ip_forward = 1` + relaxed `rp_filter` on the tun and WAN (asymmetric path);
+- a mark on `tun→WAN` packets and a `MASQUERADE` of **only those** out the WAN (scoped by
+  packet mark, not source subnet: the pool is unknown until after auth, and locally-generated
+  host traffic is never marked, so it is never masqueraded);
+- a `FORWARD … ACCEPT` both ways and a `TCPMSS` clamp (without it ping works but TCP/HTTPS stalls);
+- the WAN is auto-detected (`ip route get 1.1.1.1`).
+
+### Caveats
+
+- **Linux only** (iptables), like `gateway_nat`/`forward`. An exit node is a server/router/RPi;
+  the flag does nothing on Windows/macOS/Android. The consumer of the exit needs nothing special.
+- **Split-tunnel only.** With `gateway = true` the host's own default flips into the tunnel and
+  there is no WAN to forward out of — the client warns on that combination.
+- Not needed on the server: the server is already an exit via `routing.nat.enabled` (it
+  masquerades clients out its public IP). `exit_node` is about exiting through *another* client.
+- **Liability.** All traffic leaves under the exit owner's IP.
+- **Double hop.** Traffic transits server + exit — the cost of the scheme.
 
 ## Routing networks behind nodes WITHOUT NAT (`client_subnet`, `forward`, `forward_private`)
 

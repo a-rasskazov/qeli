@@ -242,9 +242,17 @@ The **⤓ Backup** and **⤒ Restore** buttons in the header of the *Host load* 
   users database) turned out to be unreadable, the download is **refused** with an
   explanation rather than handing you an archive that only looks complete.
   > **The archive holds secrets.** Private identity keys, argon2 password hashes, the
-  > reversibly-encrypted user passwords, the panel's session-signing key and client
-  > profiles with a plaintext password in them. Treat it as key material — encrypted
-  > storage, not a shared drive and not a repository.
+  > reversibly-encrypted user passwords (`panel-secret.key` is the key **those** are
+  > encrypted with) and client profiles with a plaintext password in them. Treat it as key
+  > material — encrypted storage, not a shared drive and not a repository.
+  >
+  > **What the archive does NOT contain: the panel's session-signing key.** That is a
+  > separate file, and it is easy to confuse with `panel-secret.key` since both are "panel
+  > keys". The session key lives at `$STATE_DIRECTORY/session.key` — under systemd that is
+  > `/var/lib/qeli/session.key`, outside the `/etc/qeli` tree the archive captures; the
+  > fallback without `StateDirectory` is `/etc/qeli/.session_key`, and only then is it
+  > included. In practice: after restoring onto a different machine, every panel login has
+  > to be done again. Not data loss, but not something to discover mid-incident either.
 - **Restore** (`POST /api/restore`) — pick a `.tar.gz`; the panel warns that the current
   config, users and identity keys will be **overwritten** and uploads the file as the
   request body. The **request-body ceiling is 16 MiB** (`DefaultBodyLimit` in

@@ -75,13 +75,18 @@ some are explicit engineering trade-offs.
    `[web] update_check` on the panel, or `qeli version --check`). When you enable it,
    the client makes a **single unauthenticated GET** of public GitHub release metadata
    (`/repos/litvinovtd/qeli/releases`) — with a **generic User-Agent**, sending nothing
-   that identifies you or your device; the version comparison is done locally. On the
-   clients it only fires **while the tunnel is up**, so the request (and your real IP)
-   travel *inside* the tunnel; the panel check runs in the operator's browser, not the
-   server process. It is **notification-only** — it never downloads or installs anything.
-   Left OFF (the default), qeli opens no such socket at all. The residual, when enabled,
-   is a "this host asked GitHub for the qeli repo" signal to whatever sees the request
-   (inside the tunnel, that is your own exit's upstream).
+   that identifies you or your device; the version comparison is done locally. On the GUI
+   clients it only fires **while the tunnel is up**, and it follows the OS route table.
+   **Careful: "the tunnel is up" is not the same as "the request went through it."** In
+   full-tunnel it does, and GitHub sees your server's IP. In **split-tunnel** — the default
+   on the CLI and the desktop clients — or if GitHub falls under an `exclude`, the request
+   goes out directly and GitHub sees your real IP. If you need the guarantee, enable the
+   update check only on a full-tunnel profile. The CLI's `qeli version --check` has no
+   tunnel gate at all: it performs the request whenever you run it. The panel check runs in
+   the operator's browser, not the server process. It is **notification-only** — it never
+   downloads or installs anything. Left OFF (the default), qeli opens no such socket at
+   all. The residual, when enabled, is a "this host asked GitHub for the qeli repo" signal
+   to whatever sees the request (inside the tunnel, that is your own exit's upstream).
 
 ## 4. Assurance status
 

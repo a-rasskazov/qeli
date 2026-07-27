@@ -80,7 +80,7 @@ operator need first, then internal and historical material.
 |---|---|
 | Windows | [qeli-win/README.md](../../qeli-win/README.md) |
 | macOS | [qeli-mac/README.md](../../qeli-mac/README.md) |
-| iOS | [qeli-ios/README.md](../../qeli-ios/README.md) · MDM: [qeli-ios/MDM/README.md](../../qeli-ios/MDM/README.md) |
+| iOS ⚠️ | [qeli-ios/README.md](../../qeli-ios/README.md) · MDM: [qeli-ios/MDM/README.md](../../qeli-ios/MDM/README.md) — feature-complete but **never run on a device**, and nothing ships from it |
 | Routers (OpenWrt) | [qeli-openwrt/README.md](../../qeli-openwrt/README.md) · Keenetic: [KEENETIC-DEPLOY.md](KEENETIC-DEPLOY.md) |
 | Android | [qeli-android/README.md](../../qeli-android/README.md) (in Russian) |
 | Linux CLI | [GETTING-STARTED §8.2](GETTING-STARTED.md) |

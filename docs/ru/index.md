@@ -80,7 +80,7 @@
 |---|---|
 | Windows | [qeli-win/README.md](../../qeli-win/README.md) |
 | macOS | [qeli-mac/README.md](../../qeli-mac/README.md) |
-| iOS | [qeli-ios/README.md](../../qeli-ios/README.md) · MDM: [qeli-ios/MDM/README.md](../../qeli-ios/MDM/README.md) |
+| iOS ⚠️ | [qeli-ios/README.md](../../qeli-ios/README.md) · MDM: [qeli-ios/MDM/README.md](../../qeli-ios/MDM/README.md) — реализован полностью, но **на устройстве не проверялся** и не выпускается |
 | Роутеры (OpenWrt) | [qeli-openwrt/README.md](../../qeli-openwrt/README.md) · Keenetic: [KEENETIC-DEPLOY.md](KEENETIC-DEPLOY.md) |
 | Android | [qeli-android/README.md](../../qeli-android/README.md) |
 | Linux CLI | [GETTING-STARTED §8.2](GETTING-STARTED.md) |

@@ -12,15 +12,17 @@ panel.
 
 ## What it is
 
-- **Full-tunnel TUN VPN**, not a per-application proxy: all traffic and DNS are routed at
-  the OS level.
+- **A TUN VPN, not a per-application proxy**: routing and DNS are handled at the OS level,
+  so every application is covered without being configured. Full-tunnel and split-tunnel are
+  both first-class — phones default to full-tunnel, the CLI and desktop clients to split.
 - **Wire modes**: `plain` · `fake-tls` (TLS 1.3 mimicry) · `obfs` (ChaCha20 stream +
   WebSocket fronting) · `reality` / `reality-tls` (real TLS 1.3 carries the tunnel) ·
   QUIC-masking for UDP.
 - **Post-quantum handshake**: hybrid X25519 + ML-KEM-768, ChaCha20-Poly1305 data plane.
 - **Web admin panel** with `qeli://` link / QR issuance, Argon2id login, native HTTPS.
-- **Server**: Linux (TUN/TAP). **Clients**: Linux CLI · Windows · macOS · Android · iOS ·
-  Keenetic / OpenWrt routers.
+- **Server**: Linux (TUN/TAP). **Clients**: Linux CLI · Windows · macOS · Android ·
+  Keenetic / OpenWrt routers — plus iOS, which is feature-complete but has never been run
+  on a device and ships nothing yet ([details](qeli-ios/README.md)).
 
 ## Works under active DPI
 
@@ -72,7 +74,7 @@ Something went wrong? → **[Troubleshooting (EN)](docs/eng/TROUBLESHOOTING.md)*
 | `qeli/` | Rust daemon: server, client CLI, protocol core, web panel |
 | `qeli-win/`, `qeli-mac/` | Desktop GUI clients (C#/.NET, shared core in `qeli-shared/`) — [Windows](qeli-win/README.md) · [macOS](qeli-mac/README.md) |
 | `qeli-android/` | Android client (Kotlin) — [README](qeli-android/README.md) |
-| `qeli-ios/` | iOS client (Swift) — [README](qeli-ios/README.md) · [MDM](qeli-ios/MDM/README.md) |
+| `qeli-ios/` | iOS client (Swift), feature-complete but untested on a device — [README](qeli-ios/README.md) · [MDM](qeli-ios/MDM/README.md) |
 | `qeli-openwrt/` | Router build (Keenetic / OpenWrt) — [README](qeli-openwrt/README.md) |
 | `docs/` | Documentation — start at [docs/ru/index.md](docs/ru/index.md) / [docs/eng/index.md](docs/eng/index.md) |
 | `release/` | Packaging: [Docker](release/docker/README.md), deb, release artefacts |
@@ -90,7 +92,8 @@ protocol may still change between minor versions. Released builds are published 
 - Licensing: **[LICENSE](LICENSE)** · **[LICENSING.md](LICENSING.md)**
 
 This is a monorepo with **per-directory licences**: the core and server (`qeli/`) are
-**AGPL-3.0-only**, the clients (`qeli-android/`, `qeli-win/`, `qeli-mac/`) are **MPL-2.0**.
+**AGPL-3.0-only**, the clients (`qeli-android/`, `qeli-win/`, `qeli-mac/`, `qeli-ios/`) are
+**MPL-2.0**.
 The full map, including the `libqeli`/AGPL note, is in [LICENSING.md](LICENSING.md).
 Contributions use a DCO sign-off, no CLA — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -128,8 +128,19 @@ Three caveats:
   [§4](#4-what-to-back-up).
 - **`QELI_DEB=/path/to.deb` disables checksum verification** — there is nothing to compare
   against. Use it deliberately, for your own builds.
-- **There are no signatures**, only the SHA256 from the same release. That guarantees
-  integrity, not provenance.
+- **The script itself verifies only the SHA256** from the same release — that is integrity,
+  not provenance: whoever can replace the release can replace `SHA256SUMS` with it.
+  Provenance is established separately, by GitHub **build provenance attestations** (the
+  `release-attest` workflow), which are signed and independently verifiable:
+
+  ```bash
+  gh attestation verify qeli_0.7.13_amd64.deb -R litvinovtd/qeli
+  ```
+
+  The same applies to the container image:
+  `gh attestation verify oci://ghcr.io/litvinovtd/qeli:latest -R litvinovtd/qeli`.
+  Verification needs `gh` and network access, so the updater does not run it — do it by
+  hand whenever provenance, not just integrity, is what you need.
 
 The manual equivalent, if you'd rather not use the script:
 
@@ -164,6 +175,19 @@ Three things worth knowing up front:
 The image is not upgraded in place — you change the tag and recreate the container. State
 lives in the `/etc/qeli` volume, so configs, users and the key survive recreation:
 
+**Check which image your `docker-compose.yml` references first** — it decides the command.
+The bundled compose uses `image: qeli:latest`, which is **built locally**, not pulled from a
+registry. For it `docker compose pull` is useless (and would go asking Docker Hub for an
+unrelated image); rebuild instead:
+
+```bash
+docker buildx build -f release/docker/Dockerfile -t qeli:latest --load .
+docker compose -f release/docker/docker-compose.yml up -d
+```
+
+If you switched `image:` to the published `ghcr.io/litvinovtd/qeli:latest`, the usual path
+works:
+
 ```bash
 docker compose -f release/docker/docker-compose.yml pull
 docker compose -f release/docker/docker-compose.yml up -d
@@ -171,11 +195,13 @@ docker compose -f release/docker/docker-compose.yml up -d
 
 To roll back, put the previous image tag back in `docker-compose.yml` and `up -d` again.
 
-> **`update-qeli-server.sh` is not for Docker.** It looks for a container named exactly
-> `qeli`, while compose creates `qeli-server` — so on a compose deployment its Docker
-> branch never fires at all. And even when it does fire it runs `docker restart` on the
-> **existing** container, which keeps running the old image. Upgrade with
-> `docker compose pull && up -d`.
+> **`update-qeli-server.sh` does handle Docker — with one caveat.** It finds the container
+> under either name, `qeli` or `qeli-server` (the latter is what the bundled compose
+> creates), pulls **the image the container actually runs**, and recreates it with
+> `docker compose up -d` — a plain `docker restart` would keep the old image. But when that
+> image is local (`qeli:latest`, no registry) there is nothing to pull, so the script
+> **stops with an explanation** instead of reporting an update that never happened. Rebuild
+> with the command above in that case.
 
 > **The client role in Docker needs `dns = off`.** `/etc/resolv.conf` is a bind mount in
 > the container, so the default `dns = tunnel` fails with EBUSY and reconnect-loops. The

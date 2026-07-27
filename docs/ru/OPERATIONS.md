@@ -126,8 +126,18 @@ sudo ./update-qeli-server.sh
   крупным обновлением снимите бэкап (см. [§4](#4-что-бэкапить)).
 - **`QELI_DEB=/путь/к.deb` отключает проверку контрольной суммы** — сверять нечего.
   Осознанно ставьте так только свои сборки.
-- **Подписи нет**, только SHA256 из того же релиза. Гарантия целостности, но не
-  происхождения.
+- **Сам скрипт проверяет только SHA256** из того же релиза — это целостность, но не
+  происхождение: злоумышленник, подменивший релиз, подменит и `SHA256SUMS`.
+  Происхождение подтверждается отдельно — **build provenance attestation** GitHub
+  (workflow `release-attest`), она подписана и проверяется независимо:
+
+  ```bash
+  gh attestation verify qeli_0.7.13_amd64.deb -R litvinovtd/qeli
+  ```
+
+  То же и для Docker-образа: `gh attestation verify oci://ghcr.io/litvinovtd/qeli:latest -R litvinovtd/qeli`.
+  Проверка требует `gh` и доступа в сеть, поэтому апдейтер её не выполняет — прогоняйте
+  вручную, когда важно происхождение, а не только целостность.
 
 Ручной эквивалент, если скрипт использовать не хотите:
 
@@ -162,6 +172,19 @@ sudo systemctl stop qeli && sudo cp -a /root/qeli.bak "$(command -v qeli)" && su
 Образ не обновляется «на месте» — меняется тег и пересоздаётся контейнер. Состояние живёт
 в томе `/etc/qeli`, поэтому конфиги, пользователи и ключ переживают пересоздание:
 
+**Сначала посмотрите, какой образ у вас в `docker-compose.yml`** — от этого зависит команда.
+В комплектном compose стоит `image: qeli:latest`, и он **собирается локально**, а не тянется
+из реестра. Для него `docker compose pull` бесполезен (и попытается сходить в Docker Hub за
+чужим образом) — нужна пересборка:
+
+```bash
+docker buildx build -f release/docker/Dockerfile -t qeli:latest --load .
+docker compose -f release/docker/docker-compose.yml up -d
+```
+
+Если вы переключили `image:` на опубликованный `ghcr.io/litvinovtd/qeli:latest`, тогда
+работает обычный путь:
+
 ```bash
 docker compose -f release/docker/docker-compose.yml pull
 docker compose -f release/docker/docker-compose.yml up -d
@@ -170,11 +193,13 @@ docker compose -f release/docker/docker-compose.yml up -d
 Откат — вернуть предыдущий тег образа в `docker-compose.yml` и повторить `up -d`.
 Подробности и оговорки — [release/docker/README.md](../../release/docker/README.md).
 
-> **`update-qeli-server.sh` для Docker не годится.** Он ищет контейнер с именем ровно
-> `qeli`, а compose создаёт `qeli-server` — то есть на compose-развёртывании
-> docker-ветка скрипта просто не срабатывает. Но даже когда срабатывает, он делает
-> `docker restart` **существующего** контейнера, а тот продолжает работать на старом
-> образе. Обновляйтесь через `docker compose pull && up -d`.
+> **`update-qeli-server.sh` понимает Docker — с оговоркой.** Он находит контейнер и по
+> имени `qeli`, и по `qeli-server` (последнее создаёт комплектный compose), тянет **тот
+> образ, на котором контейнер реально запущен**, и пересоздаёт контейнер через
+> `docker compose up -d` — простой `docker restart` оставил бы старый образ. Но если образ
+> локальный (`qeli:latest`, без реестра), тянуть нечего: скрипт **останавливается с
+> объяснением**, а не рапортует об обновлении, которого не было. В этом случае пересоберите
+> образ командой выше.
 
 > **Клиентская роль в Docker требует `dns = off`.** `/etc/resolv.conf` в контейнере —
 > bind-mount, и дефолтный `dns = tunnel` падает с EBUSY и уходит в реконнект-петлю.

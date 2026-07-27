@@ -77,6 +77,37 @@ It never accepts profile text, passwords, or private keys. On newer managed
 deployments, Apple's ManagedApp framework can replace this legacy `UserDefaults`
 delivery path.
 
+### Bootstrap order (this one bites)
+
+The policy references a profile by UUID; it never carries the profile itself. So the
+profile has to exist on the device **before** the configuration arrives, and the order is
+not interchangeable:
+
+1. Install Qeli as a **managed** app. Legacy managed app configuration is only delivered
+   to apps the MDM installed — sideloaded or App Store copies never see the key.
+2. Get the profile onto the device and note its UUID. Qeli accepts no profile text,
+   password or key over MDM by design, so this step is a `qeli://` link, a QR scan or an
+   INI import — done by the user or seeded alongside a Per-App VPN payload.
+3. Only then push the configuration dictionary with `activeProfileID` set to that UUID.
+
+Pushing step 3 first is the common mistake, and it does not fail quietly: an
+`activeProfileID` that matches nothing is treated as a policy violation, not as "no
+policy". Qeli fails closed — manual and widget starts are blocked, a running tunnel is
+stopped, On Demand rules are removed and the stale provider configuration is disabled.
+That is deliberate (a managed device must not silently fall back to a user-chosen
+profile), but it means a mis-ordered rollout looks like a broken app.
+
+### Rollback
+
+Remove the managed configuration — or just the `activeProfileID` key — and control returns
+to the user: the app goes back to the locally selected profile, and an On Demand value
+that came from policy reverts to the app's own setting. Removing the policy does **not**
+delete profiles, credentials or the provider configuration; it only stops enforcing them.
+
+To hand a device back permanently, remove the policy first and confirm the app connects on
+a local profile, then unmanage or remove the app. Doing it the other way round leaves the
+last enforced state in place with nothing left to lift it.
+
 Apple reference:
 
 - https://developer.apple.com/documentation/devicemanagement/configuring-managed-apps-and-extensions
