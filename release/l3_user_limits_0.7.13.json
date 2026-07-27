@@ -1,0 +1,23 @@
+[
+  {
+    "case": "bandwidth.limit_mbps=50",
+    "pass": true,
+    "measured_mbps": 49.9
+  },
+  {
+    "case": "static_ip",
+    "pass": true,
+    "ip": "10.9.0.77"
+  },
+  {
+    "case": "pool.reservation",
+    "pass": true,
+    "ip": "10.9.0.88"
+  },
+  {
+    "case": "max_sessions=1",
+    "pass": false,
+    "first_ip": "10.9.0.2",
+    "second_up": true
+  }
+]

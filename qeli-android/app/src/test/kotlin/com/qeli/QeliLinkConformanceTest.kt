@@ -74,6 +74,12 @@ class QeliLinkConformanceTest {
                 // Kotlin models an absent obfs key as "" rather than null.
                 assertEquals("case '$name': obfs_key", nullable(e, "obfs_key") ?: "", cfg.obfsKey)
             }
+            // `front` picks the obfs framing: losing it breaks the handshake outright.
+            // Absent in the link means the default, which Kotlin models as "websocket".
+            if (e.has("front")) {
+                assertEquals("case '$name': front", nullable(e, "front") ?: "websocket", cfg.obfsFronting)
+            }
+            if (e.has("mtu")) assertEquals("case '$name': mtu", e.getInt("mtu"), cfg.mtu)
             if (e.has("quic")) assertEquals("case '$name': quic", e.getBoolean("quic"), cfg.quicEnabled)
             if (e.has("awg")) assertEquals("case '$name': awg", e.getBoolean("awg"), cfg.awgEnabled)
             if (e.has("jc")) assertEquals("case '$name': jc", e.getInt("jc"), cfg.awgJc)
@@ -128,7 +134,11 @@ class QeliLinkConformanceTest {
             assertEquals("case '$name': quic round-trip", first.quicEnabled, again.quicEnabled)
             assertEquals("case '$name': awg round-trip", first.awgEnabled, again.awgEnabled)
             assertEquals("case '$name': mtu round-trip", first.mtu, again.mtu)
-            assertEquals("case '$name': bind_static round-trip", first.bindStaticToSession, again.bindStaticToSession)
+            // NOT asserted: `bind_static` / `mtu_probe`. As of 0.7.13 they are deliberately
+            // absent from the link (local device policy, and `bind_static=0` in a
+            // forwardable QR hands out a downgrade), so a non-default value cannot survive
+            // a round trip by design — see the SETTLED note in the fixture file. Asserting
+            // it would either pass trivially or demand the behaviour we just removed.
             if (first.awgEnabled) {
                 assertEquals("case '$name': jc round-trip", first.awgJc, again.awgJc)
                 assertEquals("case '$name': jmin round-trip", first.awgJmin, again.awgJmin)

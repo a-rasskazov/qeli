@@ -70,6 +70,13 @@ final class LinkConformanceTests: XCTestCase {
                 assertOptional(e["obfs_key"], cfg.obfsKey.isEmpty ? nil : cfg.obfsKey,
                                "case '\(name)': obfs_key")
             }
+            // `front` picks the obfs framing: losing it breaks the handshake outright.
+            // Absent in the link means the default, modelled here as "websocket".
+            if e.index(forKey: "front") != nil {
+                XCTAssertEqual(cfg.obfsFronting, (e["front"] as? String) ?? "websocket",
+                               "case '\(name)': front")
+            }
+            if let v = e["mtu"] as? Int { XCTAssertEqual(cfg.mtu, v, "case '\(name)': mtu") }
             if let v = e["quic"] as? Bool { XCTAssertEqual(cfg.quicEnabled, v, "case '\(name)': quic") }
             if let v = e["awg"] as? Bool { XCTAssertEqual(cfg.awgEnabled, v, "case '\(name)': awg") }
             if let v = e["jc"] as? Int { XCTAssertEqual(cfg.awgJunkCount, v, "case '\(name)': jc") }

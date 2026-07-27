@@ -17,9 +17,16 @@
     "in which extras they model). `null` means 'absent / not set', NOT the empty string.",
     "",
     "WHEN CHANGING THE LINK FORMAT: add the case HERE first, then make the four parsers",
-    "agree. A case that only one implementation passes is the bug this file exists to catch."
+    "agree. A case that only one implementation passes is the bug this file exists to catch.",
+    "",
+    "SETTLED (0.7.13): `bind_static` and `mtu_probe` are NOT part of the link. Android used to",
+    "emit both; Rust, C# and Swift carried neither and dropped them as unknown params, so a",
+    "link shared from Android arrived elsewhere with bind_static silently back ON, demanding a",
+    "pinned key the link never carried. They are local device policy, not a property of the",
+    "server, and `bind_static=0` in a forwardable QR hands out a security downgrade — so",
+    "Android stopped emitting them rather than the other three learning them. It still PARSES",
+    "them, as tolerance for links it issued before 0.7.13. Set both in the profile file."
   ],
-
   "cases": [
     {
       "name": "minimal-tcp-faketls",
@@ -132,9 +139,85 @@
         "proto": "tcp",
         "mode": "fake-tls"
       }
+    },
+    {
+      "name": "alias-udp-quic",
+      "why": "`mode=udp-quic` folds transport+QUIC into one key. Every implementation must expand it to proto=udp + mode=fake-tls + quic=1; keeping the alias literally matches no handshake, so the profile imports cleanly and then never connects.",
+      "uri": "qeli://alice:pw@vpn.example.com:4443?mode=udp-quic",
+      "expect": {
+        "host": "vpn.example.com",
+        "port": 4443,
+        "user": "alice",
+        "pass": "pw",
+        "proto": "udp",
+        "mode": "fake-tls",
+        "server_key": "",
+        "sni": null,
+        "reality_sid": null,
+        "obfs_key": null,
+        "quic": true,
+        "awg": false
+      }
+    },
+    {
+      "name": "alias-udp-obfs",
+      "why": "`mode=udp-obfs` expands to proto=udp + mode=obfs (quic stays off).",
+      "uri": "qeli://alice:pw@vpn.example.com:4443?mode=udp-obfs",
+      "expect": {
+        "host": "vpn.example.com",
+        "port": 4443,
+        "user": "alice",
+        "pass": "pw",
+        "proto": "udp",
+        "mode": "obfs",
+        "server_key": "",
+        "sni": null,
+        "reality_sid": null,
+        "obfs_key": null,
+        "quic": false,
+        "awg": false
+      }
+    },
+    {
+      "name": "alias-then-explicit-proto",
+      "why": "`proto` may follow the alias in the query. The alias implies the transport, so expansion must happen after the whole query is parsed — otherwise a later `proto` silently overwrites it.",
+      "uri": "qeli://alice:pw@vpn.example.com:4443?mode=udp-quic&proto=udp",
+      "expect": {
+        "host": "vpn.example.com",
+        "port": 4443,
+        "user": "alice",
+        "pass": "pw",
+        "proto": "udp",
+        "mode": "fake-tls",
+        "server_key": "",
+        "sni": null,
+        "reality_sid": null,
+        "obfs_key": null,
+        "quic": true,
+        "awg": false
+      }
+    },
+    {
+      "name": "obfs-front-none",
+      "why": "`front` selects the obfs anti-FET framing. Losing it re-defaults the importer to `websocket`, which frames the stream differently, so the handshake never completes — the link 'imports' and the tunnel silently never comes up. C# parsed this parameter but never emitted it, which is exactly that bug.",
+      "uri": "qeli://alice:pw@vpn.example.com:8443?proto=tcp&mode=obfs&obfs=psk&front=none",
+      "expect": {
+        "host": "vpn.example.com",
+        "port": 8443,
+        "user": "alice",
+        "pass": "pw",
+        "proto": "tcp",
+        "mode": "obfs",
+        "server_key": "",
+        "sni": null,
+        "reality_sid": null,
+        "obfs_key": "psk",
+        "front": "none",
+        "quic": false,
+        "awg": false
+      }
     }
   ],
-
   "reject": [
     {
       "name": "no-port",

@@ -9,6 +9,8 @@ rc=0
 # undocumented config key fails before the multi-minute Rust build.
 echo "== docs (7 checks: links / index / parity / config keys / sources / placeholders / version) =="
 (cd "$ROOT" && python3 scripts/check_docs.py) || rc=1
+echo "== version consistency (build files + docs banners) =="
+(cd "$ROOT" && python3 scripts/sync_version.py) || rc=1
 
 cd "$ROOT/qeli" || exit 1
 echo "== build (release) =="

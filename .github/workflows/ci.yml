@@ -17,6 +17,12 @@ on:
       - 'qeli-ios/**'
       - 'native-libs/**'
       - '.github/workflows/ci.yml'
+      # The docs job gates these, and without them a docs-only change ran NO CI at
+      # all: the gate existed but could never be triggered by the thing it guards.
+      - 'docs/**'
+      - 'scripts/**'
+      - 'conformance/**'
+      - '*.md'
   pull_request:
     paths:
       - 'qeli/**'
@@ -29,6 +35,12 @@ on:
       - 'qeli-ios/**'
       - 'native-libs/**'
       - '.github/workflows/ci.yml'
+      # The docs job gates these, and without them a docs-only change ran NO CI at
+      # all: the gate existed but could never be triggered by the thing it guards.
+      - 'docs/**'
+      - 'scripts/**'
+      - 'conformance/**'
+      - '*.md'
   workflow_dispatch:
   schedule:
     # Nightly continuous fuzzing (the `fuzz-nightly` job; other jobs also run as a
@@ -93,10 +105,22 @@ jobs:
   # (the last one is what let a phantom key live in one language only).
   docs:
     runs-on: ubuntu-latest
+    # The workflow-level default is `working-directory: qeli` (every other job builds
+    # the crate). Without this override these steps look for qeli/scripts/... and die
+    # with exit 2 — a gate that fails for the wrong reason and proves nothing.
+    defaults:
+      run:
+        working-directory: .
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: docs checks
         run: python3 scripts/check_docs.py
+      # Needs the tags: the "these docs describe X" banner tracks the newest v* tag,
+      # and actions/checkout fetches none by default.
+      - name: fetch tags
+        run: git fetch --tags --force
+      - name: version consistency
+        run: python3 scripts/sync_version.py
 
   # Soft gate: the client apps must at least compile. The native realtls core
   # (libqeli.so / qeli.dll / libqeli.dylib) is committed under each client, so
@@ -181,11 +205,26 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # QeliCore/Native/Qeli.xcframework is .gitignore'd, so a clean checkout does NOT
+      # have it — while project.yml requires it unconditionally. Without this step the
+      # job could never build the product it claims to test; it died at project
+      # generation instead. build_native.sh adds the iOS rustup targets itself.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: qeli
+      - name: Build the native core (XCFramework, device + simulator)
+        working-directory: qeli-ios
+        run: sh build_native.sh
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate the Xcode project
         working-directory: qeli-ios
-        run: ./generate_project.sh
+        # Invoke through `sh` instead of `./`: whether the executable bit survives depends
+        # on how the file was committed (and on Windows checkouts it generally does not), so
+        # `./generate_project.sh` fails with "Permission denied" for a reason that has
+        # nothing to do with the code being tested.
+        run: sh generate_project.sh
       - name: Build (iOS Simulator, no signing)
         working-directory: qeli-ios
         run: |

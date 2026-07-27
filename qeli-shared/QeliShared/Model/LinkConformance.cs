@@ -85,6 +85,14 @@ public static class LinkConformance
                 ok &= Nullable(e2, "reality_sid", cfg.RealityShortId, name, check);
                 // An absent obfs key is "" here, not null.
                 ok &= Nullable(e2, "obfs_key", string.IsNullOrEmpty(cfg.ObfsKey) ? null : cfg.ObfsKey, name, check);
+                // `front` picks the obfs framing: losing it breaks the handshake outright.
+                // Absent in the link means the default, modelled here as "websocket".
+                if (e2.TryGetProperty("front", out var front))
+                    ok &= Report($"conformance[{name}]: front",
+                        (front.ValueKind == JsonValueKind.Null ? "websocket" : front.GetString())
+                            == cfg.ObfsFronting, check);
+                if (e2.TryGetProperty("mtu", out var mtu))
+                    ok &= Report($"conformance[{name}]: mtu", mtu.GetInt32() == cfg.Mtu, check);
                 if (e2.TryGetProperty("quic", out var quic))
                     ok &= Report($"conformance[{name}]: quic", quic.GetBoolean() == cfg.QuicEnabled, check);
                 if (e2.TryGetProperty("awg", out var awg))

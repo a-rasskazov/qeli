@@ -14,9 +14,8 @@ Guards the documentation structure so it cannot silently rot:
                  (frozen records — archive/, CHANGELOG — are out of scope)
   6. placeholder — no GitHub URL left with `<owner>` unfilled; these hide in
                  fenced code blocks where check 1 never looks
-  7. version   — one version everywhere: qeli/Cargo.toml is the source of truth,
-                 and the Android build, both overview READMEs and CHANGELOG.md
-                 must agree with it
+  7. version   — CHANGELOG.md has a section for the version being developed.
+                 Every other version string is owned by scripts/sync_version.py
 
 Exit code 0 = all good, 1 = something to fix. Intended for CI and pre-release.
 """
@@ -51,10 +50,25 @@ def tracked_markdown() -> list[Path]:
     names: set[str] = set()
     for args in (["git", "ls-files", "*.md"],
                  ["git", "ls-files", "--others", "--exclude-standard", "*.md"]):
-        out = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, check=False)
+        try:
+            out = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, check=False)
+        except OSError as e:
+            raise SystemExit(f"cannot run git ({e}) — refusing to report success on an unchecked tree")
+        # Fail CLOSED. Swallowing a git error left the file list empty, and an empty
+        # list makes every per-file check pass vacuously: the script printed
+        # "checking 0 tracked Markdown files ... OK" and exited 0, i.e. a green gate
+        # that verified nothing. A gate that cannot see the tree must not pass it.
+        if out.returncode != 0:
+            raise SystemExit(
+                f"git {' '.join(args[1:])} failed (exit {out.returncode}): "
+                f"{out.stderr.strip() or 'no stderr'}"
+            )
         names.update(line for line in out.stdout.splitlines() if line.strip())
     files = [ROOT / n for n in sorted(names)]
-    return [f for f in files if f.exists() and "node_modules" not in f.parts]
+    files = [f for f in files if f.exists() and "node_modules" not in f.parts]
+    if not files:
+        raise SystemExit("no Markdown files found — the tree looks wrong; refusing to pass")
+    return files
 
 
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -201,13 +215,15 @@ def check_source_refs(files: list[Path]) -> None:
 
 
 CARGO_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.M)
-ANDROID_VERSION_RE = re.compile(r'versionName\s*=\s*"([^"]+)"')
 
 
 def check_version() -> None:
-    """One version across all components (see the CHANGELOG header) — and the docs
-    must state it. The overview README claimed 0.7.11 while the crate was already
-    0.7.12, which is exactly what this catches."""
+    """The CHANGELOG must have a section for the version being developed.
+
+    Only that: every other version string in the repo (build files, the overview
+    READMEs, the "these docs describe X" banners) is owned by
+    `scripts/sync_version.py`, which can also stamp them. Checking them here too
+    would be a second, weaker implementation of the same rule."""
     cargo = ROOT / "qeli" / "Cargo.toml"
     if not cargo.exists():
         fail("version", "qeli/Cargo.toml not found")
@@ -217,17 +233,6 @@ def check_version() -> None:
         fail("version", "no [package] version in qeli/Cargo.toml")
         return
     version = m.group(1)
-
-    gradle = ROOT / "qeli-android" / "app" / "build.gradle.kts"
-    if gradle.exists():
-        am = ANDROID_VERSION_RE.search(gradle.read_text(encoding="utf-8", errors="replace"))
-        if am and am.group(1) != version:
-            fail("version", f"Android versionName {am.group(1)} != crate version {version}")
-
-    for lang in LANGS:
-        readme = ROOT / "docs" / lang / "README.md"
-        if readme.exists() and version not in readme.read_text(encoding="utf-8", errors="replace"):
-            fail("version", f"docs/{lang}/README.md does not state the current version {version}")
 
     changelog = ROOT / "CHANGELOG.md"
     if changelog.exists() and f"[{version}]" not in changelog.read_text(

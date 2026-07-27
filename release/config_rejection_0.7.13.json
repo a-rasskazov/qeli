@@ -1,0 +1,128 @@
+[
+  {
+    "case": "pool.cidr /33",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "pool.cidr garbage",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "tun.address bad oct",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "tun.address garbage",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "tun.netmask bad",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "bind.port 0",
+    "cc_rejects": false,
+    "srv_crashes": false,
+    "expect_reject": false,
+    "pass": true
+  },
+  {
+    "case": "bind.port >65535",
+    "cc_rejects": true,
+    "srv_crashes": false,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "bind.transport enum",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "obf.mode enum",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "tun.mtu absurd",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "tun.mtu tiny",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "pool.exclude outside",
+    "cc_rejects": false,
+    "srv_crashes": false,
+    "expect_reject": false,
+    "pass": true
+  },
+  {
+    "case": "pool.exclude bad ip",
+    "cc_rejects": false,
+    "srv_crashes": false,
+    "expect_reject": false,
+    "pass": true
+  },
+  {
+    "case": "reality target_port",
+    "cc_rejects": true,
+    "srv_crashes": false,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "dns.upstream bad ip",
+    "cc_rejects": false,
+    "srv_crashes": false,
+    "expect_reject": false,
+    "pass": true
+  },
+  {
+    "case": "route bad cidr",
+    "cc_rejects": false,
+    "srv_crashes": false,
+    "expect_reject": false,
+    "pass": true
+  },
+  {
+    "case": "dhcp.pool_start bad",
+    "cc_rejects": true,
+    "srv_crashes": true,
+    "expect_reject": true,
+    "pass": true
+  },
+  {
+    "case": "user allowed_networks",
+    "cc_rejects": false,
+    "srv_crashes": false,
+    "expect_reject": false,
+    "pass": true
+  }
+]
