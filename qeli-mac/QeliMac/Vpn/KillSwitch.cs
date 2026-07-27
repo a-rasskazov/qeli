@@ -27,7 +27,10 @@ public static class KillSwitch
     /// and clearing the kill-switch never touches another tool's pf rules. (Р3)</summary>
     private const string AnchorName = "qeli";
 
-    private const string Dir = "/Library/Application Support/qeli";
+    // Use the canonical shared dir (Paths.ServiceDir = ".../Qeli"). Was a hardcoded lowercase
+    // ".../qeli", which on a case-SENSITIVE volume split kill-switch state into a second dir
+    // from the daemon's (harmless on the default case-insensitive APFS). (client-audit LOW)
+    private static readonly string Dir = QeliMac.Model.Paths.ServiceDir;
     private static readonly string StatePath = Path.Combine(Dir, "killswitch.state");
     private static readonly string RulesPath = Path.Combine(Dir, "killswitch.pf.conf");
 
@@ -61,8 +64,22 @@ public static class KillSwitch
         sb.Append("pass out quick on {");
         for (int i = 0; i <= 15; i++) sb.Append($" utun{i}");
         sb.AppendLine(" } all");
-        sb.AppendLine("pass out quick proto udp to any port 53");
-        sb.AppendLine("pass out quick proto tcp to any port 53");
+        // DNS: scope the port-53 pass to the system's configured resolvers, NEVER `to any`.
+        // A blanket `pass 53 to any` let every app's DNS query egress in cleartext on the
+        // physical NIC during the tunnel-down window — the metadata leak the kill-switch is
+        // meant to stop. DNS is still allowed on the physical path solely so qeli can
+        // RE-RESOLVE the server hostname on reconnect, so we permit it only to the resolvers
+        // macOS is actually using. Fails CLOSED: if no resolver can be read, no 53 rule is
+        // emitted and reconnect relies on the already-allowed cached server IP(s) below.
+        // RUNTIME-UNVERIFIED: validate reconnect with a hostname (not IP) server on a real Mac.
+        // Residual (accepted): an app querying those same resolvers still leaks its query
+        // metadata; removing that entirely would break server re-resolution while down.
+        var dnsResolvers = ResolveSystemDnsServers();
+        foreach (var r in dnsResolvers)
+        {
+            sb.AppendLine($"pass out quick proto udp to {r} port 53");
+            sb.AppendLine($"pass out quick proto tcp to {r} port 53");
+        }
         sb.AppendLine("pass out quick proto udp to any port 67");
         foreach (var ip in ips)
             sb.AppendLine($"pass out quick to {ip} all");
@@ -83,7 +100,8 @@ public static class KillSwitch
         Pf("-e", critical: false); // already-enabled pf makes -e a no-op warning
 
         log($"Kill-switch ENGAGED (pf anchor '{AnchorName}'): egress restricted to lo0, utun0..15, " +
-            $"{string.Join(", ", ips)}, DNS and DHCP. Other pf rules on this host are left intact. " +
+            $"{string.Join(", ", ips)}, DHCP, and DNS to {(dnsResolvers.Count > 0 ? string.Join(", ", dnsResolvers) : "<none — physical DNS blocked>")}. " +
+            $"Other pf rules on this host are left intact. " +
             $"Stays up across reconnects; a crash leaves it (no leak) — clear with: " +
             $"sudo pfctl -a {AnchorName} -F rules" + (wasEnabled ? "" : " ; sudo pfctl -d"));
     }
@@ -240,5 +258,28 @@ public static class KillSwitch
                 .Select(ip => ip.ToString()).Distinct().ToList();
         }
         catch { return new List<string>(); }
+    }
+
+    /// <summary>The system's configured DNS resolver IPs, read from /etc/resolv.conf (macOS
+    /// keeps it populated from the active network service). Used to SCOPE the kill-switch's
+    /// port-53 allowance to these resolvers instead of `to any`, so arbitrary DNS cannot
+    /// egress on the physical path while the tunnel is down. Empty on any read/parse failure
+    /// (caller then emits no 53 rule — fail closed).</summary>
+    private static List<string> ResolveSystemDnsServers()
+    {
+        var list = new List<string>();
+        try
+        {
+            foreach (var line in File.ReadAllLines("/etc/resolv.conf"))
+            {
+                var t = line.Trim();
+                if (!t.StartsWith("nameserver", StringComparison.Ordinal)) continue;
+                var parts = t.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2 && System.Net.IPAddress.TryParse(parts[1], out _))
+                    list.Add(parts[1]);
+            }
+        }
+        catch { /* no resolvers -> no physical DNS allowance (fail closed) */ }
+        return list.Distinct().ToList();
     }
 }

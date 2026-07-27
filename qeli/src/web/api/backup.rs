@@ -255,9 +255,26 @@ static RESTORE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 ///
 /// Returns the number of entries removed. Errors are collected, not fatal: a partial
 /// cleanup with a warning beats aborting after the files were already published.
-fn prune_absent(staged_root: &str, dest: &str) -> (usize, Vec<String>) {
+///
+/// `archive_names` MUST be captured BEFORE publishing. `publish_staged_tree` moves entries
+/// out of the staging directory with `fs::rename`, so by the time this runs the staging
+/// tree no longer contains the files it just delivered. Testing "is it still in staging?"
+/// therefore answered "no" for everything and deleted `server.conf`, `users.conf` and
+/// `panel-secret.key` moments after restoring them — while the endpoint reported success.
+fn prune_absent(
+    archive_names: &std::collections::HashSet<String>,
+    dest: &str,
+) -> (usize, Vec<String>) {
     let mut removed = 0usize;
     let mut errors = Vec::new();
+    // Fail closed: with no idea what the archive held, deleting "everything not in it"
+    // would delete everything.
+    if archive_names.is_empty() {
+        return (
+            0,
+            vec!["refusing to prune: the archive's file list is empty/unreadable".into()],
+        );
+    }
     let entries = match std::fs::read_dir(dest) {
         Ok(e) => e,
         Err(e) => return (0, vec![format!("cannot scan {dest}: {e}")]),
@@ -267,7 +284,7 @@ fn prune_absent(staged_root: &str, dest: &str) -> (usize, Vec<String>) {
         if name.starts_with('.') {
             continue; // snapshots, in-flight restore artefacts, operational dotfiles
         }
-        if std::path::Path::new(&format!("{staged_root}/{name}")).exists() {
+        if archive_names.contains(&name) {
             continue; // present in the archive — keep (publish already overwrote it)
         }
         let path = entry.path();
@@ -417,6 +434,28 @@ fn restore_blocking(data: &[u8], exact: bool) -> Result<String, String> {
     // no way back, so refuse the restore rather than proceed unprotected — the whole
     // point of the snapshot is that the operator can undo a bad archive.
     let bak = format!("/etc/qeli/.pre-restore-{uniq}.tgz");
+    // Create the snapshot file 0600 BEFORE tar writes into it. tar creates it with the
+    // process umask (0644 in practice) and the chmod below only ran once the archive was
+    // COMPLETE — so for the whole duration of the archiving, a file containing the identity
+    // keys and every user's password hash sat world-readable. Opening an existing file with
+    // O_TRUNC does not change its mode, so pre-creating it closes that window without
+    // changing how tar is invoked.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Err(e) = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&bak)
+        {
+            cleanup();
+            return Err(format!(
+                "refusing to restore: could not pre-create the pre-restore snapshot ({e})"
+            ));
+        }
+    }
     match std::process::Command::new("tar")
         .args([
             "czf",
@@ -509,6 +548,21 @@ fn restore_blocking(data: &[u8], exact: bool) -> Result<String, String> {
         return Err(e);
     }
 
+    // Snapshot the archive's TOP-LEVEL names BEFORE publishing: publish moves entries out
+    // of staging (fs::rename), so afterwards the staging tree is no longer a record of what
+    // the archive contained. Reading it later reported "the archive has nothing" and pruned
+    // away the very files that had just been restored. (Р1)
+    let archive_names: std::collections::HashSet<String> = match std::fs::read_dir(&staged_root) {
+        Ok(rd) => rd
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(e) => {
+            stage_cleanup();
+            return Err(format!("staged tree unreadable: {e}"));
+        }
+    };
+
     // Vetted — publish. Same filesystem, so each rename is atomic; a failure part-way
     // leaves the rest of the live directory intact and the pre-restore snapshot above
     // restores the whole thing.
@@ -520,7 +574,7 @@ fn restore_blocking(data: &[u8], exact: bool) -> Result<String, String> {
     // during publish leaves the live directory intact rather than half-deleted. (Р1)
     let mut pruned = String::new();
     if exact {
-        let (removed, errors) = prune_absent(&staged_root, "/etc/qeli");
+        let (removed, errors) = prune_absent(&archive_names, "/etc/qeli");
         pruned = format!(" Removed {removed} item(s) not present in the archive.");
         if !errors.is_empty() {
             pruned.push_str(&format!(
@@ -559,12 +613,54 @@ fn restore_blocking(data: &[u8], exact: bool) -> Result<String, String> {
 ///
 /// Known residual, deliberately not papered over: if an operator's hook invokes a script
 /// that itself lives under /etc/qeli, a restore can still replace that script's contents
+/// Files under `/etc/qeli` that an EXISTING hook would execute.
+///
+/// The hook rule enforced in `vet_config_file` stops a restore introducing or changing a
+/// hook COMMAND. It does nothing about the script that command points AT: if the live
+/// config already has `post_up = /etc/qeli/up.sh`, an archive can ship a new `up.sh`,
+/// leave the config byte-identical, and the panel has just written code that runs as root
+/// on the next profile start. That is precisely the panel-compromise-to-RCE step the
+/// file-only hook rule exists to prevent, so the paths are collected here and refused.
+///
+/// Only paths inside `/etc/qeli` matter — a hook pointing outside it is not something a
+/// restore can reach (and the docs already recommend keeping hooks there).
+fn hook_referenced_files() -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut add = |cmd: &str| {
+        for p in crate::hooks::script_paths(cmd) {
+            if let Some(rest) = p.strip_prefix("/etc/qeli/") {
+                // Store the TOP-LEVEL name: publishing works entry by entry, and a hook
+                // pointing at `/etc/qeli/scripts/up.sh` is blocked by refusing `scripts`.
+                if let Some(top) = rest.split('/').next().filter(|t| !t.is_empty()) {
+                    out.insert(top.to_string());
+                }
+            }
+        }
+    };
+    if let Ok(text) = std::fs::read_to_string("/etc/qeli/server.conf") {
+        if let Ok(cfg) = crate::config::parse_server_config(&text) {
+            for p in &cfg.profiles {
+                add(&p.routing.post_up);
+                add(&p.routing.post_down);
+            }
+        }
+    }
+    out
+}
+
 /// without touching the config. Hooks should point outside the panel-writable directory.
 fn vet_staged_tree(root: &str) -> Result<(), String> {
     let entries = std::fs::read_dir(root).map_err(|e| format!("staged tree unreadable: {e}"))?;
+    let hook_files = hook_referenced_files();
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
+        // Refuse to replace a file an existing hook executes — see hook_referenced_files.
+        if hook_files.contains(&name) {
+            return Err(format!(
+                "refused: '{name}' is executed by a routing.post_up/post_down hook in the live                  config. Replacing it through a restore would run panel-supplied code as root,                  which the file-only hook rule exists to prevent. Update it on the server, or                  point the hook outside /etc/qeli."
+            ));
+        }
         let md = match entry.metadata() {
             Ok(m) => m,
             Err(e) => return Err(format!("cannot stat staged '{name}': {e}")),
@@ -719,6 +815,65 @@ mod tests {
              perf.connection.handshake_timeout_secs = 10\n\
              {hooks}"
         )
+    }
+
+    /// The exact-restore prune must key off the archive's file list captured BEFORE
+    /// publishing. `publish_staged_tree` MOVES files out of staging, so a prune that
+    /// re-reads staging afterwards sees an empty tree and deletes everything it just
+    /// restored — `server.conf`, `users.conf`, `panel-secret.key` — while reporting
+    /// success. This test pins the contract that made that possible. (Р1)
+    #[test]
+    fn exact_prune_keeps_what_the_archive_delivered() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-prune-test-{}-{}",
+            std::process::id(),
+            RESTORE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.to_string_lossy().to_string();
+        for f in ["server.conf", "users.conf", "leftover.conf"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        std::fs::write(dir.join(".pre-restore-1.tgz"), b"x").unwrap();
+
+        // The archive carried server.conf + users.conf, but NOT leftover.conf.
+        let archive: std::collections::HashSet<String> = ["server.conf", "users.conf"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (removed, errors) = prune_absent(&archive, &dest);
+
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(
+            removed, 1,
+            "only the file absent from the archive should go"
+        );
+        assert!(
+            dir.join("server.conf").exists(),
+            "restored server.conf was deleted"
+        );
+        assert!(
+            dir.join("users.conf").exists(),
+            "restored users.conf was deleted"
+        );
+        assert!(
+            !dir.join("leftover.conf").exists(),
+            "stale file should have been pruned"
+        );
+        assert!(
+            dir.join(".pre-restore-1.tgz").exists(),
+            "the pre-restore snapshot is the only way back — it must never be pruned"
+        );
+
+        // An empty/unreadable archive list must prune NOTHING rather than everything.
+        let (removed2, errors2) = prune_absent(&std::collections::HashSet::new(), &dest);
+        assert_eq!(
+            removed2, 0,
+            "an empty archive list must not delete anything"
+        );
+        assert!(!errors2.is_empty(), "and it must say why");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

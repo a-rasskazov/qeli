@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -16,7 +17,12 @@
          hides most packages behind a visibility filter, so without this the picker showed
          only a fraction of the device's apps. This build is sideloaded (GitHub Releases),
          not Play-distributed, so the QUERY_ALL_PACKAGES policy restriction does not apply. -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- lintRelease flags this by default because the Play policy restricts it. The
+         justification is the comment above: the per-app split tunnel cannot show an
+         app list without it, and this build is not Play-distributed. Suppressed with
+         that reasoning rather than left as a red gate nobody reads. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+                     tools:ignore="QueryAllPackagesPermission" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application

@@ -37,11 +37,53 @@ public static class ServiceState
     private static readonly object _logLock = new();
     private const long MaxLogBytes = 256 * 1024;
 
-    public static void EnsureDir() => Directory.CreateDirectory(Dir);
+    public static void EnsureDir()
+    {
+        bool created = !Directory.Exists(Dir);
+        Directory.CreateDirectory(Dir);
+        if (created) RestrictDirAcl();
+    }
+
+    /// <summary>
+    /// Tighten the DACL of the %ProgramData%\QeliWin directory so only SYSTEM, the
+    /// Administrators group and the creating user may write into it. %ProgramData%
+    /// inherits a DACL that lets ordinary "Users"/"Authenticated Users" create files;
+    /// without this a non-admin could PLANT a <c>service-profile.json</c> that the
+    /// LocalSystem service then loads — pointing the machine-wide tunnel at an attacker
+    /// server with attacker-chosen routing/DNS (local EoP + boot-time MITM). Dropping the
+    /// inherited "Users" write on the directory closes the planting vector at the source.
+    /// Best-effort: an ACL failure never breaks operation.
+    /// </summary>
+    private static void RestrictDirAcl()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try
+        {
+            var di = new DirectoryInfo(Dir);
+            var sec = new DirectorySecurity();
+            sec.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+            void Allow(IdentityReference id) => sec.AddAccessRule(new FileSystemAccessRule(
+                id, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            Allow(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null));        // service
+            Allow(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+            var me = WindowsIdentity.GetCurrent().User;                                   // GUI user (writer)
+            if (me != null) Allow(me);
+            di.SetAccessControl(sec);
+        }
+        catch
+        {
+            // Hardening only — leave the dir usable even if the ACL can't be set.
+        }
+    }
 
     public static void SaveProfile(VpnConfig cfg)
     {
         EnsureDir();
+        // Re-assert the directory DACL on every save (idempotent): retroactively fixes a
+        // dir created by an older build with the weak inherited %ProgramData% ACL. Runs in
+        // the GUI/admin context, infrequently, so the cost is irrelevant.
+        RestrictDirAcl();
         // Encrypt at rest with DPAPI LocalMachine scope: the GUI (current user) writes
         // it and the service (LocalSystem) reads it, so a cross-user scope is required.
         // This removes the trivial plaintext exposure of the password/obfs_key (a
@@ -102,6 +144,18 @@ public static class ServiceState
             catch
             {
                 // Legacy plaintext profile (pre-E1) — read, then migrate to encrypted.
+                // But NEVER when running as the service (LocalSystem): a non-DPAPI file in
+                // the shared %ProgramData% dir may have been PLANTED by a non-admin to
+                // redirect the LocalSystem tunnel (attacker server + machine-wide routing/DNS
+                // = local EoP / boot-time MITM). Fail closed there — only DPAPI-encrypted
+                // profiles the GUI wrote are trusted. The interactive GUI still migrates its
+                // own legacy plaintext (IsSystem == false).
+                if (OperatingSystem.IsWindows() && WindowsIdentity.GetCurrent().IsSystem)
+                {
+                    AppendLog("SECURITY: refusing to load a non-DPAPI (plaintext) service profile — " +
+                              "possible planted file; delete it and reconfigure from the GUI.");
+                    return null;
+                }
                 json = Encoding.UTF8.GetString(bytes);
                 wasLegacyPlaintext = true;
             }

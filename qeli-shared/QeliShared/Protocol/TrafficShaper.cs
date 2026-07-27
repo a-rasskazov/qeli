@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 
 namespace Qeli.Shared.Protocol;
 
@@ -8,8 +9,10 @@ namespace Qeli.Shared.Protocol;
 /// sampled from an exponential (Poisson-process) distribution rather than a fixed
 /// heartbeat, with a browsing-ish size distribution, capped by a byte budget.
 /// Cover packets are empty-payload encrypted records the peer drops, so this is
-/// not a wire-format change. Sampling is timing/size only (not secret), so the
-/// system <see cref="Random"/> is fine here.
+/// not a wire-format change. Sampling is timing/size only (not secret), so a full
+/// per-sample CSPRNG is unnecessary — but the PRNG is SEEDED from
+/// <see cref="RandomNumberGenerator"/> so its sequence can't be predicted from process
+/// state, removing any cover-traffic timing an observer could model. (client-audit LOW)
 /// </summary>
 public sealed class TrafficShaper
 {
@@ -27,7 +30,7 @@ public sealed class TrafficShaper
     private readonly int _minSize;
     private readonly int _maxSize;
     private readonly double _stealthRateBps;
-    private readonly Random _rng = new();
+    private readonly Random _rng = new(BitConverter.ToInt32(RandomNumberGenerator.GetBytes(4)));
     private double _tokens;
     private long _lastRefillTicks;
     // Separate token bucket (bits) for the stealth data-plane rate cap.

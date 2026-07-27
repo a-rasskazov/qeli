@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 final class PacketCodec: @unchecked Sendable {
     static let tlsHeaderSize = 5
@@ -20,6 +21,12 @@ final class PacketCodec: @unchecked Sendable {
     private var counter: UInt64 = 0
     private var replayHighest: UInt64?
     private var replayBits = Array(repeating: UInt64(0), count: replayWords)
+    // M6: per-instance nonce seed (4B) + PRP key (32B). The nonce goes on the wire and the peer
+    // never inverts the PRP (it reads the nonce off the wire), so these are local randomness that
+    // need NOT match the peer's — they only make (seed‖counter) unique per key, which a monotonic
+    // counter + fresh per-session key guarantee.
+    private let nonceSeed: Data
+    private let noncePrpKey: Data
 
     init(
         cipher: PacketCipher,
@@ -33,6 +40,8 @@ final class PacketCodec: @unchecked Sendable {
         self.paddingMin = paddingMin
         self.paddingMax = paddingMax
         self.rawFraming = rawFraming
+        self.nonceSeed = Self.secureRandom(4)
+        self.noncePrpKey = Self.secureRandom(32)
     }
 
     var headerSize: Int { rawFraming ? 2 : Self.tlsHeaderSize }
@@ -73,7 +82,9 @@ final class PacketCodec: @unchecked Sendable {
             return counter
         }
         let paddingLength = min(max(explicitPadding, 0), 65_535)
-        let nonce = try Self.randomData(count: Self.nonceSize)
+        // Counter-derived, collision-free, DPI-opaque nonce (was a random 96-bit value, which
+        // carries a birthday-bound collision risk the Rust core eliminates). (client-audit M6)
+        let nonce = nonceFor(sequence)
         let padding = try Self.randomData(count: paddingLength)
         var inner = Data()
         inner.reserveCapacity(Self.counterSize + plaintext.count + paddingLength + 2)
@@ -178,6 +189,59 @@ final class PacketCodec: @unchecked Sendable {
                 replayBits[index] = low | high
             }
         }
+    }
+
+    // ── M6: counter-derived data-plane nonce (mirrors Rust packet.rs / C# PacketCodec) ──
+    /// Build the 96-bit wire nonce for `counter` as PRP(seed(4) ‖ counter_be(8)). A balanced
+    /// Feistel network is bijective for any round function, so distinct (seed,counter) inputs —
+    /// counter is monotonic — always map to distinct nonces (no AEAD reuse), while the on-wire
+    /// value no longer increments by 1 (no visible-counter DPI tell).
+    private func nonceFor(_ counter: UInt64) -> Data {
+        var raw = Data()
+        raw.reserveCapacity(Self.nonceSize)
+        raw.append(nonceSeed)          // 4 bytes
+        raw.appendBigEndian(counter)   // 8 bytes
+        return Self.prpNonce(key: noncePrpKey, raw: raw)
+    }
+
+    /// 96-bit balanced Feistel permutation, 4 rounds; round fn = SHA256(key‖round‖half)[..6].
+    /// Byte-for-byte identical to Rust `packet.rs prp_nonce` (not required for interop — the peer
+    /// reads the nonce straight off the wire — but kept identical for auditability).
+    private static func prpNonce(key: Data, raw: Data) -> Data {
+        let bytes = [UInt8](raw)
+        var l = Array(bytes[0..<6])
+        var r = Array(bytes[6..<12])
+        for round in UInt8(0)..<UInt8(4) {
+            let f = prpRound(key: key, round: round, half: r)
+            var nr = [UInt8](repeating: 0, count: 6)
+            for i in 0..<6 { nr[i] = l[i] ^ f[i] }
+            l = r
+            r = nr
+        }
+        return Data(l + r)
+    }
+
+    private static func prpRound(key: Data, round: UInt8, half: [UInt8]) -> [UInt8] {
+        var input = Data()
+        input.append(key)
+        input.append(round)
+        input.append(contentsOf: half)
+        let digest = SHA256.hash(data: input)
+        return Array(digest.prefix(6))
+    }
+
+    /// Non-throwing secure random for the init-time nonce seed / PRP key. SecRandomCopyBytes
+    /// effectively never fails on iOS; the fallback only guarantees distinct per-instance
+    /// material (nonce uniqueness needs distinct seeds, not CSPRNG-grade for this field).
+    private static func secureRandom(_ count: Int) -> Data {
+        var data = Data(count: count)
+        let status = data.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, count, $0.baseAddress!)
+        }
+        if status != errSecSuccess {
+            for i in 0..<count { data[i] = UInt8.random(in: 0...255) }
+        }
+        return data
     }
 
     private static func randomData(count: Int) throws -> Data {

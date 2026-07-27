@@ -68,7 +68,10 @@ pub struct Section {
 /// with no shared context to thread through; `check-config` drains it after the parse.
 static BAD_VALUES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
-fn record_bad_value(msg: String) {
+/// pub(crate) so other parsers can record their own bad values (e.g. `opt_parse` in
+/// server_ini.rs, which reads `expire_at` — a fail-open on a bad value there means an
+/// account with no expiry, and `check-config` must catch it). (S-15 / M5)
+pub(crate) fn record_bad_value(msg: String) {
     if let Ok(mut g) = BAD_VALUES.lock() {
         // Bound it: a pathological config must not grow this without limit.
         if g.len() < 256 {

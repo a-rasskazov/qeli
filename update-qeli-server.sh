@@ -94,18 +94,50 @@ fi
 echo "Installed version: ${CUR:-unknown}"
 
 # ── Docker deployment? update by pulling the image + RECREATING the container ──
-# (Detected host-side: a running container named qeli, when qeli is NOT a dpkg pkg.)
-if ! dpkg -s qeli >/dev/null 2>&1 \
-   && command -v docker >/dev/null 2>&1 \
-   && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$SERVICE"; then
-  IMG="ghcr.io/${REPO}:latest"
-  log "Docker deployment detected — pulling the latest image"
+# Detected host-side, when qeli is NOT a dpkg pkg. Match every container name our own
+# deployments use: the bundled compose calls it `qeli-server`, a hand-rolled `docker run`
+# usually `qeli`. Matching only "qeli" meant a compose deployment was NOT detected and fell
+# through to the host .deb branch — i.e. the script tried to apt-install a package onto a
+# machine that runs qeli in a container. (S-09)
+CONTAINER=""
+if ! dpkg -s qeli >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+  for cand in "$SERVICE" "${SERVICE}-server"; do
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$cand"; then
+      CONTAINER="$cand"; break
+    fi
+  done
+fi
+if [ -n "$CONTAINER" ]; then
+  # Pull the image the container ACTUALLY runs, not a hardcoded one. The bundled compose
+  # references `qeli:latest`, built locally (release/docker/README.md) and present in no
+  # registry — pulling ghcr.io/... and then recreating from the compose file made the pull
+  # a no-op while the script still reported success.
+  IMG="$(docker inspect -f '{{ .Config.Image }}' "$CONTAINER" 2>/dev/null || true)"
+  [ -n "$IMG" ] || IMG="ghcr.io/${REPO}:latest"
+
+  # Docker treats the part before the first `/` as a registry only when it contains a dot
+  # or a colon (or is localhost). A bare `qeli:latest` is not from a registry: pulling it
+  # would query Docker Hub for an unrelated image.
+  pullable=no
+  case "$IMG" in
+    */*) case "${IMG%%/*}" in *.*|*:*|localhost) pullable=yes ;; esac ;;
+  esac
+  if [ "$pullable" = no ]; then
+    die "container '$CONTAINER' runs the locally-built image '$IMG', which exists in no
+registry — there is nothing to pull, and reporting an update that never happened would be
+worse than stopping. Rebuild and recreate it yourself:
+  docker buildx build -f release/docker/Dockerfile -t $IMG --load .
+  docker compose -f release/docker/docker-compose.yml up -d
+See release/docker/README.md."
+  fi
+
+  log "Docker deployment detected ($CONTAINER) — pulling $IMG"
   docker pull "$IMG"
 
   # A plain `docker restart` re-runs the SAME container from its ORIGINAL image — it does
   # NOT pick up the image we just pulled. The container must be RECREATED. (S-09)
-  proj="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$SERVICE" 2>/dev/null || true)"
-  workdir="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$SERVICE" 2>/dev/null || true)"
+  proj="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CONTAINER" 2>/dev/null || true)"
+  workdir="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$CONTAINER" 2>/dev/null || true)"
   if [ -n "$proj" ] && docker compose version >/dev/null 2>&1; then
     log "Compose deployment ($proj) — recreating with docker compose up -d"
     if [ -n "$workdir" ] && [ -d "$workdir" ]; then
@@ -120,19 +152,19 @@ if ! dpkg -s qeli >/dev/null 2>&1 \
   # Non-compose: if the running container already IS the freshly pulled image, a restart
   # is all that's needed. Otherwise recreating requires the original `docker run` flags,
   # which cannot be reconstructed reliably — refuse to pretend a restart updated it. (S-09)
-  running_img="$(docker inspect -f '{{ .Image }}' "$SERVICE" 2>/dev/null || true)"
+  running_img="$(docker inspect -f '{{ .Image }}' "$CONTAINER" 2>/dev/null || true)"
   pulled_img="$(docker image inspect -f '{{ .Id }}' "$IMG" 2>/dev/null || true)"
   if [ -n "$running_img" ] && [ "$running_img" = "$pulled_img" ]; then
     log "Container already runs the latest image — restarting"
-    docker restart "$SERVICE"
+    docker restart "$CONTAINER"
     echo "Done — already on the newest image."
     exit 0
   fi
-  die "pulled a newer image, but '$SERVICE' was not started from compose, so this script
+  die "pulled a newer image, but '$CONTAINER' was not started from compose, so this script
 cannot recreate it safely (its original run flags are unknown — a plain restart would keep
 the OLD image). Recreate it yourself:
-  docker stop $SERVICE && docker rm $SERVICE
-  docker run -d --name $SERVICE <your original flags> $IMG
+  docker stop $CONTAINER && docker rm $CONTAINER
+  docker run -d --name $CONTAINER <your original flags> $IMG
 or, if you use compose:  docker compose up -d"
 fi
 

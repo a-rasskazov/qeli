@@ -366,17 +366,33 @@ pub fn cleanup(profile: &str) {
 /// forever. Active profiles re-install their rules immediately afterwards.
 pub fn cleanup_all() {
     if let Some(path) = iptables_path() {
-        cleanup_matching(&path, "qeli-nat:");
+        cleanup_matching(&path, "qeli-nat:", false);
     }
 }
 
 fn cleanup_with(path: &str, profile: &str) {
-    cleanup_matching(path, &tag(profile));
+    // EXACT tag match: the per-profile teardown must delete only THIS profile's rules.
+    // A substring match (the old behaviour) made `qeli-nat:web` match `qeli-nat:web2`, so
+    // starting/stopping profile `web` silently wiped profile `web2`'s MASQUERADE/FORWARD/
+    // MSS rules and broke its egress until it restarted. Both names are valid idents. (M1)
+    cleanup_matching(path, &tag(profile), true);
 }
 
-/// Delete every managed rule whose iptables comment CONTAINS `needle` — either a
-/// specific `qeli-nat:<profile>` tag or the bare `qeli-nat:` prefix (all profiles).
-fn cleanup_matching(path: &str, needle: &str) {
+/// The iptables comment on a rule (the token right after `--comment`, dequoted). `None`
+/// when the rule carries no comment.
+fn rule_comment(line: &str) -> Option<String> {
+    let toks: Vec<&str> = line.split_whitespace().collect();
+    toks.windows(2)
+        .find(|w| w[0] == "--comment")
+        .map(|w| w[1].trim_matches('"').to_string())
+}
+
+/// Delete every managed rule whose iptables comment matches `needle`. With `exact`, the
+/// comment must equal `needle` (a specific `qeli-nat:<profile>` tag); without it, the
+/// comment must START WITH `needle` (the bare `qeli-nat:` prefix used by `cleanup_all`).
+/// The comment is our own tag — no wire input — but we still match the parsed token, not a
+/// raw substring, so one profile name can never be a prefix of another's rules. (M1)
+fn cleanup_matching(path: &str, needle: &str, exact: bool) {
     for (table, chain) in [
         ("nat", "POSTROUTING"),
         ("filter", "FORWARD"),
@@ -390,10 +406,16 @@ fn cleanup_matching(path: &str, needle: &str) {
                 _ => break,
             };
             let listing = String::from_utf8_lossy(&out.stdout);
-            let Some(line) = listing
-                .lines()
-                .find(|l| l.starts_with("-A ") && l.contains(needle))
-            else {
+            let Some(line) = listing.lines().find(|l| {
+                l.starts_with("-A ")
+                    && rule_comment(l).is_some_and(|c| {
+                        if exact {
+                            c == needle
+                        } else {
+                            c.starts_with(needle)
+                        }
+                    })
+            }) else {
                 break;
             };
             // "-A CHAIN <spec...>" -> "iptables -t table -D CHAIN <spec...>".
@@ -413,5 +435,39 @@ fn cleanup_matching(path: &str, needle: &str) {
                 break; // delete failed — don't loop forever
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rule_comment, tag};
+
+    /// Reproduce the substring bug: `web`'s exact tag must NOT match `web2`'s rule, or
+    /// tearing down `web` wipes `web2`'s NAT and breaks its egress. (M1)
+    #[test]
+    fn exact_tag_does_not_match_a_sibling_prefix() {
+        let web = tag("web"); // "qeli-nat:web"
+        let web2 = tag("web2"); // "qeli-nat:web2"
+        let line_web2 =
+            format!("-A POSTROUTING -o qeli0 -m comment --comment {web2} -j MASQUERADE");
+        let c = rule_comment(&line_web2).unwrap();
+        assert_eq!(c, web2);
+        assert_ne!(c, web, "exact match must distinguish web from web2");
+        assert!(
+            c.starts_with(&web),
+            "the substring bug: web2 DOES start with web"
+        );
+        // The prefix form (cleanup_all) intentionally matches both.
+        assert!(c.starts_with("qeli-nat:"));
+    }
+
+    #[test]
+    fn rule_comment_handles_quoted_and_bare() {
+        let bare = "-A FORWARD -o t -m comment --comment qeli-nat:us -j ACCEPT";
+        assert_eq!(rule_comment(bare).as_deref(), Some("qeli-nat:us"));
+        let quoted = "-A FORWARD -o t -m comment --comment \"qeli-nat:us\" -j ACCEPT";
+        assert_eq!(rule_comment(quoted).as_deref(), Some("qeli-nat:us"));
+        let none = "-A FORWARD -o t -j ACCEPT";
+        assert_eq!(rule_comment(none), None);
     }
 }

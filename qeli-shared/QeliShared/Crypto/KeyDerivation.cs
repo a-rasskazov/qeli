@@ -61,6 +61,10 @@ public static class KeyDerivation
         var prk = Hmac(salt, ikm);
         var s2c = Expand(prk, Encoding.UTF8.GetBytes("server-to-client-enc-key"), 32);
         var c2s = Expand(prk, Encoding.UTF8.GetBytes("client-to-server-enc-key"), 32);
+        // Wipe the concatenated raw secrets + PRK now that the directional keys exist —
+        // reduces how long combined key material lingers on the heap. (client-audit LOW: zeroization)
+        CryptographicOperations.ZeroMemory(ikm);
+        CryptographicOperations.ZeroMemory(prk);
         return (s2c, c2s);
     }
 
@@ -72,9 +76,12 @@ public static class KeyDerivation
         byte[] ee, byte[] es)
     {
         var salt = Encoding.UTF8.GetBytes("qeli-key-derivation-v1-static-bound");
-        var prk = Hmac(salt, Concat(ee, es));
+        var ikm = Concat(ee, es);
+        var prk = Hmac(salt, ikm);
         var s2c = Expand(prk, Encoding.UTF8.GetBytes("server-to-client-enc-key"), 32);
         var c2s = Expand(prk, Encoding.UTF8.GetBytes("client-to-server-enc-key"), 32);
+        CryptographicOperations.ZeroMemory(ikm);
+        CryptographicOperations.ZeroMemory(prk);
         return (s2c, c2s);
     }
 
@@ -89,6 +96,8 @@ public static class KeyDerivation
         var prk = Hmac(salt, ikm);
         var s2c = Expand(prk, Encoding.UTF8.GetBytes("server-to-client-enc-key"), 32);
         var c2s = Expand(prk, Encoding.UTF8.GetBytes("client-to-server-enc-key"), 32);
+        CryptographicOperations.ZeroMemory(ikm);
+        CryptographicOperations.ZeroMemory(prk);
         return (s2c, c2s);
     }
 

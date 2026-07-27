@@ -717,7 +717,10 @@ public abstract class VpnTunnelBase
     private void ConnectTcp(VpnConfig config, CancellationToken ct)
     {
         var serverIp = ResolveServer(config.ServerAddress);
-        Log($"Connecting TCP {serverIp}:{config.Port} as user '{config.Username}'...");
+        // Do not log the account username — this line reaches shared/world-readable logs
+        // (win service.log, Android logcat). The password/keys are never logged; keep the
+        // username out too. (client-audit LOW: username-logging)
+        Log($"Connecting TCP {serverIp}:{config.Port}...");
         var sock = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         BindLocal(sock, config);  // OpenVPN local / lport
         // Publish the socket BEFORE the (blocking) connect so Stop()/CloseTransports
@@ -847,7 +850,8 @@ public abstract class VpnTunnelBase
     private void ConnectUdp(VpnConfig config, CancellationToken ct)
     {
         var serverIp = ResolveServer(config.ServerAddress);
-        Log($"Connecting UDP {serverIp}:{config.Port} as user '{config.Username}'...");
+        // Username deliberately omitted — see ConnectTcp. (client-audit LOW: username-logging)
+        Log($"Connecting UDP {serverIp}:{config.Port}...");
         var sock = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         BindLocal(sock, config);  // OpenVPN local / lport
         sock.Connect(serverIp, config.Port);
@@ -1893,7 +1897,12 @@ public abstract class VpnTunnelBase
         {
             var header = ReadBytes(5);
             int payloadLen = ((header[3] & 0xFF) << 8) | (header[4] & 0xFF);
-            if (payloadLen > 65535) throw new Exception($"TLS record too large: {payloadLen}");
+            // Cap at MaxRecordSize (not the u16 ceiling): parity with the Rust read_tls_record
+            // early cap. A peer/MITM otherwise makes us buffer up to 64 KB per record before
+            // PacketCodec rejects it. All qeli records (handshake + data) fit MaxRecordSize —
+            // the Rust client the server also talks to enforces the same bound. (client-audit LOW)
+            if (payloadLen > PacketCodec.MaxRecordSize)
+                throw new Exception($"TLS record too large: {payloadLen} > {PacketCodec.MaxRecordSize}");
             var body = ReadBytes(payloadLen);
             var rec = new byte[5 + payloadLen];
             Buffer.BlockCopy(header, 0, rec, 0, 5);
@@ -1907,7 +1916,9 @@ public abstract class VpnTunnelBase
         {
             var header = ReadBytes(2);
             int payloadLen = ((header[0] & 0xFF) << 8) | (header[1] & 0xFF);
-            if (payloadLen > 65535) throw new Exception($"raw record too large: {payloadLen}");
+            // Match ReadTlsRecord / the Rust reader: cap at MaxRecordSize, not the u16 ceiling.
+            if (payloadLen > PacketCodec.MaxRecordSize)
+                throw new Exception($"raw record too large: {payloadLen} > {PacketCodec.MaxRecordSize}");
             var body = ReadBytes(payloadLen);
             var rec = new byte[2 + payloadLen];
             Buffer.BlockCopy(header, 0, rec, 0, 2);

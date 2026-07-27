@@ -180,6 +180,16 @@ pub struct ClientRoutingConfig {
     /// this user / `advertised_routes`). Linux/router only. Default false.
     #[serde(default = "default_false")]
     pub forward: bool,
+    /// Exit-node (Linux/iptables). The MIRROR of `gateway_nat`: when `true`, this client
+    /// forwards + MASQUERADEs traffic that arrived FROM the tunnel OUT its physical WAN, so
+    /// OTHER tunnel clients reach the internet under THIS host's IP (e.g. a grey/NAT'd
+    /// residential line). Pairs with the server: the profile needs `client_to_client` and
+    /// this user needs `client_subnet = 0.0.0.0/0`; consumer clients get the exit by being
+    /// pushed a default route. This host must be SPLIT-tunnel (`gateway = false`) — its own
+    /// internet stays on the WAN, which is what carries the forwarded traffic. Linux/router
+    /// only. Default false.
+    #[serde(default = "default_false")]
+    pub exit_node: bool,
     /// Command run once when the client starts, AFTER the kill-switch/gateway NAT
     /// is in place (Linux only, runs as the client's user — typically root). Use
     /// for custom routing/firewall. SECURITY: honoured ONLY from a trusted local
@@ -512,6 +522,9 @@ impl ClientConfig {
         //   post_up / post_down → custom commands at start / clean stop (root).
         cfg.routing.gateway_nat = q.bool_or("gateway_nat", cfg.routing.gateway_nat);
         cfg.routing.forward = q.bool_or("forward", cfg.routing.forward);
+        // exit_node = true → this client is an internet EXIT for other tunnel clients
+        // (mirror of gateway_nat: MASQUERADE tun-forwarded traffic out the physical WAN).
+        cfg.routing.exit_node = q.bool_or("exit_node", cfg.routing.exit_node);
         if let Some(s) = q.get("lan_subnet").filter(|s| !s.is_empty()) {
             cfg.routing.lan_subnet = s.to_string();
         }
@@ -617,8 +630,20 @@ impl ClientConfig {
         cfg.obfuscation.awg.jmin = link.jmin;
         cfg.obfuscation.awg.jmax = link.jmax;
         cfg.obfuscation.awg.sanitize("client link");
-        // 0 = auto (adopt server-pushed MTU); a positive value overrides.
-        cfg.tun.mtu = link.mtu;
+        // 0 = auto (adopt server-pushed MTU); a positive value overrides. Validate the
+        // same 576..=9000 range `from_ini` enforces — a scanned/pasted `qeli://…?mtu=999999`
+        // (or a negative) would otherwise become an out-of-range TUN MTU the file path
+        // rejects. This entry point is infallible (returns ClientConfig, not Result), so an
+        // out-of-range value falls back to auto rather than failing the import. (M6)
+        cfg.tun.mtu = if link.mtu != 0 && !(576..=9000).contains(&link.mtu) {
+            log::warn!(
+                "qeli:// link mtu {} is out of range (expected 0 or 576..=9000) — using auto",
+                link.mtu
+            );
+            0
+        } else {
+            link.mtu
+        };
         cfg
     }
 
@@ -714,6 +739,9 @@ impl ClientConfig {
         if self.routing.forward {
             q.set("forward", "true");
         }
+        if self.routing.exit_node {
+            q.set("exit_node", "true");
+        }
         if !self.routing.lan_subnet.is_empty() {
             q.set("lan_subnet", &self.routing.lan_subnet);
         }
@@ -746,18 +774,67 @@ impl ClientConfig {
             q.set("autostart", "true");
         }
         doc.push(q);
+        // [logging]: the client PARSES this section (level / file / time_format,
+        // honoured by the router/headless client) but used to never re-emit it, so
+        // a config -> INI -> config cycle silently reset the user's logging choice —
+        // the same read-but-not-persisted class as `reality_sid` and the server's
+        // `time_format`. Emit only the non-defaults, so default configs stay compact
+        // while an explicit choice round-trips losslessly.
+        let mut lg = Section::new("logging", None);
+        let mut any = false;
+        if self.logging.level != "info" {
+            lg.set("level", &self.logging.level);
+            any = true;
+        }
+        if let Some(f) = &self.logging.file {
+            if !f.is_empty() {
+                lg.set("file", f);
+                any = true;
+            }
+        }
+        if self.logging.time_format != "datetime" {
+            lg.set("time_format", &self.logging.time_format);
+            any = true;
+        }
+        if any {
+            doc.push(lg);
+        }
         doc.to_string()
     }
 }
 
-/// Split `host:port` (IPv4/hostname). Returns an error if the port is missing
-/// or not a `u16`.
+/// Split `host:port` (IPv4 / hostname, or a bracketed IPv6 literal `[2001:db8::1]:443`).
+/// Returns an error if the port is missing or not a `u16`.
 fn split_host_port(s: &str) -> anyhow::Result<(String, u16)> {
+    // A bracketed IPv6 authority must be split on `]:`, not the last `:`, or the address's
+    // own colons break the parse. And a BARE IPv6 (`2001:db8::1`, no brackets, no port)
+    // used to silently misparse as host=`2001:db8:`, port=`1` — reject it with a clear
+    // message instead. (L5)
+    if let Some(rest) = s.strip_prefix('[') {
+        let (host, port) = rest
+            .split_once("]:")
+            .ok_or_else(|| anyhow::anyhow!("'server' IPv6 must be [host]:port, got '{}'", s))?;
+        if host.is_empty() {
+            anyhow::bail!("'server' has empty host: '{}'", s);
+        }
+        let port: u16 = port
+            .parse()
+            .map_err(|_| anyhow::anyhow!("'server' has invalid port: '{}'", s))?;
+        return Ok((host.to_string(), port));
+    }
     let (host, port) = s
         .rsplit_once(':')
         .ok_or_else(|| anyhow::anyhow!("'server' must be host:port, got '{}'", s))?;
     if host.is_empty() {
         anyhow::bail!("'server' has empty host: '{}'", s);
+    }
+    // An unbracketed host that still contains ':' is a bare IPv6 literal — the port split
+    // above just chopped its last group. Require brackets rather than misparse it. (L5)
+    if host.contains(':') {
+        anyhow::bail!(
+            "'server' looks like a bare IPv6 address — wrap it as [host]:port: '{}'",
+            s
+        );
     }
     let port: u16 = port
         .parse()
@@ -1055,4 +1132,127 @@ sni    = www.cloudflare.com
             "default tcp_nodelay must not be emitted"
         );
     }
+
+    /// EXHAUSTIVE client round-trip: every key client.rs reads is set to a
+    /// non-default value in the fixture (coverage proven by
+    /// scripts/gen_roundtrip_fixture.py's client arm), then parse ->
+    /// to_ini_string must re-emit each one. A value appears in the output only
+    /// if it was BOTH parsed into the struct AND written back, so a missing
+    /// token is a read-but-not-persisted key (the reality_sid / server
+    /// time_format bug class). ClientConfig is Deserialize-only, so this checks
+    /// the serialized form directly rather than via serde_json equality.
+    #[test]
+    fn exhaustive_round_trip_every_client_key() {
+        let fixture = r####"
+[qeli]
+server = vpn.example.com:8443
+proto = udp
+user = carol
+pass = topsecret
+key = 1111111111111111111111111111111111111111111111111111111111111111
+bind_static = false
+allow_unpinned_tofu = true
+password_file = /tmp/pw.txt
+password_command = echo pw
+keepalive = 45
+tcp_nodelay = false
+mode = reality-tls
+sni = www.apple.com
+obfs_key = obfskey123
+reality_sid = deadbeef
+front = none
+quic = true
+awg = true
+jc = 5
+jmin = 30
+jmax = 150
+route_local = true
+include = 10.0.0.0/8, 172.16.0.0/12
+exclude = 192.168.9.0/24
+kill_switch = true
+allow_ipv6_leak = true
+gateway = true
+gateway_nat = true
+forward = true
+exit_node = true
+lan_subnet = 192.168.50.0/24
+post_up = echo up
+post_down = echo down
+dns = off
+dev = mytun0
+dev_attach = true
+mtu = 1380
+mtu_probe = false
+autostart = true
+
+[logging]
+level = debug
+time_format = rfc3339
+file = /tmp/client.log
+"####;
+        let c = ClientConfig::from_ini(&IniDoc::parse(fixture).unwrap()).unwrap();
+        let out = c.to_ini_string();
+        let qeli_tokens = [
+            "proto = udp",
+            "user = carol",
+            "pass = topsecret",
+            "key = 1111",
+            "bind_static = false",
+            "allow_unpinned_tofu = true",
+            "password_file = /tmp/pw.txt",
+            "password_command = echo pw",
+            "keepalive = 45",
+            "tcp_nodelay = false",
+            "mode = reality-tls",
+            "sni = www.apple.com",
+            "obfs_key = obfskey123",
+            "reality_sid = deadbeef",
+            "front = none",
+            "quic = true",
+            "awg = true",
+            "jc = 5",
+            "jmin = 30",
+            "jmax = 150",
+            "route_local = true",
+            "include = 10.0.0.0/8",
+            "exclude = 192.168.9.0/24",
+            "kill_switch = true",
+            "allow_ipv6_leak = true",
+            "gateway = true",
+            "gateway_nat = true",
+            "forward = true",
+            "exit_node = true",
+            "lan_subnet = 192.168.50.0/24",
+            "post_up = echo up",
+            "post_down = echo down",
+            "dns = off",
+            "dev = mytun0",
+            "dev_attach = true",
+            "mtu = 1380",
+            "mtu_probe = false",
+            "autostart = true",
+        ];
+
+        for t in qeli_tokens {
+            assert!(out.contains(t), "client to_ini dropped [qeli] key: {}
+--- out ---
+{}", t, out);
+        }
+        // `[logging]` round-trip: the client parses this section (level / file /
+        // time_format, honoured by the router/headless client) AND now re-emits it,
+        // so an explicit logging choice survives a config -> INI -> config cycle.
+        // This closes the read-but-not-persisted gap of the `reality_sid` /
+        // server-`time_format` class. Only non-defaults are emitted, and all three
+        // fixture values are non-default (debug / rfc3339 / a file path), so each
+        // must appear.
+        let log_tokens = [
+            "level = debug",
+            "time_format = rfc3339",
+            "file = /tmp/client.log",
+        ];
+        for t in log_tokens {
+            assert!(out.contains(t), "client to_ini dropped [logging] key: {}\n--- out ---\n{}", t, out);
+        }
+    }
+
 }

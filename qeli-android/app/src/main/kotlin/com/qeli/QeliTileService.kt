@@ -111,7 +111,12 @@ class QeliTileService : TileService() {
             )
             startActivityAndCollapse(pi)
         } else {
+            // Pre-34 has no PendingIntent overload, so the deprecated one is the ONLY way to
+            // do this at all — the version check above is the correct handling, not an
+            // oversight. Kotlin's @Suppress("DEPRECATION") does not silence the lint check
+            // of the same subject, which is a separate id. (lintRelease gate)
             @Suppress("DEPRECATION")
+            @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated")
             startActivityAndCollapse(intent)
         }
     }

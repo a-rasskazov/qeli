@@ -12,7 +12,7 @@ pub struct UsersDb {
 
 /// Маршрут, задаваемый конкретному пользователю.
 /// Если routes пуст — используются глобальные advertised_routes сервера.
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
 pub struct UserRoute {
     pub cidr: String,
     #[serde(default)]
@@ -85,7 +85,7 @@ pub struct UserEntry {
     pub client_subnets: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
 pub struct BandwidthLimit {
     #[serde(default)]
     pub limit_mbps: u32,

@@ -39,6 +39,13 @@
     <string>public.app-category.utilities</string>
     <key>NSCameraUsageDescription</key>
     <string>Qeli uses the camera only to scan a qeli:// profile QR code.</string>
+    <!-- Required for the in-app reachability probe (ReachabilityProbe.tcp), which opens an
+         NWConnection from the APP process — unlike tunnel traffic, which runs in the
+         network extension and is exempt. Self-hosted servers are often on the LAN, and
+         without this key iOS 14+ denies the connection outright: the probe fails and the
+         UI reports the server unreachable even though the tunnel itself would connect. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Qeli checks whether your server is reachable. This is needed only when the server you configured is on your local network.</string>
     <key>QeliAppGroup</key>
     <string>$(QELI_APP_GROUP)</string>
     <key>QeliKeychainAccessGroup</key>

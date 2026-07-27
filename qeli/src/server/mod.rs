@@ -385,15 +385,32 @@ pub struct FailedAuthTracker {
 /// keys. 64 bytes comfortably covers any legitimate account name.
 const MAX_TRACKED_USERNAME_LEN: usize = 64;
 
+/// Upper bound on a configured brute-force window/lockout (30 days).
+///
+/// `lockout_secs` is parsed as a bare u64 with no ceiling, and the lockout deadline is
+/// computed as `Instant::now() + lockout` — which PANICS on overflow. A typo such as
+/// `lockout_secs = 99999999999999999999` therefore took the server down on the first failed
+/// login rather than being rejected. Anything beyond a month is indistinguishable from
+/// "forever" in practice, so clamping loses nothing real.
+pub const MAX_BRUTE_FORCE_SECS: u64 = 30 * 24 * 3600;
+
 impl FailedAuthTracker {
     pub fn new(enabled: bool, max_attempts: u32, window_secs: u64, lockout_secs: u64) -> Self {
+        if window_secs > MAX_BRUTE_FORCE_SECS || lockout_secs > MAX_BRUTE_FORCE_SECS {
+            log::warn!(
+                "brute_force: window={}s lockout={}s exceeds the {}s ceiling — clamped",
+                window_secs,
+                lockout_secs,
+                MAX_BRUTE_FORCE_SECS
+            );
+        }
         FailedAuthTracker {
             enabled,
             by_user: HashMap::new(),
             by_ip: HashMap::new(),
             max_attempts,
-            window: Duration::from_secs(window_secs),
-            lockout: Duration::from_secs(lockout_secs),
+            window: Duration::from_secs(window_secs.min(MAX_BRUTE_FORCE_SECS)),
+            lockout: Duration::from_secs(lockout_secs.min(MAX_BRUTE_FORCE_SECS)),
             tarpit_base: Duration::from_millis(200),
             tarpit_max: Duration::from_secs(3),
             last_cleanup: Instant::now(),
@@ -498,7 +515,9 @@ impl FailedAuthTracker {
         ip_entry.0.retain(|t| now.duration_since(*t) < window);
         ip_entry.0.push_back(now);
         if ip_entry.0.len() >= max {
-            ip_entry.1 = Some(now + lockout);
+            // checked_add, not `+`: `Instant + Duration` panics on overflow, and a panic
+            // here would be reachable from an unauthenticated failed login.
+            ip_entry.1 = now.checked_add(lockout);
             log::warn!(
                 "AUTH LOCKOUT (ip): {} locked for {}s after {} failed attempts",
                 ip,
@@ -676,6 +695,18 @@ pub fn profile_identity_path(pcfg: &ProfileConfig) -> String {
 /// to the interface they connect to.
 pub fn load_or_generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<StaticKeypair> {
     let path = profile_identity_path(pcfg);
+
+    // Serialise the check-then-generate under a lock on the identity directory. Without
+    // it this was a TOCTOU: the worker starting a profile, the panel's identity endpoint
+    // and the share endpoint can all run `exists()==false` concurrently and each generate
+    // a DIFFERENT key, the last write winning. For an IDENTITY key that is catastrophic —
+    // every already-pinned client would then fail to verify a server it never changed. The
+    // lock makes "load if present, else generate once" atomic across processes. (identity race)
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _lock = crate::util::FileLock::acquire(&path).ok();
+
     if std::path::Path::new(&path).exists() {
         let bytes = std::fs::read(&path)?;
         if bytes.len() != 32 {
@@ -946,6 +977,71 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                 e
             )
         })?;
+        // tun.mtu is handed straight to `ip link set … mtu N` at profile start
+        // (`create_multiqueue` / `set_up`); the kernel then rejects anything outside
+        // the TUN device's [68, 65535] range with "mtu less/greater than device
+        // minimum/maximum" — and the worker crash-loops on it. Same class as the
+        // address fields above: check-config used to answer OK and the box died on
+        // every respawn. TUN min = ETH_MIN_MTU (68); max = 65535.
+        if p.tun.mtu < 68 || p.tun.mtu > 65535 {
+            anyhow::bail!(
+                "profile '{}': tun.mtu {} is out of range — the kernel accepts 68..=65535 \
+                 for a TUN device (a VPN typically wants ~1280-1420)",
+                p.name,
+                p.tun.mtu
+            );
+        }
+        // DHCP pool bounds are parsed as IPv4 only when the server STARTS the DHCP
+        // service (`run_profile`, gated on dhcp.enabled), so a malformed address
+        // slipped past check-config and crash-looped the worker with "invalid
+        // dhcp.pool_start/end". Mirror that parse (defaults included) and the
+        // end >= start rule here so the two paths can't drift.
+        if p.dhcp.enabled {
+            let parse_pool = |field: &str, val: &Option<String>, dflt: &str| {
+                val.as_deref()
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(dflt)
+                    .parse::<std::net::Ipv4Addr>()
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "profile '{}': invalid dhcp.{} '{}': {} — expected a plain IPv4 \
+                             address (e.g. 10.9.0.100)",
+                            p.name,
+                            field,
+                            val.as_deref().unwrap_or(dflt),
+                            e
+                        )
+                    })
+            };
+            let start = parse_pool("pool_start", &p.dhcp.pool_start, "10.0.0.2")?;
+            let end = parse_pool("pool_end", &p.dhcp.pool_end, "10.0.0.254")?;
+            if u32::from(end) < u32::from(start) {
+                anyhow::bail!(
+                    "profile '{}': dhcp.pool_end ({}) must not be below dhcp.pool_start ({})",
+                    p.name,
+                    end,
+                    start
+                );
+            }
+        }
+        // dns.upstream entries are only validated lazily, per-query (`parse::<SocketAddr>()`
+        // then `continue` on error in dns.rs), so a malformed resolver was accepted at load
+        // with no warning and then silently skipped — and if EVERY upstream is bad, DNS just
+        // fails with nothing logged. Warn at load (matching pool.exclude's lenient style) so
+        // a typo is visible instead of silent. Left non-fatal: one bad entry among good ones
+        // still resolves.
+        if p.dns.enabled {
+            for up in &p.dns.upstream {
+                if up.trim().parse::<std::net::IpAddr>().is_err() {
+                    log::warn!(
+                        "profile '{}': dns.upstream '{}' is not a valid IP address — this \
+                         resolver will be skipped at query time",
+                        p.name,
+                        up
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1007,9 +1103,26 @@ pub fn load_users_db(config: &ServerConfig) -> anyhow::Result<UsersDb> {
     Ok(db)
 }
 
+/// Log any config values that were PRESENT but not understood (so they fell back to a
+/// default). `check-config` reports these and exits non-zero, but a real start went
+/// through the same parser and said nothing — so `kill_switch = ture` silently disabled
+/// the kill-switch on a live server, exactly the case the check exists for. We warn rather
+/// than refuse: aborting a start over a long-standing typo would take a working server down
+/// on upgrade. The operator sees it in the journal at boot. (S-15 / unsafe defaults)
+fn warn_bad_config_values() {
+    for msg in crate::config::format::take_bad_values() {
+        log::warn!(
+            "config: {} — a security default may not be what you intended; run \
+             `qeli check-config` to review",
+            msg
+        );
+    }
+}
+
 pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let config_content = std::fs::read_to_string(cfg_path)?;
     let config: ServerConfig = crate::config::parse_server_config(&config_content)?;
+    warn_bad_config_values();
 
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
@@ -1325,6 +1438,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // Validate the config parses and has at least one profile before starting.
     let config_content = std::fs::read_to_string(cfg_path)?;
     let config: ServerConfig = crate::config::parse_server_config(&config_content)?;
+    warn_bad_config_values();
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
     }
@@ -1620,8 +1734,8 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
     let want = (
         new_bf.enabled,
         new_bf.max_attempts,
-        Duration::from_secs(new_bf.window_secs),
-        Duration::from_secs(new_bf.lockout_secs),
+        Duration::from_secs(new_bf.window_secs.min(MAX_BRUTE_FORCE_SECS)),
+        Duration::from_secs(new_bf.lockout_secs.min(MAX_BRUTE_FORCE_SECS)),
     );
     {
         let mut tracker = state.failed_auth.lock().await;

@@ -31,6 +31,13 @@ const BACKUP_PATH: &str = "/var/lib/qeli/dns-backup.json";
 const RESOLVECTL_MARK: &str = "/var/lib/qeli/dns-resolvectl";
 const MARKER: &str = "# Managed by qeli VPN — original saved in /var/lib/qeli/dns-backup.json";
 
+/// One line per live client instance that has taken over the host DNS. `/etc/resolv.conf`
+/// and the backup are global, so with two concurrent clients the FIRST to disconnect used
+/// to restore the original AND delete the backup — leaving the second holding a DNS config
+/// it can never revert (its restore then finds no backup). This refcounts the takeover: the
+/// original is only restored, and the backup only removed, when the LAST holder leaves.
+const REFCOUNT_PATH: &str = "/var/lib/qeli/dns-holders";
+
 /// Snapshot of `/etc/resolv.conf` before qeli touched it.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct DnsBackup {
@@ -101,6 +108,11 @@ pub fn setup_dns_for_interface(
 
     log::warn!("resolvectl unavailable, falling back to /etc/resolv.conf");
     ensure_state_dir()?;
+    // Refcount the takeover: only the first holder captures the original. A second
+    // concurrent client must NOT re-capture (capture_original is already idempotent), but
+    // it MUST register so the first client's restore does not delete the backup out from
+    // under it. (DNS refcount)
+    let _first = register_dns_holder();
     capture_original(Path::new(RESOLV_PATH), Path::new(BACKUP_PATH), MARKER)?;
     write_managed_resolv(
         Path::new(RESOLV_PATH),
@@ -146,8 +158,18 @@ pub fn restore_dns() {
         }
     }
 
-    // 2. Restore /etc/resolv.conf from the persistent backup.
+    // 2. Restore /etc/resolv.conf from the persistent backup — but ONLY when this is the
+    // last live holder. With two concurrent clients, the first to disconnect must leave
+    // resolv.conf (and the backup) alone, or the second is left with a DNS config it can
+    // never revert. release_dns_holder returns true only for the last one out. (DNS refcount)
     let backup = Path::new(BACKUP_PATH);
+    if backup.exists() && !release_dns_holder() {
+        log::info!(
+            "DNS restore deferred: another qeli client still holds the host DNS — \
+             /etc/resolv.conf left in place"
+        );
+        return;
+    }
     if backup.exists() {
         match restore_resolv(Path::new(RESOLV_PATH), backup) {
             Ok(()) => {
@@ -248,6 +270,85 @@ fn try_resolvectl(config: &ClientDnsConfig, ifname: &str, dns_addr: &str) -> boo
 fn ensure_state_dir() -> anyhow::Result<()> {
     std::fs::create_dir_all(STATE_DIR)
         .map_err(|e| anyhow::anyhow!("cannot create state dir {}: {}", STATE_DIR, e))
+}
+
+/// Live-holder set for the host DNS takeover: one line per still-running client pid.
+/// Read under a lock, filtered to pids that are actually alive (so a SIGKILLed instance
+/// does not pin the takeover forever), and returned.
+fn read_live_holders() -> Vec<u32> {
+    let text = std::fs::read_to_string(REFCOUNT_PATH).unwrap_or_default();
+    text.lines()
+        .filter_map(|l| l.trim().parse::<u32>().ok())
+        .filter(|&pid| pid_alive(pid))
+        .collect()
+}
+
+fn write_holders(pids: &[u32]) {
+    let body: String = pids.iter().map(|p| format!("{p}\n")).collect();
+    let _ = crate::util::write_atomic_private(REFCOUNT_PATH, body.as_bytes());
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    // kill(pid, 0): 0 or EPERM => the process exists; ESRCH => it does not.
+    let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn pid_alive(_pid: u32) -> bool {
+    true
+}
+
+/// Pure refcount arithmetic, factored out so it is unit-testable without touching the
+/// global state paths. Register: returns (new_holders, first).
+fn compute_register(mut holders: Vec<u32>, me: u32) -> (Vec<u32>, bool) {
+    let first = holders.is_empty();
+    if !holders.contains(&me) {
+        holders.push(me);
+    }
+    (holders, first)
+}
+
+/// Release: returns (remaining, last).
+fn compute_release(holders: Vec<u32>, me: u32) -> (Vec<u32>, bool) {
+    let remaining: Vec<u32> = holders.into_iter().filter(|&p| p != me).collect();
+    let last = remaining.is_empty();
+    (remaining, last)
+}
+
+/// Register this process as a DNS holder. Returns true when it is the FIRST holder — the
+/// only case in which the caller should capture the original resolv.conf. Serialised with
+/// the release path via a lock on the refcount file. (DNS refcount)
+fn register_dns_holder() -> bool {
+    let _ = ensure_state_dir();
+    // The lock target must exist; create it empty if missing.
+    if !Path::new(REFCOUNT_PATH).exists() {
+        let _ = std::fs::write(REFCOUNT_PATH, b"");
+    }
+    let _lock = crate::util::FileLock::acquire(REFCOUNT_PATH).ok();
+    let (holders, first) = compute_register(read_live_holders(), std::process::id());
+    write_holders(&holders);
+    first
+}
+
+/// Drop this process from the holder set. Returns true when it was the LAST holder — the
+/// only case in which the caller should restore the original and delete the backup.
+fn release_dns_holder() -> bool {
+    let _ = ensure_state_dir();
+    if !Path::new(REFCOUNT_PATH).exists() {
+        // No refcount file at all (older state, or already cleaned) — treat as last so a
+        // single-instance restore still works exactly as before.
+        return true;
+    }
+    let _lock = crate::util::FileLock::acquire(REFCOUNT_PATH).ok();
+    let (remaining, last) = compute_release(read_live_holders(), std::process::id());
+    if last {
+        let _ = std::fs::remove_file(REFCOUNT_PATH);
+    } else {
+        write_holders(&remaining);
+    }
+    last
 }
 
 /// Capture the current resolv.conf state into `backup`, exactly once.
@@ -387,6 +488,57 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The refcount is what keeps two concurrent clients from clobbering each other's DNS
+    /// restore. These pin the arithmetic: capture only on the first holder, restore only
+    /// on the last. (DNS refcount)
+    #[test]
+    fn first_holder_captures_last_holder_restores() {
+        // A connects: empty -> first.
+        let (h, first) = super::compute_register(vec![], 100);
+        assert!(first, "the first holder must capture the original");
+        assert_eq!(h, vec![100]);
+
+        // B connects: not first.
+        let (h, first) = super::compute_register(h, 200);
+        assert!(!first, "a second concurrent client must NOT re-capture");
+        assert_eq!(h, vec![100, 200]);
+
+        // A disconnects: not last -> must defer the restore.
+        let (h, last) = super::compute_release(h, 100);
+        assert!(
+            !last,
+            "the first to leave must NOT restore while another holds DNS"
+        );
+        assert_eq!(h, vec![200]);
+
+        // B disconnects: last -> restore.
+        let (h, last) = super::compute_release(h, 200);
+        assert!(last, "the last holder out restores the original");
+        assert!(h.is_empty());
+    }
+
+    #[test]
+    fn single_client_registers_and_releases_cleanly() {
+        let (h, first) = super::compute_register(vec![], 42);
+        assert!(first);
+        let (h, last) = super::compute_release(h, 42);
+        assert!(last, "a lone client is both the first and the last holder");
+        assert!(h.is_empty());
+    }
+
+    #[test]
+    fn re_register_is_idempotent_across_reconnect() {
+        // On reconnect a client releases then re-registers with the SAME pid; it must not
+        // appear twice.
+        let (h, _) = super::compute_register(vec![7], 7);
+        assert_eq!(
+            h,
+            vec![7],
+            "re-registering an existing pid must not duplicate it"
+        );
+    }
+
     use super::*;
     use std::path::PathBuf;
 

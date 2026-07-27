@@ -34,6 +34,15 @@ pub struct PacketCodec {
     counter: u64,
     /// 4-byte random seed mixed into every nonce. Unique per session/key.
     /// Prevents nonce reuse across reconnects that might accidentally reuse the same counter.
+    ///
+    /// DEFENSE-IN-DEPTH ONLY (32 bits). Within a session, uniqueness is already guaranteed by
+    /// the monotonic `counter` + the bijective Feistel PRP (see `prp_nonce_no_collisions`).
+    /// This seed is load-bearing ONLY if the same AEAD `key` is ever fed to two
+    /// `PacketCodec::new` calls — then a ~2^-32 seed collision would replay counter 0 under
+    /// the same key (catastrophic AEAD nonce reuse). Today the tunnel derives a FRESH
+    /// ephemeral key per handshake, so a reconnect always brings a new key and the seed is
+    /// redundant. If a static/reused key is ever introduced, widen this to 8–12 bytes or
+    /// derive it from the transcript so it cannot collide. (L8)
     nonce_seed: [u8; 4],
     /// Key for the 96-bit Feistel permutation that randomises the on-wire nonce.
     /// Derived from the AEAD key; only the *sender* needs it (the receiver reads

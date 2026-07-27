@@ -557,6 +557,21 @@ mod conformance {
                     link.obfs_key
                 );
             }
+            // `front` picks the obfs framing, so losing it breaks the handshake rather
+            // than degrading gracefully — and it was asserted by none of the four runners,
+            // which is how C# came to parse it without ever emitting it.
+            if let Some(v) = e.get("front") {
+                assert!(
+                    opt_eq(v, link.fronting.as_ref()),
+                    "case '{name}': front = {:?}",
+                    link.fronting
+                );
+            }
+            // `mtu` has its own history of silent loss (Android emitted it with no case
+            // to read it back), and no runner asserted it either.
+            if let Some(v) = e.get("mtu").and_then(Value::as_i64) {
+                assert_eq!(link.mtu, v as i32, "case '{name}': mtu");
+            }
             if let Some(v) = e.get("quic").and_then(Value::as_bool) {
                 assert_eq!(link.quic, v, "case '{name}': quic");
             }

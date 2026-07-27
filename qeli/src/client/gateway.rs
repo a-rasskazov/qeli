@@ -29,14 +29,289 @@ const TAG: &str = "qeli-gw-nat";
 /// (a missing/read-only path in a restricted container yields `false`). Not fatal
 /// on its own, but the caller warns for a knob that actually matters (ip_forward),
 /// so a silently-unforwarded LAN doesn't look like a working gateway.
-fn set_sysctl(path: &str, val: &str) -> bool {
+fn write_sysctl_raw(path: &str, val: &str) -> bool {
     std::fs::write(path, val).is_ok()
+}
+
+fn set_sysctl(path: &str, val: &str) -> bool {
+    // Record the host's PRIOR value before overwriting it. Doing this inside the writer
+    // makes the ordering structural: the previous code snapshotted separately, after the
+    // writes had already happened, so it captured our own values and `disengage` then
+    // "restored" ip_forward=1 / rp_filter=0 — permanently turning a workstation into a
+    // router with anti-spoofing disabled. With the snapshot bound to the write, that
+    // mistake is no longer expressible.
+    remember_prior(path);
+    std::fs::write(path, val).is_ok()
+}
+
+/// First-write-wins snapshot of one knob. Called only from [`set_sysctl`]; a reconnect
+/// re-enters `engage` and must NOT overwrite the pristine value with our own.
+fn remember_prior(path: &str) {
+    let Ok(current) = std::fs::read_to_string(path) else {
+        return; // knob absent (container / older kernel) — nothing to restore later
+    };
+    if let Ok(mut g) = PRIOR_SYSCTLS.lock() {
+        let prior = g.get_or_insert_with(Vec::new);
+        if !prior.iter().any(|(p, _)| p == path) {
+            prior.push((path.to_string(), current.trim().to_string()));
+        }
+    }
 }
 
 /// Should the gateway firewall run for this config? True for NAT (`gateway_nat`) OR
 /// pure L3 forwarding (`forward`, #13). [`engage`]'s `masquerade` arg picks which.
 pub fn should_engage(routing: &crate::config::client::ClientRoutingConfig) -> bool {
     routing.gateway_nat || routing.forward
+}
+
+// ── exit-node (this client is an internet EXIT for other tunnel clients) ──────
+//
+// The MIRROR of `gateway_nat`. gateway_nat masquerades a LAN *behind* this client OUT
+// THE TUN (into the tunnel); exit_node masquerades traffic that arrived FROM the tunnel
+// OUT THE PHYSICAL WAN (into this host's own internet). Chain:
+//   consumer client --tunnel--> server --(client_to_client)--> THIS client --WAN--> net
+// so remote clients reach the internet under THIS host's public IP (e.g. a grey/NAT'd
+// residential line). The server side of the chain is `client_to_client` on the profile
+// plus the exit user's `client_subnet` (0.0.0.0/0) — see the server config; this module
+// is only the last hop's forward+NAT.
+//
+// Scoping is by PACKET MARK, not by source subnet: the pool CIDR is not known until
+// after auth, but exit rules install before the connect loop (like gateway_nat). We mark
+// packets forwarded tun->wan in mangle/FORWARD and MASQUERADE only those in
+// nat/POSTROUTING — so locally-generated traffic (OUTPUT->POSTROUTING, never marked) is
+// left alone, and no pool knowledge is needed. The nfmark persists FORWARD->POSTROUTING
+// on the same skb. Masked (`0x51/0x51`) so it coexists with any other fwmark user.
+const EXIT_TAG: &str = "qeli-exit-node";
+const EXIT_MARK: &str = "0x51/0x51";
+
+/// WAN interface used at [`engage_exit`], so [`disengage_exit`] removes exactly the rule
+/// it added even if the default route changed meanwhile (a re-detect could differ).
+static EXIT_WAN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Detect the WAN (default-route) interface via `ip route get 1.1.1.1`. `None` if there
+/// is no default route — an exit node with no internet path has nothing to share.
+fn detect_wan() -> Option<String> {
+    let out = std::process::Command::new("ip")
+        .args(["route", "get", "1.1.1.1"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // "1.1.1.1 via 10.0.0.1 dev eth0 src ..." — the token after "dev".
+    let s = String::from_utf8_lossy(&out.stdout);
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    toks.iter()
+        .position(|&t| t == "dev")
+        .and_then(|i| toks.get(i + 1))
+        .map(|s| s.to_string())
+}
+
+fn exit_mark_rule<'a>(tun_if: &'a str, wan_if: &'a str) -> Vec<&'a str> {
+    vec![
+        "-i",
+        tun_if,
+        "-o",
+        wan_if,
+        "-j",
+        "MARK",
+        "--set-xmark",
+        EXIT_MARK,
+        "-m",
+        "comment",
+        "--comment",
+        EXIT_TAG,
+    ]
+}
+
+fn exit_masq_rule(wan_if: &str) -> Vec<&str> {
+    vec![
+        "-o",
+        wan_if,
+        "-m",
+        "mark",
+        "--mark",
+        EXIT_MARK,
+        "-j",
+        "MASQUERADE",
+        "-m",
+        "comment",
+        "--comment",
+        EXIT_TAG,
+    ]
+}
+
+fn exit_fwd_out<'a>(tun_if: &'a str, wan_if: &'a str) -> Vec<&'a str> {
+    vec![
+        "-i",
+        tun_if,
+        "-o",
+        wan_if,
+        "-j",
+        "ACCEPT",
+        "-m",
+        "comment",
+        "--comment",
+        EXIT_TAG,
+    ]
+}
+
+fn exit_fwd_in<'a>(tun_if: &'a str, wan_if: &'a str) -> Vec<&'a str> {
+    vec![
+        "-i",
+        wan_if,
+        "-o",
+        tun_if,
+        "-m",
+        "state",
+        "--state",
+        "ESTABLISHED,RELATED",
+        "-j",
+        "ACCEPT",
+        "-m",
+        "comment",
+        "--comment",
+        EXIT_TAG,
+    ]
+}
+
+/// MSS-clamp SYNs entering the small-MTU tunnel (the SYN-ACK returning to the consumer).
+/// The consumer's own forward SYN already carries a small MSS from its own tun clamp, so
+/// this side covers the return leg — without it TCP/HTTPS through the exit stalls.
+fn exit_mss(tun_if: &str) -> Vec<&str> {
+    vec![
+        "-o",
+        tun_if,
+        "-p",
+        "tcp",
+        "--tcp-flags",
+        "SYN,RST",
+        "SYN",
+        "-j",
+        "TCPMSS",
+        "--clamp-mss-to-pmtu",
+        "-m",
+        "comment",
+        "--comment",
+        EXIT_TAG,
+    ]
+}
+
+/// Program this host as an internet exit for other tunnel clients: `ip_forward`, a
+/// MASQUERADE of tun-forwarded traffic out the WAN, a FORWARD accept both ways, and an
+/// MSS-clamp. Idempotent; installs by interface name so it survives reconnects (rules
+/// stay while the tun is recreated), and is removed on a clean stop by [`disengage_exit`].
+pub fn engage_exit(tun_if: &str) -> anyhow::Result<()> {
+    if !valid_ifname(tun_if) {
+        anyhow::bail!("exit-node: invalid TUN interface name {tun_if:?}");
+    }
+    let wan = detect_wan().ok_or_else(|| {
+        anyhow::anyhow!(
+            "exit-node: no default route found — cannot determine the WAN interface to NAT \
+             out of. An exit node needs its own working internet path to share."
+        )
+    })?;
+    if !valid_ifname(&wan) {
+        anyhow::bail!("exit-node: detected WAN interface name {wan:?} is invalid");
+    }
+    let path = ipt_path("iptables").ok_or_else(|| {
+        anyhow::anyhow!("exit-node: `iptables` is not installed (apt install iptables)")
+    })?;
+
+    // ip_forward is load-bearing (same as gateway_nat); rp_filter relaxed for the
+    // asymmetric tun<->wan path. Each snapshots its prior value (remember_prior) so
+    // disengage restores it — these are HOST-wide knobs, not ours to leave changed.
+    if !set_sysctl("/proc/sys/net/ipv4/ip_forward", "1") {
+        log::warn!(
+            "exit-node: could NOT enable net.ipv4.ip_forward (read-only /proc or a \
+             restricted container?) — tunnel traffic will NOT be forwarded to the internet. \
+             Enable it on the host: `sysctl -w net.ipv4.ip_forward=1`."
+        );
+    }
+    set_sysctl("/proc/sys/net/ipv4/conf/all/rp_filter", "0");
+    set_sysctl(&format!("/proc/sys/net/ipv4/conf/{tun_if}/rp_filter"), "0");
+    set_sysctl(&format!("/proc/sys/net/ipv4/conf/{wan}/rp_filter"), "0");
+
+    let ensure = |table: &str, chain: &str, rule: &[&str]| -> bool {
+        let mut c: Vec<&str> = vec!["-t", table, "-C", chain];
+        c.extend_from_slice(rule);
+        if !present(&path, &c) {
+            let mut a: Vec<&str> = vec!["-t", table, "-A", chain];
+            a.extend_from_slice(rule);
+            let _ = ipt(&path, &a);
+        }
+        present(&path, &c)
+    };
+
+    // MARK + MASQUERADE are both essential — without either, tunnel traffic reaches the
+    // WAN with a private source and the return path is black-holed.
+    if !ensure("mangle", "FORWARD", &exit_mark_rule(tun_if, &wan)) {
+        anyhow::bail!("exit-node: could not install the tun->wan MARK rule (mangle FORWARD)");
+    }
+    if !ensure("nat", "POSTROUTING", &exit_masq_rule(&wan)) {
+        anyhow::bail!("exit-node: could not install MASQUERADE out {wan} (nat POSTROUTING)");
+    }
+    // FORWARD accepts are best-effort — when the FORWARD policy is already ACCEPT they are
+    // redundant, and on iptables-nft hosts the legacy filter chain can be incompatible.
+    let fwd_ok = ensure("filter", "FORWARD", &exit_fwd_out(tun_if, &wan))
+        & ensure("filter", "FORWARD", &exit_fwd_in(tun_if, &wan));
+    ensure("mangle", "FORWARD", &exit_mss(tun_if));
+
+    if !fwd_ok {
+        log::warn!(
+            "exit-node: FORWARD accept rules not installed (legacy/nft filter conflict?) — \
+             relying on the FORWARD policy being ACCEPT. If forwarding fails, permit \
+             {tun_if}<->{wan} yourself."
+        );
+    }
+    *EXIT_WAN.lock().unwrap() = Some(wan.clone());
+    log::warn!(
+        "Exit-node engaged: MASQUERADE tunnel traffic out {wan} (+forward +mss-clamp, \
+         ip_forward=1). Remote clients now reach the internet under THIS host's IP. The \
+         server must set client_to_client + this user's client_subnet = 0.0.0.0/0. Stays up \
+         across reconnects, removed on a clean stop; a crash leaves it — clear rules tagged \
+         `{EXIT_TAG}`."
+    );
+    Ok(())
+}
+
+/// Remove every `qeli-exit-node` rule. Best-effort; a missing rule is not an error.
+pub fn disengage_exit(tun_if: &str) {
+    restore_sysctls(tun_if);
+    let wan = EXIT_WAN
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .or_else(detect_wan);
+    let Some(path) = ipt_path("iptables") else {
+        return;
+    };
+    let Some(wan) = wan else {
+        log::warn!(
+            "exit-node: WAN interface unknown at teardown — leftover rules tagged \
+             `{EXIT_TAG}` may remain; remove them by hand."
+        );
+        return;
+    };
+    let drop = |table: &str, chain: &str, rule: &[&str]| {
+        let mut c: Vec<&str> = vec!["-t", table, "-C", chain];
+        c.extend_from_slice(rule);
+        for _ in 0..8 {
+            if present(&path, &c) {
+                let mut d: Vec<&str> = vec!["-t", table, "-D", chain];
+                d.extend_from_slice(rule);
+                let _ = ipt(&path, &d);
+            } else {
+                break;
+            }
+        }
+    };
+    drop("mangle", "FORWARD", &exit_mark_rule(tun_if, &wan));
+    drop("nat", "POSTROUTING", &exit_masq_rule(&wan));
+    drop("filter", "FORWARD", &exit_fwd_out(tun_if, &wan));
+    drop("filter", "FORWARD", &exit_fwd_in(tun_if, &wan));
+    drop("mangle", "FORWARD", &exit_mss(tun_if));
+    log::info!("Exit-node disengaged (WAN {wan})");
 }
 
 /// The MASQUERADE rule body (optionally restricted to a source subnet), tagged.
@@ -150,11 +425,10 @@ pub fn engage(tun_if: &str, lan_subnet: &str, masquerade: bool) -> anyhow::Resul
     // rp_filter stays best-effort (relaxing it only avoids drops on the asymmetric path).
     set_sysctl("/proc/sys/net/ipv4/conf/all/rp_filter", "0");
     set_sysctl(&format!("/proc/sys/net/ipv4/conf/{tun_if}/rp_filter"), "0");
-    // Remember what the host had, so `disengage` can put it back. These are HOST-wide
-    // knobs: leaving ip_forward on turns a workstation into a router after the VPN
-    // stops, and a relaxed rp_filter keeps an anti-spoofing check disabled — neither is
-    // ours to change permanently.
-    remember_sysctls(tun_if);
+    // (Each set_sysctl snapshots the prior value itself — see remember_prior. These are
+    // HOST-wide knobs: leaving ip_forward on turns a workstation into a router after the
+    // VPN stops, and a relaxed rp_filter keeps an anti-spoofing check disabled — neither
+    // is ours to change permanently.)
 
     // Append a rule iff absent, then confirm it actually landed.
     let ensure = |table: &str, chain: &str, rule: &[&str]| -> bool {
@@ -243,33 +517,10 @@ pub fn disengage(tun_if: &str, lan_subnet: &str) {
 }
 
 /// Host sysctl values as they were before `engage` touched them, so `disengage` can put
-/// them back. Keyed by path; a value we could not read is not recorded (nothing to
-/// restore). Process-global, matching the one-tunnel-per-process model.
+/// them back. Recorded per path by [`remember_prior`] on the first write (a reconnect
+/// re-enters `engage` and must not overwrite the pristine values with our own); a knob we
+/// could not read is simply not recorded, since there is nothing to restore.
 static PRIOR_SYSCTLS: std::sync::Mutex<Option<Vec<(String, String)>>> = std::sync::Mutex::new(None);
-
-fn sysctl_paths(tun_if: &str) -> Vec<String> {
-    vec![
-        "/proc/sys/net/ipv4/ip_forward".to_string(),
-        "/proc/sys/net/ipv4/conf/all/rp_filter".to_string(),
-        format!("/proc/sys/net/ipv4/conf/{tun_if}/rp_filter"),
-    ]
-}
-
-fn remember_sysctls(tun_if: &str) {
-    let mut prior = Vec::new();
-    for p in sysctl_paths(tun_if) {
-        if let Ok(v) = std::fs::read_to_string(&p) {
-            prior.push((p, v.trim().to_string()));
-        }
-    }
-    if let Ok(mut g) = PRIOR_SYSCTLS.lock() {
-        // Only the FIRST engage records the pristine values: a reconnect must not
-        // remember our own modified state as "what the host had".
-        if g.is_none() {
-            *g = Some(prior);
-        }
-    }
-}
 
 fn restore_sysctls(_tun_if: &str) {
     let Ok(mut g) = PRIOR_SYSCTLS.lock() else {
@@ -279,7 +530,9 @@ fn restore_sysctls(_tun_if: &str) {
         return;
     };
     for (path, value) in prior {
-        if !set_sysctl(&path, &value) {
+        // RAW write: going through set_sysctl would re-record the value we are about to
+        // replace (i.e. our own), so the next engage would treat it as the pristine one.
+        if !write_sysctl_raw(&path, &value) {
             log::warn!("gateway-nat: could not restore {path} to {value:?}");
         }
     }

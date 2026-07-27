@@ -345,6 +345,28 @@ struct VPNConfig: Codable, Equatable, Sendable {
             default: break
             }
         }
+
+        // Alias convenience: `mode=udp-quic` / `udp-obfs` fold transport+QUIC into the
+        // wire mode. Split it back into proto + wire mode + quic — the same mapping the
+        // Rust link parser applies (config/share.rs). Done AFTER the loop, not inside the
+        // `mode` case, because `proto` may arrive later in the query and would otherwise
+        // overwrite the transport the alias just implied.
+        switch config.wireMode {
+        case "udp-quic":
+            config.protocolName = "udp"
+            config.wireMode = "fake-tls"
+            config.quicEnabled = true
+        case "udp-obfs":
+            config.protocolName = "udp"
+            config.wireMode = "obfs"
+        default:
+            break
+        }
+
+        // Validate before handing the config back. Parsing alone accepted anything an
+        // `Int` could hold, so `:0` and `:65536` produced a config that only failed much
+        // later — and the reject tests, which call this method directly, passed them.
+        try config.validate()
         return config
     }
 

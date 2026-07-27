@@ -59,6 +59,42 @@ pub fn setup_routes(
                     );
                 }
             }
+        } else if let Some(dev) = physical_dev_for(server_addr).filter(|d| d != ifname) {
+            // ON-LINK server (no gateway — same subnet, reached directly). The old code
+            // pinned the bypass ONLY when a gateway existed, so here it did nothing, and the
+            // `0.0.0.0/1`+`128.0.0.0/1` halves below then captured the encrypted carrier to
+            // the server INTO the tunnel it carries — an immediate deadlock. Pin a scoped
+            // `/32` on the physical dev instead: more specific than the halves, so the
+            // carrier stays off the tunnel. (on-link bypass)
+            let output = std::process::Command::new("ip")
+                .args(["route", "add", server_addr, "dev", &dev, "scope", "link"])
+                .output()?;
+            if output.status.success() {
+                note_created(&["route", "del", server_addr]);
+                log::info!("Added on-link bypass route: {} dev {}", server_addr, dev);
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.contains("File exists") {
+                    anyhow::bail!(
+                        "full tunnel: could not pin the on-link server bypass route for {} \
+                         dev {}: {} — without it the encrypted path to the server loops into \
+                         the tunnel",
+                        server_addr,
+                        dev,
+                        stderr.trim()
+                    );
+                }
+            }
+        } else {
+            // Neither a gateway nor a usable physical dev: we cannot keep the carrier off
+            // the tunnel, so a full tunnel would deadlock. Fail loudly rather than build a
+            // tunnel that cannot pass its own carrier traffic.
+            anyhow::bail!(
+                "full tunnel: could not determine how to reach the server {} on the physical \
+                 network (no gateway and no usable interface) — refusing to build a tunnel \
+                 whose own encrypted path would loop back into it",
+                server_addr
+            );
         }
 
         // Override the host default via the tunnel with the two-halves trick
@@ -130,8 +166,21 @@ pub fn setup_routes(
                     Ok(o) => {
                         let e = String::from_utf8_lossy(&o.stderr);
                         if e.contains("File exists") {
-                            // Pre-existing: counts as blocked, but is not ours to remove.
-                            blocked += 1;
+                            // Pre-existing — but a route to ::/1 is not necessarily a
+                            // BLACKHOLE. Verify before counting it as blocked, or a plain
+                            // pre-existing route makes us report IPv6 as blocked while it
+                            // leaks out the physical interface.
+                            match existing_route_satisfies(true, half, "blackhole") {
+                                Some(true) => blocked += 1, // genuinely blocked, not ours to remove
+                                Some(false) => log::warn!(
+                                    "full tunnel: {} already has a NON-blackhole route — IPv6                                      traffic to it will BYPASS the tunnel",
+                                    half
+                                ),
+                                None => log::warn!(
+                                    "full tunnel: {} exists but could not be verified as a                                      blackhole — assuming IPv6 is NOT blocked",
+                                    half
+                                ),
+                            }
                         } else {
                             log::warn!(
                                 "full tunnel: could not blackhole IPv6 {}: {}",
@@ -177,6 +226,29 @@ pub fn setup_routes(
                     stderr.trim()
                 );
             }
+            // `File exists` was accepted as success — but this branch exists precisely
+            // because an un-tunnelled `include` subnet leaves in the clear, and a
+            // pre-existing route to it may point anywhere (a LAN gateway, another VPN).
+            // Swallowing it defeated the very check whose comment calls it fatal. Verify
+            // the existing route uses OUR interface; bail with the same reasoning if not.
+            let dev = format!("dev {ifname}");
+            match existing_route_satisfies(false, subnet, &dev) {
+                Some(true) => {}
+                Some(false) => anyhow::bail!(
+                    "included subnet {} already has a route that does NOT use {} — it would \
+                     leave unencrypted. Remove the conflicting route (`ip route show {}`) or \
+                     drop it from `include`.",
+                    subnet,
+                    ifname,
+                    subnet
+                ),
+                None => anyhow::bail!(
+                    "included subnet {} already has a route, but it could not be verified as \
+                     going through {} — refusing to run rather than assume it is tunnelled.",
+                    subnet,
+                    ifname
+                ),
+            }
         }
     }
 
@@ -186,6 +258,19 @@ pub fn setup_routes(
     // there — the subnet has no dedicated tun route to remove). Falls back to the delete
     // when the physical gateway is unknown (split-tunnel, where the subnet only exists on
     // tun if `include` added it). Removed on disconnect by cleanup_routes.
+    // A kill-switch + exclude combination is fail-closed but silently non-functional: the
+    // kill-switch's terminal DROP blocks everything not going out `tun` or to the server, so
+    // an excluded subnet is BLACKHOLED rather than routed direct. That is safe (no leak) but
+    // confusing — the user set exclude and sees the destination unreachable with no reason.
+    // Say so once. (L4)
+    if config.kill_switch && !config.exclude.is_empty() {
+        log::warn!(
+            "exclude + kill_switch: {} excluded subnet(s) will be BLACKHOLED, not sent direct — \
+             the kill-switch blocks all non-tunnel egress. Disable the kill-switch if you need \
+             these to reach the physical network.",
+            config.exclude.len()
+        );
+    }
     for subnet in &config.exclude {
         if !is_valid_cidr(subnet) {
             log::warn!("skipping invalid exclude subnet: {}", subnet);
@@ -225,7 +310,16 @@ pub fn setup_routes(
             ])
             .output()?;
 
-        if !output.status.success() {
+        if output.status.success() {
+            // Journal the deletion like every OTHER route type. custom_routes were the
+            // only ones NOT recorded via note_created: when `via` is a PHYSICAL gateway
+            // (a legitimate use — steer a subnet independently of the tunnel), the route
+            // resolves onto the physical interface, so cleanup's `ip route flush dev <tun>`
+            // never removes it and neither does the (empty) journal — leaving a stale route
+            // on the host after disconnect that blackholes the subnet if that gateway later
+            // changes. Match on `dest via via` so we delete exactly this route. (M4)
+            note_created(&["route", "del", &route.dest, "via", &route.via]);
+        } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.contains("File exists") {
                 log::warn!("Failed to add custom route {}: {}", route.dest, stderr);
@@ -284,11 +378,58 @@ pub fn apply_local_networks(
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 if !stderr.contains("File exists") {
                     log::warn!("Failed to route local net {}: {}", cidr, stderr.trim());
+                } else {
+                    // A route already exists — but pointing where? A pre-existing
+                    // `10.0.0.0/8 via <LAN gw>` is the normal case on a router, and
+                    // swallowing it made the "routing local networks through the tunnel"
+                    // line below a lie for that range.
+                    let dev = format!("dev {ifname}");
+                    match existing_route_satisfies(false, cidr, &dev) {
+                        Some(true) => {}
+                        Some(false) => log::warn!(
+                            "local net {} already has a route that does NOT use {} — it will                              NOT go through the tunnel",
+                            cidr,
+                            ifname
+                        ),
+                        None => log::warn!(
+                            "local net {} already has a route that could not be verified — it                              may not go through the tunnel",
+                            cidr
+                        ),
+                    }
                 }
             }
         }
     }
     log::info!("Routing local networks (RFC1918 blanket) through the tunnel");
+}
+
+/// Does the route the kernel ALREADY has for `cidr` satisfy what we wanted?
+///
+/// `ip route add` answers `File exists` for any pre-existing route to that prefix — it says
+/// nothing about where that route points. Treating it as success (which every call site
+/// did) meant a stale `10.0.0.0/8 via 192.168.1.1` counted as "routed through the tunnel",
+/// and a plain `::/1` counted as "IPv6 blackholed". Both then logged success while the
+/// traffic went straight out the physical interface. So: ask what is actually installed and
+/// check it contains `want` (`dev <tun>` for a tunnelled prefix, `blackhole` for a blocked
+/// one).
+///
+/// `None` = could not tell (no `ip`, unparsable output); the caller warns rather than
+/// silently assuming either way.
+fn existing_route_satisfies(v6: bool, cidr: &str, want: &str) -> Option<bool> {
+    let mut args: Vec<&str> = Vec::new();
+    if v6 {
+        args.push("-6");
+    }
+    args.extend_from_slice(&["route", "show", cidr]);
+    let out = std::process::Command::new("ip").args(&args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(text.contains(want))
 }
 
 pub fn apply_pushed_routes(routes_json: &str, ifname: &str, default_gateway: &str) {
@@ -373,10 +514,18 @@ pub fn apply_pushed_routes(routes_json: &str, ifname: &str, default_gateway: &st
                     // the tunnel subnet ("Nexthop has invalid gateway"), which Linux refuses.
                     // The desktop/mobile clients route interface-scoped and quietly accept such
                     // a route, so the server side can look "fine" while Linux clients drop it.
+                    // LEAK-marked (L3): a pushed route that fails to install means that
+                    // subnet is NOT in the tunnel. In split-tunnel there is no kill-switch
+                    // (should_engage requires full-tunnel), so it goes out the physical
+                    // interface in the clear while auth still reports a working tunnel.
+                    // Kept as warn, not fatal: this mirrors OpenVPN's best-effort
+                    // `push "route"`, and making it fatal would let a broken/hostile server
+                    // config deny the client service. The wording now names it as a leak.
                     log::warn!(
-                        "pushed route {} via {} NOT applied: {} — the next hop must be reachable \
-                         on the tunnel subnet; drop `gateway=` from the server's `route =` line to \
-                         use the tunnel gateway ({}) instead",
+                        "LEAK: pushed route {} via {} NOT applied: {} — traffic to this subnet \
+                         will use the PHYSICAL interface UNENCRYPTED. The next hop must be \
+                         reachable on the tunnel subnet; drop `gateway=` from the server's \
+                         `route =` line to use the tunnel gateway ({}) instead",
                         route.cidr,
                         gateway,
                         stderr.trim(),
@@ -413,6 +562,29 @@ fn default_gateway(server_addr: &str) -> Option<String> {
         if part == "via" {
             saw_via = true;
         } else if saw_via {
+            return Some(part.to_string());
+        }
+    }
+    None
+}
+
+/// The physical interface `server_addr` is reached on, parsed from the `dev` field of
+/// `ip route get`. This is what a gateway-less (ON-LINK) server has instead of a `via`:
+/// same subnet as the client, reached directly. (on-link bypass)
+fn physical_dev_for(server_addr: &str) -> Option<String> {
+    let out = std::process::Command::new("ip")
+        .args(["route", "get", server_addr])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut saw_dev = false;
+    for part in s.split_whitespace() {
+        if part == "dev" {
+            saw_dev = true;
+        } else if saw_dev {
+            // Never our own tunnel device — if `ip route get` already resolves the server
+            // through the tun (a stale route from a previous run), pinning it there is the
+            // exact loop we are trying to prevent.
             return Some(part.to_string());
         }
     }

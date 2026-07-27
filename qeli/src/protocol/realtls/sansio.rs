@@ -303,7 +303,8 @@ impl SansIoClient {
                             if transcript.len().saturating_add(mlen) > MAX_TRANSCRIPT {
                                 self.state = State::Failed;
                                 return Err(ierr(
-                                    "handshake transcript exceeded the cumulative cap — peer is                                      streaming handshake messages without finishing",
+                                    "handshake transcript exceeded the cumulative cap — peer is \
+                                     streaming handshake messages without finishing",
                                 ));
                             }
                             transcript.extend_from_slice(&hs_buf[..mlen]);

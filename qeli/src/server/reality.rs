@@ -88,6 +88,11 @@ pub async fn handle_connection(
 
     // Clamp so a 0 (a Default-constructed config, or a misconfigured 0) can't give
     // recv_peek an already-expired deadline that instant-bridges every client.
+    // Deadline for terminating TLS with a peer that passed the REALITY discriminator.
+    // Reuses the profile's handshake budget so it stays one knob; clamped so a config of 0
+    // cannot mean "wait forever". (S-01 follow-up)
+    let handshake_timeout =
+        Duration::from_secs(pcfg.performance.connection.handshake_timeout_secs.max(5));
     let peek_ms = pcfg.obfuscation.tls.reality_proxy.peek_timeout_ms.max(300);
     let header = match tokio::time::timeout(
         Duration::from_millis(peek_ms + 300),
@@ -197,16 +202,33 @@ pub async fn handle_connection(
                     }
                     None => (Default::default(), None),
                 };
-                let tls = crate::protocol::realtls::server::terminate_handrolled(
-                    stream,
-                    crate::crypto::Keypair::generate(),
-                    borrow,
-                    cert.as_deref(),
+                // BOUNDED (S-01 follow-up): the TLS termination reads records in a loop
+                // with no deadline of its own, and it runs BEFORE handle_client — so the
+                // profile's handshake_timeout does not cover it. A peer that sends a valid
+                // ClientHello and then goes silent parked here forever while holding a
+                // pre-auth permit; enough of them and no new client could be admitted.
+                let tls = match tokio::time::timeout(
+                    handshake_timeout,
+                    crate::protocol::realtls::server::terminate_handrolled(
+                        stream,
+                        crate::crypto::Keypair::generate(),
+                        borrow,
+                        cert.as_deref(),
+                    ),
                 )
                 .await
-                .map_err(|e| {
-                    anyhow::anyhow!("REALITY hand-rolled TLS termination failed: {}", e)
-                })?;
+                {
+                    Ok(r) => r.map_err(|e| {
+                        anyhow::anyhow!("REALITY hand-rolled TLS termination failed: {}", e)
+                    })?,
+                    Err(_) => {
+                        return Err(anyhow::anyhow!(
+                            "REALITY hand-rolled TLS termination timed out after {:?} for {}",
+                            handshake_timeout,
+                            addr
+                        ))
+                    }
+                };
                 log::debug!(
                     "REALITY: hand-rolled TLS established with {} — tunnel inside",
                     addr
@@ -223,10 +245,24 @@ pub async fn handle_connection(
                         &pcfg.obfuscation.tls.reality_proxy.target,
                     ),
                 };
-                let tls =
-                    crate::protocol::realtls::server::terminate(Vec::new(), stream, tls_config)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("REALITY TLS termination failed: {}", e))?;
+                // Same bound as the hand-rolled path above.
+                let tls = match tokio::time::timeout(
+                    handshake_timeout,
+                    crate::protocol::realtls::server::terminate(Vec::new(), stream, tls_config),
+                )
+                .await
+                {
+                    Ok(r) => {
+                        r.map_err(|e| anyhow::anyhow!("REALITY TLS termination failed: {}", e))?
+                    }
+                    Err(_) => {
+                        return Err(anyhow::anyhow!(
+                            "REALITY TLS termination timed out after {:?} for {}",
+                            handshake_timeout,
+                            addr
+                        ))
+                    }
+                };
                 log::debug!(
                     "REALITY: real TLS established with {} — tunnel inside",
                     addr

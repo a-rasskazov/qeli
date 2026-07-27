@@ -19,6 +19,43 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Filesystem paths a hook command would actually execute: the first token, plus — when
+/// that token is a known interpreter — the script it is told to run.
+///
+/// Used for two purposes that must agree: the world-writable warning below, and the
+/// restore vetting in `web/api/backup.rs`, which refuses to overwrite a script an existing
+/// hook points at. Not cfg-gated: the restore path needs it on every build.
+pub fn script_paths(cmd: &str) -> Vec<String> {
+    const INTERPRETERS: &[&str] = &[
+        "sh", "bash", "dash", "zsh", "ksh", "ash", "busybox", "python", "python2", "python3",
+        "perl", "ruby", "node", "lua", "php", "awk",
+    ];
+    let toks: Vec<&str> = cmd.split_whitespace().collect();
+    let mut out: Vec<String> = Vec::new();
+    let Some(&first) = toks.first() else {
+        return out;
+    };
+    out.push(first.to_string());
+    let base = first.rsplit('/').next().unwrap_or(first);
+    if INTERPRETERS.contains(&base) {
+        // First non-flag argument is the script path. `-c` takes inline code rather than a
+        // file, so stop there instead of treating a fragment of shell as a path.
+        let mut i = 1;
+        while i < toks.len() && toks[i].starts_with('-') {
+            if toks[i] == "-c" {
+                return out;
+            }
+            i += 1;
+        }
+        if let Some(&script) = toks.get(i) {
+            if !script.starts_with('-') {
+                out.push(script.to_string());
+            }
+        }
+    }
+    out
+}
+
 /// Reject hooks from a config file others can write (privilege-escalation guard).
 /// `Ok(())` = safe to run hooks; `Err(reason)` = refuse. Non-Linux: always `Ok`
 /// (hooks are a Linux-only feature).
@@ -69,39 +106,12 @@ pub async fn run(label: &str, cmd: &str, env: &[(&str, String)]) {
     // world-writable file, a local non-owner could swap its contents — flag it.
     {
         use std::os::unix::fs::MetadataExt;
-        // Check the first token AND, when that token is a known interpreter, the script it
-        // is being told to run. `bash /opt/hook.sh` previously stat'ed only `bash` — a
-        // root-owned system binary that is never world-writable — so the file that actually
-        // executes was never examined, which is exactly the case this warning exists for.
-        // (S-11)
-        const INTERPRETERS: &[&str] = &[
-            "sh", "bash", "dash", "zsh", "ksh", "ash", "busybox", "python", "python2", "python3",
-            "perl", "ruby", "node", "lua", "php", "awk",
-        ];
-        let toks: Vec<&str> = cmd.split_whitespace().collect();
-        let mut to_check: Vec<&str> = Vec::new();
-        if let Some(&first) = toks.first() {
-            to_check.push(first);
-            let base = first.rsplit('/').next().unwrap_or(first);
-            if INTERPRETERS.contains(&base) {
-                // First non-flag argument is the script path. `-c` takes inline code rather
-                // than a file, so stop there instead of stat'ing a fragment of shell.
-                let mut i = 1;
-                while i < toks.len() && toks[i].starts_with('-') {
-                    if toks[i] == "-c" {
-                        break;
-                    }
-                    i += 1;
-                }
-                if let Some(&script) = toks.get(i) {
-                    if !script.starts_with('-') {
-                        to_check.push(script);
-                    }
-                }
-            }
-        }
-        for path in to_check {
-            if let Ok(md) = std::fs::metadata(path) {
+        // The first token AND, when it is a known interpreter, the script it runs:
+        // `bash /opt/hook.sh` used to stat only `bash` — a root-owned system binary that is
+        // never world-writable — so the file that actually executes went unexamined, which
+        // is exactly the case this warning exists for. (S-11)
+        for path in script_paths(cmd) {
+            if let Ok(md) = std::fs::metadata(&path) {
                 if md.is_file() && md.mode() & 0o002 != 0 {
                     log::warn!(
                         "hook[{label}]: script '{path}' is world-writable (mode {:o}) — a local user could alter what runs as root",

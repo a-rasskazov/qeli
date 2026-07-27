@@ -60,6 +60,14 @@ pub fn short_id_from_hex(s: &str) -> [u8; SHORT_ID_LEN] {
 
 /// Client side: seal `{short_id, now}` into a 32-byte session_id using the
 /// ephemeral that is also sent as the ClientHello key_share.
+///
+/// CONTRACT: `ephemeral` MUST be single-use — a fresh keypair per connection. The
+/// `(key, nonce)` for this seal is derived deterministically from the ephemeral↔server
+/// shared secret, so reusing an ephemeral across two seals would reuse the same AEAD
+/// (key, nonce): the two ciphertexts share keystream (short_id cancels, the timestamp XOR
+/// leaks) AND reuse the Poly1305 one-time key, which allows token forgery. Every live
+/// caller passes a `Keypair::generate()` that doubles as the TLS key_share, so the
+/// invariant holds; this note exists to stop a future refactor from caching the ephemeral.
 pub fn seal_session_id(
     reality_pub: &PublicKey,
     ephemeral: &Keypair,

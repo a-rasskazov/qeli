@@ -126,7 +126,12 @@ public partial class MainWindow : Window
             {
                 _tray = new TrayController(
                     getProfiles: () => _profiles.ToList(),
-                    getActive: () => Selected,
+                    // In daemon mode the "active" profile is the one the daemon is configured to
+                    // run (ServiceProfile), not the transient list selection — otherwise the tray
+                    // checkmark claimed a profile was active that the daemon wasn't running. (M3)
+                    getActive: () => _serviceMode
+                        ? (ResolveProfile(AppSettings.Current.ServiceProfile) ?? Selected)
+                        : Selected,
                     onSelectProfile: p => Dispatcher.UIThread.Post(() => SelectProfileFromTray(p)),
                     onToggleConnect: () => Dispatcher.UIThread.Post(() => ToggleConnection()),
                     onShowWindow: () => Dispatcher.UIThread.Post(ShowFromTray),
@@ -227,10 +232,17 @@ public partial class MainWindow : Window
     private VpnConfig? ResolveProfile(string? saved)
     {
         if (string.IsNullOrEmpty(saved)) return null;
-        return _profiles.FirstOrDefault(x => x.Id == saved)
-            ?? _profiles.FirstOrDefault(x => x.DisplayName == saved)
-            ?? _profiles.FirstOrDefault(x => x.ServerAddress == saved)
-            ?? _profiles.FirstOrDefault(x => x.Name == saved);
+        // Stable Id is the authoritative match.
+        var byId = _profiles.FirstOrDefault(x => x.Id == saved);
+        if (byId != null) return byId;
+        // Legacy fallbacks (pre-Id saves): DisplayName, then Name — but ONLY when the match
+        // is UNAMBIGUOUS. Two accounts on one server share a DisplayName/Name, and the old
+        // `ServerAddress` fallback made that collision resolve to whichever came first,
+        // silently auto-connecting / running the wrong account. Drop the ServerAddress
+        // fallback and refuse an ambiguous legacy match (caller falls back / prompts). (M5)
+        var byName = _profiles.Where(x => x.DisplayName == saved).ToList();
+        if (byName.Count == 0) byName = _profiles.Where(x => x.Name == saved).ToList();
+        return byName.Count == 1 ? byName[0] : null;
     }
 
     /// <summary>Called by App at launch: auto-connect to the configured profile if enabled.</summary>
@@ -379,10 +391,22 @@ public partial class MainWindow : Window
         var tmp = System.IO.Path.Combine(dir, "pending-daemon-profile.json");
         try
         {
-            File.WriteAllText(tmp, JsonSerializer.Serialize(p));
-            // The temp file carries the server password — keep it user-only.
+            var json = JsonSerializer.Serialize(p);
+            // The temp file carries the server password — create it 0600 BEFORE the bytes land,
+            // rather than writing at the default umask and narrowing afterwards: a crash/read in
+            // that window would otherwise expose the plaintext password. Mirrors
+            // SecureKey.FileStore. (client-audit LOW: pending-daemon-profile TOCTOU)
             if (!OperatingSystem.IsWindows())
+            {
+                using var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write);
                 try { File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { }
+                var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+                fs.Write(bytes, 0, bytes.Length);
+            }
+            else
+            {
+                File.WriteAllText(tmp, json);
+            }
 
             var (ok, msg, canceled) = await Task.Run(() => ServiceManager.RunSelfElevated("daemon-install", tmp));
             if (!ok)
@@ -408,6 +432,24 @@ public partial class MainWindow : Window
         bool running = _status is VpnStatus.Connected or VpnStatus.Connecting;
         try
         {
+            // Sync the daemon to the SELECTED profile before starting. The daemon runs
+            // AppSettings.ServiceProfile, but the list lets the user pick a profile — so
+            // selecting X and pressing Connect used to silently start whatever ServiceProfile
+            // last held (Y). Reconfigure to the selection when it differs, so what you select
+            // is what connects (matching non-daemon mode). No-op (and no admin prompt) when the
+            // selection already is the configured daemon profile. (client-audit M3)
+            if (!running)
+            {
+                var sel = Selected;
+                if (sel != null && sel.Id != AppSettings.Current.ServiceProfile)
+                {
+                    AppSettings.Current.ServiceProfile = sel.Id;
+                    AppSettings.Current.ServiceEnabled = true;
+                    AppSettings.Current.Save();
+                    await ApplyServiceSettings(); // re-encrypts profile + (re)installs + starts the daemon
+                    return;
+                }
+            }
             if (ServiceManager.NeedsElevation)
             {
                 var verb = running ? "daemon-stop" : "daemon-start";

@@ -1419,14 +1419,24 @@ pub async fn verify_client_auth(
                 // Spend the same Argon2 work as the wrong-password path below, so an
                 // unknown username is not distinguishable from a known one by how
                 // fast the server rejects it (anti-enumeration). Result discarded.
+                //
+                // Take the SAME concurrency permit the real verify holds. Without it this
+                // path bypassed the memory-hard limiter entirely: a flood of made-up
+                // usernames — which needs no valid credentials at all — spawned an
+                // unbounded number of ~19 MiB Argon2 jobs, defeating the very gate that
+                // exists to bound them. Holding it also keeps the timing equivalent under
+                // load, which is the point of doing this work in the first place.
                 let pw_bytes = password.as_bytes().to_vec();
-                let _ = tokio::task::spawn_blocking(move || {
-                    use argon2::PasswordVerifier;
-                    if let Ok(ph) = argon2::PasswordHash::new(dummy_password_hash()) {
-                        let _ = argon2::Argon2::default().verify_password(&pw_bytes, &ph);
-                    }
-                })
-                .await;
+                {
+                    let _permit = crate::server::argon2_gate().acquire().await;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        use argon2::PasswordVerifier;
+                        if let Ok(ph) = argon2::PasswordHash::new(dummy_password_hash()) {
+                            let _ = argon2::Argon2::default().verify_password(&pw_bytes, &ph);
+                        }
+                    })
+                    .await;
+                }
                 let locked = server_state
                     .failed_auth
                     .lock()
@@ -1730,11 +1740,18 @@ pub(crate) fn register_client_subnets(
             .any(|e| e.cidr == r.cidr && e.client_ip != client_ip)
         {
             log::warn!(
-                "iroute: '{cidr}' (user '{username}') is already claimed by another client — skipping"
+                "iroute: '{cidr}' (user '{}') is already claimed by another client — skipping",
+                crate::util::log_sanitize(username)
             );
             continue;
         }
-        log::info!("iroute: {cidr} -> client {username} ({client_ip}) on profile '{profile_name}'");
+        // Sanitize the username on the way to the log like every other user-derived value —
+        // a CR/LF in it could otherwise forge log records (CWE-117). These two were the last
+        // raw `{username}` sites left in server/. (H-8)
+        log::info!(
+            "iroute: {cidr} -> client {} ({client_ip}) on profile '{profile_name}'",
+            crate::util::log_sanitize(username)
+        );
         programmed.push(r.cidr.clone());
         sessions.client_routes.push(r);
     }

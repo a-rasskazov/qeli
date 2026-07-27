@@ -55,19 +55,17 @@ public static class SecureKey
     private static bool KeychainStore(byte[] key)
     {
         var b64 = Convert.ToBase64String(key);
-        // Prefer handing the secret over on STDIN. As an argv value it is visible in `ps`
-        // to every local user for the lifetime of the call — and this is the key that
-        // protects every stored password and obfs_key. `security` prompts for the password
-        // when -w is given with no value, and reads the answer from stdin. (C-19)
+        // Hand the secret over on STDIN only. As an argv value it is visible in `ps` to every
+        // local user for the lifetime of the call — and this is the key that protects every
+        // stored password and obfs_key, so an argv leak is a cross-user compromise of all of
+        // them. `security` reads the value from stdin when -w is given with no value. (C-19)
         //
-        // It can insist on a real tty in some environments, so fall back to the old argv
-        // form instead of failing to store the key at all: an unstored key means the
-        // profiles encrypted with it are unreadable next launch, which is far worse than a
-        // brief argv exposure.
+        // If the stdin path fails (e.g. `security` insists on a real tty), we do NOT fall back
+        // to the argv form: GetOrCreate() then falls through to the 0600 fallback key file,
+        // which is owner-only and far safer than exposing the master key in the process table.
+        // (Previously the argv fallback here leaked the master key to every local user.)
         var (code, _) = Run($"add-generic-password -s {Service} -a {Account} -U -w", stdin: b64 + "\n");
-        if (code == 0) return true;
-        var (fallback, _) = Run($"add-generic-password -s {Service} -a {Account} -w {b64} -U");
-        return fallback == 0;
+        return code == 0;
     }
 
     private static (int, string) Run(string args, string? stdin = null)

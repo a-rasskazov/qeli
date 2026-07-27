@@ -274,6 +274,18 @@ public sealed class NetworkConfigurator : IDisposable
     public void SetDns(IReadOnlyList<string> servers)
     {
         if (servers.Count == 0) return;
+        // Validate every resolver is a literal IP before splicing it into the networksetup
+        // argument string. DNS values come from the profile / server-push and — unlike routes,
+        // which go through strict ParseCidr — were used unchecked; a crafted value could add
+        // stray argv tokens (no shell, so token-confusion not RCE) and make the DNS-apply fail.
+        // Drop non-IP entries; if nothing valid remains, don't touch DNS. (client-audit LOW)
+        servers = servers.Where(s => IPAddress.TryParse(s.Trim(), out _)).Select(s => s.Trim()).ToList();
+        if (servers.Count == 0)
+        {
+            Degrade("DNS NOT applied — no valid resolver IP in the configured DNS list; " +
+                    "queries will use the system resolver, not the tunnel's");
+            return;
+        }
         var service = PrimaryNetworkService();
         if (service == null)
         {

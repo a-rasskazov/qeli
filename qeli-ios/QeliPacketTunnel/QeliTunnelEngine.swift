@@ -205,6 +205,13 @@ final class QeliTunnelEngine: @unchecked Sendable {
         ipv4.excludedRoutes = Self.deduplicated(excluded)
         network.ipv4Settings = ipv4
 
+        // IPv6 policy (client-audit LOW, reviewed BY-DESIGN):
+        //  • Full-tunnel + !allowIPv6Leak  -> capture the v6 default and blackhole it (qeli
+        //    carries IPv4 only; leaving v6 on the WAN would leak *everything*). Fail-closed.
+        //  • Split-tunnel                  -> deliberately install NO v6 settings, so v6 stays on
+        //    the normal path. Blackholing v6 here would break the user's legitimate v6 internet
+        //    for the traffic they intentionally kept OFF the tunnel — split-tunnel is fail-open
+        //    for v4 too, and the tunnel is v4-only, so there is no v6 route to carry anyway.
         if effectiveConfig.isFullTunnel && !effectiveConfig.allowIPv6Leak {
             let ipv6 = NEIPv6Settings(addresses: ["fd00:7165:6c69::2"], networkPrefixLengths: [64])
             ipv6.includedRoutes = [.default()]

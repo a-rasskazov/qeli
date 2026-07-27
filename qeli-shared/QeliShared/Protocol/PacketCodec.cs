@@ -40,6 +40,14 @@ public sealed class PacketCodec
     private long _replayHighest = -1; // inbound replay window
     private readonly ulong[] _replayBits = new ulong[ReplayWords]; // 2048-bit window (M-13)
 
+    // M6: per-instance nonce seed + PRP key. The nonce goes on the wire and the peer never
+    // inverts the PRP (it reads the nonce off the wire), so these are local randomness and
+    // need NOT match the peer's — they only have to make (seed‖counter) unique per key, which
+    // a monotonic counter + fresh per-session key guarantee. Fresh seed per instance also
+    // keeps nonces unique across a reconnect that reused the key.
+    private readonly byte[] _nonceSeed = RandomNumberGenerator.GetBytes(4);
+    private readonly byte[] _noncePrpKey = RandomNumberGenerator.GetBytes(32);
+
     public PacketCodec(PacketCipher cipher, bool paddingEnabled = true, int paddingMin = 0, int paddingMax = 255,
         bool raw = false)
     {
@@ -141,8 +149,10 @@ public sealed class PacketCodec
         if (currentCounter >= long.MaxValue - 1000)
             throw new PacketException("Counter exhausted - session must be renegotiated");
 
-        var nonce = new byte[NonceSize];
-        RandomNumberGenerator.Fill(nonce);
+        // Counter-derived, collision-free, DPI-opaque nonce (was a random 96-bit value,
+        // which carries a birthday-bound collision risk the Rust core eliminates). See
+        // NonceForCounter / PrpNonce. (client-audit M6)
+        var nonce = NonceForCounter(currentCounter);
 
         paddingLen = Math.Clamp(paddingLen, 0, 65535);
         var padding = new byte[paddingLen];
@@ -190,6 +200,62 @@ public sealed class PacketCodec
         Buffer.BlockCopy(nonce, 0, packet, _headerSize, NonceSize);
         Buffer.BlockCopy(ciphertext, 0, packet, _headerSize + NonceSize, ciphertext.Length);
         return packet;
+    }
+
+    // ── M6: counter-derived data-plane nonce (mirrors Rust packet.rs) ────────────
+    /// <summary>Build the 96-bit wire nonce for <paramref name="counter"/> as
+    /// PRP(seed(4) ‖ counter_be(8)). A balanced Feistel network is bijective for any round
+    /// function, so distinct (seed,counter) inputs — counter is monotonic — always map to
+    /// distinct nonces (no AEAD nonce reuse), while the on-wire value no longer increments by
+    /// 1 (no visible-counter DPI tell). Replaces the previous random 96-bit nonce.</summary>
+    private byte[] NonceForCounter(long counter)
+    {
+        var raw = new byte[NonceSize];
+        Buffer.BlockCopy(_nonceSeed, 0, raw, 0, 4);
+        raw[4] = (byte)((counter >> 56) & 0xFF);
+        raw[5] = (byte)((counter >> 48) & 0xFF);
+        raw[6] = (byte)((counter >> 40) & 0xFF);
+        raw[7] = (byte)((counter >> 32) & 0xFF);
+        raw[8] = (byte)((counter >> 24) & 0xFF);
+        raw[9] = (byte)((counter >> 16) & 0xFF);
+        raw[10] = (byte)((counter >> 8) & 0xFF);
+        raw[11] = (byte)(counter & 0xFF);
+        return PrpNonce(_noncePrpKey, raw);
+    }
+
+    /// <summary>96-bit balanced Feistel permutation, 4 rounds; round fn = SHA256(key‖round‖half)[..6].
+    /// Byte-for-byte identical to Rust <c>packet.rs prp_nonce</c> (not required for interop — the peer
+    /// reads the nonce straight off the wire — but kept identical for auditability).</summary>
+    private static byte[] PrpNonce(byte[] key, byte[] raw)
+    {
+        var l = new byte[6];
+        var r = new byte[6];
+        Buffer.BlockCopy(raw, 0, l, 0, 6);
+        Buffer.BlockCopy(raw, 6, r, 0, 6);
+        for (byte round = 0; round < 4; round++)
+        {
+            var f = PrpRound(key, round, r);
+            var nr = new byte[6];
+            for (int i = 0; i < 6; i++) nr[i] = (byte)(l[i] ^ f[i]);
+            l = r;
+            r = nr;
+        }
+        var outp = new byte[NonceSize];
+        Buffer.BlockCopy(l, 0, outp, 0, 6);
+        Buffer.BlockCopy(r, 0, outp, 6, 6);
+        return outp;
+    }
+
+    private static byte[] PrpRound(byte[] key, byte round, byte[] half)
+    {
+        var input = new byte[key.Length + 1 + half.Length];
+        Buffer.BlockCopy(key, 0, input, 0, key.Length);
+        input[key.Length] = round;
+        Buffer.BlockCopy(half, 0, input, key.Length + 1, half.Length);
+        var d = SHA256.HashData(input);
+        var outp = new byte[6];
+        Buffer.BlockCopy(d, 0, outp, 0, 6);
+        return outp;
     }
 
     public byte[] Decrypt(byte[] packet)

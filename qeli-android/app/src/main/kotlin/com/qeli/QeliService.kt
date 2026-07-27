@@ -401,13 +401,30 @@ class VpnServiceImpl : VpnService() {
                 // Reset the backoff only after a STABLE established session; otherwise escalate.
                 val ran = System.currentTimeMillis() - lastAttemptStart
                 attempt = if (liveStatus == STATUS_CONNECTED && ran >= stableMs) 0 else attempt + 1
-                closeTransports()
+                // Reconnect path: drop only the sockets. Keep the TUN so routing stays
+                // captured (fail-closed) across the backoff+re-handshake; setupTunInterface
+                // replaces it in place. (Full TUN teardown happens below on give-up / stop.)
+                closeSockets()
             }
         }
-        if (userRequestedDisconnect) stopVpn()
+        if (userRequestedDisconnect) {
+            stopVpn()
+        } else {
+            // We fell out of the loop without a user disconnect — reconnect was disabled or
+            // max-retries hit (give up). The TUN was kept open across attempts; close it now
+            // so we don't leave a dead fail-closed tunnel lingering with no data plane.
+            closeTransports()
+        }
     }
 
-    private fun closeTransports() {
+    /** Close only the transport sockets (TCP/UDP/bonded), leaving the TUN in place.
+     *  Used on the RECONNECT path: keeping vpnInterface open means Android keeps routing
+     *  captured while we re-handshake, so apps' packets go into the (temporarily dead) TUN
+     *  and are dropped — fail-CLOSED — instead of leaking cleartext over the physical link.
+     *  setupTunInterface()'s handoff then replaces the TUN in place once the new session is
+     *  up. Closing+nulling the TUN here (as the old closeTransports did) opened a leak window
+     *  for the whole backoff+handshake on every drop, defeating that handoff. */
+    private fun closeSockets() {
         try { socketChannel?.close() } catch (_: Exception) {}
         // Close every secondary bonded socket so its blocking read unblocks and the
         // per-stream coroutine exits (otherwise a reconnect leaks bonded streams).
@@ -416,9 +433,15 @@ class VpnServiceImpl : VpnService() {
             bondedSockets.clear()
         }
         try { udpSocket?.close() } catch (_: Exception) {}
-        try { vpnInterface?.close() } catch (_: Exception) {}
         socketChannel = null
         udpSocket = null
+    }
+
+    /** Full teardown of the data plane: sockets AND the TUN. Only for a real stop
+     *  (user disconnect / give-up), never between reconnect attempts. */
+    private fun closeTransports() {
+        closeSockets()
+        try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
     }
 
@@ -1235,6 +1258,15 @@ class VpnServiceImpl : VpnService() {
      * O_NONBLOCK so read() blocks until a packet arrives.
      */
     private fun forceBlocking(pfd: ParcelFileDescriptor): Boolean {
+        // Explicit version gate rather than "call it and catch NoSuchMethodError": lint
+        // (rightly) flags the unguarded call as a NewApi error, and exception-driven control
+        // flow hides from every static check what a version check states plainly. The catch
+        // below stays as a backstop for vendor images that lie about their API level. (C-01)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            broadcastLog("Os.fcntlInt needs Android 11 (API 30) — using the poll-based " +
+                "non-blocking read path")
+            return false
+        }
         return try {
             val fd = pfd.fileDescriptor
             val fl = android.system.Os.fcntlInt(fd, android.system.OsConstants.F_GETFL, 0)
@@ -1563,7 +1595,9 @@ class VpnServiceImpl : VpnService() {
     }
 
     private suspend fun connectTcp(config: VpnConfig) {
-        broadcastLog("Connecting TCP ${config.serverAddress}:${config.port} as user '${config.username}'...")
+        // Username omitted: broadcastLog also writes to Logcat (release), which lands in
+        // bug reports / adb. Password/keys are never logged; keep the username out too. (LOW)
+        broadcastLog("Connecting TCP ${config.serverAddress}:${config.port}...")
         // Publish the channel into the instance field BEFORE the blocking connect(),
         // so a user Disconnect or a network change can close it to interrupt connect()
         // immediately. (A blocking SocketChannel.connect/read ignores coroutine
@@ -1680,7 +1714,8 @@ class VpnServiceImpl : VpnService() {
     }
 
     private suspend fun connectUdp(config: VpnConfig) {
-        broadcastLog("Connecting UDP ${config.serverAddress}:${config.port} as user '${config.username}'...")
+        // Username omitted — see TCP path. (client-audit LOW: username-logging)
+        broadcastLog("Connecting UDP ${config.serverAddress}:${config.port}...")
         val sock = DatagramSocket()
         protectSocket("server UDP") { protect(sock) }
         sock.connect(InetSocketAddress(config.serverAddress, config.port))

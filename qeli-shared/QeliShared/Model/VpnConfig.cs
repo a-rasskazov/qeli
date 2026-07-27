@@ -299,6 +299,13 @@ public sealed class VpnConfig : INotifyPropertyChanged
         if (!string.IsNullOrEmpty(Sni)) q.Add($"sni={Uri.EscapeDataString(Sni)}");
         if (!string.IsNullOrEmpty(RealityShortId)) q.Add($"rsid={Uri.EscapeDataString(RealityShortId)}");
         if (!string.IsNullOrEmpty(ObfsKey)) q.Add($"obfs={Uri.EscapeDataString(ObfsKey)}");
+        // anti-FET fronting. FromQeliUri already read this, but ToQeliUri never wrote it:
+        // an obfs profile with `front=none` shared from the desktop came back as the
+        // default `websocket` on import — a different framing, so the tunnel never
+        // handshakes. Emitted only when it diverges from the default, matching Rust
+        // (config/client.rs: `.filter(|s| s != "websocket")`).
+        if (!string.IsNullOrEmpty(ObfsFronting) && ObfsFronting != "websocket")
+            q.Add($"front={Uri.EscapeDataString(ObfsFronting)}");
         // F2 AmneziaWG junk: emit only when enabled (off = byte-identical, no params).
         if (AwgEnabled)
         {

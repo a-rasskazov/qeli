@@ -63,7 +63,19 @@ public sealed class MlKem : IDisposable
     private static byte[] Consume(IntPtr ptr, UIntPtr len)
     {
         if (ptr == IntPtr.Zero || len == UIntPtr.Zero) return Array.Empty<byte>();
-        int n = (int)len;
+        // `UIntPtr` is pointer-sized (nuint), so the FFI length is correct on both 32- and
+        // 64-bit. The narrowing `(int)len` was not: on a 32-bit runtime a length above
+        // int.MaxValue wraps to a negative size and `new byte[n]` throws (or worse, on the
+        // 64-bit path silently truncates a >2GB buffer). Bound it explicitly — a realtls /
+        // ML-KEM buffer is only ever a few KB, so anything this large is a corrupt length
+        // from the native side, not something to allocate. (32-bit FFI)
+        ulong len64 = (ulong)len;
+        if (len64 > int.MaxValue)
+        {
+            qeli_realtls_buf_free(ptr, len);
+            throw new InvalidOperationException($"native buffer length {len64} exceeds the managed limit");
+        }
+        int n = (int)len64;
         var managed = new byte[n];
         Marshal.Copy(ptr, managed, 0, n);
         qeli_realtls_buf_free(ptr, len);

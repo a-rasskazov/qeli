@@ -141,13 +141,19 @@ data class VpnConfig(
         if (awgEnabled) { q.add("awg=1"); q.add("jc=$awgJc"); q.add("jmin=$awgJmin"); q.add("jmax=$awgJmax") }
         if (quicEnabled) q.add("quic=1")
         if (mtu > 0) q.add("mtu=$mtu")   // 0 = auto, omit
-        // Round-trip the remaining wire-affecting fields. Omitting them does not mean
-        // "default" to the importer — it means the import silently RE-defaults them:
-        // `front` back to websocket (wrong framing → no connection) and `bind_static`
-        // back ON (which then demands a pinned key the link never carried). (C-12)
+        // `front` affects the wire: omitting it does not mean "default" to the importer,
+        // it means the import silently re-defaults to websocket — a different framing, so
+        // the tunnel never handshakes. Carried by every implementation. (C-12)
         if (obfsFronting != "websocket") q.add("front=${pctEncode(obfsFronting)}")
-        if (!bindStaticToSession) q.add("bind_static=0")
-        if (!mtuProbe) q.add("mtu_probe=0")
+        // `bind_static` and `mtu_probe` are deliberately NOT emitted. They are local device
+        // policy, not a property of the server, and the link is defined as carrying only
+        // what the client cannot learn any other way. Android was the only implementation
+        // that put them in: Rust, C# and Swift dropped them as unknown params, so a link
+        // shared from here arrived elsewhere with bind_static silently back ON — demanding
+        // a pinned key the link never carried. Emitting `bind_static=0` was also the worse
+        // half of the divergence: it hands a security downgrade to anyone the QR is
+        // forwarded to. Set both in the profile itself instead. Parsing them stays below,
+        // as tolerance for links this app issued before 0.7.13.
         sb.append('?').append(q.joinToString("&"))
         if (!name.isNullOrBlank()) sb.append('#').append(pctEncode(name))
         return sb.toString()
@@ -531,10 +537,24 @@ data class VpnConfig(
                     "jmin" -> jmin = v.toIntOrNull() ?: 40
                     "jmax" -> jmax = v.toIntOrNull() ?: 300
                     "mtu" -> linkMtu = v.toIntOrNull() ?: 0
+                    // Legacy tolerance only — this app stopped EMITTING these in 0.7.13
+                    // (see toQeliUri). Kept so links it issued earlier still import the way
+                    // they were shared; no other implementation carries them.
                     "mtu_probe" -> linkMtuProbe = !(v == "0" || v.equals("false", ignoreCase = true))
                     "bind_static" -> bindStatic = !(v == "0" || v.equals("false", ignoreCase = true))
                     // forward-compatible: ignore unknown params
                 }
+            }
+
+            // Alias convenience: `mode=udp-quic` / `udp-obfs` fold transport+QUIC into the
+            // wire mode. Split it back into proto + wire mode + quic — the same mapping the
+            // Rust link parser applies (config/share.rs). Android was the only client that
+            // did NOT expand these: it kept the alias as the literal wire mode, which no
+            // handshake matches, so such a link imported cleanly and then never connected.
+            // Applied AFTER the loop because `proto` may come later in the query.
+            when (mode) {
+                "udp-quic" -> { proto = "udp"; mode = "fake-tls"; quic = true }
+                "udp-obfs" -> { proto = "udp"; mode = "obfs" }
             }
 
             return VpnConfig(

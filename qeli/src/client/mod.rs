@@ -99,8 +99,23 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
     // Gateway/router NAT + lifecycle hooks (Linux). Resolve the tun interface name
     // once — both the kill-switch and the gateway NAT key their rules on it.
     let gw_on = gateway::should_engage(&config.routing);
+    // Exit-node: this client is an internet EXIT for OTHER tunnel clients (mirror of
+    // gateway_nat — masquerade tun-forwarded traffic out the physical WAN). Independent of
+    // gw_on: exit uses its own engage/disengage, so both can be off, one on, or (unusually)
+    // both.
+    let exit_on = config.routing.exit_node;
     let tun_if = tap_interface_name(&config.tun.name, &config.tun.device_type);
     let lan_subnet = config.routing.lan_subnet.clone();
+    // An exit node must be split-tunnel: its own internet stays on the WAN, which is what
+    // carries the forwarded traffic. With add_default_gateway the host's own default flips
+    // into the tunnel and there is no WAN path to forward out of.
+    if exit_on && config.routing.add_default_gateway {
+        log::warn!(
+            "exit_node + gateway (full-tunnel) on the SAME client: an exit node must be \
+             split-tunnel (gateway = false) so its own WAN can carry the forwarded traffic. \
+             With full-tunnel there is no WAN egress and forwarding will fail."
+        );
+    }
 
     // post_up/post_down are honoured ONLY from a trusted (not group/world-writable)
     // config file: a hook runs as us (root). SECURITY: the panel/API never writes
@@ -153,9 +168,10 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
             } => {}
         }
         log::info!(
-            "Shutdown signal received — restoring DNS{}{} and exiting",
+            "Shutdown signal received — restoring DNS{}{}{} and exiting",
             if ks_on { " + clearing kill-switch" } else { "" },
-            if gw_on { " + clearing gateway-NAT" } else { "" }
+            if gw_on { " + clearing gateway-NAT" } else { "" },
+            if exit_on { " + clearing exit-node" } else { "" }
         );
         dns::restore_dns();
         if ks_on {
@@ -163,6 +179,9 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
         }
         if gw_on {
             gateway::disengage(&sig_tun, &sig_lan);
+        }
+        if exit_on {
+            gateway::disengage_exit(&sig_tun);
         }
         // Routes and the device: `TunGuard::drop` handles these on every normal exit, but
         // `process::exit` below skips destructors entirely, so a Ctrl-C used to leave the
@@ -197,6 +216,13 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
         // masquerade only for gateway_nat (internet egress); `forward` alone = pure L3
         // routing, no NAT (#13).
         gateway::engage(&tun_if, &lan_subnet, config.routing.gateway_nat)?;
+    }
+    // Exit-node: forward + MASQUERADE tunnel traffic out the physical WAN, so other tunnel
+    // clients reach the internet under this host's IP. Like the gateway NAT it installs by
+    // interface name before the first connect, stays up across reconnects, and is removed on
+    // a clean stop. Refuse to run if requested but not installable (no iptables / no WAN).
+    if exit_on {
+        gateway::engage_exit(&tun_if)?;
     }
     // Run post_up after the firewall is in place.
     crate::hooks::run("post_up", &post_up, &hook_env).await;
@@ -236,6 +262,9 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
             if gw_on {
                 gateway::disengage(&tun_if, &lan_subnet);
             }
+            if exit_on {
+                gateway::disengage_exit(&tun_if);
+            }
             crate::hooks::run("post_down", &post_down, &hook_env).await;
             return result;
         }
@@ -247,6 +276,9 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
             }
             if gw_on {
                 gateway::disengage(&tun_if, &lan_subnet);
+            }
+            if exit_on {
+                gateway::disengage_exit(&tun_if);
             }
             crate::hooks::run("post_down", &post_down, &hook_env).await;
             return Err(anyhow::anyhow!("max retries ({}) reached", max_retries));
@@ -2605,7 +2637,21 @@ fn setup_tunnel(
              has a trusted local resolver (e.g. a router)."
         );
     }
-    dns::setup_dns_for_interface(&config.dns, dns_ip, dns_port, &if_name)?;
+    // DNS resolver management is BEST-EFFORT: the tunnel data-plane is already up by here,
+    // so a failure to touch the host resolver must NOT tear a working tunnel down. This is
+    // exactly the read-only-/etc case (a hardened systemd unit with ProtectSystem, a
+    // container with a read-only rootfs, a netns) where the atomic resolv.conf rewrite hits
+    // `Read-only file system` — previously fatal (`?`), which crash-looped a tunnel that
+    // otherwise carried traffic fine. Warn and continue; the only thing skipped is the
+    // automatic anti-DNS-leak, and the message names the config that suppresses it for good.
+    if let Err(e) = dns::setup_dns_for_interface(&config.dns, dns_ip, dns_port, &if_name) {
+        log::warn!(
+            "DNS setup failed ({e}) — keeping the tunnel UP with the host resolver unchanged. \
+             If /etc is read-only (hardened systemd unit / container / netns), set `dns = off` \
+             in the client config to manage DNS yourself and silence this. In a full-tunnel \
+             profile, DNS queries may go to the physical network's resolver until then."
+        );
+    }
 
     // Past every fallible step — hand the raw fds to the caller, who closes them via the
     // reader/writer threads (see `TunGuard` and the teardown).

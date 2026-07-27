@@ -404,6 +404,65 @@ pub async fn create_user(
     ))
 }
 
+/// Copy onto `slot` only the fields that differ between `before` (the entry as this
+/// process last saw it) and `after` (the same entry with this request's edits applied).
+///
+/// A wholesale `*slot = after` reverts anything ANOTHER writer changed in the meantime —
+/// the worker applies `set-bandwidth`, `set-limit` and expiry over the control socket, and
+/// the panel's snapshot can easily predate that. Comparing field by field means an edit to
+/// the password touches the password and nothing else, so two writers only collide when
+/// they genuinely edit the SAME field.
+///
+/// `username` is deliberately not merged: it is the key we matched on.
+fn merge_changed_fields(
+    before: &crate::config::users::UserEntry,
+    after: &crate::config::users::UserEntry,
+    slot: &mut crate::config::users::UserEntry,
+) {
+    if after.password_hash != before.password_hash {
+        slot.password_hash = after.password_hash.clone();
+    }
+    if after.password_enc != before.password_enc {
+        slot.password_enc = after.password_enc.clone();
+    }
+    if after.static_ip != before.static_ip {
+        slot.static_ip = after.static_ip.clone();
+    }
+    if after.enabled != before.enabled {
+        slot.enabled = after.enabled;
+    }
+    if after.allowed_networks != before.allowed_networks {
+        slot.allowed_networks = after.allowed_networks.clone();
+    }
+    if after.group != before.group {
+        slot.group = after.group.clone();
+    }
+    if after.max_sessions != before.max_sessions {
+        slot.max_sessions = after.max_sessions;
+    }
+    if after.data_limit_gb != before.data_limit_gb {
+        slot.data_limit_gb = after.data_limit_gb;
+    }
+    if after.expire_at != before.expire_at {
+        slot.expire_at = after.expire_at;
+    }
+    if after.profiles != before.profiles {
+        slot.profiles = after.profiles.clone();
+    }
+    if after.bandwidth != before.bandwidth {
+        slot.bandwidth = after.bandwidth.clone();
+    }
+    if after.metadata != before.metadata {
+        slot.metadata = after.metadata.clone();
+    }
+    if after.routes != before.routes {
+        slot.routes = after.routes.clone();
+    }
+    if after.client_subnets != before.client_subnets {
+        slot.client_subnets = after.client_subnets.clone();
+    }
+}
+
 pub async fn update_user(
     State(state): State<Arc<ServerState>>,
     _guard: auth::AuthGuard,
@@ -517,12 +576,30 @@ pub async fn update_user(
             // in-memory database back is what let one edit revert another writer's — most
             // visibly its own follow-up `set-bandwidth`, which the worker applied to its
             // older snapshot and saved over the password this call had just written.
+            //
+            // But writing the whole ENTRY was still wrong for the same reason one level
+            // down: `user` is a handle into this process's snapshot, which may predate a
+            // field the worker changed over the control socket (bandwidth, data limit,
+            // expiry). Overwriting the fresh entry wholesale reverted those. So diff the
+            // entry against its pre-edit state and copy over ONLY what this request
+            // actually changed, leaving every other field at whatever the file now holds.
+            let before = snapshot
+                .users
+                .iter()
+                .find(|u| u.username == username)
+                .cloned();
             let edited = user.clone();
             let users_file = state.config.auth.users_file.clone();
             match UsersDb::update_locked(&users_file, |db| {
                 match db.users.iter_mut().find(|u| u.username == username) {
                     Some(slot) => {
-                        *slot = edited;
+                        match &before {
+                            Some(before) => merge_changed_fields(before, &edited, slot),
+                            // No pre-edit state to diff against (should not happen — we
+                            // found the user above) — fall back to the whole entry rather
+                            // than silently applying nothing.
+                            None => *slot = edited.clone(),
+                        }
                         true
                     }
                     None => false,
@@ -842,4 +919,85 @@ pub async fn delete_group(
     Ok(Json(
         json!({"ok": true, "message": format!("group '{}' deleted", name)}),
     ))
+}
+
+#[cfg(test)]
+mod merge_tests {
+    //! The field-wise merge is what keeps two writers from clobbering each other. The
+    //! panel edits a user from a snapshot that may already be stale — the worker changes
+    //! bandwidth/limits/expiry over the control socket — so writing the whole entry back
+    //! reverted whatever it had not seen. These pin that only the edited fields travel.
+    use super::merge_changed_fields;
+    use crate::config::users::UserEntry;
+
+    fn user(name: &str) -> UserEntry {
+        UserEntry {
+            username: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn only_the_edited_field_is_written() {
+        let before = user("alice");
+        let mut after = before.clone();
+        after.password_hash = "$argon2id$new".into();
+
+        // The file meanwhile got a bandwidth limit from the worker.
+        let mut slot = before.clone();
+        slot.bandwidth.limit_mbps = 50;
+
+        merge_changed_fields(&before, &after, &mut slot);
+
+        assert_eq!(slot.password_hash, "$argon2id$new", "the edit must apply");
+        assert_eq!(
+            slot.bandwidth.limit_mbps, 50,
+            "a field this request did not touch must keep the file's value"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_concurrent_change_survives() {
+        // Panel disables the user; worker had just set an expiry and a data limit.
+        let before = user("bob");
+        let mut after = before.clone();
+        after.enabled = false;
+
+        let mut slot = before.clone();
+        slot.expire_at = Some(1_800_000_000);
+        slot.data_limit_gb = 100;
+
+        merge_changed_fields(&before, &after, &mut slot);
+
+        assert!(!slot.enabled);
+        assert_eq!(slot.expire_at, Some(1_800_000_000));
+        assert_eq!(slot.data_limit_gb, 100);
+    }
+
+    #[test]
+    fn a_genuine_conflict_still_takes_the_edit() {
+        // Both writers touched the SAME field — last writer wins, by design.
+        let before = user("carol");
+        let mut after = before.clone();
+        after.max_sessions = 3;
+
+        let mut slot = before.clone();
+        slot.max_sessions = 9;
+
+        merge_changed_fields(&before, &after, &mut slot);
+        assert_eq!(slot.max_sessions, 3);
+    }
+
+    #[test]
+    fn no_edits_leaves_the_file_entry_untouched() {
+        let before = user("dave");
+        let after = before.clone();
+        let mut slot = before.clone();
+        slot.bandwidth.limit_mbps = 7;
+        slot.static_ip = Some("10.0.0.9".into());
+
+        merge_changed_fields(&before, &after, &mut slot);
+        assert_eq!(slot.bandwidth.limit_mbps, 7);
+        assert_eq!(slot.static_ip.as_deref(), Some("10.0.0.9"));
+    }
 }

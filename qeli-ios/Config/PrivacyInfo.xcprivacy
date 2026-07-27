@@ -10,9 +10,16 @@
             <key>NSPrivacyAccessedAPIType</key>
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
+            <!-- CA92.1: defaults the app reads/writes only for itself.
+                 1C8F.1: defaults in the App Group shared with the tunnel extension.
+                 AC6B.1: reading `com.apple.configuration.managed` — the MDM-supplied app
+                 configuration. Required because ManagedConfigurationReader calls
+                 UserDefaults.standard.dictionary(forKey:) on that key; without this code
+                 App Store review rejects the build for an undeclared Required Reason API. -->
             <array>
                 <string>1C8F.1</string>
                 <string>CA92.1</string>
+                <string>AC6B.1</string>
             </array>
         </dict>
     </array>

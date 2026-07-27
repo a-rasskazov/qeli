@@ -69,14 +69,24 @@ class ObfsStream private constructor(
      *  unbroken keystream — byte-for-byte compatible with the Rust streaming
      *  ObfsStream (chacha20 crate's apply_keystream). */
     class ChaCha20Keystream(private val key: ByteArray, private val nonce: ByteArray) {
-        private var counter = 0
+        // 64-bit block index for EXHAUSTION tracking; only the low 32 bits are the IETF
+        // ChaCha20 block counter fed to chacha20Block (so the on-wire keystream is unchanged).
+        private var counter = 0L
         private var block = ByteArray(0)
         private var blockOff = 0
         fun xor(data: ByteArray): ByteArray {
             val out = ByteArray(data.size)
             for (i in data.indices) {
                 if (blockOff >= block.size) {
-                    block = chacha20Block(key, counter, nonce); counter++; blockOff = 0
+                    // IETF ChaCha20's block counter is 32-bit -> the keystream is exhausted
+                    // after 2^32 blocks (256 GiB/direction). Rust's chacha20 crate PANICS there;
+                    // match it and FAIL rather than let the Int wrap back to 0, which reused the
+                    // keystream (XOR of two ciphertexts leaks). Unreachable on one obfs-TCP
+                    // connection in practice. (client-audit LOW)
+                    if (counter >= 0x1_0000_0000L)
+                        throw IllegalStateException(
+                            "obfs keystream exhausted (2^32 blocks / 256 GiB) — reconnect required")
+                    block = chacha20Block(key, counter.toInt(), nonce); counter++; blockOff = 0
                 }
                 out[i] = (data[i].toInt() xor block[blockOff].toInt()).toByte()
                 blockOff++
@@ -143,7 +153,13 @@ class ObfsStream private constructor(
          *  consumed before any data is buffered, so `pending` must stay empty. */
         fun discardOneFrame(recvRaw: (Int) -> ByteArray) {
             require(pending.size() == pendingOff) { "obfs ws: junk after data buffered" }
-            decodeOneFrame(recvRaw)
+            // Loop until an actual DATA-carrying frame (opcode 0x0/0x2) is consumed. A
+            // spec-legal control frame (ping/pong/close, opcode>=0x8) writes nothing to
+            // `pending`, so counting it as the consumed junk frame would desync the junk
+            // tally. decodeOneFrame consumes+discards control frames transparently; keep
+            // going until one actually adds bytes. (client-audit LOW)
+            val before = pending.size()
+            do { decodeOneFrame(recvRaw) } while (pending.size() == before)
             pending.reset(); pendingOff = 0
         }
 

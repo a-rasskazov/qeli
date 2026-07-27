@@ -74,10 +74,22 @@ public static class KillSwitch
         // doubles them inside a '...' literal) so a `'` can't break out of the argument.
         script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: tun' -Group '{Group}' " +
            $"-Direction Outbound -InterfaceAlias '{(tunAlias ?? "").Replace("'", "''")}' -Action Allow -Profile Any | Out-Null");
-        script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: dns-udp' -Group '{Group}' " +
-           $"-Direction Outbound -Protocol UDP -RemotePort 53 -Action Allow -Profile Any | Out-Null");
-        script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: dns-tcp' -Group '{Group}' " +
-           $"-Direction Outbound -Protocol TCP -RemotePort 53 -Action Allow -Profile Any | Out-Null");
+        // DNS: scope port 53 to the system's configured resolvers, NEVER to any remote
+        // address. An unrestricted `RemotePort 53` rule let every app's DNS query egress in
+        // cleartext on the physical NIC during the tunnel-down window — the metadata leak the
+        // kill-switch is meant to stop. DNS is still permitted on the physical path only so the
+        // server hostname can be RE-RESOLVED on reconnect, so we allow it only to the resolvers
+        // in use. Fail closed: no resolvers -> no rule, reconnect uses the allowed cached
+        // server IP(s) above. Residual (accepted): an app querying those same resolvers still
+        // leaks its query; removing that would break re-resolution while down. (client-audit LOW)
+        var dnsServers = ResolveDnsServers();
+        foreach (var r in dnsServers)
+        {
+            script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: dns-udp {r}' -Group '{Group}' " +
+               $"-Direction Outbound -Protocol UDP -RemotePort 53 -RemoteAddress {r} -Action Allow -Profile Any | Out-Null");
+            script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: dns-tcp {r}' -Group '{Group}' " +
+               $"-Direction Outbound -Protocol TCP -RemotePort 53 -RemoteAddress {r} -Action Allow -Profile Any | Out-Null");
+        }
         script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: dhcp' -Group '{Group}' " +
            $"-Direction Outbound -Protocol UDP -RemotePort 67 -Action Allow -Profile Any | Out-Null");
         // Now flip the default outbound action to Block — the allow rules above let
@@ -85,8 +97,9 @@ public static class KillSwitch
         script.AppendLine("Set-NetFirewallProfile -All -DefaultOutboundAction Block");
         Ps(script.ToString(), critical: true);
 
-        log($"Kill-switch ENGAGED: egress restricted to tun '{tunAlias}', {string.Join(", ", ips)}, " +
-            $"DNS and DHCP. Stays up across reconnects; lifted only on a clean stop. A crash leaves it " +
+        log($"Kill-switch ENGAGED: egress restricted to tun '{tunAlias}', {string.Join(", ", ips)}, DHCP, and " +
+            $"DNS to {(dnsServers.Count > 0 ? string.Join(", ", dnsServers) : "<none — physical DNS blocked>")}. " +
+            $"Stays up across reconnects; lifted only on a clean stop. A crash leaves it " +
             $"(no leak) — clear with: Remove-NetFirewallRule -Group {Group}; " +
             $"Set-NetFirewallProfile -All -DefaultOutboundAction Allow");
     }
@@ -294,5 +307,33 @@ public static class KillSwitch
                 .Select(ip => ip.ToString()).Distinct().ToList();
         }
         catch { return new List<string>(); }
+    }
+
+    /// <summary>The system's configured DNS resolver IPs across all up interfaces. Used to
+    /// SCOPE the kill-switch's port-53 allowance instead of opening 53 to any remote address.
+    /// Loopback and link-local are excluded (not real upstream resolvers / can't be a valid
+    /// -RemoteAddress); IPv6 scope ids are stripped. Empty on failure -> caller emits no DNS
+    /// rule (fail closed).</summary>
+    private static List<string> ResolveDnsServers()
+    {
+        var list = new List<string>();
+        try
+        {
+            foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                foreach (var dns in ni.GetIPProperties().DnsAddresses)
+                {
+                    if (System.Net.IPAddress.IsLoopback(dns) || dns.IsIPv6LinkLocal) continue;
+                    // Strip any IPv6 scope id (%N) — New-NetFirewallRule -RemoteAddress rejects it.
+                    var s = dns.ToString();
+                    int pct = s.IndexOf('%');
+                    if (pct >= 0) s = s[..pct];
+                    list.Add(s);
+                }
+            }
+        }
+        catch { /* no resolvers -> no physical DNS allowance (fail closed) */ }
+        return list.Distinct().ToList();
     }
 }
