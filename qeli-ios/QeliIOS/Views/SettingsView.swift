@@ -51,11 +51,24 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("Appearance") {
+                    // Endonyms, so the picker is readable whichever language is active.
+                    Picker("Language", selection: setting(\.language)) {
+                        ForEach(AppLanguage.allCases) { language in
+                            Text(language.displayName).tag(language)
+                        }
+                    }
+                    // LocalizedStringKey, not the bare String: `title` is a localization key,
+                    // and Text(String) renders verbatim (these options used to stay English
+                    // even with the rest of the UI in Russian).
                     Picker("Theme", selection: setting(\.appearance)) {
-                        ForEach(AppAppearance.allCases) { appearance in Text(appearance.title).tag(appearance) }
+                        ForEach(AppAppearance.allCases) { appearance in
+                            Text(LocalizedStringKey(appearance.title)).tag(appearance)
+                        }
                     }
                     Picker("Log timestamp", selection: setting(\.logTimeFormat)) {
-                        ForEach(LogTimeFormat.allCases) { format in Text(format.title).tag(format) }
+                        ForEach(LogTimeFormat.allCases) { format in
+                            Text(LocalizedStringKey(format.title)).tag(format)
+                        }
                     }
                 }
                 Section("Backup and restore") {

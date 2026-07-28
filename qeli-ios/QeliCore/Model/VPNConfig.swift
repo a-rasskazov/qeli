@@ -61,6 +61,14 @@ struct VPNConfig: Codable, Equatable, Sendable {
     var appsMode = "all"
     var apps: [String] = []
 
+    // [logging] passthrough. Not used by the app (its own log setting lives in
+    // AppSettings); carried so a desktop/router client.conf opened and re-saved here keeps
+    // its logging section instead of silently losing it — the Rust client parses AND
+    // re-emits these, and the Android client now does too.
+    var loggingLevel: String?
+    var loggingFile: String?
+    var loggingTimeFormat: String?
+
     var isUDP: Bool { protocolName.caseInsensitiveCompare("udp") == .orderedSame }
     var isFullTunnel: Bool { addDefaultGateway || routingMode == "full-tunnel" }
 
@@ -79,6 +87,43 @@ struct VPNConfig: Codable, Equatable, Sendable {
             self = try Self.fromINI(trimmed)
         }
         try validate()
+    }
+
+    /// Clamp every obfuscation/shaping value the SERVER pushes in AuthOK into a usable
+    /// range.
+    ///
+    /// `validate()` covers what the user types (port, timeout, mtu, padding) but nothing
+    /// that arrives over the wire, and the AuthOK parsers assigned these fields straight
+    /// from the JSON. Two consequences, both remote and post-authentication:
+    ///
+    /// * a large `idle_gap_mean_ms` made `TrafficShaper.nextGapMilliseconds` produce a
+    ///   `Double` outside `Int`'s range, and `Int(_:)` TRAPS rather than saturating —
+    ///   killing the Network Extension process on the first heartbeat tick;
+    /// * a large `padding.max_bytes` pushed records past `MaxRecordSize`, so
+    ///   `PacketCodec.encrypt` threw, the uplink died, the client reconnected, got the
+    ///   same value and looped forever.
+    ///
+    /// Clamping rather than rejecting: a server that pushes an odd value is far more
+    /// likely misconfigured than hostile, and refusing to connect would be a worse
+    /// outcome than shaping slightly differently than asked. (Audit 2026-07-27, C10.)
+    mutating func clampPushedObfuscation() {
+        // Padding must leave room inside one record; 1400 mirrors the Rust client's cap.
+        paddingMin = min(max(paddingMin, 0), 1_400)
+        paddingMax = min(max(paddingMax, paddingMin), 1_400)
+
+        shapingGapMeanMilliseconds = min(max(shapingGapMeanMilliseconds, 1), 60_000)
+        shapingGapMinMilliseconds = min(max(shapingGapMinMilliseconds, 0), 60_000)
+        shapingGapMaxMilliseconds = min(
+            max(shapingGapMaxMilliseconds, shapingGapMinMilliseconds),
+            60_000
+        )
+        shapingMinSize = min(max(shapingMinSize, 0), 1_400)
+        shapingMaxSize = min(max(shapingMaxSize, shapingMinSize), 1_400)
+        shapingBudgetBytesPerSecond = min(max(shapingBudgetBytesPerSecond, 0), 100_000_000)
+        shapingStealthRateMbps = min(max(shapingStealthRateMbps, 1), 10_000)
+
+        heartbeatIntervalMilliseconds = min(max(heartbeatIntervalMilliseconds, 1_000), 600_000)
+        heartbeatJitterMilliseconds = min(max(heartbeatJitterMilliseconds, 0), 60_000)
     }
 
     func validate() throws {
@@ -173,6 +218,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.allowLAN = bool(qeli["allow_lan"])
         if let dns = qeli["dns"], !["off", "system", "tunnel"].contains(dns.lowercased()) {
             config.dnsServers = list(dns)
+        }
+
+        // Carried through untouched so re-saving a desktop config keeps its logging section.
+        if let logging = sections["logging"] {
+            config.loggingLevel = logging["level"].nonEmpty
+            config.loggingFile = logging["file"].nonEmpty
+            config.loggingTimeFormat = logging["time_format"].nonEmpty
         }
 
         config.wireMode = qeli["mode"].nonEmpty ?? "fake-tls"
@@ -341,7 +393,11 @@ struct VPNConfig: Codable, Equatable, Sendable {
             case "jc": config.awgJunkCount = Int(value) ?? 0
             case "jmin": config.awgJunkMin = Int(value) ?? 40
             case "jmax": config.awgJunkMax = Int(value) ?? 300
-            case "mtu": config.mtu = Int(value) ?? 0
+            // Out-of-range → auto, rather than rejecting the whole link in validate()
+            // below. Matches the Rust `from_link` clamp; the Android client now does the
+            // same, so one shared link no longer imports on one platform and fails on
+            // another over a value the client would have ignored anyway.
+            case "mtu": config.mtu = Int(value).flatMap { $0 == 0 || (576...9000).contains($0) ? $0 : 0 } ?? 0
             default: break
             }
         }
@@ -406,12 +462,12 @@ struct VPNConfig: Codable, Equatable, Sendable {
         if mtu != 0 { lines.append("mtu = \(mtu)") }
         if !mtuProbe { lines.append("mtu_probe = false") }
         if !isFullTunnel { lines.append("gateway = false") }
-        if !includeRoutes.isEmpty { lines.append("include = \(includeRoutes.joined(separator: ","))") }
-        if !excludeRoutes.isEmpty { lines.append("exclude = \(excludeRoutes.joined(separator: ","))") }
+        if !includeRoutes.isEmpty { lines.append("include = \(includeRoutes.joined(separator: ", "))") }
+        if !excludeRoutes.isEmpty { lines.append("exclude = \(excludeRoutes.joined(separator: ", "))") }
         if routeLocalNetworks { lines.append("route_local = true") }
         if allowIPv6Leak { lines.append("allow_ipv6_leak = true") }
         if allowLAN { lines.append("allow_lan = true") }
-        if !dnsServers.isEmpty { lines.append("dns = \(dnsServers.joined(separator: ","))") }
+        if !dnsServers.isEmpty { lines.append("dns = \(dnsServers.joined(separator: ", "))") }
         if !paddingEnabled { lines.append("padding = false") }
         if paddingMin != 0 { lines.append("padding_min = \(paddingMin)") }
         if paddingMax != 255 { lines.append("padding_max = \(paddingMax)") }
@@ -429,12 +485,20 @@ struct VPNConfig: Codable, Equatable, Sendable {
         if shapingStealth { lines.append("shaping_stealth = true") }
         if shapingStealthRateMbps != 2 { lines.append("shaping_stealth_mbps = \(shapingStealthRateMbps)") }
         if appsMode != "all" { lines.append("apps_mode = \(appsMode)") }
-        if !apps.isEmpty { lines.append("apps = \(apps.joined(separator: ","))") }
+        if !apps.isEmpty { lines.append("apps = \(apps.joined(separator: ", "))") }
         if !reconnectEnabled { lines.append("reconnect = false") }
         if reconnectMaxRetries != -1 { lines.append("reconnect_retries = \(reconnectMaxRetries)") }
         if reconnectBaseDelaySeconds != 1 { lines.append("reconnect_base_delay = \(reconnectBaseDelaySeconds)") }
         if reconnectMaxDelaySeconds != 60 { lines.append("reconnect_max_delay = \(reconnectMaxDelaySeconds)") }
         if connectionTimeoutSeconds != 30 { lines.append("timeout = \(connectionTimeoutSeconds)") }
+        // Re-emit [logging] so a desktop/router client.conf survives an edit on the phone.
+        if loggingLevel?.nonEmpty != nil || loggingFile?.nonEmpty != nil || loggingTimeFormat?.nonEmpty != nil {
+            lines.append("")
+            lines.append("[logging]")
+            if let value = loggingLevel?.nonEmpty { lines.append("level = \(value)") }
+            if let value = loggingFile?.nonEmpty { lines.append("file = \(value)") }
+            if let value = loggingTimeFormat?.nonEmpty { lines.append("time_format = \(value)") }
+        }
         return lines.joined(separator: "\n") + "\n"
     }
 

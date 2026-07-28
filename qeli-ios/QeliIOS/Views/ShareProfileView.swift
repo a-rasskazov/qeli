@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ShareProfileView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
     let profile: Profile
 
     private var link: String {
@@ -26,9 +27,25 @@ struct ShareProfileView: View {
                     .lineLimit(7)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .qeliCard()
-                ShareLink(item: link) { Label("Share profile", systemImage: "square.and.arrow.up") }
+                HStack(spacing: 12) {
+                    // Explicit Copy, matching the Android share dialog: selecting the
+                    // monospaced link by hand is fiddly, and the share sheet is a detour
+                    // when the user just wants it on the clipboard.
+                    Button {
+                        UIPasteboard.general.string = link
+                        copied = true
+                    } label: {
+                        Label(copied ? "Link copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    ShareLink(item: link) {
+                        Label("Share profile", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
                     .buttonStyle(.borderedProminent)
                     .tint(QeliTheme.primary)
+                }
                 Text("The share link contains the profile credentials.")
                     .font(.footnote).foregroundStyle(.secondary)
             }

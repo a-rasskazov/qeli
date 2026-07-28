@@ -3,7 +3,13 @@
 ## Implemented foundation
 
 - Connection / Profiles / Log navigation and Qeli visual language.
-- Profile CRUD, active-profile locking while connected, reorder and reachability.
+- Profile CRUD, active-profile locking while connected (refused with an alert, and the
+  rows that cannot be picked are dimmed), reorder and reachability — TCP by a connect
+  probe, UDP by the same hybrid X25519 + ML-KEM ClientHello the Android client sends,
+  framed for the profile's wire mode. While the active tunnel is up the probe measures the
+  tunnel gateway rather than the public endpoint.
+- English / Russian UI with an in-app language picker. English is the default on every
+  device, matching Android — the app does not follow the system locale.
 - INI, JSON, file, clipboard, QR and `qeli://` deep-link import.
 - Share link, QR generation and system share sheet.
 - Encrypted-at-rest profile store and Android-compatible backup encryption.
@@ -31,12 +37,20 @@
   2048-packet replay window, UDP fragmentation, QUIC mask and traffic shaping.
 - Rust XCFramework build path for REALITY TLS, ML-KEM-768 and fake-TLS ClientHello.
 - WidgetKit status widget with an authenticated App Intent action and an iOS 18
-  Control Center / Lock Screen / Action button control.
+  Control Center / Lock Screen / Action button control. The toggle drives the installed
+  tunnel from the widget process, so it connects without foregrounding the app (matching
+  the Android widget / Quick Settings tile); if the extension cannot reach the tunnel the
+  request is queued and applied at the next app launch.
 - Managed app configuration reader and truthful Per-App VPN / IKEv2 Always On MDM
   templates.
 
 ## Remaining verification milestones
 
+0. Verify on a device the changes from the 2026-07-27 parity pass, none of which have run
+   anywhere yet: the language picker and the forced `\.locale`, the dimmed locked rows, the
+   UDP reachability probe, and above all the widget/Control Center toggle — it now drives
+   `NETunnelProviderManager` from the extension instead of opening the app, which is the
+   one change that can regress a previously working (if clunky) flow.
 1. Build the Rust XCFramework and generated Xcode project on macOS/Xcode 16+.
 2. Run physical-device interoperability tests against every Android/server wire mode,
    including packet loss, Wi-Fi/cellular transitions and bonded-stream failure.

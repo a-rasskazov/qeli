@@ -14,8 +14,12 @@ enum ReachabilityState: Equatable {
 
 struct AppAlert: Identifiable {
     let id = UUID()
+    /// English localization key; the view resolves it via `LocalizedStringKey`.
     var title: String
     var message: String
+    /// Set when `message` is already-interpolated display text (a version number, a server
+    /// error) rather than a key, so the view shows it as-is instead of looking it up.
+    var isLiteralMessage = false
 }
 
 @MainActor
@@ -58,7 +62,8 @@ final class AppModel: ObservableObject {
             self.archive = try profileStore.load()
         } catch {
             self.archive = .initial
-            self.alert = AppAlert(title: "Profile store error", message: error.localizedDescription)
+            self.alert = AppAlert(title: "Profile store error", message: error.localizedDescription,
+                                  isLiteralMessage: true)
         }
         profiles = archive.profiles
         if managedConfiguration.hasActiveProfilePolicy {
@@ -302,15 +307,23 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 let config = try VPNConfig(parsing: profile.configText)
-                guard !config.isUDP else {
-                    reachability[profile.id] = .unavailable("protocol probe pending")
-                    return
+                // While THIS profile's tunnel is up, dialing the public endpoint measures a
+                // looped-back path (or is carried by the tunnel it is probing) and reports a
+                // meaningless RTT. Probe the tunnel gateway instead, like Android does.
+                let viaTunnel = tunnelSnapshot.phase.isActive && profile.id == activeProfileID
+                let host = viaTunnel
+                    ? (tunnelSnapshot.clientAddress.flatMap(Self.gateway(forClientAddress:)) ?? config.serverAddress)
+                    : config.serverAddress
+                let milliseconds: Int
+                if config.isUDP && !viaTunnel {
+                    milliseconds = try await ReachabilityProbe.udp(config: config, host: host, timeout: 4)
+                } else {
+                    milliseconds = try await ReachabilityProbe.tcp(
+                        host: host,
+                        port: config.port,
+                        timeout: 4
+                    )
                 }
-                let milliseconds = try await ReachabilityProbe.tcp(
-                    host: config.serverAddress,
-                    port: config.port,
-                    timeout: 4
-                )
                 reachability[profile.id] = .reachable(milliseconds: milliseconds)
             } catch {
                 reachability[profile.id] = .unavailable(error.localizedDescription)
@@ -368,8 +381,30 @@ final class AppModel: ObservableObject {
         reachability.removeAll()
     }
 
+    /// Resolve a localization key in the *selected* UI language.
+    ///
+    /// Views get this for free from `\.locale`, but that environment value doesn't reach
+    /// model code, so anything built here (alerts, formatted messages) has to look the
+    /// string up in the right `.lproj` explicitly.
+    func localized(_ key: String) -> String {
+        guard let path = Bundle.main.path(forResource: settings.language.rawValue, ofType: "lproj"),
+              let bundle = Bundle(path: path) else {
+            return NSLocalizedString(key, comment: "")
+        }
+        return NSLocalizedString(key, bundle: bundle, comment: "")
+    }
+
+    /// The tunnel gateway is `.1` of the assigned client address (10.9.2.2 → 10.9.2.1),
+    /// same derivation as the Android client. Nil for anything that isn't dotted IPv4.
+    static func gateway(forClientAddress address: String) -> String? {
+        let octets = address.split(separator: ".")
+        guard octets.count == 4 else { return nil }
+        return "\(octets[0]).\(octets[1]).\(octets[2]).1"
+    }
+
     func present(_ error: Error, title: String) {
-        alert = AppAlert(title: title, message: error.localizedDescription)
+        // localizedDescription is system/server text, not one of our keys.
+        alert = AppAlert(title: title, message: error.localizedDescription, isLiteralMessage: true)
     }
 
     private func commitArchive() throws {
@@ -515,7 +550,11 @@ final class AppModel: ObservableObject {
                     if notifyWhenAvailable {
                         alert = AppAlert(
                             title: "Update available",
-                            message: "Qeli \(info.latest) is available. Open Settings to view the release."
+                            message: String(
+                                format: localized("Qeli %@ is available. Open Settings to view the release."),
+                                info.latest
+                            ),
+                            isLiteralMessage: true
                         )
                     }
                 } else {
@@ -562,6 +601,103 @@ private enum ReachabilityProbe {
                         connection.cancel()
                         continuation.resume(returning: Int(elapsed / 1_000_000))
                     }
+                case .failed(let error):
+                    gate.resume { connection.cancel(); continuation.resume(throwing: error) }
+                default:
+                    break
+                }
+            }
+            connection.start(queue: DispatchQueue.global(qos: .utility))
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                gate.resume {
+                    connection.cancel()
+                    continuation.resume(throwing: URLError(.timedOut))
+                }
+            }
+        }
+    }
+
+    /// Probe a UDP profile by sending a real hybrid ClientHello and timing the reply.
+    ///
+    /// A UDP socket "connects" locally, so — unlike TCP — merely opening it proves nothing;
+    /// the server has to answer. This mirrors the Android `udpPing`: build the same
+    /// X25519 + ML-KEM-768 ClientHello padded to 1200 bytes, then layer it EXACTLY like the
+    /// real data path does (QUIC long-header wrap first, obfs datagram seal outside it) —
+    /// getting that order wrong makes a healthy quic+obfs server look unreachable. One
+    /// retry, because a single UDP datagram is allowed to vanish.
+    static func udp(config: VPNConfig, host: String, timeout: TimeInterval) async throws -> Int {
+        guard let rawPort = UInt16(exactly: config.port), let networkPort = NWEndpoint.Port(rawValue: rawPort) else {
+            throw URLError(.badURL)
+        }
+        let mlkem = try MLKEMContext()
+        var x25519 = Data(count: 32)
+        let status = x25519.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+        guard status == errSecSuccess else { throw URLError(.cannotConnectToHost) }
+
+        var framed = try QeliNativeCore.fakeTLSClientHello(
+            x25519PublicKey: x25519,
+            mlkemEncapsulationKey: mlkem.encapsulationKey,
+            sni: config.sni?.isEmpty == false ? config.sni! : "www.microsoft.com",
+            padToMinimum: 1_200
+        )
+        if config.quicEnabled {
+            framed = try QUICMask.wrapLong(
+                framed,
+                connectionID: try QUICMask.connectionID(),
+                packetNumber: 0,
+                packetType: 0x02
+            )
+        }
+        if config.wireMode.lowercased() == "obfs" {
+            framed = try ObfsDatagramCipher.seal(framed, key: ObfsDatagramCipher.deriveKey(config.obfsKey))
+        }
+
+        let payload = framed
+        for attempt in 0..<2 {
+            do {
+                return try await sendAndAwaitReply(
+                    payload: payload,
+                    host: host,
+                    port: networkPort,
+                    timeout: timeout
+                )
+            } catch {
+                if attempt == 1 { throw error }
+            }
+        }
+        throw URLError(.timedOut)
+    }
+
+    private static func sendAndAwaitReply(
+        payload: Data,
+        host: String,
+        port: NWEndpoint.Port,
+        timeout: TimeInterval
+    ) async throws -> Int {
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .udp)
+        let start = DispatchTime.now().uptimeNanoseconds
+        return try await withCheckedThrowingContinuation { continuation in
+            let gate = ProbeGate()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    connection.send(content: payload, completion: .contentProcessed { error in
+                        if let error {
+                            gate.resume { connection.cancel(); continuation.resume(throwing: error) }
+                            return
+                        }
+                        connection.receiveMessage { data, _, _, receiveError in
+                            let elapsed = DispatchTime.now().uptimeNanoseconds - start
+                            gate.resume {
+                                connection.cancel()
+                                if let data, !data.isEmpty {
+                                    continuation.resume(returning: Int(elapsed / 1_000_000))
+                                } else {
+                                    continuation.resume(throwing: receiveError ?? URLError(.timedOut))
+                                }
+                            }
+                        }
+                    })
                 case .failed(let error):
                     gate.resume { connection.cancel(); continuation.resume(throwing: error) }
                 default:

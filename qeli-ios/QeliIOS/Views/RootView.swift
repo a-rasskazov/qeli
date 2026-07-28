@@ -34,7 +34,16 @@ struct RootView: View {
         .background(QeliTheme.background.ignoresSafeArea())
         .sheet(isPresented: $showingSettings) { SettingsView() }
         .alert(item: $model.alert) { alert in
-            Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
+            // LocalizedStringKey, not the bare String: AppModel builds these as English
+            // keys, and Text(String) would render them verbatim regardless of language.
+            // Already-interpolated messages carry `isLiteral` so they bypass the lookup.
+            Alert(
+                title: Text(LocalizedStringKey(alert.title)),
+                message: alert.isLiteralMessage
+                    ? Text(alert.message)
+                    : Text(LocalizedStringKey(alert.message)),
+                dismissButton: .default(Text("OK"))
+            )
         }
         .confirmationDialog(
             "Import profile?",

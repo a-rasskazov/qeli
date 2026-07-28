@@ -74,6 +74,14 @@ final class TunnelManager: NSObject, ObservableObject {
 
     func connect(profile: Profile, settings: AppSettings) async throws {
         guard !connectInProgress else { throw TunnelManagerError.connectAlreadyInProgress }
+        // reality-tls seals the auth token into the ClientHello, so it cannot even be built
+        // without the pinned key + short id. Android refuses this up front with a readable
+        // message; without the check iOS dialled out and failed deep in the handshake.
+        if let config = try? VPNConfig(parsing: profile.configText),
+           config.wireMode.lowercased() == "reality-tls",
+           config.serverPublicKeyHex?.isEmpty != false || config.realityShortID?.isEmpty != false {
+            throw TunnelManagerError.realityRequiresPinnedKey
+        }
         operationGeneration &+= 1
         let generation = operationGeneration
         connectInProgress = true
@@ -173,7 +181,16 @@ final class TunnelManager: NSObject, ObservableObject {
         guard let manager else { throw TunnelManagerError.managerUnavailable }
         manager.onDemandRules = enabled ? [NEOnDemandRuleConnect() as NEOnDemandRule] : []
         manager.isOnDemandEnabled = enabled
-        if manager.isEnabled { try await Self.save(manager) }
+        // Persist ALWAYS. The save used to be gated on `manager.isEnabled`, so with a
+        // disabled manager this mutated the in-memory object, wrote nothing to the VPN
+        // preferences, and returned success. Two places hit exactly that: after
+        // `failClosedForManagedProfilePolicy()` sets `isEnabled = false`, the follow-up
+        // `updateOnDemand(true)` that is supposed to restore the organisation's policy did
+        // nothing at all; and on a fresh install the Settings toggle silently failed to
+        // stick until the first successful connect. Reporting success for a write that did
+        // not happen is the part that made it hard to see.
+        // (Audit 2026-07-27, M8.)
+        try await Self.save(manager)
     }
 
     func reloadProviderSettings() async throws {
@@ -361,12 +378,15 @@ enum TunnelManagerError: LocalizedError {
     case sessionUnavailable
     case connectAlreadyInProgress
     case providerMessageRejected(String)
+    case realityRequiresPinnedKey
 
     var errorDescription: String? {
         switch self {
         case .managerUnavailable: return "The system VPN manager is unavailable."
         case .sessionUnavailable: return "The Qeli Packet Tunnel session is unavailable."
         case .connectAlreadyInProgress: return "A Qeli connection attempt is already in progress."
+        case .realityRequiresPinnedKey:
+            return "reality-tls needs both the pinned server key and reality_sid; add them to the profile."
         case .providerMessageRejected(let message): return "The Packet Tunnel rejected the settings update: \(message)"
         }
     }

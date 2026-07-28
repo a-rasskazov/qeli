@@ -1,6 +1,5 @@
 package com.qeli.model
 
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Serializable
 
@@ -112,7 +111,14 @@ data class VpnConfig(
     // "all" = every app uses the VPN (default). "include" = ONLY [apps] are tunnelled.
     // "exclude" = every app EXCEPT [apps]. [apps] holds Android package names.
     val appsMode: String = "all",             // "all" | "include" | "exclude"
-    val apps: List<String> = emptyList()
+    val apps: List<String> = emptyList(),
+    // ── [logging] passthrough ──
+    // Not used by the app (its own log settings live in SharedPreferences); carried so a
+    // desktop/router client.conf opened and re-saved here keeps its logging section instead
+    // of silently losing it. Mirrors qeli/src/config/client.rs, which parses AND re-emits it.
+    val loggingLevel: String? = null,
+    val loggingFile: String? = null,
+    val loggingTimeFormat: String? = null
 ) : Serializable {
 
     /** True when the protocol is UDP (DatagramChannel transport, QUIC masking). */
@@ -122,14 +128,68 @@ data class VpnConfig(
         get() = addDefaultGateway || routingMode.equals("full-tunnel", ignoreCase = true)
 
     /**
+     * Reject configs that cannot be represented as flat-INI, and range-check the numeric
+     * fields. Mirrors the iOS `VPNConfig.validate()` so both mobile clients accept and
+     * refuse exactly the same profiles.
+     *
+     * The control-character scan is a SECURITY guard, not cosmetics. [toIni] writes
+     * `key = value` verbatim, so a password / SNI / route carrying a newline lets an
+     * imported `qeli://` link forge additional INI keys — e.g. appending
+     * `\nbind_static = false` turns off binding the session to the pinned server key, and
+     * the forged line comes back as trusted config on the next save. Checked on emit (the
+     * moment the forgery would be written) and on link import (untrusted input entering).
+     *
+     * Parsing stays lenient about the STRING fields for the same reason (an odd sni already
+     * on disk must not lock the user out of their own profile), but NOT about the numeric
+     * ranges: `mtu` and the padding bounds are checked at import too, because an
+     * out-of-range value there is not a cosmetic problem — it produces a tunnel that cannot
+     * establish, or records the peer rejects, with no hint of why. See [checkedMtu] /
+     * [checkedPadding]. (Audit 2026-07-27, C6)
+     */
+    fun validate() {
+        fun scalar(name: String, v: String?) {
+            val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
+            throw IllegalArgumentException(
+                "'$name' contains a control character (0x%02X); refusing to write it".format(bad.code)
+            )
+        }
+        scalar("server", serverAddress); scalar("proto", protocol)
+        scalar("user", username); scalar("pass", password)
+        scalar("key", serverPublicKeyHex); scalar("mode", wireMode)
+        scalar("sni", sni); scalar("reality_sid", realityShortId)
+        scalar("obfs_key", obfsKey); scalar("front", obfsFronting)
+        for (v in includeRoutes) scalar("include", v)
+        for (v in excludeRoutes) scalar("exclude", v)
+        for (v in dnsServers) scalar("dns", v)
+        for (v in apps) scalar("apps", v)
+        scalar("logging.level", loggingLevel); scalar("logging.file", loggingFile)
+        scalar("logging.time_format", loggingTimeFormat)
+
+        require(serverAddress.isNotEmpty()) { "'server' has empty host" }
+        require(port in 1..65535) { "'server' port out of range: $port" }
+        require(protocol == "tcp" || protocol == "udp") { "'proto' must be tcp or udp, got '$protocol'" }
+        require(connectionTimeoutSecs in 1..300) { "'timeout' must be 1..300, got $connectionTimeoutSecs" }
+        require(wireMode in WIRE_MODES) { "'mode' must be one of $WIRE_MODES, got '$wireMode'" }
+        // 0 = auto. Matches the Rust client, which rejects anything outside MTU_MIN..MTU_MAX.
+        // Same predicate the import paths use, so emit and import can never disagree. (C6)
+        require(mtuInRange(mtu)) { "'mtu' must be 0 (auto) or $MTU_MIN..$MTU_MAX, got $mtu" }
+        require(paddingMin >= 0 && paddingMax >= paddingMin && paddingMax <= PADDING_CEILING) {
+            "padding range invalid: $paddingMin..$paddingMax (expected 0..$PADDING_CEILING)"
+        }
+    }
+
+    /**
      * Build a compact `qeli://` share link (inverse of [fromQeliUri]); mirrors the C#
      * VpnConfig.ToQeliUri and the Rust ClientLink::to_uri, so the link imports on every
      * client + the server's /api/share. [name] becomes the `#label` fragment.
      */
     fun toQeliUri(name: String? = null): String {
+        validate()
         val sb = StringBuilder("qeli://")
-        sb.append(pctEncode(username))
-        if (password.isNotEmpty()) sb.append(':').append(pctEncode(password))
+        // Always `user:pass@`, even when the password is empty — that is what the Rust
+        // ClientLink::to_uri and the iOS client emit, so the same profile now produces a
+        // byte-identical link (and QR) on every platform.
+        sb.append(pctEncode(username)).append(':').append(pctEncode(password))
         // Bracket an IPv6 literal so its colons aren't read as the :port separator.
         val host = if (serverAddress.contains(':') && !serverAddress.startsWith('[')) "[$serverAddress]" else serverAddress
         sb.append('@').append(host).append(':').append(port)
@@ -159,46 +219,12 @@ data class VpnConfig(
         return sb.toString()
     }
 
-    /**
-     * Serialize back to the canonical qeli JSON client-config schema (the one
-     * [fromJson] reads). Used to store an imported `qeli://` link as a normal
-     * profile so the rest of the app (ping, edit, connect) treats it uniformly.
-     * Only connection essentials are emitted; the server pushes the rest.
-     */
-    fun toConfigJson(label: String? = null): String = JSONObject().apply {
-        if (!label.isNullOrBlank()) put("name", label)
-        put("server", JSONObject()
-            .put("address", serverAddress)
-            .put("port", port)
-            .put("protocol", protocol))
-        put("auth", JSONObject()
-            .put("username", username)
-            .put("password", password)
-            .put("server_public_key", serverPublicKeyHex ?: ""))
-        put("routing", JSONObject().put("mode", "full-tunnel").put("add_default_gateway", true)
-            .put("route_local_networks", routeLocalNetworks))
-        // Carry explicit resolvers only when the user actually set them; empty means
-        // "let the server-pushed DNS (or the full-tunnel fallback) apply at connect time".
-        if (dnsServers.isNotEmpty()) put("dns", JSONObject().put("servers", JSONArray(dnsServers)))
-        put("obfuscation", JSONObject().apply {
-            put("mode", wireMode)
-            if (!sni.isNullOrBlank()) put("sni", sni)
-            if (obfsKey.isNotEmpty()) put("obfs_key", obfsKey)
-            if (obfsFronting != "websocket") put("fronting", obfsFronting)
-            // F2: emit the awg block only when enabled (keeps default configs clean).
-            if (awgEnabled) put("awg", JSONObject()
-                .put("enabled", true)
-                .put("jc", awgJc)
-                .put("jmin", awgJmin)
-                .put("jmax", awgJmax))
-            // reality-tls short_id and the UDP QUIC-masking flag are connection-
-            // essential for those modes; omitting them silently downgraded a
-            // reality / udp+quic profile to a plain one on round-trip (fromJson
-            // reads both back).
-            if (!realityShortId.isNullOrEmpty()) put("reality_short_id", realityShortId)
-            if (quicEnabled) put("quic", JSONObject().put("enabled", true))
-        })
-    }.toString()
+    // `toConfigJson` lived here — DELETED (Audit 2026-07-27, X4). It had no callers: the app
+    // stores profiles as flat-INI via [toIni], and an imported qeli:// link goes through that
+    // same path. It also hardcoded `routing.mode = "full-tunnel"` + `add_default_gateway =
+    // true` regardless of the config it was serialising, so anyone who wired it up would have
+    // silently overridden a split-tunnel profile — dead code that was wrong on the one field
+    // a VPN cannot afford to get wrong.
 
     /**
      * Render the connection essentials to the flat-INI `[qeli]` format — the
@@ -207,7 +233,10 @@ data class VpnConfig(
      * `dns` and `mtu` are app extras the Rust client simply ignores.
      */
     fun toIni(label: String? = null): String = buildString {
-        if (!label.isNullOrBlank()) append("# ").append(label).append('\n')
+        // Emit-time gate: refuses control characters (INI forgery) and out-of-range values.
+        validate()
+        // A label carrying a newline would forge INI lines just like a scalar would.
+        if (!label.isNullOrBlank()) append("# ").append(label.replace(Regex("[\\r\\n\\u0000]"), " ")).append('\n')
         append("[qeli]\n")
         append("server = ").append(serverAddress).append(':').append(port).append('\n')
         append("proto = ").append(protocol).append('\n')
@@ -244,10 +273,10 @@ data class VpnConfig(
         // Per-app split tunnel (Android extra). Emit only when active so default
         // profiles stay byte-identical and the desktop/CLI client (which ignores
         // these keys) round-trips them harmlessly.
-        if (appsMode != "all" && apps.isNotEmpty()) {
-            append("apps_mode = ").append(appsMode).append('\n')
-            append("apps = ").append(apps.joinToString(", ")).append('\n')
-        }
+        // Emitted independently (matching iOS): coupling them dropped `apps_mode = include`
+        // with an empty list, silently reverting the profile to "all apps tunnelled".
+        if (appsMode != "all") append("apps_mode = ").append(appsMode).append('\n')
+        if (apps.isNotEmpty()) append("apps = ").append(apps.joinToString(", ")).append('\n')
         // Reconnect / timeout tuning (Android extras; the Rust client ignores them).
         // Emitted only when diverging from the defaults.
         if (!reconnectEnabled) append("reconnect = false\n")
@@ -255,10 +284,99 @@ data class VpnConfig(
         if (reconnectBaseDelaySecs != 1L) append("reconnect_base_delay = ").append(reconnectBaseDelaySecs).append('\n')
         if (reconnectMaxDelaySecs != 60L) append("reconnect_max_delay = ").append(reconnectMaxDelaySecs).append('\n')
         if (connectionTimeoutSecs != 30L) append("timeout = ").append(connectionTimeoutSecs).append('\n')
+        // Padding / heartbeat / shaping. Normally server-pushed, so these are local
+        // OVERRIDES and stay out of the file at their defaults. The key names match the
+        // iOS client exactly — it already read and wrote them, so without these an
+        // iOS-exported profile silently lost its shaping/heartbeat tuning here.
+        if (!paddingEnabled) append("padding = false\n")
+        if (paddingMin != 0) append("padding_min = ").append(paddingMin).append('\n')
+        if (paddingMax != 255) append("padding_max = ").append(paddingMax).append('\n')
+        if (!heartbeatEnabled) append("heartbeat = false\n")
+        if (heartbeatIntervalMs != 15000L) append("heartbeat_interval = ").append(heartbeatIntervalMs).append('\n')
+        if (heartbeatDataSize != 16) append("heartbeat_size = ").append(heartbeatDataSize).append('\n')
+        if (heartbeatJitterMs != 2000L) append("heartbeat_jitter = ").append(heartbeatJitterMs).append('\n')
+        if (shapingEnabled) append("shaping = true\n")
+        if (shapingGapMeanMs != 700L) append("shaping_gap_mean = ").append(shapingGapMeanMs).append('\n')
+        if (shapingGapMinMs != 40L) append("shaping_gap_min = ").append(shapingGapMinMs).append('\n')
+        if (shapingGapMaxMs != 6000L) append("shaping_gap_max = ").append(shapingGapMaxMs).append('\n')
+        if (shapingBudgetBytesPerSec != 16384) append("shaping_budget = ").append(shapingBudgetBytesPerSec).append('\n')
+        if (shapingMinSize != 64) append("shaping_min_size = ").append(shapingMinSize).append('\n')
+        if (shapingMaxSize != 1024) append("shaping_max_size = ").append(shapingMaxSize).append('\n')
+        if (shapingStealth) append("shaping_stealth = true\n")
+        if (shapingStealthRateMbps != 2) append("shaping_stealth_mbps = ").append(shapingStealthRateMbps).append('\n')
+        // Re-emit [logging] verbatim so a desktop/router client.conf survives a mobile save.
+        if (!loggingLevel.isNullOrEmpty() || !loggingFile.isNullOrEmpty() || !loggingTimeFormat.isNullOrEmpty()) {
+            append("\n[logging]\n")
+            if (!loggingLevel.isNullOrEmpty()) append("level = ").append(loggingLevel).append('\n')
+            if (!loggingFile.isNullOrEmpty()) append("file = ").append(loggingFile).append('\n')
+            if (!loggingTimeFormat.isNullOrEmpty()) append("time_format = ").append(loggingTimeFormat).append('\n')
+        }
     }
 
     companion object {
         private const val serialVersionUID = 2L
+
+        /** Wire modes the client can actually dial; same set as the iOS validator. */
+        private val WIRE_MODES = setOf("plain", "fake-tls", "obfs", "reality-tls")
+
+        /**
+         * Values of `mtu_probe` that turn probing OFF. Anything else — including an
+         * unrecognised word — leaves the default (on), which is what the Rust `bool_or`
+         * and the iOS client do. Using the generic truthy `bool()` here would instead read
+         * a typo as "off", disabling probing on a config the desktop client accepts.
+         */
+        private val MTU_PROBE_OFF = setOf("false", "0", "no", "off")
+
+        // ── imported-value ranges (Audit 2026-07-27, C6) ─────────────────────────
+        // The SERVER-pushed mtu was already range-checked (QeliService.parseOk clamps to
+        // 576..9000), the locally imported one was not: `qeli://…?mtu=99999`, or a
+        // hand-written `mtu = 40`, went straight through to VpnService.Builder.setMtu, where
+        // establish() fails and the retry loop reconnects forever with an opaque error. An
+        // out-of-range padding_max is the same class of bug one layer down — every data
+        // record then exceeds PacketCodec.MAX_RECORD_SIZE and the peer drops it. Same ranges
+        // as the Rust client (qeli/src/config/client.rs) and the C# port.
+        const val MTU_MIN = 576
+        const val MTU_MAX = 9000
+        private const val PADDING_CEILING = 1400   // the per-packet pad_cap wire ceiling
+
+        /** 0 (auto) or a plausible tunnel MTU. */
+        fun mtuInRange(mtu: Int): Boolean = mtu == 0 || mtu in MTU_MIN..MTU_MAX
+
+        /** Explicit TUN MTU from a config FILE (flat-INI or JSON); 0 = auto. REJECTS, like
+         *  the Rust `from_ini` and the C# `CheckedMtu`: a bad value in a file the user wrote
+         *  by hand is a mistake worth surfacing at import (every import path already reports
+         *  the message), not something to silently rewrite behind their back. */
+        private fun checkedMtu(mtu: Int): Int =
+            if (mtuInRange(mtu)) mtu
+            else throw IllegalArgumentException(
+                "invalid mtu $mtu — expected 0 (auto) or $MTU_MIN..$MTU_MAX"
+            )
+
+        /** Same range for a `qeli://` LINK, but falling back to auto instead of throwing —
+         *  mirrors the Rust link importer, which is infallible and only warns. A scanned or
+         *  pasted link must still yield a usable profile; the mtu is the one thing in it the
+         *  server re-pushes anyway. */
+        private fun linkMtuOrAuto(mtu: Int): Int {
+            if (mtuInRange(mtu)) return mtu
+            warn("qeli:// link mtu $mtu is out of range (expected 0 or $MTU_MIN..$MTU_MAX) — using auto")
+            return 0
+        }
+
+        /** Clamp imported padding bounds to 0..[PADDING_CEILING] and restore min <= max.
+         *  Clamped rather than rejected: unlike mtu these are pure obfuscation knobs, so
+         *  narrowing them costs the user nothing, while an oversized max breaks every
+         *  packet. */
+        private fun checkedPadding(min: Int, max: Int): Pair<Int, Int> {
+            val lo = min.coerceIn(0, PADDING_CEILING)
+            return lo to max.coerceIn(lo, PADDING_CEILING)
+        }
+
+        /** Warn without dragging `android.util.Log` into the JVM unit tests, where the
+         *  android.jar stub throws "not mocked" and would fail the link-conformance run
+         *  the moment a fixture carries an out-of-range value. */
+        private fun warn(msg: String) {
+            try { android.util.Log.w("VpnConfig", msg) } catch (_: Throwable) { /* off-device */ }
+        }
 
         /**
          * Parse a profile config in EITHER format: flat-INI (starts with a
@@ -284,6 +402,7 @@ data class VpnConfig(
         fun fromIni(text: String): VpnConfig {
             val ini = parseIni(text)
             val q = ini["qeli"] ?: throw IllegalArgumentException("config: missing [qeli] section")
+            val log = ini["logging"]
             val server = q["server"]?.takeIf { it.isNotBlank() }
                 ?: throw IllegalArgumentException("[qeli] missing required key 'server' (host:port)")
             val ci = server.lastIndexOf(':')
@@ -306,6 +425,11 @@ data class VpnConfig(
                 null
             else
                 dnsRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            // Padding bounds are clamped, not rejected — see [checkedPadding]. (C6)
+            val pad = checkedPadding(
+                q["padding_min"]?.toIntOrNull() ?: 0,
+                q["padding_max"]?.toIntOrNull() ?: 255
+            )
             return VpnConfig(
                 serverAddress = host,
                 port = port,
@@ -341,12 +465,37 @@ data class VpnConfig(
                 includeRoutes = q["include"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 excludeRoutes = q["exclude"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 dnsServers = if (dns.isNullOrEmpty()) emptyList() else dns,
-                mtu = q["mtu"]?.toIntOrNull() ?: 0,  // 0 = auto (use server-pushed MTU)
-                mtuProbe = q["mtu_probe"]?.lowercase()?.let { it != "false" && it != "0" } ?: true,
+                // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
+                mtu = checkedMtu(q["mtu"]?.toIntOrNull() ?: 0),
+                // Same false-set as the Rust `bool_or` and the iOS client. The old test
+                // (`!= "false" && != "0"`) read `mtu_probe = off` / `no` as ON — the exact
+                // opposite of what the user wrote, and of what the desktop client does.
+                mtuProbe = q["mtu_probe"]?.let { it.trim().lowercase() !in MTU_PROBE_OFF } ?: true,
                 // Per-app split tunnel (Android extra). Only "include"/"exclude" are honoured;
                 // anything else (or a missing key) falls back to "all" = every app tunnelled.
                 appsMode = q["apps_mode"]?.trim()?.lowercase()?.takeIf { it == "include" || it == "exclude" } ?: "all",
-                apps = q["apps"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+                apps = q["apps"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
+                // Local overrides for the normally server-pushed knobs. Key names match iOS.
+                paddingEnabled = q["padding"]?.let { bool(it) } ?: true,
+                paddingMin = pad.first,
+                paddingMax = pad.second,
+                heartbeatEnabled = q["heartbeat"]?.let { bool(it) } ?: true,
+                heartbeatIntervalMs = q["heartbeat_interval"]?.toLongOrNull() ?: 15000L,
+                heartbeatDataSize = q["heartbeat_size"]?.toIntOrNull() ?: 16,
+                heartbeatJitterMs = q["heartbeat_jitter"]?.toLongOrNull() ?: 2000L,
+                shapingEnabled = bool(q["shaping"]),
+                shapingGapMeanMs = q["shaping_gap_mean"]?.toLongOrNull() ?: 700L,
+                shapingGapMinMs = q["shaping_gap_min"]?.toLongOrNull() ?: 40L,
+                shapingGapMaxMs = q["shaping_gap_max"]?.toLongOrNull() ?: 6000L,
+                shapingBudgetBytesPerSec = q["shaping_budget"]?.toIntOrNull() ?: 16384,
+                shapingMinSize = q["shaping_min_size"]?.toIntOrNull() ?: 64,
+                shapingMaxSize = q["shaping_max_size"]?.toIntOrNull() ?: 1024,
+                shapingStealth = bool(q["shaping_stealth"]),
+                shapingStealthRateMbps = q["shaping_stealth_mbps"]?.toIntOrNull() ?: 2,
+                // Carried through untouched so re-saving a desktop config keeps its logging.
+                loggingLevel = log?.get("level")?.takeIf { it.isNotEmpty() },
+                loggingFile = log?.get("file")?.takeIf { it.isNotEmpty() },
+                loggingTimeFormat = log?.get("time_format")?.takeIf { it.isNotEmpty() }
             )
         }
 
@@ -398,6 +547,8 @@ data class VpnConfig(
                 root.has("password") -> root.optString("password")
                 else -> ""
             }
+            // Padding bounds are clamped, not rejected — see [checkedPadding]. (C6)
+            val pad = checkedPadding(padding.optInt("min_bytes", 0), padding.optInt("max_bytes", 255))
 
             return VpnConfig(
                 serverAddress = server.optString("address", root.optString("address", "127.0.0.1")),
@@ -412,7 +563,8 @@ data class VpnConfig(
                 password = password,
                 serverPublicKeyHex = auth.optStringOrNull("server_public_key"),
                 bindStaticToSession = auth.optBoolean("bind_static_to_session", true),
-                mtu = tun.optInt("mtu", 0),  // 0 = auto (use server-pushed MTU)
+                // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
+                mtu = checkedMtu(tun.optInt("mtu", 0)),
                 // Default to full-tunnel (a VPN should carry ALL traffic) so a config
                 // without a routing section doesn't silently leak outside the tunnel.
                 // Explicit "split-tunnel" is still honoured: isFullTunnel only becomes
@@ -423,6 +575,9 @@ data class VpnConfig(
                 excludeRoutes = routing.optStringList("exclude"),
                 routeLocalNetworks = routing.optBoolean("route_local_networks", false),
                 allowIpv6Leak = routing.optBoolean("allow_ipv6_leak", false),
+                // Was missing: a JSON config carrying routing.allow_lan imported with LAN
+                // bypass silently off, while the iOS client honoured it.
+                allowLan = routing.optBoolean("allow_lan", false),
                 dnsServers = dns.optStringList("servers"),
                 wireMode = obf.optString("mode", "fake-tls"),
                 obfsKey = obf.optString("obfs_key", ""),
@@ -435,8 +590,8 @@ data class VpnConfig(
                 sni = obf.optStringOrNull("sni"),
                 realityShortId = obf.optStringOrNull("reality_short_id"),
                 paddingEnabled = padding.optBoolean("enabled", true),
-                paddingMin = padding.optInt("min_bytes", 0),
-                paddingMax = padding.optInt("max_bytes", 255),
+                paddingMin = pad.first,
+                paddingMax = pad.second,
                 heartbeatEnabled = heartbeat.optBoolean("enabled", true),
                 heartbeatIntervalMs = heartbeat.optLong("interval_ms", 15000),
                 heartbeatDataSize = heartbeat.optInt("data_size_bytes", 16),
@@ -536,7 +691,13 @@ data class VpnConfig(
                     "jc" -> jc = v.toIntOrNull() ?: 0
                     "jmin" -> jmin = v.toIntOrNull() ?: 40
                     "jmax" -> jmax = v.toIntOrNull() ?: 300
-                    "mtu" -> linkMtu = v.toIntOrNull() ?: 0
+                    // Out-of-range → fall back to auto rather than importing a value the
+                    // client can't apply, and SAY SO (a silently dropped mtu looks like the
+                    // link never carried one). Matches the Rust from_link fallback; iOS used
+                    // to reject the whole link and this app used to import it verbatim, so
+                    // `qeli://…?mtu=99999` reached VpnService.Builder.setMtu and turned into
+                    // an endless establish-fail → reconnect loop. (Audit 2026-07-27, C6)
+                    "mtu" -> linkMtu = linkMtuOrAuto(v.toIntOrNull() ?: 0)
                     // Legacy tolerance only — this app stopped EMITTING these in 0.7.13
                     // (see toQeliUri). Kept so links it issued earlier still import the way
                     // they were shared; no other implementation carries them.
@@ -577,7 +738,12 @@ data class VpnConfig(
                 mtu = linkMtu,
                 mtuProbe = linkMtuProbe,
                 bindStaticToSession = bindStatic
-            )
+            ).also {
+                // A link is untrusted input: validate at the boundary so a forged newline
+                // in user/pass/sni can never reach the profile store (and from there the
+                // next toIni). Same gate the iOS client applies to an imported link.
+                it.validate()
+            }
         }
 
         /** Percent-encode UTF-8 bytes except RFC 3986 unreserved (mirrors C# Uri.EscapeDataString). */

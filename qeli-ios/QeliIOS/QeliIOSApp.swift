@@ -10,6 +10,11 @@ struct QeliIOSApp: App {
             RootView()
                 .environmentObject(model)
                 .preferredColorScheme(colorScheme)
+                // Drive the UI language from the setting instead of the device locale, so
+                // the app opens in English by default on any phone (matching Android) and
+                // switches live when the user picks a language — SwiftUI resolves every
+                // LocalizedStringKey against this locale.
+                .environment(\.locale, model.settings.language.locale)
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }

@@ -122,6 +122,12 @@ struct ProfilesView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Switching is refused while the tunnel is up (AppModel.canSwitchProfile). Dim
+            // the rows that can't be picked so that reads as unavailable BEFORE the tap,
+            // instead of only surfacing as an alert afterwards — same affordance as the
+            // Android and desktop clients. Only the selectable area is dimmed: the row's
+            // menu (Share / Edit / Duplicate / Delete) stays fully usable while locked.
+            .opacity(isSwitchLocked(profile) ? 0.45 : 1)
             Spacer(minLength: 4)
             Menu {
                 Button { sharingProfile = profile } label: { Label("Share", systemImage: "square.and.arrow.up") }
@@ -144,6 +150,12 @@ struct ProfilesView: View {
             RoundedRectangle(cornerRadius: 17, style: .continuous)
                 .stroke(profile.id == model.activeProfileID ? QeliTheme.primary.opacity(0.45) : Color.primary.opacity(0.08))
         }
+    }
+
+    /// True when this row can't be made active right now — the tunnel is up (or an MDM
+    /// policy owns the choice) and the row isn't the one already running.
+    private func isSwitchLocked(_ profile: Profile) -> Bool {
+        !model.canSwitchProfile && profile.id != model.activeProfileID
     }
 
     private func reachabilityText(_ profile: Profile) -> String {
