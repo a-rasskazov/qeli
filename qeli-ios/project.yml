@@ -30,12 +30,11 @@ targets:
       - path: QeliCore
         excludes:
           - Native/include
-          # QeliFFI.swift is NOT excluded here even though the app does not link QeliNative:
-          # the app's reachability probe builds a real hybrid ClientHello and so references
-          # MLKEMContext / QeliNativeCore. The file guards its real implementation behind
-          # `#if canImport(QeliNative)` and, without the module and without
-          # QELI_NATIVE_REQUIRED, compiles to stubs that throw `.unavailable` — which is the
-          # branch written for exactly this target. Excluding it just left the app unbuildable.
+          # QeliFFI.swift must be part of the app: the reachability probe builds a real hybrid
+          # ClientHello, so AppModel references MLKEMContext / QeliNativeCore directly.
+          # Excluding it left the app unbuildable. Note that QeliNative IS importable here, so
+          # the file compiles its real FFI branch rather than the `.unavailable` stubs — hence
+          # the xcframework in `dependencies` below; without it the app fails to link.
           - Native/Qeli.xcframework
           - Native/Qeli.xcframework/**
       - path: Config/PrivacyInfo.xcprivacy
@@ -51,6 +50,11 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_ENTITLEMENTS: Config/QeliIOS.entitlements
     dependencies:
+      # The container app embeds the core; QeliPacketTunnel links it with `embed: false` and
+      # resolves it from the app bundle at runtime. Nothing embedded it before, so the
+      # extension's arrangement had no counterpart.
+      - framework: QeliCore/Native/Qeli.xcframework
+        embed: true
       - target: QeliPacketTunnel
         embed: true
       - target: QeliWidgets
