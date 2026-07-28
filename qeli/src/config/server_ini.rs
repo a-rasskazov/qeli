@@ -115,10 +115,33 @@ impl ServerConfig {
             ..Default::default()
         };
         // inline [user:*] / [group:*] override auth.users / auth.groups
+        //
+        // De-duplicate by username, first-wins — the SAME rule `UsersDb::from_ini` applies
+        // (L7). This path did not, and the asymmetry was a security bug rather than a
+        // cosmetic one: `find_user` returns the first entry that matches AND is enabled, so
+        // a stale `[user:alice]` left above a newly added `[user:alice] enabled = false`
+        // meant the admin disabled the account, saw it listed as disabled, and the shadow
+        // copy went on authenticating. Reachable through the panel too — `put_config`
+        // validates each username with `is_valid_ident` but never checks uniqueness, and
+        // `to_ini_string` faithfully writes both sections back out.
+        // (Audit 2026-07-27, C7.)
+        let mut seen_users = std::collections::HashSet::new();
         let users: Vec<UserEntry> = doc
             .sections_of("user")
             .map(user_from)
             .filter(|u| !u.username.is_empty())
+            .filter(|u| {
+                if seen_users.insert(u.username.clone()) {
+                    true
+                } else {
+                    log::warn!(
+                        "config: duplicate inline [user:{}] — keeping the first block and \
+                         ignoring the later one (the lookup only ever saw the first)",
+                        u.username
+                    );
+                    false
+                }
+            })
             .collect();
         if !users.is_empty() {
             // Inline users win over an explicitly-set users_file — warn so it isn't a
@@ -357,11 +380,13 @@ fn logging_from(s: &Section) -> crate::config::LoggingConfig {
 
 fn profile_to(p: &ProfileConfig) -> Section {
     let mut s = Section::new("profile", Some(p.name.clone()));
-    // Emit only the keys that apply to this profile's transport, so a generated/
-    // round-tripped config isn't cluttered with options that do nothing here
-    // (QUIC masking is UDP-only; TCP perf + stream-bonding are TCP-only). Parsing
-    // still accepts every key (serde defaults), so older mixed configs load fine.
-    let is_udp = p.bind.transport.eq_ignore_ascii_case("udp");
+    // Emit EVERY key, including those that do nothing on this profile's transport.
+    //
+    // This used to emit transport-specific keys conditionally, to keep a generated config
+    // tidy — but the parser accepts them all, so serialization was lossy in one direction
+    // and the panel's Save silently deleted whatever the operator had written for the
+    // other transport. Tidiness is not worth a save that loses data.
+    // (Audit 2026-07-27, P5.)
     put(&mut s, "enabled", p.enabled);
     if let Some(k) = &p.identity_key {
         put_str(&mut s, "identity_key", k);
@@ -588,27 +613,34 @@ fn profile_to(p: &ProfileConfig) -> Section {
         "obf.anti_fingerprinting.add_jitter_to_handshake",
         o.anti_fingerprinting.add_jitter_to_handshake,
     );
-    // QUIC masking is a UDP-only disguise; multipath stream-bonding is TCP-only.
-    if is_udp {
-        put(&mut s, "obf.quic.enabled", o.quic.enabled);
-    } else {
-        put(&mut s, "obf.multipath.enabled", o.multipath.enabled);
-        put(&mut s, "obf.multipath.max_streams", o.multipath.max_streams);
-        put(&mut s, "obf.multipath.adaptive", o.multipath.adaptive);
-    }
+    // QUIC masking is a UDP-only disguise; multipath stream-bonding is TCP-only — but BOTH
+    // are emitted regardless of the current transport.
+    //
+    // They used to be written conditionally while the PARSER reads them unconditionally,
+    // which made every save lossy: a UDP profile with hand-written `obf.multipath.*` (or
+    // `perf.tcp.*` below) lost those lines the first time anyone pressed Save in the
+    // panel, and the loss was invisible until the operator later switched
+    // `bind.transport = tcp` and the profile came up on defaults instead of the tuning
+    // they had written. The round-trip test did not catch it because its fixture only
+    // carries keys matching its own transport. Writing everything costs a few lines in the
+    // file and makes save idempotent for any input the parser accepts.
+    // (Audit 2026-07-27, P5.)
+    put(&mut s, "obf.quic.enabled", o.quic.enabled);
+    put(&mut s, "obf.multipath.enabled", o.multipath.enabled);
+    put(&mut s, "obf.multipath.max_streams", o.multipath.max_streams);
+    put(&mut s, "obf.multipath.adaptive", o.multipath.adaptive);
     put(&mut s, "obf.awg.enabled", o.awg.enabled);
     put(&mut s, "obf.awg.jc", o.awg.jc);
     put(&mut s, "obf.awg.jmin", o.awg.jmin);
     put(&mut s, "obf.awg.jmax", o.awg.jmax);
     // performance
     let pf = &p.performance;
-    // TCP socket tuning only applies to a TCP transport.
-    if !is_udp {
-        put(&mut s, "perf.tcp.nodelay", pf.tcp.nodelay);
-        put(&mut s, "perf.tcp.keepalive_secs", pf.tcp.keepalive_secs);
-        put(&mut s, "perf.tcp.send_buffer_size", pf.tcp.send_buffer_size);
-        put(&mut s, "perf.tcp.recv_buffer_size", pf.tcp.recv_buffer_size);
-    }
+    // TCP socket tuning only applies to a TCP transport, but is emitted regardless — see
+    // the note on obf.quic/obf.multipath above. (Audit 2026-07-27, P5.)
+    put(&mut s, "perf.tcp.nodelay", pf.tcp.nodelay);
+    put(&mut s, "perf.tcp.keepalive_secs", pf.tcp.keepalive_secs);
+    put(&mut s, "perf.tcp.send_buffer_size", pf.tcp.send_buffer_size);
+    put(&mut s, "perf.tcp.recv_buffer_size", pf.tcp.recv_buffer_size);
     put(&mut s, "perf.tun.read_buffer_size", pf.tun.read_buffer_size);
     put(
         &mut s,
@@ -1268,6 +1300,86 @@ mod tests {
         // time_format, not only read it. Without logging_to emitting the key, a
         // panel "Save to Disk" would silently reset the user's choice to datetime.
         assert_eq!(back.logging.time_format, "rfc3339");
+    }
+
+    /// Saving must not drop keys that belong to the OTHER transport.
+    ///
+    /// The serializer emitted `obf.multipath.*` / `perf.tcp.*` only for TCP and
+    /// `obf.quic.*` only for UDP, while the parser reads all of them unconditionally — so
+    /// a UDP profile carrying hand-written multipath/TCP tuning lost it on the first panel
+    /// save, and nobody noticed until the transport was switched later.
+    /// (Audit 2026-07-27, P5.)
+    #[test]
+    fn saving_preserves_keys_of_the_other_transport() {
+        let src = "\
+[profile:udpone]
+bind.transport = udp
+obf.multipath.max_streams = 6
+obf.multipath.enabled = true
+perf.tcp.keepalive_secs = 77
+obf.quic.enabled = true
+";
+        let cfg = crate::config::parse_server_config(src).expect("parses");
+        let p = &cfg.profiles[0];
+        assert_eq!(p.obfuscation.multipath.max_streams, 6);
+        assert_eq!(p.performance.tcp.keepalive_secs, 77);
+
+        // Round-trip through the serializer the panel uses.
+        let out = cfg.to_ini_string();
+        for token in [
+            "obf.multipath.max_streams = 6",
+            "perf.tcp.keepalive_secs = 77",
+            "obf.quic.enabled = true",
+        ] {
+            assert!(
+                out.contains(token),
+                "save dropped {token:?} on a UDP profile\n--- out ---\n{out}"
+            );
+        }
+        let back = crate::config::parse_server_config(&out).expect("re-parses");
+        let bp = &back.profiles[0];
+        assert_eq!(bp.obfuscation.multipath.max_streams, 6);
+        assert_eq!(bp.performance.tcp.keepalive_secs, 77);
+        assert!(bp.obfuscation.quic.enabled);
+    }
+
+    /// A duplicate inline `[user:*]` must collapse to the FIRST block, exactly as
+    /// `UsersDb::from_ini` already did — otherwise disabling an account does nothing.
+    ///
+    /// `find_user` returns the first entry that matches AND is enabled, so a stale block
+    /// above a newly-disabled one kept authenticating while the panel showed the account
+    /// as disabled. (Audit 2026-07-27, C7.)
+    #[test]
+    fn duplicate_inline_user_keeps_only_the_first_block() {
+        let src = "\
+[profile:main]
+bind.transport = tcp
+
+[user:alice]
+password_hash = $argon2id$first
+enabled = true
+
+[user:alice]
+password_hash = $argon2id$second
+enabled = false
+
+[user:bob]
+password_hash = $argon2id$bob
+";
+        let cfg = crate::config::parse_server_config(src).expect("parses");
+        let alices: Vec<_> = cfg
+            .auth
+            .users
+            .iter()
+            .filter(|u| u.username == "alice")
+            .collect();
+        assert_eq!(alices.len(), 1, "the shadow copy must be dropped");
+        assert_eq!(
+            alices[0].password_hash, "$argon2id$first",
+            "first block wins, matching find_user"
+        );
+        assert!(cfg.auth.users.iter().any(|u| u.username == "bob"));
+        assert_eq!(cfg.auth.users.len(), 2);
     }
 
     #[test]

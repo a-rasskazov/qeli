@@ -484,8 +484,13 @@ impl ClientConfig {
             // application-layer fragmentation, so an oversized mtu emits one over-large
             // datagram, and a tiny one breaks the tunnel. Same 576..=9000 range the
             // server-PUSHED mtu is already validated against (0 stays "auto").
-            if m != 0 && !(576..=9000).contains(&m) {
-                anyhow::bail!("invalid mtu {} — expected 0 (auto) or 576..=9000", m);
+            if m != 0 && !crate::config::server::mtu_in_range(m as i64) {
+                anyhow::bail!(
+                    "invalid mtu {} — expected 0 (auto) or {}..={}",
+                    m,
+                    crate::config::server::MTU_MIN,
+                    crate::config::server::MTU_MAX
+                );
             }
             cfg.tun.mtu = m;
         }
@@ -635,7 +640,7 @@ impl ClientConfig {
         // (or a negative) would otherwise become an out-of-range TUN MTU the file path
         // rejects. This entry point is infallible (returns ClientConfig, not Result), so an
         // out-of-range value falls back to auto rather than failing the import. (M6)
-        cfg.tun.mtu = if link.mtu != 0 && !(576..=9000).contains(&link.mtu) {
+        cfg.tun.mtu = if link.mtu != 0 && !crate::config::server::mtu_in_range(link.mtu as i64) {
             log::warn!(
                 "qeli:// link mtu {} is out of range (expected 0 or 576..=9000) — using auto",
                 link.mtu
@@ -1234,9 +1239,14 @@ file = /tmp/client.log
         ];
 
         for t in qeli_tokens {
-            assert!(out.contains(t), "client to_ini dropped [qeli] key: {}
+            assert!(
+                out.contains(t),
+                "client to_ini dropped [qeli] key: {}
 --- out ---
-{}", t, out);
+{}",
+                t,
+                out
+            );
         }
         // `[logging]` round-trip: the client parses this section (level / file /
         // time_format, honoured by the router/headless client) AND now re-emits it,
@@ -1251,8 +1261,12 @@ file = /tmp/client.log
             "file = /tmp/client.log",
         ];
         for t in log_tokens {
-            assert!(out.contains(t), "client to_ini dropped [logging] key: {}\n--- out ---\n{}", t, out);
+            assert!(
+                out.contains(t),
+                "client to_ini dropped [logging] key: {}\n--- out ---\n{}",
+                t,
+                out
+            );
         }
     }
-
 }

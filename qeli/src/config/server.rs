@@ -223,6 +223,210 @@ impl Default for BruteForceConfig {
     }
 }
 
+/// The usable tunnel MTU range, shared by every component that checks one.
+///
+/// There used to be three different answers. The INI parser enforced nothing, the server
+/// accepted the kernel's full `68..=65535`, and the client — both its own config
+/// (`config/client.rs`) and the value pushed to it in AuthOK (`client/mod.rs`) — accepted
+/// only `576..=9000`, silently discarding anything else and falling back to
+/// `MTU_AUTO_FALLBACK`. So `tun.mtu = 300` passed `check-config`, passed startup, brought
+/// the server's TUN up at 300, and left every client on 1400: a one-way MTU mismatch that
+/// dropped anything larger than 300 bytes, with nothing in the logs on either side.
+/// 576 is the IPv4 minimum reassembly buffer (RFC 791); 9000 is conventional jumbo.
+/// (Audit 2026-07-27, C4.)
+pub const MTU_MIN: u32 = 576;
+pub const MTU_MAX: u32 = 9000;
+
+/// Resolve the DHCP pool bounds for a profile, defaulting them from the tunnel subnet
+/// and refusing a pool that lies outside it.
+///
+/// `DhcpConfig.pool_start`/`pool_end` have no serde defaults, and both places that needed
+/// a fallback hard-coded `10.0.0.2`/`10.0.0.254` — an address range that has nothing to do
+/// with the shipped tunnel default of `10.9.0.1/24`. Turning `dhcp.enabled` on without
+/// naming a pool therefore passed validation and handed clients 10.0.0.x addresses on a
+/// 10.9.0.0/24 interface, where they simply did not route. Nothing checked containment
+/// either, so an explicitly-configured pool on the wrong subnet was equally silent.
+/// Deriving the default from `tun.address`/`tun.netmask` and rejecting anything outside
+/// that subnet fixes both, and keeping it in ONE function stops the validation path and
+/// the runtime path from drifting apart again. (Audit 2026-07-27, C9.)
+pub fn dhcp_pool_bounds(
+    dhcp: &DhcpConfig,
+    tun_address: &str,
+    tun_netmask: &str,
+) -> Result<(std::net::Ipv4Addr, std::net::Ipv4Addr), String> {
+    use std::net::Ipv4Addr;
+    let addr: Ipv4Addr = tun_address
+        .parse()
+        .map_err(|e| format!("invalid tun.address '{tun_address}': {e}"))?;
+    let mask: Ipv4Addr = tun_netmask
+        .parse()
+        .map_err(|e| format!("invalid tun.netmask '{tun_netmask}': {e}"))?;
+    let (a, m) = (u32::from(addr), u32::from(mask));
+    let network = a & m;
+    let broadcast = network | !m;
+    if broadcast.saturating_sub(network) < 3 {
+        return Err(format!(
+            "tun subnet {tun_address}/{tun_netmask} is too small to host a DHCP pool"
+        ));
+    }
+    // Usable host range, skipping the network address and the gateway (network|1, which
+    // is what the tunnel itself uses), and the broadcast address.
+    let lo = network + 2;
+    let hi = broadcast - 1;
+
+    let parse = |field: &str, val: &Option<String>, dflt: u32| -> Result<Ipv4Addr, String> {
+        match val.as_deref().filter(|v| !v.trim().is_empty()) {
+            Some(v) => v.trim().parse::<Ipv4Addr>().map_err(|e| {
+                format!("invalid dhcp.{field} '{v}': {e} — expected a plain IPv4 address")
+            }),
+            None => Ok(Ipv4Addr::from(dflt)),
+        }
+    };
+    let start = parse("pool_start", &dhcp.pool_start, lo)?;
+    let end = parse("pool_end", &dhcp.pool_end, hi)?;
+
+    if u32::from(end) < u32::from(start) {
+        return Err(format!(
+            "dhcp.pool_end ({end}) must not be below dhcp.pool_start ({start})"
+        ));
+    }
+    for (field, ip) in [("pool_start", start), ("pool_end", end)] {
+        let v = u32::from(ip);
+        if v < lo || v > hi {
+            return Err(format!(
+                "dhcp.{field} ({ip}) is outside the tunnel subnet's usable range \
+                 {}–{} (tun.address {tun_address}, netmask {tun_netmask}) — clients would \
+                 receive addresses that cannot route on this interface",
+                Ipv4Addr::from(lo),
+                Ipv4Addr::from(hi)
+            ));
+        }
+    }
+    Ok((start, end))
+}
+
+/// `true` when `mtu` is inside [`MTU_MIN`]..=[`MTU_MAX`].
+///
+/// Takes `i64` because the same value is typed differently at each site it is checked —
+/// `u32` in the server config, `i32` in the client config, `i64` when parsed out of
+/// AuthOK — and having every caller open-code its own comparison is precisely how the
+/// three ranges drifted apart in the first place. Callers pass `x as i64`.
+pub fn mtu_in_range(mtu: i64) -> bool {
+    (MTU_MIN as i64..=MTU_MAX as i64).contains(&mtu)
+}
+
+#[cfg(test)]
+mod dhcp_pool_tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn dhcp(start: Option<&str>, end: Option<&str>) -> DhcpConfig {
+        DhcpConfig {
+            enabled: true,
+            pool_start: start.map(str::to_string),
+            pool_end: end.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// With no pool configured the default must come from the TUNNEL subnet, not from a
+    /// hard-coded 10.0.0.x that has nothing to do with it. (Audit 2026-07-27, C9.)
+    #[test]
+    fn default_pool_is_derived_from_the_tun_subnet() {
+        let (s, e) = dhcp_pool_bounds(&dhcp(None, None), "10.9.0.1", "255.255.255.0").unwrap();
+        assert_eq!(s, "10.9.0.2".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(e, "10.9.0.254".parse::<Ipv4Addr>().unwrap());
+
+        let (s, e) = dhcp_pool_bounds(&dhcp(None, None), "192.168.7.1", "255.255.255.0").unwrap();
+        assert_eq!(s, "192.168.7.2".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(e, "192.168.7.254".parse::<Ipv4Addr>().unwrap());
+    }
+
+    /// A pool on a different subnet must be refused, not silently handed out.
+    #[test]
+    fn pool_outside_the_tun_subnet_is_rejected() {
+        // The old hard-coded default, against the shipped tunnel default.
+        let err = dhcp_pool_bounds(
+            &dhcp(Some("10.0.0.2"), Some("10.0.0.254")),
+            "10.9.0.1",
+            "255.255.255.0",
+        )
+        .unwrap_err();
+        assert!(err.contains("outside the tunnel subnet"), "got: {err}");
+
+        // Only one end outside is enough.
+        assert!(dhcp_pool_bounds(
+            &dhcp(Some("10.9.0.10"), Some("10.9.1.10")),
+            "10.9.0.1",
+            "255.255.255.0"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn valid_pool_and_ordering_still_work() {
+        let (s, e) = dhcp_pool_bounds(
+            &dhcp(Some("10.9.0.100"), Some("10.9.0.200")),
+            "10.9.0.1",
+            "255.255.255.0",
+        )
+        .unwrap();
+        assert_eq!(s, "10.9.0.100".parse::<Ipv4Addr>().unwrap());
+        assert_eq!(e, "10.9.0.200".parse::<Ipv4Addr>().unwrap());
+
+        let err = dhcp_pool_bounds(
+            &dhcp(Some("10.9.0.200"), Some("10.9.0.100")),
+            "10.9.0.1",
+            "255.255.255.0",
+        )
+        .unwrap_err();
+        assert!(err.contains("must not be below"), "got: {err}");
+    }
+}
+
+impl BruteForceConfig {
+    /// Reject a policy that cannot rate-limit anything. `label` names the section
+    /// (`[auth]` / `[web]`) so the operator knows which one to fix.
+    ///
+    /// These bounds existed only inside the panel's `POST /api/blocked/settings`
+    /// handler, so every other way of setting the same four keys — the INI file,
+    /// `PUT /api/config`, `PUT /api/config/raw` — wrote them unchecked. Two values were
+    /// quietly catastrophic:
+    ///
+    /// * `window_secs = 0` — `record_ip_failure` retains only entries newer than the
+    ///   window, and `now.duration_since(t) < ZERO` is false even for the entry it just
+    ///   pushed, so the deque is cleared on every attempt and its length never exceeds 1.
+    ///   Lockout NEVER fires, while the panel keeps reporting the policy as enabled.
+    /// * `max_attempts = 0` — `len() >= 0` holds always, so the first wrong password
+    ///   locks the source out. A self-inflicted denial of service.
+    ///
+    /// Bounds are enforced even when `enabled = false`, so flipping the switch later
+    /// cannot activate a policy that was never checked. (Audit 2026-07-27, C1.)
+    pub fn validate(&self, label: &str) -> Result<(), String> {
+        if !(1..=10_000).contains(&self.max_attempts) {
+            return Err(format!(
+                "{label} brute_force.max_attempts must be between 1 and 10000 (got {}) — \
+                 0 would lock out on the first failed attempt",
+                self.max_attempts
+            ));
+        }
+        if !(1..=86_400).contains(&self.window_secs) {
+            return Err(format!(
+                "{label} brute_force.window_secs must be between 1 and 86400 (24h) (got {}) — \
+                 0 clears the failure history on every attempt, so lockout never triggers",
+                self.window_secs
+            ));
+        }
+        if !(1..=2_592_000).contains(&self.lockout_secs) {
+            return Err(format!(
+                "{label} brute_force.lockout_secs must be between 1 and 2592000 (30d) (got {})",
+                self.lockout_secs
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn default_bf_max_attempts() -> u32 {
     5
 }
