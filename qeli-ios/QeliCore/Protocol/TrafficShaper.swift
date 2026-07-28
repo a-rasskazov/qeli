@@ -32,7 +32,21 @@ final class TrafficShaper: @unchecked Sendable {
 
     func nextGapMilliseconds() -> Int {
         let sample = -Double(gapMeanMilliseconds) * log(max(1e-12, 1 - Double.random(in: 0..<1)))
-        return min(max(Int(sample), gapMinimumMilliseconds), gapMaximumMilliseconds)
+        // Clamp in Double BEFORE converting. `Int(someDouble)` does not saturate in Swift —
+        // it TRAPS when the value is out of `Int`'s range, and the old code converted first
+        // and clamped afterwards. The exponential draw reaches ~27.6 × the mean, and the
+        // mean comes straight from the server's AuthOK with no validation
+        // (`VPNConfig.validate()` covers port/timeout/mtu/padding but no shaping field), so
+        // a server sending a huge `idle_gap_mean_ms` crashed the Network Extension on the
+        // first heartbeat tick — remotely, post-authentication.
+        //
+        // The bounds themselves are also clamped: `gapMinimumMilliseconds` was used raw as
+        // the upper argument, so two negative values collapsed the cover emitter into a
+        // 1 ms busy-loop. (Audit 2026-07-27, C10.)
+        let lo = Double(max(0, gapMinimumMilliseconds))
+        let hi = Double(max(gapMinimumMilliseconds, gapMaximumMilliseconds))
+        let clamped = min(max(sample, lo), max(lo, hi))
+        return Int(clamped.rounded())
     }
 
     func nextSize() -> Int {

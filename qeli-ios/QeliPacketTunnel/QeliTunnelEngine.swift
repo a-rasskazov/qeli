@@ -23,6 +23,10 @@ final class QeliTunnelEngine: @unchecked Sendable {
     private let sharedStore: SharedTunnelStore
 
     private let stateLock = NSLock()
+    /// Deadline for one `setTunnelNetworkSettings` call — see the note at its call site.
+    /// Generous: applying settings is normally sub-second, so this only ever fires when
+    /// the callback is never going to arrive. (Audit 2026-07-27, M5.)
+    private static let networkSettingsTimeoutMilliseconds = 15_000
     private let packetWriteLock = NSLock()
     private let networkSettingsGate = AsyncOperationGate()
     private var snapshot: TunnelSnapshot
@@ -215,6 +219,22 @@ final class QeliTunnelEngine: @unchecked Sendable {
         if effectiveConfig.isFullTunnel && !effectiveConfig.allowIPv6Leak {
             let ipv6 = NEIPv6Settings(addresses: ["fd00:7165:6c69::2"], networkPrefixLengths: [64])
             ipv6.includedRoutes = [.default()]
+            // `allowLAN` must exclude the v6 local ranges too, exactly as it does for v4
+            // above. The v6 default was captured with NO exclusions at all, and the tunnel
+            // carries only IPv4 (`TunnelRecordSender.sendUserPacket` drops non-v4), so
+            // anything reachable over IPv6 simply vanished. A user who ticked "allow local
+            // network" saw their v4 NAS work and their printer, AirPlay target or
+            // ULA-addressed NAS stay unreachable, with nothing to explain the difference.
+            // Link-local (fe80::/10) and unique-local (fc00::/7) are the LAN's own
+            // prefixes; multicast (ff00::/8) carries the discovery protocols — mDNS,
+            // SSDP — those services are found with. (Audit 2026-07-27, M7.)
+            if effectiveConfig.allowLAN || SettingsStore().load().allowLAN {
+                ipv6.excludedRoutes = [
+                    NEIPv6Route(destinationAddress: "fe80::", networkPrefixLength: NSNumber(value: 10)),
+                    NEIPv6Route(destinationAddress: "fc00::", networkPrefixLength: NSNumber(value: 7)),
+                    NEIPv6Route(destinationAddress: "ff00::", networkPrefixLength: NSNumber(value: 8))
+                ]
+            }
             network.ipv6Settings = ipv6
         }
 
@@ -241,12 +261,41 @@ final class QeliTunnelEngine: @unchecked Sendable {
             }
             guard let validity else { throw CancellationError() }
             guard validity else { throw TunnelEngineError.staleNetworkSettings }
-            try await withCheckedThrowingContinuation { continuation in
+            // Bounded by a deadline, because NOTHING else here is.
+            //
+            // `setTunnelNetworkSettings` is a completion-callback API, and a callback that
+            // never fires is a real failure mode when the provider is being torn down
+            // mid-reconnect. This continuation had no cancellation handler and no timeout,
+            // so the task suspended forever — while HOLDING `networkSettingsGate`, whose
+            // `acquire()` is itself an uncancellable continuation. One stuck call therefore
+            // wedged every future `applyNetworkSettings`: all reconnects and every
+            // `handleAppMessage("reload-settings")` blocked permanently, leaving a tunnel
+            // that reported Connected, carried nothing, and never retried.
+            //
+            // A task group cannot fix this — the callback bridge is not cancellable, so the
+            // group would still wait on it. Instead the timer resumes the continuation
+            // itself, with a one-shot guard so exactly one of the two paths wins.
+            // (Audit 2026-07-27, M5.)
+            let settingsOutcome: Result<Void, Error> = await withCheckedContinuation { continuation in
+                let resumeLock = NSLock()
+                var alreadyResumed = false
+                let finish: @Sendable (Result<Void, Error>) -> Void = { outcome in
+                    resumeLock.lock()
+                    let isFirst = !alreadyResumed
+                    alreadyResumed = true
+                    resumeLock.unlock()
+                    if isFirst { continuation.resume(returning: outcome) }
+                }
                 provider.setTunnelNetworkSettings(network) { error in
-                    if let error { continuation.resume(throwing: error) }
-                    else { continuation.resume(returning: ()) }
+                    finish(error.map { Result<Void, Error>.failure($0) } ?? .success(()))
+                }
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + .milliseconds(Self.networkSettingsTimeoutMilliseconds)
+                ) {
+                    finish(.failure(TunnelEngineError.networkSettingsTimedOut))
                 }
             }
+            try settingsOutcome.get()
             let stillCurrent = stateLock.withLock { () -> Bool? in
                 guard !stopped else { return nil }
                 guard networkSettingsGeneration == requestGeneration else { return false }
@@ -1061,11 +1110,61 @@ final class QeliTunnelEngine: @unchecked Sendable {
         return false
     }
 
+    /// Read from the TUN, resuming on cancellation instead of waiting for a packet.
+    ///
+    /// `readPackets` only calls back when a packet actually arrives. With a bare
+    /// continuation the uplink task therefore parked here indefinitely on an idle tunnel,
+    /// and `uplinkTask.cancel()` in `stop()` had no effect: the task stayed alive, kept a
+    /// strong reference to `self`, and `self.provider` is `unowned`. Starting a second
+    /// tunnel on the same provider (a profile switch) then left the OLD engine's task
+    /// suspended here; the next packet resumed it into a released object graph.
+    ///
+    /// `withTaskCancellationHandler` resumes the continuation on cancellation, so the
+    /// loop's own `Task.isCancelled` check is reached and the task actually finishes. The
+    /// in-flight `readPackets` callback may still fire afterwards, which is harmless: it
+    /// hits the one-shot guard and is dropped. (Audit 2026-07-27, M6.)
     private func readPackets() async -> ([Data], [NSNumber]) {
-        await withCheckedContinuation { continuation in
-            provider.packetFlow.readPackets { packets, protocols in
-                continuation.resume(returning: (packets, protocols))
+        // The continuation must be reachable from BOTH the packet callback and the
+        // cancellation handler, and exactly one of them may resume it — hence the box.
+        final class ReadBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var continuation: CheckedContinuation<([Data], [NSNumber]), Never>?
+            private var resumed = false
+
+            /// Store the continuation, or report that cancellation already won.
+            func park(_ c: CheckedContinuation<([Data], [NSNumber]), Never>) -> Bool {
+                lock.lock()
+                defer { lock.unlock() }
+                if resumed { return false }
+                continuation = c
+                return true
             }
+
+            func resume(_ value: ([Data], [NSNumber])) {
+                lock.lock()
+                let pending = continuation
+                let isFirst = !resumed
+                resumed = true
+                continuation = nil
+                lock.unlock()
+                if isFirst { pending?.resume(returning: value) }
+            }
+        }
+
+        let box = ReadBox()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard box.park(continuation) else {
+                    // Cancelled before we parked — resume immediately with nothing.
+                    continuation.resume(returning: ([], []))
+                    return
+                }
+                provider.packetFlow.readPackets { packets, protocols in
+                    box.resume((packets, protocols))
+                }
+            }
+        } onCancel: {
+            box.resume(([], []))
         }
     }
 
@@ -1209,6 +1308,7 @@ enum TunnelEngineError: LocalizedError {
     case staleNetworkSettings
     case networkPathUnavailable
     case startTimedOut(Int)
+    case networkSettingsTimedOut
     case unsupportedCombination(String)
     case reconnectStopped(ReconnectStopReason, String)
 
@@ -1216,6 +1316,8 @@ enum TunnelEngineError: LocalizedError {
         switch self {
         case .packetInjectionFailed:
             return "iOS rejected a packet from the Qeli tunnel."
+        case .networkSettingsTimedOut:
+            return "iOS did not answer setTunnelNetworkSettings in time."
         case .transportUnavailable:
             return "The tunnel transport is unavailable."
         case .sessionUnavailable:

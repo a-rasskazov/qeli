@@ -22,7 +22,7 @@ enum QeliObfs {
         let nonce = try secureRandom(count: nonceLength)
         let flag = UInt8(0x40) | ((try secureRandom(count: 1))[0] & 0x3f)
         var stream = try QeliChaCha20Keystream(key: key, nonce: nonce)
-        return Data([flag]) + nonce + stream.xor(payload)
+        return Data([flag]) + nonce + (try stream.xor(payload))
     }
 
     static func datagramOpen(key: Data, datagram: Data) throws -> Data? {
@@ -31,7 +31,7 @@ enum QeliObfs {
         let nonceEnd = datagram.index(nonceStart, offsetBy: nonceLength)
         let nonce = Data(datagram[nonceStart..<nonceEnd])
         var stream = try QeliChaCha20Keystream(key: key, nonce: nonce)
-        return stream.xor(Data(datagram[nonceEnd...]))
+        return try stream.xor(Data(datagram[nonceEnd...]))
     }
 
     /// One client-to-server RFC 6455 binary frame with a caller-provided mask.
@@ -107,11 +107,22 @@ struct QeliChaCha20Keystream {
         self.nonce = Array(nonce)
     }
 
-    mutating func xor(_ data: Data) -> Data {
+    /// Throws once the 2^32 block counter is exhausted rather than wrapping.
+    ///
+    /// `counter &+= 1` silently wrapped to 0, restarting the keystream from the first
+    /// block under the SAME (key, nonce). Two ciphertexts then share keystream and XOR to
+    /// the plaintexts — a total loss of confidentiality for that stream, reached after
+    /// 2^32 × 64 B = 256 GiB in one direction on a long-lived obfs-TCP session. Every
+    /// other implementation already refuses: the Rust core (`protocol/obfs.rs`), the
+    /// Android client, and the OTHER Swift ChaCha20 in this very module
+    /// (`ObfsDatagramCipher`, which throws `counterExhausted`). This one was the outlier.
+    /// (Audit 2026-07-27, F6.)
+    mutating func xor(_ data: Data) throws -> Data {
         var output = Data(capacity: data.count)
         for byte in data {
             if blockOffset >= block.count {
                 block = Self.makeBlock(key: key, counter: counter, nonce: nonce)
+                guard counter != UInt32.max else { throw QeliObfsError.counterExhausted }
                 counter &+= 1
                 blockOffset = 0
             }
@@ -180,11 +191,15 @@ enum QeliObfsError: LocalizedError, Equatable {
     case invalidWebSocketMask
     case invalidRandomLength
     case randomFailure(OSStatus)
+    /// The ChaCha20 block counter reached 2^32; continuing would reuse keystream.
+    case counterExhausted
 
     var errorDescription: String? {
         switch self {
         case .invalidKeyLength(let count): return "Obfs key must be 32 bytes, got \(count)."
         case .invalidNonceLength(let count): return "Obfs nonce must be 12 bytes, got \(count)."
+        case .counterExhausted:
+            return "Obfs keystream exhausted (2^32 blocks) — the session must be renegotiated."
         case .invalidWebSocketMask: return "WebSocket mask must be four bytes."
         case .invalidRandomLength: return "Random byte count cannot be negative."
         case .randomFailure(let status): return "Secure random generation failed (\(status))."

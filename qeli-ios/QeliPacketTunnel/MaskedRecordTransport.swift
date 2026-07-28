@@ -155,7 +155,7 @@ actor ObfuscatedRecordTransport: QeliRecordTransport {
         await transmitGate.acquire()
         do {
             try Task.checkCancellation()
-            let ciphertext = writeStream.xor(record)
+            let ciphertext = try writeStream.xor(record)
             let wire: Data
             if webSocketInput != nil { wire = try QeliObfs.webSocketFrames(payload: ciphertext) }
             else { wire = ciphertext }
@@ -182,7 +182,7 @@ actor ObfuscatedRecordTransport: QeliRecordTransport {
         } else {
             ciphertext = try await input.readExactly(count)
         }
-        return readStream.xor(ciphertext)
+        return try readStream.xor(ciphertext)
     }
 }
 

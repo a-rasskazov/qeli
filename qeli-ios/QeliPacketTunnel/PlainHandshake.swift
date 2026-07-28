@@ -111,7 +111,20 @@ enum PlainHandshake {
 
         if message.count >= 64 {
             staticPublicKey = Data(message.prefix(32))
-            receivedProof = Data(message[32..<64])
+            // dropFirst/prefix, NOT `message[32..<64]`.
+            //
+            // `message` is the return value of `PacketCodec.decrypt`, which hands back a
+            // SLICE (`decrypted[Self.counterSize..<dataEnd]`). A `Data` slice keeps its
+            // parent's indices, so `startIndex` here is 8, not 0 — subscripting with the
+            // absolute range 32..<64 read relative bytes 24…55 and the proof never
+            // matched. `timingSafeEqual` then failed on every connection, the error was
+            // classified as fatal by `isFatalConnectionError`, and the tunnel died with no
+            // retry showing the user something indistinguishable from a MITM. The line
+            // directly above is already relative-correct, because `prefix` counts elements
+            // rather than indexing — which is exactly why the two disagreed unnoticed. The
+            // fake-TLS twin of this function has always used this form.
+            // (Audit 2026-07-27, K1.)
+            receivedProof = Data(message.dropFirst(32).prefix(32))
             if let explicitPin {
                 guard timingSafeEqual(explicitPin, staticPublicKey) else {
                     throw PlainHandshakeError.serverKeyMismatch
@@ -187,6 +200,8 @@ enum PlainHandshake {
                 config.shapingStealthRateMbps = (shaping["stealth_rate_mbps"] as? NSNumber)?.intValue ?? 2
             }
         }
+        // Everything above came from the server with no bounds. (Audit 2026-07-27, C10.)
+        config.clampPushedObfuscation()
         let sessionToken = (root["session_token"] as? String) ?? ""
         let maxStreams = sessionToken.isEmpty ? 1 : min(max(number("max_streams", 1), 1), 64)
         let multipathAdaptive = (root["multipath_adaptive"] as? NSNumber)?.boolValue ?? false

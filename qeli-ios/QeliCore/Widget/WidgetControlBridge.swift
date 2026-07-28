@@ -107,6 +107,21 @@ enum WidgetControlBridge {
     }
 
     static var widgetControlsEnabled: Bool {
+        // Consult the MDM policy DIRECTLY first — do not rely on the app having mirrored
+        // it into the App Group.
+        //
+        // This used to read only the mirrored copy and default to ENABLED whenever the key
+        // was absent, and the mirror is written exclusively by the main app. So on a
+        // freshly-enrolled or freshly-rebooted device, a user who tapped the Control
+        // Centre toggle without ever opening Qeli was allowed straight through: the
+        // organisation's `widgetControlsEnabled: false` had never been copied anywhere the
+        // extension looked. A policy check that defaults to "permitted" when it cannot
+        // find the policy is not a policy check. The extension can read the managed
+        // dictionary itself, so read it, and treat an explicit `false` as final.
+        // (Audit 2026-07-27, M9.)
+        if let managed = ManagedConfigurationReader().load().widgetControlsEnabled {
+            return managed
+        }
         guard let defaults = appGroupDefaults(),
               defaults.object(forKey: controlsEnabledKey) != nil else { return true }
         return defaults.bool(forKey: controlsEnabledKey)

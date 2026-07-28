@@ -450,6 +450,8 @@ private enum FakeTLSHandshake {
                 config.shapingStealthRateMbps = (shaping["stealth_rate_mbps"] as? NSNumber)?.intValue ?? 2
             }
         }
+        // Everything above came from the server with no bounds. (Audit 2026-07-27, C10.)
+        config.clampPushedObfuscation()
 
         let tokenText = root["session_token"] as? String ?? ""
         let token = decodeSessionToken(tokenText)

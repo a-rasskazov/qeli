@@ -67,6 +67,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 try await engine.start()
                 try Task.checkCancellation()
                 guard isCurrent(state.generation) else { throw CancellationError() }
+                // Do not report success if the tunnel has ALREADY failed terminally.
+                //
+                // `engine.start()` spawns the connection supervisor as a detached task and
+                // returns as soon as the fail-closed TUN is installed. That supervisor can
+                // reach `terminalFailure` — and therefore `cancelTunnelWithError` — before
+                // we get here; a `proto = udp` + `mode = plain` profile does it
+                // immediately, because `unsupportedCombination` is classified as fatal.
+                // Finishing with `nil` then told NetworkExtension the tunnel had started
+                // while it was being torn down: the UI flickered connected → failed, and
+                // with On-Demand enabled iOS relaunched the provider in a loop.
+                // (Audit 2026-07-27, M4.)
+                let snapshot = engine.currentSnapshot()
+                if snapshot.phase == .error {
+                    let reason = snapshot.error ?? snapshot.message
+                    throw PacketTunnelProviderError.startFailed(reason)
+                }
                 completion.finish(nil)
             } catch is CancellationError {
                 if isCurrent(state.generation), let startedEngine {
@@ -202,6 +218,15 @@ private final class ProviderStartCompletion: @unchecked Sendable {
 
 enum PacketTunnelProviderError: LocalizedError {
     case profileNotFound
+    /// The engine reached a terminal failure before `startTunnel` could report success.
+    case startFailed(String)
 
-    var errorDescription: String? { "The active encrypted Qeli profile was not found." }
+    var errorDescription: String? {
+        switch self {
+        case .profileNotFound:
+            return "The active encrypted Qeli profile was not found."
+        case .startFailed(let reason):
+            return reason.isEmpty ? "The Qeli tunnel failed to start." : reason
+        }
+    }
 }

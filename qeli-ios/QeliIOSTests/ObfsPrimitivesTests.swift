@@ -34,12 +34,12 @@ final class ObfsPrimitivesTests: XCTestCase {
         let nonce = Data(repeating: 0x5a, count: 12)
         let plaintext = Data((0..<257).map { UInt8($0 & 0xff) })
         var single = try QeliChaCha20Keystream(key: key, nonce: nonce)
-        let expected = single.xor(plaintext)
+        let expected = try single.xor(plaintext)
 
         var split = try QeliChaCha20Keystream(key: key, nonce: nonce)
-        var actual = split.xor(Data(plaintext.prefix(13)))
-        actual.append(split.xor(Data(plaintext.dropFirst(13).prefix(64))))
-        actual.append(split.xor(Data(plaintext.dropFirst(77))))
+        var actual = try split.xor(Data(plaintext.prefix(13)))
+        actual.append(try split.xor(Data(plaintext.dropFirst(13).prefix(64))))
+        actual.append(try split.xor(Data(plaintext.dropFirst(77))))
         XCTAssertEqual(actual, expected)
     }
 
