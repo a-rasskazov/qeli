@@ -1,0 +1,14 @@
+Template: qeli/run-as
+Type: select
+Choices: qeli, root
+Default: qeli
+Description: Run the qeli service as which user?
+ The qeli VPN server can run as the unprivileged "qeli" system user
+ (recommended: least privilege, the default hardened setup) or as "root".
+ .
+ Running as root removes the privilege separation: a compromise of the daemon
+ becomes a compromise of the whole host. Pick it only when the qeli user cannot
+ work (for example a kernel or container without ambient capabilities), or to
+ avoid the /etc/qeli ownership and polkit setup. When unsure, keep "qeli".
+ .
+ You can change this at any time with:  qeli set-service-user root|qeli

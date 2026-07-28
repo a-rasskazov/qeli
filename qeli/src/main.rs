@@ -65,13 +65,13 @@ enum Commands {
     /// List currently connected clients
     #[command(name = "list-clients")]
     ListClients {
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Forcefully disconnect a user
     Kick {
         username: String,
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Set bandwidth limit for a user (0 = unlimited)
@@ -80,34 +80,34 @@ enum Commands {
         username: String,
         /// Bandwidth limit in Mbit/s (0 = unlimited)
         mbps: u32,
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Show routes configured for a user
     #[command(name = "show-routes")]
     ShowRoutes {
         username: String,
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Disable user permanently (kick + block reconnects)
     #[command(name = "disable-user")]
     DisableUser {
         username: String,
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Re-enable a previously disabled user
     #[command(name = "enable-user")]
     EnableUser {
         username: String,
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// List IPs currently blocked by brute-force protection (wrong-password lockout)
     #[command(name = "list-blocked")]
     ListBlocked {
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Unblock an IP locked by brute-force protection (or --all to clear every IP)
@@ -118,7 +118,7 @@ enum Commands {
         /// Unblock every currently-blocked IP
         #[arg(long)]
         all: bool,
-        #[arg(long, default_value = "/var/run/qeli/control.sock")]
+        #[arg(long, default_value_t = qeli::server::control::control_socket_path())]
         socket: String,
     },
     /// Show each profile's server identity public key (pin these on clients).
@@ -202,6 +202,22 @@ enum Commands {
         #[arg(long, default_value = "qeli")]
         user: String,
         /// Print the rule and target path, but do not write anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Choose the OS user the qeli systemd service runs as: `qeli` (default,
+    /// unprivileged, least-privilege) or `root`. Writes a systemd drop-in override
+    /// under /etc/systemd/system/<unit>.d/ — it never edits the packaged unit, so the
+    /// choice survives package upgrades. Run as root; restart the service to apply.
+    #[command(name = "set-service-user")]
+    SetServiceUser {
+        /// `qeli` (default, hardened) or `root` (no privilege separation).
+        #[arg(value_parser = ["qeli", "root"])]
+        user: String,
+        /// systemd unit to override.
+        #[arg(long, default_value = "qeli.service")]
+        unit: String,
+        /// Show what would change; touch nothing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -692,6 +708,17 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        Commands::SetServiceUser {
+            user,
+            unit,
+            dry_run,
+        } => {
+            #[cfg(target_os = "linux")]
+            {
+                set_service_user(user, unit, dry_run)?;
+            }
+        }
+
         Commands::Version { check } => {
             println!("qeli {}", env!("CARGO_PKG_VERSION"));
             if check {
@@ -790,6 +817,83 @@ fn install_polkit(unit: String, user: String, dry_run: bool) -> anyhow::Result<(
     Ok(())
 }
 
+/// Implement `qeli set-service-user`: pick whether the systemd service runs as the
+/// unprivileged `qeli` user (default) or as root, via a drop-in override so the choice
+/// survives package upgrades. Must run as root. For `root` it writes User=root/Group=root;
+/// for `qeli` it removes the override (the packaged unit already runs as qeli) and hands
+/// /etc/qeli ownership back so the unprivileged service can write it.
+#[cfg(target_os = "linux")]
+fn set_service_user(user: String, unit: String, dry_run: bool) -> anyhow::Result<()> {
+    let dir = format!("/etc/systemd/system/{unit}.d");
+    let dropin = format!("{dir}/run-as.conf");
+    let as_root = user == "root";
+
+    let content = format!(
+        "# Written by `qeli set-service-user root`. Runs {unit} as ROOT instead of the\n\
+         # unprivileged `qeli` user — a compromise of the daemon then means root on the\n\
+         # host (least privilege is lost). Revert with `qeli set-service-user qeli` (or\n\
+         # delete this file). The packaged unit's hardening (ProtectSystem, NoNewPrivileges,\n\
+         # a bounded capability set) still applies on top of root.\n\
+         [Service]\n\
+         User=root\n\
+         Group=root\n"
+    );
+
+    if dry_run {
+        if as_root {
+            println!("# would write {dropin}:\n{content}");
+        } else {
+            println!(
+                "# would remove {dropin} (if present) → revert to the packaged default \
+                 (User=qeli),\n# then: chown -R qeli:qeli /etc/qeli"
+            );
+        }
+        println!("# then: systemctl daemon-reload   (restart {unit} to apply)");
+        return Ok(());
+    }
+
+    if unsafe { libc::geteuid() } != 0 {
+        anyhow::bail!(
+            "set-service-user must run as root — retry with: sudo qeli set-service-user {user}"
+        );
+    }
+
+    if as_root {
+        std::fs::create_dir_all(&dir).map_err(|e| anyhow::anyhow!("cannot create {dir}: {e}"))?;
+        std::fs::write(&dropin, content.as_bytes())
+            .map_err(|e| anyhow::anyhow!("cannot write {dropin}: {e}"))?;
+        println!("{unit} will run as ROOT (drop-in {dropin}).");
+        println!("  WARNING: this removes privilege separation — a daemon compromise means root.");
+        println!(
+            "  Prefer this only when the qeli user cannot work (a kernel/container without\n\
+             \x20 ambient capabilities), or to avoid the /etc/qeli ownership + polkit setup."
+        );
+    } else {
+        match std::fs::remove_file(&dropin) {
+            Ok(_) => {
+                println!("Removed {dropin} — {unit} reverts to the packaged default (User=qeli).")
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                println!("No root override present — {unit} already runs as the qeli user.");
+            }
+            Err(e) => return Err(anyhow::anyhow!("cannot remove {dropin}: {e}")),
+        }
+        // Files written while running as root are root-owned; hand /etc/qeli back to the
+        // qeli user so the unprivileged service can write identity keys / users / panel saves.
+        if unit == "qeli.service" {
+            let _ = std::process::Command::new("chown")
+                .args(["-R", "qeli:qeli", "/etc/qeli"])
+                .status();
+        }
+    }
+
+    let _ = std::process::Command::new("systemctl")
+        .arg("daemon-reload")
+        .status();
+    println!("Run `systemctl restart {unit}` to apply.");
+    Ok(())
+}
+
 /// Implement `qeli add-client`: append a user to the users file (Argon2-hashed
 /// password) and optionally emit a `qeli://` share link for QR import.
 #[cfg(target_os = "linux")]
@@ -840,7 +944,7 @@ fn add_client(
     let password_hash = {
         use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
         let salt = SaltString::generate(&mut OsRng);
-        argon2::Argon2::default()
+        qeli::crypto::password_hasher()
             .hash_password(plaintext.as_bytes(), &salt)
             .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?
             .to_string()
@@ -1023,7 +1127,7 @@ fn set_web_password(
     let password_hash = {
         use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
         let salt = SaltString::generate(&mut OsRng);
-        argon2::Argon2::default()
+        qeli::crypto::password_hasher()
             .hash_password(plaintext.as_bytes(), &salt)
             .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?
             .to_string()

@@ -1,0 +1,8 @@
+#!/bin/sh
+# debconf config script: ask which OS user the qeli service should run as, BEFORE
+# postinst runs. The answer is applied in postinst via `qeli set-service-user`.
+set -e
+. /usr/share/debconf/confmodule
+
+db_input medium qeli/run-as || true
+db_go || true

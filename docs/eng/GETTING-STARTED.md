@@ -55,21 +55,58 @@ A single `qeli` binary plays both roles: `qeli server` and `qeli client`.
 ## 2. Install the server
 
 > ⚡ **Fastest path (one command).** The repo root ships a ready installer
-> [`install-reality-server.sh`](../../install-reality-server.sh): it installs the
-> dependencies and the latest `.deb`, **asks which profile** (reality-tls by default, or
-> fake-tls) **and which port** (default :443), brings it up with full-tunnel NAT, and
-> creates **5 users** with ready `qeli://` connection strings under
-> `/etc/qeli/client-links/`. Run as root: `./install-reality-server.sh <public-ip-or-host>`
-> (or `sudo ./install-reality-server.sh …` if you have sudo — it is not required and is
-> never installed). For a non-interactive run (or `curl … | bash`) set the choice up
-> front: `QELI_PROFILE=fake-tls QELI_PORT=8443 ./install-reality-server.sh <IP>`. After
-> that you just paste a connection string into the app. Manual steps below.
+> [`install-qeli-server.sh`](../../install-qeli-server.sh): it installs qeli and its
+> dependencies, **asks which profile** — `reality-tls` (the default; real TLS 1.3 on
+> TCP:443, survives active probing), `fake-tls` (cheaper on CPU, enough against passive
+> DPI), or **`udp-quic`** (a UDP path with QUIC-shaped datagrams — pick it where TCP:443 is
+> throttled, reset, or otherwise degraded) —
+> **and which port** (default :443), brings it up with full-tunnel NAT, and creates
+> **5 users** with ready `qeli://` connection strings under `/etc/qeli/client-links/`.
+> Run as root: `./install-qeli-server.sh <public-ip-or-host>` (or `sudo …` if you have
+> sudo — it is not required and is never installed). Download the script and run it as a
+> second step — we do not use `curl … | bash`: the script runs as root and is worth reading
+> first, and `curl -fsSL` stays silent on an HTTP error while `bash` with empty stdin exits
+> 0 (a failed download then looks like a successful install).
+> For a non-interactive run (automation) set the choice up front:
+> `QELI_PROFILE=udp-quic QELI_PORT=443 ./install-qeli-server.sh <IP>`. After that you just
+> paste a connection string into the app. Manual steps below.
+>
+> **What it does, in order:** ① installs dependencies (`curl`, `jq`, `iptables`,
+> `iproute2`, `openssl`) → ② gets qeli onto the box **and sets up exactly what the `.deb`
+> does** (the `qeli` system user, `/etc/qeli` + state dirs, the `*.conf.example` files,
+> the systemd unit, the polkit rule) → ③ writes `/etc/qeli/server.conf` with the chosen
+> profile on the chosen port + full-tunnel NAT (a fresh REALITY `short_id` for reality-tls)
+> → ④ generates the per-profile server identity key → ⑤ creates the 5 users and saves their
+> `qeli://` links → ⑥ applies mobile/LTE OS tuning (BBR + PMTU probing, plus an outer MSS
+> clamp on the TCP profiles) → ⑦ enables the HTTPS web panel with a generated password →
+> ⑧ `systemctl enable --now qeli`.
+>
+> **Which user the service runs as** — `QELI_RUN_AS=qeli` (default, unprivileged) or
+> `QELI_RUN_AS=root`. The installer applies it with `qeli set-service-user` (§10.4) just
+> before the first start, so the service comes up as the chosen user:
+> ```bash
+> sudo QELI_RUN_AS=root ./install-qeli-server.sh <IP>    # no privilege separation — see §10.4
+> ```
+> Keep the default unless you have a specific reason; the warning in §10.4 applies.
+>
+> **Two install branches (step ②) — both end in an identical system:**
+> - **Default — download the `.deb`** from GitHub Releases, verify its SHA256, and
+>   `apt install` it. This is the normal path; nothing extra to pass.
+> - **From a prebuilt binary — `QELI_BIN=<path>`:** instead of downloading, install that
+>   binary and **reproduce the .deb layout itself** (user, dirs, `*.conf.example` files,
+>   `qeli.service`, the `49-qeli.rules` polkit rule). Use it for a **build-from-source** or
+>   **air-gapped** install. Add `QELI_SRC=<repo checkout>` to copy the unit and examples
+>   straight from source (fully offline); without it they are fetched from GitHub. Example:
+>   ```bash
+>   sudo QELI_BIN=qeli/target/release/qeli QELI_SRC=. ./install-qeli-server.sh <IP>
+>   ```
 >
 > **What else it changes on the host** (not incidental details — know them up front):
 > - **System-wide network tuning**: writes `/etc/sysctl.d/99-qeli-perf.conf` and switches
 >   congestion control to **BBR** — this affects **all** TCP on the host, not just qeli.
 > - **Loads the `tcp_bbr` module on every boot** via `/etc/modules-load.d/qeli-bbr.conf`.
-> - **Adds an MSS rule** in `mangle/OUTPUT` and tries to **persist the firewall**. With
+> - **Adds an MSS rule** (TCP profiles only — udp-quic skips it) in `mangle/OUTPUT` and
+>   tries to **persist the firewall**. With
 >   no `netfilter-persistent` it snapshots to `/etc/iptables/rules.v4` — and that snapshot
 >   is the host's **entire** current ruleset, not just its own rule.
 >   **Persisting is best-effort, not a guarantee.** Every step runs with `|| true`, so it
@@ -136,7 +173,16 @@ What the package does:
 - ships **examples** `/etc/qeli/{server,server-multiprofile,users,client,client-reality}.conf.example`
   (you create the real configs yourself — step 3);
 - installs the systemd unit `qeli.service` (`ExecStart=/usr/bin/qeli server --config /etc/qeli/server.conf`)
-  and the polkit rule `/etc/polkit-1/rules.d/49-qeli.rules`.
+  and the polkit rule `/etc/polkit-1/rules.d/49-qeli.rules`;
+- **asks which OS user the service should run as** (debconf question `qeli/run-as`:
+  `qeli` — the default, unprivileged — or `root`) and applies the answer via
+  `qeli set-service-user`. Answer non-interactively (automation / preseed) with:
+  ```bash
+  echo "qeli qeli/run-as select root" | sudo debconf-set-selections
+  sudo apt install /tmp/qeli_0.7.13_amd64.deb
+  ```
+  Changeable at any time afterwards — `sudo qeli set-service-user root|qeli` (§10.4),
+  where the trade-offs of `root` are spelled out.
 
 #### A.3. Fix ownership of `/etc/qeli` — a required step after configuring
 
@@ -206,8 +252,19 @@ cargo build --release --features jemalloc   # binary → qeli/target/release/qel
 make -C debian deb             # → qeli/debian/qeli_<version>_amd64.deb
 ```
 
-Without the package you can run the binary directly (see step 4), but then you create
-the systemd unit, the user and the directories yourself.
+Without the package you can run the binary directly (see step 4), but then you create the
+systemd unit, the user and the directories yourself — **or let the installer do it for
+you** from the freshly built binary, reproducing the exact `.deb` layout (the `qeli` user,
+`/etc/qeli` + state dirs, the `*.conf.example` files, `qeli.service`, the polkit rule) with
+no download. From the repo root:
+
+```bash
+sudo QELI_BIN=qeli/target/release/qeli QELI_SRC=. ./install-qeli-server.sh <public-ip>
+```
+
+`QELI_BIN` selects the from-binary branch; `QELI_SRC=.` copies the unit and examples
+straight from this checkout (fully offline). See §2's **"Two install branches"**. This also
+installs the polkit rule, so the panel's `Apply & Restart` works without the extra step below.
 
 > ⚠️ **Non-.deb install + web panel:** the panel's **`Apply & Restart`** button runs
 > `systemctl restart` on the service. A **non-root** `User=qeli` service is only allowed
@@ -577,6 +634,14 @@ variants as the server's `[logging] time_format`: date and time / RFC 3339 in UT
 only / Unix / none). If you plan to compare the app log against the server's, set
 `RFC 3339` on both sides. It applies immediately; already-written lines keep their stamp.
 
+> **iOS.** The iPhone/iPad client lives in [`qeli-ios/`](../../qeli-ios/README.md) and
+> mirrors Android feature for feature: the same profiles, `qeli://` links and QR codes, the
+> same wire modes, an English/Russian UI, a widget and a Control Center toggle. It is
+> **built from source on macOS** (Xcode 16+, see its README) — there is no prebuilt binary
+> in the releases, and it has not yet been exercised on a physical device. The
+> platform-imposed differences: per-app routing is MDM-only, and VPN On Demand stands in
+> for boot auto-connect — see [`qeli-ios/PARITY.md`](../../qeli-ios/PARITY.md).
+
 > ⚠️ **macOS — first launch.** The app is **ad-hoc** signed (not notarized by Apple), so
 > Gatekeeper blocks it and it **won't open** on a double-click. Clear the quarantine once
 > in Terminal:
@@ -788,7 +853,48 @@ qeli version --check   # ask GitHub Releases whether a newer one exists (opt-in,
 sudo qeli install-polkit                                        # defaults: user=qeli, unit=qeli.service
 sudo qeli install-polkit --unit qeli-server.service --user vpn  # non-standard unit/user
 sudo qeli install-polkit --dry-run                             # print the rule, write nothing
+
+# Choose the OS user the SERVICE runs as: `qeli` (default, unprivileged) or `root`.
+sudo qeli set-service-user root      # switch to root (see the warning below)
+sudo qeli set-service-user qeli      # switch back to the unprivileged default
+sudo qeli set-service-user root --dry-run          # show what would change
+sudo qeli set-service-user root --unit qeli-server.service   # non-standard unit
+sudo systemctl restart qeli          # required for either to take effect
 ```
+
+**What `set-service-user` actually does.** It never edits the packaged unit file
+(`/lib/systemd/system/qeli.service`) — dpkg overwrites that on every upgrade and your
+change would silently vanish. Instead it manages a **systemd drop-in override**:
+
+| argument | effect |
+|---|---|
+| `root` | writes `/etc/systemd/system/qeli.service.d/run-as.conf` containing `[Service] User=root / Group=root`, which takes precedence over the packaged `User=qeli`. Lives in `/etc`, so it survives package upgrades. |
+| `qeli` | deletes that drop-in (the packaged unit already says `User=qeli`) **and** runs `chown -R qeli:qeli /etc/qeli`, because files written while the service ran as root are root-owned and the unprivileged service could not write them afterwards. |
+
+Both then run `systemctl daemon-reload`; you restart the service to apply. The command is
+idempotent (safe to re-run), requires root, and rejects anything other than `qeli`/`root`.
+The unit's hardening — `ProtectSystem=full`, `NoNewPrivileges=true`, the bounded
+`CapabilityBoundingSet` — **stays in force either way**; `root` only changes *who* the
+process runs as.
+
+> ⚠️ **When to run as root — and why you normally should not.**
+> The default `qeli` user exists for privilege separation: if the daemon is ever
+> compromised, the attacker gets an account that owns nothing but `/etc/qeli` — **not the
+> machine**. Running as root throws that away: a compromise of the VPN daemon becomes
+> **full root on the host**. The daemon is reachable from the internet, so this is not a
+> theoretical distinction.
+>
+> Legitimate reasons to pick `root`:
+> - a kernel or container that does not honour `AmbientCapabilities`, so the unprivileged
+>   service cannot create the TUN device or bind :443 at all (symptom: the profile fails to
+>   bind with `Operation not permitted` even though the unit grants the caps);
+> - a restricted environment where you cannot install the polkit rule, and you still want
+>   the panel's `Apply & Restart` to work (root manages its own unit directly);
+> - you keep tripping over the `/etc/qeli` ownership trap (§A.3) and accept the trade-off.
+>
+> If you do run as root, compensate elsewhere: keep the panel off the public internet
+> (`web.allowed_ips`, or a loopback bind + SSH tunnel), and switch back with
+> `sudo qeli set-service-user qeli` as soon as the reason is gone.
 
 ### 10.5. Diagnostics
 
@@ -903,7 +1009,7 @@ sudo rm -rf /var/lib/qeli /var/log/qeli /run/qeli
 sudo deluser --system qeli 2>/dev/null; sudo delgroup qeli 2>/dev/null; true
 ```
 
-Additionally — **if you installed via `install-reality-server.sh`** (it touches the OS):
+Additionally — **if you installed via `install-qeli-server.sh`** (it touches the OS):
 
 ```bash
 # sysctl tuning (BBR / buffers / PMTU)

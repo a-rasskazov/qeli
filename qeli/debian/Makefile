@@ -48,7 +48,18 @@ deb-portable:
 	$(MAKE) check-abi BINARY=$(ZIG_BINARY)
 	$(MAKE) deb-prebuilt BINARY=$(ZIG_BINARY)
 
-# Fails when the binary demands a newer glibc than the declared floor.
+# Fails when the binary demands more of the target machine than the package promises:
+#   1. a newer glibc than the declared floor, and
+#   2. a CPU baseline `Depends:` cannot express (Audit 2026-07-27, G3).
+#
+# On (2): `-C target-feature=+aes` used to be set for one triple only, so the release
+# could be built demanding AES-NI while nothing checked it - the binary then SIGILLs at
+# startup on a VPS whose CPU flags are masked, and apt installs it happily because
+# there is no way to write "requires AES-NI" in a Depends line. The check is by
+# construction indirect: RustCrypto's `cpufeatures` compiles its CPUID probe away when
+# the feature is enabled at compile time, so "AES instructions present AND no cpuid
+# anywhere" means the runtime fallback is gone. It is a heuristic, and it is the only
+# signal the ELF actually carries - a false PASS is possible, a false FAIL is not.
 check-abi:
 	@test -f "$(BINARY)" || { echo "binary not found: $(BINARY)"; exit 1; }
 	@max=`objdump -T "$(BINARY)" | grep -oE 'GLIBC_[0-9.]+' | sed 's/GLIBC_//' | sort -V | tail -1`; \
@@ -56,6 +67,7 @@ check-abi:
 	 if [ "`printf '%s\n%s\n' "$$max" "$(GLIBC_ABI)" | sort -V | tail -1`" != "$(GLIBC_ABI)" ]; then \
 	   echo "ERROR: binary needs glibc $$max but the package promises $(GLIBC_ABI) - build with 'make deb-portable'"; exit 1; \
 	 fi
+	@objdump -d "$(BINARY)" | awk '/aesenc|aesdec|aeskeygenassist|aesimc/{a++} /cpuid/{c++} END{printf "AES-NI baseline: %d aes insn(s), %d cpuid probe(s)\n", a, c; if (a>0 && c==0) {print "ERROR: AES-NI is baked in with no runtime CPU detection left - the binary will SIGILL"; print "       on any CPU without AES-NI, and Depends: cannot express a CPU feature."; print "       Drop -C target-feature=+aes (see qeli/.cargo/config.toml)."; exit 1}}'
 
 deb-prebuilt: stage
 	dpkg-deb --root-owner-group --build $(DEB_DIR)
@@ -77,6 +89,8 @@ stage:
 	install -m644 49-qeli.rules $(DEB_DIR)/etc/polkit-1/rules.d/49-qeli.rules
 	install -m755 postinst $(DEB_DIR)/DEBIAN/postinst
 	install -m755 prerm    $(DEB_DIR)/DEBIAN/prerm
+	install -m755 config    $(DEB_DIR)/DEBIAN/config
+	install -m644 templates $(DEB_DIR)/DEBIAN/templates
 	echo /etc/qeli/server.conf.example >  $(DEB_DIR)/DEBIAN/conffiles
 	echo /etc/qeli/server-multiprofile.conf.example >> $(DEB_DIR)/DEBIAN/conffiles
 	echo /etc/qeli/users.conf.example  >> $(DEB_DIR)/DEBIAN/conffiles
