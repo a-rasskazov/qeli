@@ -355,7 +355,9 @@ final class TunnelManager: NSObject, ObservableObject {
     }
 
     private static func save(_ manager: NETunnelProviderManager) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        // Void spelled out: the call is a bare statement, so there is no return type to infer
+        // from, and both resume calls sit inside the completion closure.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             manager.saveToPreferences { error in
                 if let error { continuation.resume(throwing: error) }
                 else { continuation.resume(returning: ()) }
@@ -364,7 +366,7 @@ final class TunnelManager: NSObject, ObservableObject {
     }
 
     private static func load(_ manager: NETunnelProviderManager) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             manager.loadFromPreferences { error in
                 if let error { continuation.resume(throwing: error) }
                 else { continuation.resume(returning: ()) }
