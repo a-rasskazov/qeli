@@ -31,7 +31,12 @@ android {
     signingConfigs {
         if (keystorePropsFile.exists()) {
             create("release") {
-                storeFile = file(keystoreProps.getProperty("storeFile"))
+                // rootProject.file, not file: this block lives in the :app module, so a bare
+                // file() resolves a relative path against qeli-android/app/ — while
+                // keystore.properties (and the keystore it names) sit at the project root, as
+                // keystore.properties.example instructs. The documented layout could therefore
+                // never build: "Keystore file '.../app/qeli-release.jks' not found".
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
