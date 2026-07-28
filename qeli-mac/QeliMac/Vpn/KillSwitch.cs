@@ -13,8 +13,10 @@ namespace QeliMac.Vpn;
 /// FAIL-SAFE: the ruleset stays loaded across reconnects and is restored only on a
 /// clean Stop(). A crash leaves it (the host stays locked — no leak) until qeli runs
 /// again: <see cref="Sweep"/> at startup restores pf from the saved state. To clear
-/// manually: <c>sudo pfctl -f /etc/pf.conf</c> (and <c>sudo pfctl -d</c> if pf was
-/// off before).
+/// manually, flush the anchor — NOT <c>pfctl -f /etc/pf.conf</c>, which reloads the FILE
+/// rather than whatever the host actually had loaded:
+/// <c>sudo pfctl -a com.apple/qeli -F rules ; sudo pfctl -a qeli -F rules</c>
+/// (and <c>sudo pfctl -d</c> if pf was off before).
 ///
 /// REQUIRES root (the tunnel already does). The utun name is dynamic and unknown
 /// before the device is created, so we pass utun0..15 (mirrors the Linux `oifname`
@@ -26,6 +28,13 @@ public static class KillSwitch
     /// <summary>pf anchor our rules live in. Everything is scoped to this name so engaging
     /// and clearing the kill-switch never touches another tool's pf rules. (Р3)</summary>
     private const string AnchorName = "qeli";
+
+    /// <summary>Anchor path used when the main ruleset carries the stock macOS wildcard
+    /// reference <c>anchor "com.apple/*"</c>: a child anchor under <c>com.apple</c> is
+    /// evaluated by that existing reference, so our rules take effect without the main
+    /// ruleset being touched at all. See <see cref="ResolveAnchorPath"/>.</summary>
+    private const string AppleAnchorPath = "com.apple/" + AnchorName;
+    private const string AppleWildcardRef = "anchor \"com.apple/*\"";
 
     // Use the canonical shared dir (Paths.ServiceDir = ".../Qeli"). Was a hardcoded lowercase
     // ".../qeli", which on a case-SENSITIVE volume split kill-switch state into a second dir
@@ -91,19 +100,17 @@ public static class KillSwitch
         // was actually loaded. An anchor is additive: our rules live in their own namespace
         // and are removed by flushing just that namespace, leaving everything else alone.
         //
-        // Two steps: load the rules INTO the anchor, then make sure the main ruleset has an
-        // `anchor "qeli"` reference so they are evaluated at all. The reference is added by
-        // appending to the loaded main ruleset (pfctl -sr) and reloading it — that is the
-        // only way to introduce an anchor point without editing /etc/pf.conf.
-        Pf($"-a {AnchorName} -f \"{RulesPath}\"", critical: true);
-        EnsureAnchorReferenced(log);
+        // Pick an anchor point that is ALREADY referenced by the loaded main ruleset, then
+        // load the rules into it. We no longer rewrite the main ruleset. (N3)
+        string anchor = ResolveAnchorPath(log);
+        Pf($"-a {anchor} -f \"{RulesPath}\"", critical: true);
         Pf("-e", critical: false); // already-enabled pf makes -e a no-op warning
 
-        log($"Kill-switch ENGAGED (pf anchor '{AnchorName}'): egress restricted to lo0, utun0..15, " +
+        log($"Kill-switch ENGAGED (pf anchor '{anchor}'): egress restricted to lo0, utun0..15, " +
             $"{string.Join(", ", ips)}, DHCP, and DNS to {(dnsResolvers.Count > 0 ? string.Join(", ", dnsResolvers) : "<none — physical DNS blocked>")}. " +
             $"Other pf rules on this host are left intact. " +
             $"Stays up across reconnects; a crash leaves it (no leak) — clear with: " +
-            $"sudo pfctl -a {AnchorName} -F rules" + (wasEnabled ? "" : " ; sudo pfctl -d"));
+            $"sudo pfctl -a {anchor} -F rules" + (wasEnabled ? "" : " ; sudo pfctl -d"));
     }
 
     /// <summary>Restore pf to its pre-engage state (reload the system ruleset, and
@@ -113,7 +120,15 @@ public static class KillSwitch
         // Flush ONLY our anchor. The old code reloaded /etc/pf.conf, which wiped any rules
         // another tool had loaded and restored the file's contents rather than the state we
         // replaced. Flushing the anchor removes exactly what we added. (Р3)
+        //
+        // BOTH candidate paths, unconditionally: Engage picks between `qeli` and
+        // `com.apple/qeli` depending on what the main ruleset references (see
+        // ResolveAnchorPath), and a Sweep after a crash — or after an upgrade from a build
+        // that only ever used the top-level anchor — must not leave the other one loaded and
+        // still blocking. Flushing an anchor that holds nothing is a no-op.
+        // (Audit 2026-07-27, N3)
         Pf($"-a {AnchorName} -F rules", critical: false);
+        Pf($"-a {AppleAnchorPath} -F rules", critical: false);
         bool wasEnabled = true;
         try
         {
@@ -182,35 +197,48 @@ public static class KillSwitch
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Make sure the MAIN ruleset contains an `anchor "qeli"` line, or the rules we loaded
-    /// into the anchor are never evaluated (an anchor with no reference is inert — which
-    /// would mean a kill-switch that silently protects nothing). (Р3)
+    /// Choose the anchor path to load our rules into: one the loaded main ruleset ALREADY
+    /// references, because an anchor nothing references is inert — a kill-switch that
+    /// silently protects nothing. Throws if there is no such reference, so Engage fails
+    /// closed and the caller refuses to connect unprotected.
     ///
-    /// Reads the loaded main ruleset with `pfctl -sr`, appends the anchor reference and
-    /// reloads it. NOTE the known limitation: `-sr` prints filter rules only, so a host
-    /// whose main ruleset also carries `nat`/`rdr`/`set` directives would lose those on
-    /// this reload — macOS ships none by default, but a machine running Docker or an
-    /// enterprise agent may. Those are re-added by the tool that owns them; we never
-    /// rewrite the main ruleset again after this.
+    /// WHY THIS NO LONGER WRITES THE MAIN RULESET (N3). The previous version read the main
+    /// ruleset with `pfctl -sr`, appended `anchor "qeli"` and reloaded the result. `-sr`
+    /// prints FILTER rules only, so that reload silently dropped every `nat`, `rdr`, `scrub`
+    /// and `set` line the host had loaded — and `Disengage` restored none of it, because it
+    /// only flushes our anchor. On a machine running Docker/vmnet (or an enterprise agent)
+    /// that permanently broke port forwarding, and the damage outlived the VPN session.
+    /// Restoring a faithful copy of the full ruleset is not achievable from pfctl's
+    /// per-class output either, so the fix is to stop rewriting it altogether:
+    ///
+    ///  1. `anchor "qeli"` already referenced (a hand-edited /etc/pf.conf, or a main ruleset
+    ///     a previous build of this code rewrote) → use the top-level `qeli` anchor.
+    ///  2. Stock macOS: /etc/pf.conf ends with `anchor "com.apple/*"`, a WILDCARD reference
+    ///     that evaluates every child anchor of `com.apple`. Loading into `com.apple/qeli`
+    ///     is therefore live immediately, with zero changes to the main ruleset — the same
+    ///     mechanism other macOS network tools use. It is also the last filter directive in
+    ///     the stock file, so our non-quick `block drop out all` is still the last match,
+    ///     exactly as when we appended the reference ourselves.
+    ///  3. Neither present → refuse. Adding the reference means rewriting the main ruleset,
+    ///     which is the bug. The message tells the operator the one-line fix.
     /// </summary>
-    private static void EnsureAnchorReferenced(Action<string> log)
+    private static string ResolveAnchorPath(Action<string> log)
     {
         string current = Pf("-sr", critical: false);
         if (current.Contains($"anchor \"{AnchorName}\"", StringComparison.Ordinal))
-            return; // already referenced (e.g. a previous run, or /etc/pf.conf has it)
-
-        string merged = current.TrimEnd() + $"\nanchor \"{AnchorName}\"\n";
-        string tmp = Path.Combine(Dir, "main-with-anchor.pf.conf");
-        try
+            return AnchorName;
+        if (current.Contains(AppleWildcardRef, StringComparison.Ordinal))
         {
-            File.WriteAllText(tmp, merged);
-            Pf($"-f \"{tmp}\"", critical: true);
-            log($"pf: added an `anchor \"{AnchorName}\"` reference to the main ruleset");
+            log($"pf: loading kill-switch rules into '{AppleAnchorPath}' " +
+                $"(covered by the existing `{AppleWildcardRef}` reference — main ruleset untouched)");
+            return AppleAnchorPath;
         }
-        finally
-        {
-            try { File.Delete(tmp); } catch { /* best effort */ }
-        }
+        throw new InvalidOperationException(
+            "kill-switch: the loaded pf ruleset references neither `anchor \"com.apple/*\"` " +
+            $"nor `anchor \"{AnchorName}\"`, so rules loaded into an anchor would never be " +
+            "evaluated. Add `anchor \"" + AnchorName + "\"` to /etc/pf.conf and reload it " +
+            "(`sudo pfctl -f /etc/pf.conf`). Refusing to engage rather than rewriting the " +
+            "host's main ruleset, which would drop its nat/rdr/scrub rules.");
     }
 
     private static string PfInfo() => Pf("-s info", critical: false);

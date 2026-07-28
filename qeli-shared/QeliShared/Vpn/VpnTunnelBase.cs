@@ -44,10 +44,14 @@ public abstract class VpnTunnelBase
     // True once an established tunnel is up; used to detect a server-side drop.
     private volatile bool _wasConnected;
 
-    // True while the firewall kill-switch is engaged (so Stop() lifts exactly what
+    // 1 while the firewall kill-switch is engaged (so the teardown lifts exactly what
     // Start() raised). The kill-switch is raised ONCE before the connect loop and
     // stays up across reconnects — see KillSwitchEngage/Disengage.
-    private bool _ksEngaged;
+    // An int (not a bool) because TWO paths may now lift it: Stop() and the reconnect
+    // loop's give-up tail, which runs on the tunnel task and therefore cannot take
+    // _lifecycleLock (Stop() holds it while joining that very task). Interlocked makes
+    // "lift exactly once" hold without a lock. (Audit 2026-07-27, B2)
+    private int _ksEngaged;
 
     // Live transports for the current attempt (closed to interrupt blocking IO).
     private Socket? _tcp;
@@ -71,6 +75,20 @@ public abstract class VpnTunnelBase
     // UDP handshake retransmit tick — see RecvUdpWithClientHelloRetransmit.
     private const int HsRetransmitMs = 1000;
 
+    // Ceiling for anything the SERVER gets to size: obfuscation padding and flow-shaping
+    // cover. The Rust client caps padding on EVERY transport
+    // (client/mod.rs: pad_cap = min(padding_max, 1400 - (len + 60))); the C# client only
+    // capped the UDP path, via EncryptCapped(pkt, effectiveMtu). On TCP the raw pushed
+    // value went straight into enc.Encrypt/EncryptPadded, so a server pushing a large
+    // padding.max_bytes / traffic_shaping.max_size made PacketCodec.EncryptPadded throw
+    // (payload > MaxRecordSize) on the FIRST data packet — the tunnel dropped, reconnected,
+    // was handed the same values and dropped again: an unbreakable loop from one AuthOK
+    // field. PadWireCeiling is the 1400 of the Rust formula; PadCapInner is its
+    // per-packet budget for plaintext+padding (1400 - 60 of record/AEAD overhead), which
+    // is what EncryptCapped's maxInnerPlusPad expects. (Audit 2026-07-27, N2)
+    private const int PadWireCeiling = 1400;
+    private const int PadCapInner = PadWireCeiling - 60;
+
     // Live byte counters (goodput, IP-payload bytes) for the UI speed readout.
     private long _bytesUp;
     private long _bytesDown;
@@ -91,6 +109,14 @@ public abstract class VpnTunnelBase
         {
             Stop();
             _userRequestedDisconnect = false;
+            // TestHandshake latches this and used to never clear it, so a GUI object that had
+            // run the headless handshake test once connected forever after WITHOUT a TUN —
+            // "connected", no traffic. Reset it with the rest of the per-run state.
+            // (Audit 2026-07-27, N5)
+            _handshakeOnly = false;
+            // Per-run too: left set, a previous MITM stop would suppress the ordinary
+            // "could not connect" message on the NEXT attempt. (Audit 2026-07-27, Z2)
+            _stoppedForSecurityReason = false;
             _wasConnected = false;
             _lastNetSig = PhysicalNetSignature(); // baseline: physical net at connect (TUN excluded)
             _bytesUp = 0; _bytesDown = 0;
@@ -107,7 +133,7 @@ public abstract class VpnTunnelBase
             // it but it can't be raised, do NOT connect unprotected.
             if (config.KillSwitch && config.IsFullTunnel)
             {
-                try { KillSwitchEngage(config); _ksEngaged = true; }
+                try { KillSwitchEngage(config); Interlocked.Exchange(ref _ksEngaged, 1); }
                 catch (Exception e)
                 {
                     Log($"[SECURITY] kill-switch could not be engaged: {e.Message} — not connecting unprotected");
@@ -128,10 +154,20 @@ public abstract class VpnTunnelBase
         _handshakeIp = null;
         _userRequestedDisconnect = true; // no reconnect loop
         using var cts = new CancellationTokenSource();
+        // Clear the handshake-only latch on EVERY exit, success or throw: it used to stay set
+        // for the lifetime of the object, so a later Start() on the same tunnel skipped the TUN
+        // entirely and reported a connection that carried no traffic. (Audit 2026-07-27, N5)
         try { RunVpnConnection(config, cts.Token); }
-        finally { CloseTransports(); }
+        finally { _handshakeOnly = false; CloseTransports(); }
         return _handshakeIp ?? throw new Exception("handshake produced no IP");
     }
+
+    /// <summary>
+    /// Set when the connect loop stopped because of a server-identity mismatch (possible
+    /// MITM), so the generic "could not connect" message does not replace that warning.
+    /// (Audit 2026-07-27, Z2.)
+    /// </summary>
+    private volatile bool _stoppedForSecurityReason;
 
     public void Stop()
     {
@@ -139,7 +175,13 @@ public abstract class VpnTunnelBase
         {
             _userRequestedDisconnect = true;
             try { _cts?.Cancel(); } catch { }
-            CloseTransports();
+            // Phase 1 — SOCKETS ONLY (keepTun), to wake every blocking read. The TUN and the
+            // platform network state must NOT be torn down yet: the connect thread can be deep
+            // inside SetupTun (seconds on Windows, where creating the Wintun adapter alone takes
+            // ~10 s), and it assigns _tun AFTER we would have nulled it — so the adapter, its
+            // routes and the DNS override survived the "stop" with nothing left referencing
+            // them. Tear down only once the task is joined, below. (Audit 2026-07-27, B3)
+            CloseTransports(keepTun: true);
             // FULLY join the previous attempt before returning. The switch path calls
             // Start()->Stop() on the SAME tunnel object, whose transport/TUN/route fields are
             // shared; if the old task's teardown outlived this wait it would dispose the NEW
@@ -157,12 +199,13 @@ public abstract class VpnTunnelBase
             }
             _runTask = null;
             _cts = null;
+            // Phase 2 — now that nothing is running inside SetupTun / the data plane, dispose
+            // the TUN and undo the platform network state. Idempotent: the joined task's own
+            // error path may already have done it (both CloseTransports and CleanupPlatform
+            // null-check what they release). (Audit 2026-07-27, B3)
+            CloseTransports();
             // Lift the kill-switch only on a clean stop (a crash leaves it = fail-safe).
-            if (_ksEngaged)
-            {
-                try { KillSwitchDisengage(); } catch (Exception e) { Log($"kill-switch disengage error: {e.Message}"); }
-                _ksEngaged = false;
-            }
+            KillSwitchLift();
             Status(VpnStatus.Disconnected);
         }
     }
@@ -257,6 +300,22 @@ public abstract class VpnTunnelBase
 
     /// <summary>Platform hook: lift the kill-switch on a clean stop.</summary>
     protected virtual void KillSwitchDisengage() { }
+
+    /// <summary>Lift the kill-switch exactly once, from whichever ORDERLY teardown path
+    /// reaches it first — Stop(), or the reconnect loop giving up.
+    ///
+    /// It used to be lifted only in Stop(). An exit through `reconnect_enabled = false` or
+    /// `max_retries` therefore left the host firewalled (Windows `DefaultOutboundAction
+    /// Block`, macOS pf `block drop out all`) with the UI showing Error and offering only
+    /// "Connect" — the user had no in-app way to get their network back. A CRASH must still
+    /// leave it engaged (fail-safe, swept on the next run); only a deliberate give-up lifts
+    /// it. Interlocked rather than the lifecycle lock: the give-up tail runs ON the tunnel
+    /// task, which Stop() joins while holding that lock. (Audit 2026-07-27, B2)</summary>
+    private void KillSwitchLift()
+    {
+        if (Interlocked.Exchange(ref _ksEngaged, 0) == 0) return;
+        try { KillSwitchDisengage(); } catch (Exception e) { Log($"kill-switch disengage error: {e.Message}"); }
+    }
 
     /// <summary>Close a TCP socket with a graceful FIN (Shutdown(Both) then Close) rather
     /// than the abrupt RST a bare Close() sends when there is unacked data or a live peer.
@@ -368,6 +427,12 @@ public abstract class VpnTunnelBase
                 // surface a clear security warning and stop. (A5 — TOFU warning.)
                 Log($"[SECURITY] {e.Message}");
                 Status(VpnStatus.Error, Loc.T("MitmStop"));
+                // Remember WHY we stopped. The give-up tail below announces a generic
+                // "could not connect" for every exit, which overwrote this security
+                // warning within milliseconds — so the one message the user most needs to
+                // see, on a possible MITM, never reached the UI at all.
+                // (Audit 2026-07-27, Z2.)
+                _stoppedForSecurityReason = true;
                 CloseTransports();
                 break;
             }
@@ -421,7 +486,21 @@ public abstract class VpnTunnelBase
         // joins this task), so don't race it here.
         if (!_userRequestedDisconnect) CloseTransports();
         if (_userRequestedDisconnect) Status(VpnStatus.Disconnected);
-        else Status(VpnStatus.Error, Loc.T("CouldNotConnect")); // gave up retrying
+        else
+        {
+            // …and the same is true of the kill-switch, which only Stop() used to lift: after
+            // an orderly give-up the UI shows Error and offers "Connect", so a still-engaged
+            // firewall left the host with no egress AND no in-app way to restore it. Lift it
+            // BEFORE announcing Error, so egress is already back when the user sees the state.
+            // (Audit 2026-07-27, B2)
+            KillSwitchLift();
+            // Keep a security stop visible: only announce the generic failure when the
+            // loop ended for an ordinary reason. (Audit 2026-07-27, Z2.)
+            if (!_stoppedForSecurityReason)
+            {
+                Status(VpnStatus.Error, Loc.T("CouldNotConnect")); // gave up retrying
+            }
+        }
     }
 
     private void RunVpnConnection(VpnConfig config, CancellationToken ct)
@@ -1359,12 +1438,22 @@ public abstract class VpnTunnelBase
         int GetInt(JsonObject o, string k, int d) => o[k] is JsonValue v && v.TryGetValue(out int i) ? i : d;
         long GetLong(JsonObject o, string k, long d) => o[k] is JsonValue v && v.TryGetValue(out long l) ? l : d;
         bool GetBool(JsonObject o, string k, bool d) => o[k] is JsonValue v && v.TryGetValue(out bool b) ? b : d;
+        // Everything the server sizes is clamped to a wire-plausible range HERE, at the one
+        // place AuthOK's obfuscation object is decoded, so no send path can be handed a value
+        // PacketCodec will refuse. Unclamped these reached enc.SetPadding / the shaper as-is
+        // and a single oversized max_bytes / max_size turned every TCP data packet into a
+        // PacketException — drop, reconnect, same values, drop. (Audit 2026-07-27, N2)
+        int Bounded(JsonObject o, string k, int d) => Math.Clamp(GetInt(o, k, d), 0, PadWireCeiling);
+        int padMin = Bounded(pad, "min_bytes", 0);
+        int padMax = Math.Max(Bounded(pad, "max_bytes", 255), padMin);
+        int shMin = Bounded(sh, "min_size", 64);
+        int shMax = Math.Max(Bounded(sh, "max_size", 1024), shMin);
         return new PushedObf(
-            GetBool(pad, "enabled", true), GetInt(pad, "min_bytes", 0), GetInt(pad, "max_bytes", 255),
+            GetBool(pad, "enabled", true), padMin, padMax,
             GetBool(hb, "enabled", true), GetLong(hb, "interval_ms", 15000), GetLong(hb, "jitter_ms", 2000),
             GetBool(sh, "enabled", false), GetLong(sh, "idle_gap_mean_ms", 700),
             GetLong(sh, "idle_gap_min_ms", 40), GetLong(sh, "idle_gap_max_ms", 6000),
-            GetInt(sh, "budget_bytes_per_sec", 16384), GetInt(sh, "min_size", 64), GetInt(sh, "max_size", 1024),
+            GetInt(sh, "budget_bytes_per_sec", 16384), shMin, shMax,
             GetBool(sh, "stealth", false), GetInt(sh, "stealth_rate_mbps", 2));
     }
 
@@ -1682,9 +1771,14 @@ public abstract class VpnTunnelBase
                     // the RX-liveness timeout. TCP is an in-order stream, so a write error
                     // there IS fatal. (This EMSGSIZE-was-fatal path put udp-quic into an
                     // endless auth→drop→reconnect loop.)
+                    // TCP takes the SAME per-packet cap, just against the fixed 1400-byte
+                    // budget the Rust client uses instead of the probed MTU: enc.Encrypt(pkt)
+                    // applied the server-pushed padding_max verbatim, so an oversized pushed
+                    // value threw PacketException here and dropped the tunnel on every
+                    // reconnect. (Audit 2026-07-27, N2)
                     try
                     {
-                        transport.Send(isUdp ? enc.EncryptCapped(pkt, effectiveMtu) : enc.Encrypt(pkt));
+                        transport.Send(enc.EncryptCapped(pkt, isUdp ? effectiveMtu : PadCapInner));
                     }
                     catch (Exception) when (isUdp) { continue; } // drop-on-egress-error (UDP loss)
                     Interlocked.Add(ref _bytesUp, pkt.Length);
@@ -2154,7 +2248,14 @@ public abstract class VpnTunnelBase
         var tunWriteLock = new object();
 
         var streams = new List<BondedStream> { primary };
+        // Guarded exactly like `streams`, and for the same reason: on the ADAPTIVE path the
+        // ramp task calls LaunchStreamJobs from a thread-pool thread while this thread is
+        // adding its own jobs and, at teardown, snapshotting the list. A List<T> mutated from
+        // two threads can lose an entry, resize mid-read or throw — and a job missing from the
+        // snapshot is a worker the teardown never joins, i.e. a thread still inside the TUN
+        // when the caller disposes it. (Audit 2026-07-27, N1)
         var jobs = new List<Task>();
+        void AddJob(Task t) { lock (jobs) jobs.Add(t); }
         byte[] token;
         try { token = Convert.FromHexString(session.SessionToken); }
         catch (FormatException)
@@ -2188,7 +2289,7 @@ public abstract class VpnTunnelBase
         void LaunchStreamJobs(BondedStream s)
         {
             Interlocked.Increment(ref live);
-            jobs.Add(Task.Run(() =>
+            AddJob(Task.Run(() =>
             {
                 try
                 {
@@ -2215,7 +2316,7 @@ public abstract class VpnTunnelBase
             // single-stream note) unless flow-shaping cover replaces it. 30s fallback.
             long kaIntervalMsM = hbOnM ? config.HeartbeatIntervalMs : 30_000;
             {
-                jobs.Add(Task.Run(() =>
+                AddJob(Task.Run(() =>
                 {
                     var rng = RandomNumberGenerator.Create();
                     while (!lct.IsCancellationRequested)
@@ -2259,7 +2360,7 @@ public abstract class VpnTunnelBase
         }
         else
         {
-            jobs.Add(Task.Run(() =>
+            AddJob(Task.Run(() =>
             {
                 long lastBytes = 0, bestRate = 0; int idx = 1;
                 while (!lct.IsCancellationRequested)
@@ -2291,7 +2392,7 @@ public abstract class VpnTunnelBase
         }
 
         // Upload: round-robin Wintun outbound packets across the live streams.
-        jobs.Add(Task.Run(() =>
+        AddJob(Task.Run(() =>
         {
             try
             {
@@ -2306,7 +2407,10 @@ public abstract class VpnTunnelBase
                     BondedStream? s = null;
                     lock (streams) { if (streams.Count > 0) s = streams[(int)((uint)Interlocked.Increment(ref rr) % (uint)streams.Count)]; }
                     if (s == null) continue;
-                    try { s.Transport.Send(s.Enc.Encrypt(pkt)); Interlocked.Add(ref _bytesUp, pkt.Length); Interlocked.Exchange(ref lastTx, Environment.TickCount64); }
+                    // Bonded streams are TCP, so they take the same fixed per-packet padding
+                    // cap as the single-stream TCP path — Encrypt() applied the server-pushed
+                    // padding_max verbatim. (Audit 2026-07-27, N2)
+                    try { s.Transport.Send(s.Enc.EncryptCapped(pkt, PadCapInner)); Interlocked.Add(ref _bytesUp, pkt.Length); Interlocked.Exchange(ref lastTx, Environment.TickCount64); }
                     catch (Exception e) { OnStreamDeath(s, e); }
                 }
             }
@@ -2315,7 +2419,7 @@ public abstract class VpnTunnelBase
 
         // Liveness watchdog: reconnect on resume-from-sleep, on active-uplink/dead-downlink,
         // or on server silence (the last only when the server is expected to be sending).
-        jobs.Add(Task.Run(() =>
+        AddJob(Task.Run(() =>
         {
             long lastWall = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             long lastTick = Environment.TickCount64;
@@ -2353,7 +2457,8 @@ public abstract class VpnTunnelBase
         // Wake every parked worker (TUN reader + per-stream heartbeats) and join before
         // returning, so the TUN is idle when the caller disposes it.
         loopCts.Cancel();
-        try { Task.WaitAll(jobs.ToArray(), 3000); } catch { }
+        Task[] pending; lock (jobs) pending = jobs.ToArray();   // (Audit 2026-07-27, N1)
+        try { Task.WaitAll(pending, 3000); } catch { }
 
         if (!ct.IsCancellationRequested && error is not OperationCanceledException)
             throw error; // let ConnectWithRetry decide whether to reconnect

@@ -160,45 +160,17 @@ public static class TlsHandshake
         buf.W(0x00); buf.W(0x00);
     }
 
-    public static byte[]? ParseServerHello(byte[] data)
-    {
-        if (data.Length < 5 || data[0] != ServerHelloType) return null;
-        int bodyLen = ReadInt24(data, 1);
-        if (bodyLen < 43 || data.Length < 4 + bodyLen) return null;
-        int pos = 4;
-
-        pos += 2;  // version
-        pos += 32; // random
-        int sessionIdLen = data[pos] & 0xFF; pos += 1 + sessionIdLen;
-        pos += 2; // cipher suite
-        pos += 1; // compression
-        if (pos + 2 > data.Length) return null;
-        int extLen = ReadShort(data, pos); pos += 2;
-        if (pos + extLen > data.Length) return null;
-        int extEnd = pos + extLen;
-
-        while (pos + 4 <= extEnd)
-        {
-            int extType = ReadShort(data, pos);
-            int extDataLen = ReadShort(data, pos + 2); pos += 4;
-            if (pos + extDataLen > extEnd) break;
-            if (extType == 0x0033)
-            {
-                if (extDataLen < 6) return null;
-                int group = ReadShort(data, pos + 2);
-                int keyLen = ReadShort(data, pos + 4);
-                if (group == 0x001d && keyLen >= 32)
-                    return data[(pos + 6)..(pos + 6 + 32)];
-            }
-            pos += extDataLen;
-        }
-        return null;
-    }
-
     /// <summary>Parse a hybrid ServerHello (handshake-message bytes, starting 0x02),
     /// returning the ML-KEM-768 ciphertext (1088) and the server's x25519 public (32)
     /// from its X25519MLKEM768 (0x11ec) key_share. Mirrors Rust
-    /// <c>parse_server_hello_pq</c>; null if the hybrid share is absent/malformed.</summary>
+    /// <c>parse_server_hello_pq</c>; null if the hybrid share is absent/malformed.
+    ///
+    /// The ONLY ServerHello parser: the classic X25519-only <c>ParseServerHello</c> that
+    /// used to sit here was removed. It had no callers (every wire mode goes through the
+    /// hybrid handshake) and, unlike this one, it sliced <c>data[pos+6 .. pos+6+32]</c>
+    /// without the <c>pos + 6 + keyLen &lt;= extEnd</c> bounds check below — a peer sending
+    /// <c>extDataLen == 6</c> with <c>keyLen = 32</c> made it throw on attacker-controlled
+    /// input. (Audit 2026-07-27, F8)</summary>
     public static (byte[] Ciphertext, byte[] ServerX25519)? ParseServerHelloPq(byte[] data)
     {
         if (data.Length < 5 || data[0] != ServerHelloType) return null;

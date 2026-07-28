@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace QeliWin.Vpn;
 
@@ -17,12 +18,19 @@ public sealed class WintunAdapter : IDisposable, Qeli.Shared.Vpn.ITunDevice
 
     private const uint ERROR_NO_MORE_ITEMS = 259;
     private const uint ERROR_HANDLE_EOF = 38;
-    private const uint WAIT_OBJECT_0 = 0;
-    private const uint WAIT_TIMEOUT = 258;
 
     private IntPtr _adapter;
     private IntPtr _session;
-    private IntPtr _readEvent;
+    // OUR OWN duplicate of Wintun's read-wait event, not the handle WintunGetReadWaitEvent
+    // returned. That handle belongs to the session and is freed by WintunEndSession, which
+    // Dispose calls under _gate — while the reader was already blocked in a 250 ms wait on
+    // it OUTSIDE the gate, i.e. waiting on a handle that had just been freed (and can be
+    // reused for an unrelated kernel object). Duplicating gives us an independent handle to
+    // the same event object, so the object stays alive as long as we hold it, and wrapping it
+    // in a WaitHandle makes the lifetime ref-counted: WaitHandle.WaitOne holds the
+    // SafeHandle for the duration of the wait, so a concurrent Dispose defers the real
+    // CloseHandle until the waiter is out. (Audit 2026-07-27, N6)
+    private WaitHandle? _readWait;
     // True only when WE created `_adapter`. Dispose removes the adapter only if we created
     // it, so our teardown can never take down an adapter that belongs to another app.
     private bool _created;
@@ -79,7 +87,24 @@ public sealed class WintunAdapter : IDisposable, Qeli.Shared.Vpn.ITunDevice
     private static extern uint WintunGetRunningDriverVersion();
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr sourceHandle,
+        IntPtr targetProcess, out IntPtr targetHandle, uint desiredAccess,
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint options);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
+
+    /// <summary>Managed owner for the DUPLICATED read-wait handle. WaitHandle is the only
+    /// way to get .NET's ref-counted SafeHandle semantics around a raw event handle, and
+    /// those semantics are the point: they are what stops Dispose from closing the handle
+    /// out from under a thread that is inside WaitOne. (Audit 2026-07-27, N6)</summary>
+    private sealed class DuplicatedEvent : WaitHandle
+    {
+        public DuplicatedEvent(IntPtr handle) => SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle: true);
+    }
 
     // ── lifecycle ──────────────────────────────────────────────────────────
     /// <summary>Create (or reopen) the adapter and start a session. Requires admin.</summary>
@@ -110,7 +135,17 @@ public sealed class WintunAdapter : IDisposable, Qeli.Shared.Vpn.ITunDevice
         if (_session == IntPtr.Zero)
             throw new Win32Exception(Marshal.GetLastWin32Error(), "WintunStartSession failed");
 
-        _readEvent = WintunGetReadWaitEvent(_session);
+        // Duplicate the session's read-wait event for our own use (see _readWait). A failure
+        // here is not fatal: ReceivePacket then falls back to a short poll instead of an
+        // event wait — slightly less efficient, but never a wait on a freed handle.
+        IntPtr sessionEvent = WintunGetReadWaitEvent(_session);
+        if (sessionEvent != IntPtr.Zero
+            && DuplicateHandle(GetCurrentProcess(), sessionEvent, GetCurrentProcess(),
+                               out IntPtr dup, 0, false, DUPLICATE_SAME_ACCESS)
+            && dup != IntPtr.Zero)
+        {
+            _readWait = new DuplicatedEvent(dup);
+        }
     }
 
     public static uint RunningDriverVersion()
@@ -132,7 +167,7 @@ public sealed class WintunAdapter : IDisposable, Qeli.Shared.Vpn.ITunDevice
     {
         while (!ct.IsCancellationRequested)
         {
-            IntPtr readEvent;
+            WaitHandle? readWait;
             lock (_gate)
             {
                 if (_disposed || _session == IntPtr.Zero) return null; // torn down
@@ -148,12 +183,16 @@ public sealed class WintunAdapter : IDisposable, Qeli.Shared.Vpn.ITunDevice
                 if (err == ERROR_HANDLE_EOF) return null;              // session ended
                 if (err != ERROR_NO_MORE_ITEMS)
                     throw new Win32Exception((int)err, "WintunReceivePacket failed");
-                readEvent = _readEvent; // snapshot under the lock for the wait below
+                readWait = _readWait; // snapshot under the lock for the wait below
             }
-            // Wait for the ring OUTSIDE the lock (up to 250 ms) so Dispose is never
-            // blocked behind our sleep. A stale/zeroed event means we were torn down.
-            if (readEvent == IntPtr.Zero) return null;
-            WaitForSingleObject(readEvent, 250); // wake to re-check cancellation / _disposed
+            // Wait for the ring OUTSIDE the lock (up to 250 ms) so Dispose is never blocked
+            // behind our sleep. Waiting on OUR duplicate is what makes that safe: a Dispose
+            // that lands mid-wait ends the session but cannot free the object we are parked
+            // on. If it disposed the handle just before we entered the wait, WaitOne throws
+            // ObjectDisposedException — that is simply "torn down". Handle duplication having
+            // failed at Open, poll instead. (Audit 2026-07-27, N6)
+            try { if (readWait != null) readWait.WaitOne(250); else Thread.Sleep(50); }
+            catch (ObjectDisposedException) { return null; }
         }
         return null;
     }
@@ -183,7 +222,11 @@ public sealed class WintunAdapter : IDisposable, Qeli.Shared.Vpn.ITunDevice
             if (_session != IntPtr.Zero) { WintunEndSession(_session); _session = IntPtr.Zero; }
             // Remove the adapter ONLY if we created it — never take down a foreign one.
             if (_adapter != IntPtr.Zero) { if (_created) WintunCloseAdapter(_adapter); _adapter = IntPtr.Zero; }
-            _readEvent = IntPtr.Zero;
+            // Release our duplicate LAST. A reader still inside WaitOne holds the SafeHandle
+            // via DangerousAddRef, so the actual CloseHandle is deferred until it returns —
+            // which it does within 250 ms. (Audit 2026-07-27, N6)
+            try { _readWait?.Dispose(); } catch { }
+            _readWait = null;
         }
     }
 }

@@ -20,7 +20,7 @@ public sealed record UpdateInfo(string LatestVersion, string ReleaseUrl, bool Is
 /// release page URL; it NEVER downloads or installs anything.
 ///
 /// Endpoint is the releases LIST (not /releases/latest, which silently skips pre-releases —
-/// and every qeli release so far is a pre-release), mirroring install-reality-server.sh.
+/// and every qeli release so far is a pre-release), mirroring install-qeli-server.sh.
 /// Any error / timeout / rate-limit (GitHub allows 60 req/h/IP unauthenticated) fails soft to
 /// null so the UI simply shows nothing.
 /// </summary>
@@ -75,7 +75,7 @@ public static class UpdateChecker
     }
 
     /// <summary>Pure pick logic (pre-releases INCLUDED): the first array element that is not a
-    /// draft, returning (tag_name, html_url). Mirrors install-reality-server.sh's
+    /// draft, returning (tag_name, html_url). Mirrors install-qeli-server.sh's
     /// "map(select(.draft|not)) | .[0]". Returns null if the array is empty / malformed.</summary>
     private static (string tag, string? url)? SelectLatest(JsonElement root)
     {

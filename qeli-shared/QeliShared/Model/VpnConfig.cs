@@ -422,6 +422,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         var awg = Obj(obf, "awg");
 
         string password = StrOrNull(auth, "password") ?? StrOrNull(root, "password") ?? "";
+        var pad = CheckedPadding(Int(padding, "min_bytes", 0), Int(padding, "max_bytes", 255));
 
         return new VpnConfig
         {
@@ -438,7 +439,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             Password = password,
             ServerPublicKeyHex = StrOrNull(auth, "server_public_key"),
             BindStaticToSession = Bool(auth, "bind_static_to_session", true),
-            Mtu = Int(tun, "mtu", 0),  // 0 = auto (use server-pushed MTU)
+            Mtu = CheckedMtu(Int(tun, "mtu", 0)),  // 0 = auto (use server-pushed MTU)
             RoutingMode = Str(routing, "mode", "full-tunnel"),
             AddDefaultGateway = Bool(routing, "add_default_gateway", false),
             IncludeRoutes = StrList(routing, "include"),
@@ -458,8 +459,8 @@ public sealed class VpnConfig : INotifyPropertyChanged
             Sni = StrOrNull(obf, "sni"),
             RealityShortId = StrOrNull(obf, "reality_short_id"),
             PaddingEnabled = Bool(padding, "enabled", true),
-            PaddingMin = Int(padding, "min_bytes", 0),
-            PaddingMax = Int(padding, "max_bytes", 255),
+            PaddingMin = pad.Min,
+            PaddingMax = pad.Max,
             HeartbeatEnabled = Bool(heartbeat, "enabled", true),
             HeartbeatIntervalMs = Long(heartbeat, "interval_ms", 15000),
             HeartbeatDataSize = Int(heartbeat, "data_size_bytes", 16),
@@ -566,12 +567,48 @@ public sealed class VpnConfig : INotifyPropertyChanged
             // shared flat-INI config's TUN interface name transfers across clients.
             DevNode = Get("dev_node").Length > 0 ? Get("dev_node")
                     : Get("dev").Length > 0 ? Get("dev") : null,
-            Mtu = int.TryParse(Get("mtu"), out var miv) ? miv : 0,  // 0 = auto
+            Mtu = CheckedMtu(int.TryParse(Get("mtu"), out var miv) ? miv : 0),  // 0 = auto
             MtuProbe = Get("mtu_probe") is var mp && (mp.Length == 0 || IniBool(mp)),  // default true
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
         };
+    }
+
+    // ── imported-value ranges ────────────────────────────────────────────────
+    // `port` and the server-pushed `max_streams` were range-checked at import, but `mtu`
+    // and the padding bounds were not: a hand-written config or a pasted
+    // `qeli://…?mtu=999999` (or a negative) became a profile that failed at connect with
+    // an opaque TUN/socket error, and an out-of-range padding_max built records the peer
+    // rejects as oversized. Same ranges the Rust client enforces — config/client.rs:
+    // mtu is 0 (auto) or 576..=9000; padding is bounded by the 1400-byte wire ceiling the
+    // per-packet pad_cap uses. (Audit 2026-07-27, C6)
+    private const int MtuMin = 576;
+    private const int MtuMax = 9000;
+    private const int PaddingCeiling = 1400;
+
+    /// <summary>Range-check an explicit TUN MTU from a config FILE (flat-INI or JSON);
+    /// 0 = auto. REJECTS, like the Rust <c>from_ini</c>: a bad value in a file the user
+    /// wrote by hand is a mistake worth surfacing at import (both GUI import paths show
+    /// the message), not something to silently rewrite. (Audit 2026-07-27, C6)</summary>
+    private static int CheckedMtu(int mtu) =>
+        mtu == 0 || (mtu >= MtuMin && mtu <= MtuMax)
+            ? mtu
+            : throw new FormatException($"invalid mtu {mtu} — expected 0 (auto) or {MtuMin}..{MtuMax}");
+
+    /// <summary>Same range for a <c>qeli://</c> link, but falls back to auto instead of
+    /// throwing — mirrors the Rust link importer, which is infallible and only warns. A
+    /// scanned or pasted link should still yield a usable profile. (Audit 2026-07-27, C6)</summary>
+    private static int LinkMtu(int mtu) => mtu == 0 || (mtu >= MtuMin && mtu <= MtuMax) ? mtu : 0;
+
+    /// <summary>Clamp imported padding bounds to 0..1400 and restore min &lt;= max. Clamped
+    /// rather than rejected: unlike mtu these are pure obfuscation knobs, so narrowing them
+    /// costs the user nothing while an oversized max_bytes would make every data record
+    /// exceed PacketCodec.MaxRecordSize. (Audit 2026-07-27, C6)</summary>
+    private static (int Min, int Max) CheckedPadding(int min, int max)
+    {
+        min = Math.Clamp(min, 0, PaddingCeiling);
+        return (min, Math.Clamp(max, min, PaddingCeiling));
     }
 
     private static bool IniBool(string v) =>
@@ -697,7 +734,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             Username = user, Password = pass, ServerPublicKeyHex = key,
             WireMode = mode, ObfsKey = obfs, ObfsFronting = front, Sni = sni, QuicEnabled = quic,
             AwgEnabled = awg, AwgJc = awgJc, AwgJmin = awgJmin, AwgJmax = awgJmax,
-            RealityShortId = rsid, Mtu = mtu,
+            RealityShortId = rsid, Mtu = LinkMtu(mtu),
         };
     }
 

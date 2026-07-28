@@ -121,6 +121,15 @@ public partial class MainWindow : Window
         Toast.Enabled = AppSettings.Current.ToastsEnabled;
 
         Closing += OnWindowClosing;
+        // Log off / shut down / restart: the OS ends the session and `Closing` is NOT a
+        // reliable teardown hook there. It runs with `_exiting == false`, takes the tray
+        // branch, sets `e.Cancel = true` (which the shutdown path ignores) and returns —
+        // so the process died with the Wintun adapter up, the 0.0.0.0/1 + 128.0.0.0/1
+        // routes installed, DNS overridden and, with kill_switch on, egress still blocked.
+        // The next boot then started on a machine whose networking qeli had configured and
+        // never restored. `SessionEnding` is the event that actually fires here.
+        // (Audit 2026-07-27, Z3.)
+        if (Application.Current is { } app) app.SessionEnding += OnSessionEnding;
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) Hide(); };
 
         RefreshServiceMode();
@@ -153,13 +162,41 @@ public partial class MainWindow : Window
     {
         if (_exiting)
         {
-            try { _tunnel.Stop(); } catch { }
+            // ExitApp owns the teardown and has already awaited it OFF the UI thread; this
+            // handler runs on the UI thread, so a Stop() here would just re-introduce the
+            // Dispatcher deadlock it fixed (Stop joins the tunnel task, whose status callback
+            // needs this very thread). Only tray cleanup is left. (Audit 2026-07-27, N4)
             _tray?.Dispose();
             return;
         }
         e.Cancel = true;
         Hide();
         _tray?.ShowBalloon("Qeli", Loc.T("TrayBalloon"));
+    }
+
+    /// <summary>
+    /// Tear the tunnel down when the OS ends the session (logoff / shutdown / restart).
+    /// </summary>
+    /// <remarks>
+    /// Synchronous ON PURPOSE, unlike <see cref="ExitApp"/>: Windows gives a session-ending
+    /// app a limited window and then kills it, so deferring to a continuation would lose the
+    /// race. The teardown runs on a worker thread with a bounded wait — `Stop()` joins the
+    /// tunnel task, whose status callback marshals to THIS thread, so calling it inline
+    /// would deadlock exactly as it did in the exit path (N4). `_exiting` is set first so
+    /// the `Closing` handler that follows takes the already-torn-down branch instead of
+    /// cancelling the close. (Audit 2026-07-27, Z3.)
+    /// </remarks>
+    private void OnSessionEnding(object sender, SessionEndingCancelEventArgs e)
+    {
+        if (_exiting) return;
+        _exiting = true;
+        try
+        {
+            // Bounded: never hold up a shutdown longer than the teardown legitimately needs.
+            Task.Run(() => { try { _tunnel.Stop(); } catch { } }).Wait(TimeSpan.FromSeconds(10));
+        }
+        catch { /* shutting down anyway — nothing useful to report */ }
+        _tray?.Dispose();
     }
 
     private void ShowFromTray()
@@ -329,10 +366,20 @@ public partial class MainWindow : Window
         ServicePollTick(null, EventArgs.Empty);
     }
 
-    private void ExitApp()
+    /// <summary>Quit: tear the tunnel down, then shut the app down.
+    ///
+    /// Asynchronous on purpose. Stop() blocks up to ~8 s joining the tunnel task, and that
+    /// task reports its final status through StatusChanged, which marshals back with
+    /// Dispatcher.Invoke — so calling Stop() straight from the UI thread deadlocked the two
+    /// against each other: the window froze for the whole join timeout on every quit, and the
+    /// teardown that timed out left the adapter, routes and DNS behind. Run it off the UI
+    /// thread (exactly what ToggleConnection already does) and only shut down once it has
+    /// actually finished. (Audit 2026-07-27, N4)</summary>
+    private async void ExitApp()
     {
+        if (_exiting) return;   // a second Exit while the first teardown is still running
         _exiting = true;
-        try { _tunnel.Stop(); } catch { }
+        await Task.Run(() => { try { _tunnel.Stop(); } catch { } });
         _tray?.Dispose();
         Application.Current.Shutdown();
     }
