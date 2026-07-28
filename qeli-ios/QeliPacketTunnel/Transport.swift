@@ -31,9 +31,12 @@ final class NetworkTransport: QeliTransport, @unchecked Sendable {
         if config.isUDP {
             parameters = .udp
             if config.mtu == 0 && config.mtuProbe {
-                let ip = NWProtocolIP.Options()
-                ip.disableFragmentation = true
-                parameters.defaultProtocolStack.internetProtocol = ip
+                // NWProtocolIP.Options has no public initialiser — the stack already holds one,
+                // it can only be configured in place. Assigning a fresh instance would also have
+                // replaced the whole internetProtocol entry rather than adjusting it.
+                if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+                    ip.disableFragmentation = true
+                }
             }
         } else {
             let tcp = NWProtocolTCP.Options()
@@ -43,7 +46,10 @@ final class NetworkTransport: QeliTransport, @unchecked Sendable {
             tcp.keepaliveCount = 3
             parameters = NWParameters(tls: nil, tcp: tcp)
         }
-        parameters.serviceClass = .interactive
+        // There is no `.interactive` case. `.responsiveData` is the latency-sensitive class
+        // that fits a tunnel carrying mixed traffic; the voice/video classes would mark every
+        // packet as real-time media.
+        parameters.serviceClass = .responsiveData
         let connection = NWConnection(
             host: NWEndpoint.Host(config.serverAddress),
             port: port,
@@ -89,7 +95,9 @@ final class NetworkTransport: QeliTransport, @unchecked Sendable {
     func send(_ data: Data) async throws {
         try Task.checkCancellation()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            // Spelled out: both resume calls sit inside NWConnection's completion closure, so
+            // there is nothing for the compiler to infer the result type from.
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 connection.send(content: data, completion: .contentProcessed { error in
                     if let error { continuation.resume(throwing: error) }
                     else { continuation.resume(returning: ()) }
