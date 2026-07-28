@@ -88,19 +88,40 @@ public static class ServiceManager
         var full = Path.GetFullPath(exePath);
         for (var path = full; !string.IsNullOrEmpty(path); path = Path.GetDirectoryName(path) ?? "")
         {
-            // %u = owner uid, %Lp = permission bits in octal.
-            var (outp, code) = Run2("/usr/bin/stat", $"-f \"%u %Lp\" \"{path}\"");
+            // %u = owner uid, %g = owner gid, %Lp = permission bits in octal.
+            var (outp, code) = Run2("/usr/bin/stat", $"-f \"%u %g %Lp\" \"{path}\"");
             if (code != 0)
                 throw new InvalidOperationException($"Cannot stat '{path}' while validating the daemon path.");
             var parts = outp.Trim().Split(' ');
-            if (parts.Length != 2 || !int.TryParse(parts[0], out var uid))
+            if (parts.Length != 3 || !int.TryParse(parts[0], out var uid) || !int.TryParse(parts[1], out var gid))
                 throw new InvalidOperationException($"Unexpected stat output for '{path}': {outp.Trim()}");
-            var mode = Convert.ToInt32(parts[1], 8);
-            if (uid != 0 || (mode & 0b000_010_010) != 0)
+            var mode = Convert.ToInt32(parts[2], 8);
+
+            // World-writable is always fatal: ANY local account could swap the binary that
+            // launchd then runs as root.
+            bool worldWritable = (mode & 0b000_000_010) != 0;
+
+            // Group-writable is fatal only when the group is not a system/admin one.
+            //
+            // This used to reject group-write outright, which rejected /Applications — macOS
+            // ships it `root:admin 0775` precisely so admins can install apps — and therefore
+            // rejected the exact location the error message told people to move the app to.
+            // The daemon could then never be installed from a normal install, while the GUI
+            // kept re-prompting for the admin password. The check was measuring the wrong
+            // property: on macOS, membership in `admin` already confers sudo, so an admin
+            // being able to write there is not an escalation — they can become root directly.
+            // `wheel` (gid 0) is likewise root-equivalent. Every other group is a real
+            // boundary and still refuses.
+            const int GidWheel = 0, GidAdmin = 80;
+            bool groupWritable = (mode & 0b000_010_000) != 0
+                                 && gid != GidWheel && gid != GidAdmin;
+
+            if (uid != 0 || worldWritable || groupWritable)
                 throw new InvalidOperationException(
                     "Refusing to install the LaunchDaemon: it would run as root at boot from " +
-                    $"\"{full}\", but \"{path}\" is not root-owned or is group/world-writable. " +
-                    "Anyone able to write there could then run code as root on every boot." +
+                    $"\"{full}\", but \"{path}\" is not root-owned, is world-writable, or is " +
+                    "writable by a non-administrator group. Anyone able to write there could " +
+                    "then run code as root on every boot." +
                     Environment.NewLine + Environment.NewLine +
                     "Move Qeli.app to /Applications (owned by root, e.g. " +
                     "`sudo cp -R Qeli.app /Applications/ && sudo chown -R root:wheel /Applications/Qeli.app`) " +

@@ -1,6 +1,6 @@
 # Qeli — installation & getting started (step by step)
 
-> **These docs describe 0.7.12** — the latest released version. `qeli --version` tells you
+> **These docs describe 0.7.13** — the latest released version. `qeli --version` tells you
 > what you actually have.
 
 A complete from-scratch guide: from standing up the server to creating users with

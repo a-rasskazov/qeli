@@ -254,11 +254,39 @@ public sealed class VpnTunnel : VpnTunnelBase
     }
 
     // Firewall kill-switch (full-tunnel only). Allow the Wintun adapter by its
-    // per-tunnel name (derived from the server address, same as SetupTun); the rule
-    // matches once the adapter appears on reconnect, like the Linux `oifname vpn0`, so
-    // it can be raised before the tun exists.
-    protected override void KillSwitchEngage(VpnConfig config) =>
+    // per-tunnel name (derived from the server address, same as SetupTun).
+    //
+    // The adapter must EXIST before the rule is created. `New-NetFirewallRule` resolves
+    // -InterfaceAlias at creation time and fails with "The specified interface was not
+    // found on the system" when it doesn't — unlike Linux nft/iptables, where an interface
+    // name may refer to a device that only appears later. This code was written under the
+    // Linux assumption, and since the kill-switch is deliberately raised BEFORE the first
+    // connect (leak-proof from the very first attempt), engaging it for a profile whose
+    // adapter did not exist yet always failed — and fail-closed then refused to start the
+    // profile at all. Bringing the adapter up here costs nothing extra: SetupTun consumes
+    // exactly this prewarmed adapter (same name + GUID), so nothing is created twice.
+    protected override void KillSwitchEngage(VpnConfig config)
+    {
+        EnsureTunAdapterExists(config);
         KillSwitch.Engage(config.ServerAddress, AdapterIdentity(config).name, Log);
+    }
+
+    /// <summary>Bring the Wintun adapter up NOW, synchronously, so a firewall rule can name
+    /// it. Reuses the ordinary prewarm path (idempotent — SetupTun still consumes the warmed
+    /// adapter). Throws with an actionable message when it cannot be created, so the caller's
+    /// fail-closed path reports the real cause instead of an opaque firewall error.</summary>
+    private void EnsureTunAdapterExists(VpnConfig config)
+    {
+        if (_tun != null) return;   // a persisted adapter is already up — nothing to create
+        PrewarmTun(config);         // no-op when a warm is already in flight
+        WintunAdapter? warmed = null;
+        try { warmed = _prewarm?.GetAwaiter().GetResult(); } catch { /* reported just below */ }
+        if (warmed == null)
+            throw new InvalidOperationException(
+                "the Wintun adapter could not be created, so no firewall rule can name it " +
+                "(Windows rejects a rule for a missing interface). Check that the Wintun driver " +
+                "loads and that qeli is running elevated.");
+    }
 
     protected override void KillSwitchDisengage() => KillSwitch.Disengage(Log);
 }

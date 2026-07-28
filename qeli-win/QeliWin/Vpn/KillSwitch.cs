@@ -95,7 +95,19 @@ public static class KillSwitch
         // Now flip the default outbound action to Block — the allow rules above let
         // the permitted traffic through. Reached only if every rule above succeeded.
         script.AppendLine("Set-NetFirewallProfile -All -DefaultOutboundAction Block");
-        Ps(script.ToString(), critical: true);
+        try { Ps(script.ToString(), critical: true); }
+        catch
+        {
+            // The default outbound action is flipped by the LAST line, so a failure here means
+            // it was never applied and there is nothing to restore — egress is untouched. But
+            // the allow rules created before the failure, and the state file written above,
+            // would linger; and because THIS process is still alive, the next startup Sweep
+            // would read that state, see a live owner and deliberately leave the leftovers in
+            // place (C-04). Undo our own partial work before failing closed.
+            try { Ps($"Remove-NetFirewallRule -Group '{Group}' -ErrorAction SilentlyContinue", critical: false); } catch { }
+            try { File.Delete(StatePath); } catch { }
+            throw;
+        }
 
         log($"Kill-switch ENGAGED: egress restricted to tun '{tunAlias}', {string.Join(", ", ips)}, DHCP, and " +
             $"DNS to {(dnsServers.Count > 0 ? string.Join(", ", dnsServers) : "<none — physical DNS blocked>")}. " +
@@ -256,7 +268,17 @@ public static class KillSwitch
     {
         // $ErrorActionPreference=Stop makes cmdlet errors terminate the process with
         // a non-zero exit code, which we can detect for the critical steps.
-        var full = "$ErrorActionPreference='Stop'; " + command;
+        //
+        // powershell.exe serializes its ERROR stream as CLIXML whenever stderr is redirected
+        // (which it always is here), so a failure used to surface as an unreadable `#< CLIXML`
+        // blob — the one place where the message actually matters. For the critical steps,
+        // catch in-script and echo the message on STDOUT as plain text instead. Non-critical
+        // calls are left alone: their stdout is PARSED (GetOutboundActions), and an extra line
+        // there would be misread as data.
+        var full = critical
+            ? "$ErrorActionPreference='Stop'; try {\n" + command +
+              "\n} catch { [Console]::Out.WriteLine('QELI_ERR: ' + $_.Exception.Message); exit 1 }"
+            : "$ErrorActionPreference='Stop'; " + command;
         var enc = Convert.ToBase64String(Encoding.Unicode.GetBytes(full));
         var psi = new ProcessStartInfo("powershell.exe",
             $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {enc}")
@@ -284,8 +306,25 @@ public static class KillSwitch
         string o = Drain(outTask), e = Drain(errTask);
         if (critical && p.ExitCode != 0)
             throw new InvalidOperationException(
-                $"kill-switch: PowerShell step failed (exit {p.ExitCode}): {e.Trim()}");
+                $"kill-switch: PowerShell step failed (exit {p.ExitCode}): {ErrorDetail(o, e)}");
         return o + e;
+    }
+
+    /// <summary>The readable reason a critical step failed: the message our in-script catch
+    /// echoed on stdout, falling back to stderr. A raw CLIXML blob is named rather than
+    /// dumped — pasting it into a log tells the reader nothing.</summary>
+    private static string ErrorDetail(string stdout, string stderr)
+    {
+        const string marker = "QELI_ERR: ";
+        foreach (var line in stdout.Split('\n'))
+        {
+            var t = line.Trim();
+            if (t.StartsWith(marker, StringComparison.Ordinal)) return t[marker.Length..];
+        }
+        var s = stderr.Trim();
+        return s.StartsWith("#< CLIXML", StringComparison.Ordinal)
+            ? "(PowerShell returned a serialized CLIXML error and no message reached stdout)"
+            : s;
     }
 
     /// <summary>Upper bound for one PowerShell step. Generous — a firewall cmdlet can be

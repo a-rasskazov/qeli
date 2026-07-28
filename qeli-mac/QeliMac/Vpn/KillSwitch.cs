@@ -233,6 +233,30 @@ public static class KillSwitch
                 $"(covered by the existing `{AppleWildcardRef}` reference — main ruleset untouched)");
             return AppleAnchorPath;
         }
+        // NOTHING is loaded — the stock state of a Mac that has never enabled pf, which is
+        // the default. Refusing here was wrong and made the client unusable: with
+        // `kill_switch = true` the caller fails closed and never connects at all, so a
+        // perfectly ordinary Mac simply stopped working on upgrade (0.7.12 got away with it
+        // because it reloaded /etc/pf.conf outright).
+        //
+        // Loading the system's own /etc/pf.conf is safe in exactly this case and only this
+        // case: the reason we refuse to touch the main ruleset is that it may carry another
+        // tool's nat/rdr/scrub rules — and here there are none to lose. /etc/pf.conf is
+        // Apple's file, it already carries `anchor "com.apple/*"`, and loading it is what
+        // macOS's own tooling does. A NON-empty ruleset without our anchors still refuses:
+        // there we would be destroying someone's live rules to make room for ours.
+        if (current.Trim().Length == 0)
+        {
+            log("pf: no ruleset is loaded — loading the system /etc/pf.conf so an anchor can "
+                + "be evaluated (nothing to overwrite: the ruleset was empty)");
+            Pf("-f /etc/pf.conf", critical: false);
+            current = Pf("-sr", critical: false);
+            if (current.Contains(AppleWildcardRef, StringComparison.Ordinal))
+                return AppleAnchorPath;
+            if (current.Contains($"anchor \"{AnchorName}\"", StringComparison.Ordinal))
+                return AnchorName;
+        }
+
         throw new InvalidOperationException(
             "kill-switch: the loaded pf ruleset references neither `anchor \"com.apple/*\"` " +
             $"nor `anchor \"{AnchorName}\"`, so rules loaded into an anchor would never be " +

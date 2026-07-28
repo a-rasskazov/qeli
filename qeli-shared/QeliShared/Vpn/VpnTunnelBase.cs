@@ -137,7 +137,14 @@ public abstract class VpnTunnelBase
                 catch (Exception e)
                 {
                     Log($"[SECURITY] kill-switch could not be engaged: {e.Message} — not connecting unprotected");
-                    Status(VpnStatus.Error, "kill-switch failed");
+                    // Carry the REASON into the status detail, not just "it failed". This is a
+                    // refusal to connect, so the status line is the only thing many users will
+                    // ever see — and a bare "kill-switch failed" says nothing about what to do,
+                    // sending them to the log for text the UI could have shown. The platform
+                    // messages here are written to be actionable (macOS names the missing pf
+                    // anchor and the pfctl command that fixes it), so the first sentence is
+                    // worth surfacing verbatim.
+                    Status(VpnStatus.Error, $"kill-switch failed — {FirstSentence(e.Message)}");
                     return;
                 }
             }
@@ -223,14 +230,48 @@ public abstract class VpnTunnelBase
     /// ConnectWithRetry reconnects promptly. Mirrors the Android client's forceReconnect().</summary>
     public void ForceReconnect(string reason)
     {
+        NoteNetworkSettling();
         if (_userRequestedDisconnect || !IsRunning || !_wasConnected) return;
         long now = Environment.TickCount64;
         if (now - Interlocked.Read(ref _lastForceReconnectTick) < 3000) return; // debounce a burst
         Interlocked.Exchange(ref _lastForceReconnectTick, now);
         Log($"{reason} — reconnecting");
         _forcedReconnectInFlight = true;
-        Interlocked.Exchange(ref _settlingUntilTick, now + SettlingWindowMs);
         CloseTransports(keepTun: true);
+    }
+
+    /// <summary>First sentence of a message, for a one-line status detail. Falls back to a
+    /// hard character cap so a message with no sentence break still cannot overrun the UI.</summary>
+    private static string FirstSentence(string s)
+    {
+        s = (s ?? "").Replace('\n', ' ').Replace('\r', ' ').Trim();
+        int dot = s.IndexOf(". ", StringComparison.Ordinal);
+        if (dot > 0) s = s[..(dot + 1)];
+        return s.Length <= 160 ? s : s[..157] + "…";
+    }
+
+    /// <summary>Mark the network as settling for the next <see cref="SettlingWindowMs"/>.
+    ///
+    /// Deliberately NOT gated on `_wasConnected`, unlike the cycle it accompanies. That guard
+    /// is right for tearing a live tunnel down — there is nothing to cycle otherwise — but it
+    /// is exactly wrong for recording that the network just changed. On Windows the tunnel is
+    /// usually already dead by the time the Resume event arrives (the sockets went away with
+    /// the suspend), so `_wasConnected` is false and every caller returned early — leaving the
+    /// window unarmed in the single most common case it exists for, while the retry loop was
+    /// already grinding through full-length attempts. Arm first, then decide whether a cycle
+    /// is also needed.</summary>
+    private void NoteNetworkSettling()
+    {
+        if (_userRequestedDisconnect || !IsRunning) return;
+        Interlocked.Exchange(ref _settlingUntilTick, Environment.TickCount64 + SettlingWindowMs);
+        // Logged only when there is no live tunnel to cycle — the path that used to be
+        // entirely silent. When a cycle does follow, ForceReconnect logs its own line and a
+        // second one here would just be noise. This line is what makes the window visible in
+        // a field log: if recovery is still slow, its presence says the window was armed and
+        // the time went somewhere else.
+        if (!_wasConnected)
+            Log($"Network settling — short attempt budget ({SettlingAttemptTimeoutMs / 1000}s) "
+                + $"for the next {SettlingWindowMs / 1000}s");
     }
 
     // We know WHY we are reconnecting (resume-from-sleep, network change), and for a while
@@ -239,6 +280,30 @@ public abstract class VpnTunnelBase
     private const int SettlingWindowMs = 30_000;
     private const int SettlingAttemptCap = 3;   // ≤ base·2² — 4 s at the default base of 1 s
     private long _settlingUntilTick;
+
+    /// <summary>How long ONE connect attempt may block, in ms.
+    ///
+    /// Normally the configured `ConnectionTimeoutSecs` (default 30 s), which exists for
+    /// genuinely slow paths. While the network is settling after a resume or a network
+    /// change that budget is the wrong trade entirely: the path is not merely slow, it is
+    /// not there yet, so the attempt is guaranteed to fail and every second spent waiting
+    /// is a second the tunnel stays down AFTER the network comes back.
+    ///
+    /// This is what actually dominated the reported "about a minute" to recover from
+    /// sleep — not the backoff between attempts, which the settling cap already handles.
+    /// One attempt could burn an unbounded DNS lookup plus a 30 s connect, so a single
+    /// badly-timed attempt outlasted the entire settling window on its own. A connect that
+    /// is going to succeed on a healthy path completes in well under a second; capping the
+    /// budget to a few seconds while settling costs nothing real and turns one 30 s stall
+    /// into several cheap retries that land as soon as the interface is usable.</summary>
+    private int AttemptTimeoutMs(VpnConfig config)
+    {
+        int full = (int)config.ConnectionTimeoutSecs * 1000;
+        bool settling = Environment.TickCount64 < Interlocked.Read(ref _settlingUntilTick);
+        return settling ? Math.Min(full, SettlingAttemptTimeoutMs) : full;
+    }
+
+    private const int SettlingAttemptTimeoutMs = 5_000;
 
     /// <summary>Resume-from-sleep variant of <see cref="ForceReconnect"/>. The OS raises Resume
     /// while Wi-Fi is still reassociating and DHCP is pending, so cycling right then tears the
@@ -250,6 +315,11 @@ public abstract class VpnTunnelBase
     /// with no network at all still reconnects rather than waiting forever.</summary>
     public void ForceReconnectWhenNetworkReady(string reason, int maxWaitMs = 15_000)
     {
+        // Arm the settling window on the OS event itself, BEFORE the `_wasConnected` guard
+        // below can return: after a suspend the tunnel is usually already gone, and that is
+        // precisely when the retry loop needs to know the network is coming back rather than
+        // that the server is down. See NoteNetworkSettling.
+        NoteNetworkSettling();
         if (_userRequestedDisconnect || !IsRunning || !_wasConnected) return;
         Task.Run(async () =>
         {
@@ -838,7 +908,10 @@ public abstract class VpnTunnelBase
 
     private void ConnectTcp(VpnConfig config, CancellationToken ct)
     {
-        var serverIp = ResolveServer(config.ServerAddress);
+        // One budget for the whole pre-data-plane phase: resolve, connect, handshake reads.
+        // Shortened while the network is settling — see AttemptTimeoutMs.
+        int attemptMs = AttemptTimeoutMs(config);
+        var serverIp = ResolveServer(config.ServerAddress, attemptMs);
         // Do not log the account username — this line reaches shared/world-readable logs
         // (win service.log, Android logcat). The password/keys are never logged; keep the
         // username out too. (client-audit LOW: username-logging)
@@ -850,7 +923,7 @@ public abstract class VpnTunnelBase
         // otherwise the Disconnect button does nothing until the connect timeout.
         _tcp = sock;
         if (ct.IsCancellationRequested || _userRequestedDisconnect) { try { sock.Close(); } catch { } throw new OperationCanceledException(); }
-        ConnectWithTimeout(sock, serverIp, config.Port, (int)config.ConnectionTimeoutSecs * 1000);
+        ConnectWithTimeout(sock, serverIp, config.Port, attemptMs);
         sock.NoDelay = true;
         sock.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
         // Bound the HANDSHAKE reads by ConnectionTimeoutSecs. ConnectWithTimeout only
@@ -859,7 +932,7 @@ public abstract class VpnTunnelBase
         // forever (KeepAlive does not help — a silent-but-alive peer keeps ACKing probes),
         // pinning the client in "Connecting" with no reconnect. RunTcpAfterHandshake resets
         // this to 0 (infinite) before the data plane, where liveness is the rxDead watchdog.
-        sock.ReceiveTimeout = (int)config.ConnectionTimeoutSecs * 1000;
+        sock.ReceiveTimeout = attemptMs;
         Log("TCP connected");
         var io = new SocketIO(sock);
 
@@ -971,13 +1044,14 @@ public abstract class VpnTunnelBase
 
     private void ConnectUdp(VpnConfig config, CancellationToken ct)
     {
-        var serverIp = ResolveServer(config.ServerAddress);
+        int attemptMs = AttemptTimeoutMs(config);
+        var serverIp = ResolveServer(config.ServerAddress, attemptMs);
         // Username deliberately omitted — see ConnectTcp. (client-audit LOW: username-logging)
         Log($"Connecting UDP {serverIp}:{config.Port}...");
         var sock = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         BindLocal(sock, config);  // OpenVPN local / lport
         sock.Connect(serverIp, config.Port);
-        sock.ReceiveTimeout = (int)config.ConnectionTimeoutSecs * 1000;
+        sock.ReceiveTimeout = attemptMs;
         _udp = sock;
 
         bool quic = config.QuicEnabled;
@@ -2520,10 +2594,29 @@ public abstract class VpnTunnelBase
         return IPAddress.TryParse(s, out _);
     }
 
-    private static IPAddress ResolveServer(string address)
+    /// <summary>Resolve the server address, bounded by <paramref name="timeoutMs"/>.
+    ///
+    /// `Dns.GetHostAddresses` is a blocking `getaddrinfo` with NO timeout of its own, and
+    /// right after a resume-from-sleep it is one of the slowest things on the reconnect
+    /// path: the resolver is often not reachable yet, and the OS works through its retry
+    /// schedule before failing. Unbounded, that stall is charged to the attempt before a
+    /// single packet is sent. Bounding it lets the attempt fail fast and be retried once
+    /// the network is actually up, which is the whole point of the settling window.
+    /// (Field report 2026-07-25 item 1, second pass.)</summary>
+    private static IPAddress ResolveServer(string address, int timeoutMs)
     {
         if (IPAddress.TryParse(address, out var ip)) return ip;
-        var addrs = Dns.GetHostAddresses(address);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        IPAddress[] addrs;
+        try
+        {
+            addrs = Dns.GetHostAddressesAsync(address, cts.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException(
+                $"DNS lookup for {address} timed out after {timeoutMs} ms");
+        }
         return addrs.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
             ?? throw new Exception($"no IPv4 address for {address}");
     }

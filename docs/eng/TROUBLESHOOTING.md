@@ -1,6 +1,6 @@
 # Qeli — connection diagnostics and error reference
 
-> **These docs describe 0.7.12** — the latest released version. `qeli --version` tells you
+> **These docs describe 0.7.13** — the latest released version. `qeli --version` tells you
 > what you actually have.
 
 A detailed, practical guide: how to enable debug logging, how to read the log by
@@ -690,13 +690,95 @@ for 16–32 s **after** it became usable. With a finite `max_retries` those same
 could exhaust it, and giving up tears down the TUN and routes — hence traffic leaving
 outside the tunnel.
 
-**Fixed** in 0.7.13: for 30 s after a resume or a network change the attempt counter is
-capped (retry at least every ~4 s), so the reconnect happens as soon as the network is
-ready. The backoff still applies where it is meant to — when the server really is down. No
-action is required beyond running a 0.7.13+ client.
+**This took two passes, both within 0.7.13.** The first capped the pauses **between**
+attempts (retry at least every ~4 s for 30 s after a resume). Correct in itself, but it
+missed the dominant term: the time was going **inside a single attempt**, so 0.7.13 builds
+predating the second pass still showed the original delay.
 
-If the delay persists on 0.7.13+, we need a client log covering wake → `Connected`
-(**Log** tab → **Copy log**): it shows exactly where the time goes.
+**What the second pass closed.** Name resolution used a blocking call with **no timeout at
+all**, and `ConnectionTimeoutSecs` — default **30 s** — was charged to the connect and again
+to the handshake reads. One badly-timed attempt therefore outlasted the whole settling window
+by itself. The entire pre-data-plane phase (resolve + connect + handshake) is now capped at
+5 s while the network settles, and resolution is time-bounded always. On top of that the
+window was not being armed at all in the most common case: it sat behind a "tunnel still
+connected" guard, and after a suspend the tunnel is already dead by the time the Resume event
+lands. No action is required beyond running a current 0.7.13 build.
+
+To confirm from the log (**Log** tab → **Copy log**): a resume should now produce
+`Network settling — short attempt budget 5s for the next 30s`. If that line is present and
+recovery is still slow, the time is going somewhere else — send the whole log covering
+wake → `Connected`.
+
+### 6.13 Panel behind a reverse proxy: 404, or thrown to the site root
+
+**The symptom pair is the diagnosis:** with `base_path` set the panel returns **404**; without
+it the panel loads but throws you to the root of the site.
+
+> ⚠️ **First check that the `base_path` line carries no comment.** In flat-INI, `#` and `;`
+> begin a comment **only at the start of a line**, so `base_path =    # keep empty` sets the
+> value to the literal `# keep empty`. The panel then mounts under a prefix nobody requests
+> and **every** route, `/login` included, returns 404. From this version on the server rejects
+> such a value, logs `web.base_path = "…" is not a plain URL path`, and serves the panel at
+> the root instead. An empty value is written simply as `base_path =`, with nothing after it.
+
+**Cause.** The prefix has two independent consumers, configured by different things:
+
+| What | Comes from | Applied |
+|---|---|---|
+| Where routes are mounted | **only** `web.base_path` | at process start |
+| `<base href>` and redirects | `X-Forwarded-Prefix`, else `web.base_path` | per request |
+
+Hence two working configurations, and they are mutually exclusive:
+
+| | `web.base_path` | Proxy |
+|---|---|---|
+| A | empty | strips the prefix, sends `X-Forwarded-Prefix` |
+| B | `/qeli` | does **not** strip the prefix |
+
+**A 404 with `base_path` set means your proxy strips the prefix** — so you need variant A, not
+B. In nginx that is decided by the trailing slash on `proxy_pass`: without it the original URI
+is passed through whole (variant B), with it the location prefix is stripped (variant A).
+
+**Being thrown to the root is `trusted_proxies`.** Pages load, because relative links resolve
+against the request URL. But every page without a session issues `Redirect::to("/login")`, and
+the login page issues `Redirect::to("/")` — and the prefix is prepended to those redirects
+**only when it is non-empty**. `X-Forwarded-Prefix` is honored only from an address listed in
+`web.trusted_proxies`; with an empty list the header is dropped, the prefix becomes empty, and
+the redirect lands on the site root.
+
+> This is why the symptom looks intermittent: with a live session there is no redirect and
+> everything works; after a service restart or session expiry the panel starts "throwing you
+> to the root".
+
+The full variant A:
+
+```ini
+[web]
+bind = 127.0.0.1
+base_path =
+trusted_proxies = 127.0.0.1
+public_host = your-domain.com
+```
+
+```nginx
+location /qeli/ {
+    proxy_pass http://127.0.0.1:1444/;          # trailing slash — strips /qeli
+    proxy_set_header X-Forwarded-Prefix /qeli;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+`base_path` applies only on a **full** process restart; `trusted_proxies` reloads live.
+
+Check:
+```bash
+curl -s https://your-domain.com/qeli/login | grep -o '<base href="[^"]*"'
+```
+Expect `<base href="/qeli/">`. If it is `/`, look in the server log for
+`panel: ignoring X-Forwarded-Prefix from … not covered by web.trusted_proxies` — it names the
+exact address to add.
 
 ---
 

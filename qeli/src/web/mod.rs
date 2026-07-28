@@ -63,15 +63,42 @@ fn req_prefix(
     peer: Option<IpAddr>,
     trusted: &[String],
 ) -> String {
-    let from_proxy = match peer {
-        Some(ip) if !trusted.is_empty() && ip_allowed(ip, trusted) => headers
+    let trusted_peer = matches!(peer, Some(ip) if !trusted.is_empty() && ip_allowed(ip, trusted));
+    // Say something when a proxy IS sending the header and we are dropping it. Ignoring it
+    // is correct — an untrusted client must not dictate the panel's base path — but doing so
+    // in complete silence is what makes this misconfiguration so expensive to diagnose: the
+    // panel serves pages fine (relative assets resolve against the request URL) and only the
+    // ROOT-ABSOLUTE redirects (`/login`, `/`) come out unprefixed, so the symptom is "the
+    // panel randomly throws me to the proxy root" with nothing anywhere to explain it. Warned
+    // once per process, not per request.
+    if !trusted_peer && headers.contains_key("x-forwarded-prefix") {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            log::warn!(
+                "panel: ignoring X-Forwarded-Prefix from {} — it is not covered by \
+                 web.trusted_proxies (currently {}). Redirects will point at the server root \
+                 instead of the sub-path. Add the proxy's address to web.trusted_proxies, or \
+                 set web.base_path and stop the proxy from stripping the prefix.",
+                peer.map(|p| p.to_string())
+                    .unwrap_or_else(|| "<unknown>".into()),
+                if trusted.is_empty() {
+                    "empty".to_string()
+                } else {
+                    trusted.join(", ")
+                }
+            );
+        }
+    }
+    let from_proxy = if trusted_peer {
+        headers
             .get("x-forwarded-prefix")
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .filter(|s| is_safe_prefix(s))
-            .map(|s| s.to_string()),
-        _ => None,
+            .map(|s| s.to_string())
+    } else {
+        None
     };
     norm_prefix(&from_proxy.unwrap_or_else(|| cfg_base.to_string()))
 }
@@ -604,7 +631,28 @@ pub async fn start(state: Arc<ServerState>) {
     // Reverse-proxy sub-path: when `web.base_path` is set (e.g. "/qeli"), mount the
     // whole panel under it so upstream paths line up; `base_path_rewrite` fills
     // {{basehref}} and prefixes redirects. Empty = served at the root (unchanged).
+    // Refuse to mount under a base_path that isn't a plain URL path, and say so.
+    //
+    // A junk value mounts the whole panel under a prefix no browser will ever request, so
+    // EVERY route 404s — including /login — with nothing in the log to explain it. The way
+    // operators actually hit this is the flat-INI comment rule: `#`/`;` start a comment only
+    // at the START of a line, so `base_path =    # keep empty` parses as the literal value
+    // "# keep empty" rather than as empty. That reads as "the panel is broken on this
+    // version"; verified on the lab, where it 404s /login while a clean `base_path =` serves
+    // it. Same allow-list the forwarded header is held to — see is_safe_prefix.
     let base = norm_prefix(&web_cfg.base_path);
+    let base = if base.is_empty() || is_safe_prefix(&base) {
+        base
+    } else {
+        log::error!(
+            "web.base_path = {:?} is not a plain URL path — ignoring it and serving the panel \
+             at the root. Mounting it would 404 every page. Note that '#' and ';' begin a \
+             comment only at the start of a line, so a trailing `# …` on the base_path line \
+             becomes part of the VALUE.",
+            web_cfg.base_path
+        );
+        String::new()
+    };
     let routes = if base.is_empty() {
         routes
     } else {
