@@ -30,7 +30,12 @@ targets:
       - path: QeliCore
         excludes:
           - Native/include
-          - Native/QeliFFI.swift
+          # QeliFFI.swift is NOT excluded here even though the app does not link QeliNative:
+          # the app's reachability probe builds a real hybrid ClientHello and so references
+          # MLKEMContext / QeliNativeCore. The file guards its real implementation behind
+          # `#if canImport(QeliNative)` and, without the module and without
+          # QELI_NATIVE_REQUIRED, compiles to stubs that throw `.unavailable` — which is the
+          # branch written for exactly this target. Excluding it just left the app unbuildable.
           - Native/Qeli.xcframework
           - Native/Qeli.xcframework/**
       - path: Config/PrivacyInfo.xcprivacy
