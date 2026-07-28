@@ -55,7 +55,8 @@ In scope (please report):
   *positively identify* a qeli flow (distinct from the documented residual
   metadata leaks — see the threat model).
 - Local privilege-escalation via qeli's privileged components (TUN setup,
-  nftables kill-switch, `resolv.conf` handling, the control socket).
+  the `iptables`/`ip6tables` kill-switch, `resolv.conf` handling, the control
+  socket).
 
 Out of scope:
 

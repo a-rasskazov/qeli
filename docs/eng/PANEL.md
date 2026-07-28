@@ -190,7 +190,7 @@ sits at the bottom of the sidebar (and in the corner of the login page).
   **Mobile / LTE:** the large post-quantum handshake can black-hole behind a
   sub-1500 path MTU; on the server apply the OS tuning (outer-port MSS clamp + BBR /
   PMTU probing) — see [CONFIG.md](CONFIG.md) → "sysctl + iptables". The
-  `install-reality-server.sh` installer does this automatically.
+  `install-qeli-server.sh` installer does this automatically.
 - **Live clients** — who's connected (profile, IP, uptime, traffic, limit), with
   **Kick** and **Set bandwidth**. Per-profile filter, 10s auto-refresh.
 

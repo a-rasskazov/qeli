@@ -61,7 +61,7 @@ REALITY-токен несёт timestamp с окном **±120 секунд** (an
 
 1. Залить новый бинарь + `server-reality.conf` на боевой сервер и перезапустить службу:
    `systemctl restart qeli`. Юнит называется **`qeli.service`** — так его ставит и `.deb`
-   (`qeli/debian/qeli.service`), и `install-reality-server.sh`. Имя `qeli-server`
+   (`qeli/debian/qeli.service`), и `install-qeli-server.sh`. Имя `qeli-server`
    встречается только как имя контейнера в `docker-compose.yml` — это не systemd-юнит.
 2. Перевести клиентов на `client-reality.conf` (:443).
 3. (Опционально) для бесшовности — временный fake-tls профиль на другом порту,

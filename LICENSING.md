@@ -58,7 +58,10 @@
 
 Rust-крейты (rustls/ring/ml-kem/…), .NET-пакеты (Avalonia, SkiaSharp, BouncyCastle,
 QRCoder, …), Kotlin/Android-библиотеки — каждая под СВОЕЙ лицензией (преим.
-MIT/Apache-2.0/ISC). Проверка совместимости — джоба `security-audit`/license-scan в CI.
+MIT/Apache-2.0/ISC). **Автоматической проверки лицензий в CI сегодня нет:** джоба
+`security-audit` гоняет `cargo audit`, а это база уязвимостей RUSTSEC, не лицензии;
+`cargo-deny`/`cargo-about` в дереве не заведены. Совместимость проверяется вручную при
+добавлении зависимости. Завести `cargo deny check licenses` — открытая задача.
 Сторонние нативные бинари (Wintun и пр.) — в `native-libs/third-party/` под upstream.
 
 ## SPDX-заголовки (план)

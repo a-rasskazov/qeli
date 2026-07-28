@@ -41,18 +41,25 @@ bulk download to statistical DPI.
 **One command on a clean Linux server (Debian/Ubuntu), as root:**
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/litvinovtd/qeli/main/install-reality-server.sh
+curl -fsSLO https://raw.githubusercontent.com/litvinovtd/qeli/main/install-qeli-server.sh
 ```
 
-Review it, then run `bash install-reality-server.sh`. Download-then-run (rather than
+Review it, then run `bash install-qeli-server.sh`. Download-then-run (rather than
 `curl … | bash`) exists so the script can be read before it executes as root; the installer
 itself verifies the `.deb` against its SHA256.
 
 The script installs the `.deb` from [Releases](https://github.com/litvinovtd/qeli/releases),
-asks for the profile (`reality-tls` by default, or `fake-tls`) and the listen port (default
-`443`), writes a config with full-tunnel NAT, creates users and prints ready-to-use
-`qeli://` links. For a non-interactive run set the answers up front:
-`QELI_PROFILE=reality-tls|fake-tls` and/or `QELI_PORT=<1-65535>`.
+asks for the profile and the listen port (default `443`), writes a config with full-tunnel
+NAT, creates users and prints ready-to-use `qeli://` links. Three profiles are offered:
+
+| Profile | When to pick it |
+|---------|-----------------|
+| `reality-tls` | The default the installer provisions. Real TLS 1.3 over TCP:443 — survives active probing. |
+| `fake-tls` | Cheaper on CPU; enough against passive/signature DPI. |
+| `udp-quic` | A UDP path with QUIC-shaped datagrams — useful where TCP:443 is throttled, reset or otherwise degraded. |
+
+For a non-interactive run set the answers up front:
+`QELI_PROFILE=reality-tls|fake-tls|udp-quic` and/or `QELI_PORT=<1-65535>`.
 
 Then install a client from Releases and paste or scan the link.
 
@@ -83,8 +90,14 @@ Something went wrong? → **[Troubleshooting (EN)](docs/eng/TROUBLESHOOTING.md)*
 ## Status
 
 Pre-1.0 / beta — the data plane is stable and covered by unit + end-to-end tests, but the
-protocol may still change between minor versions. Released builds are published on the
-**GitHub Releases** page (binaries are not committed to git).
+protocol may still change between minor versions. Release builds are published on the
+**GitHub Releases** page and are not committed to git. The client **native cores** are the
+exception: `libqeli.so` / `qeli.dll` / `libqeli.dylib` (plus third-party `wintun.dll`) are
+committed under `native-libs/` and mirrored into each client tree, so the platform CI jobs
+need only their own toolchain. Their hashes are pinned in `native-libs/SHA256SUMS` and
+checked by the `native-libs` CI gate. This is an explicit trade-off against reproducibility
+— see [THREAT-MODEL §4](docs/eng/THREAT-MODEL.md#4-assurance-status) ·
+[Модель угроз §4](docs/ru/THREAT-MODEL.md#4-уровень-проверенности).
 
 - Changes: **[CHANGELOG.md](CHANGELOG.md)**
 - Security policy: **[SECURITY.md](SECURITY.md)**

@@ -76,7 +76,31 @@ By making a contribution to this project, I certify that:
 
 ## Разработка
 
-- Сервер/ядро (Linux): `cargo build --release` + `cargo test --all` + `cargo clippy --all-targets -- -D warnings` в `qeli/`.
+### Тулчейн и системные пререквизиты
+
+- **Rust stable.** Заведомо рабочая версия — **rustc 1.96.0** (на ней собирается лаба);
+  CI берёт актуальный `stable`. `rust-version` (MSRV) в `qeli/Cargo.toml` не объявлен,
+  так что «older stable» не гарантирован — если собираете на более старом тулчейне и
+  что-то не компилируется, обновитесь, прежде чем заводить issue.
+- **Nightly** нужен только для двух вещей: fuzz-харнесов (`cargo +nightly fuzz`) и
+  кросс-сборки под mipsel (tier-3, `-Zbuild-std`). Для обычной работы не требуется.
+- **Сборка `.deb`** (`qeli/debian/Makefile`) — Debian/Ubuntu-хост и **`dpkg-deb`**.
+  Для публикуемых пакетов цель одна — **`make deb-portable`**, а ей нужны **`zig`** и
+  **`cargo-zigbuild`** в `PATH`: они прибивают ABI glibc к 2.28, иначе бинарь
+  собирается против glibc хоста и падает на Ubuntu 22.04 с `GLIBC_2.39 not found`
+  (так уехали 0.7.8–0.7.11). `make deb` — только для локального использования.
+- **Клиенты**: .NET SDK (Windows/macOS), Android SDK + Gradle, Xcode + XcodeGen (iOS).
+  Точные версии — в `.github/workflows/ci.yml`, он же источник истины.
+
+### Команды
+
+- Сервер/ядро (Linux), в `qeli/`: `cargo build --release --features jemalloc` +
+  `cargo test --workspace` + `cargo clippy --all-targets -- -D warnings`.
+  **`--features jemalloc` для СЕРВЕРНОГО бинаря обязателен**: без него RSS воркера
+  упирается в ~180 МБ под churn'ом хендшейков (glibc держит освобождённые арены)
+  вместо ~40–60 МБ с jemalloc — см.
+  [GETTING-STARTED](docs/ru/GETTING-STARTED.md). Клиентской сборке фича не нужна,
+  а `qeli/debian/Makefile` включает её сам (`CARGO_FEATURES`).
 - Клиенты: см. `.github/workflows/ci.yml` (Android gradle, Windows/macOS `dotnet`).
 - Документация — начните с карты: [docs/ru/index.md](docs/ru/index.md) · [docs/eng/index.md](docs/eng/index.md).
 - **Правили доки или добавляли ключ конфигурации?** Прогоните `python3 scripts/check_docs.py`

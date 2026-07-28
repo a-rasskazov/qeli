@@ -12,7 +12,7 @@
 | Обмен ключами | X25519 (эфемерный per-session), `x25519-dalek`; во всех режимах кроме `plain` — PQ-гибрид **X25519MLKEM768** (ML-KEM-768, `ml-kem`, ключи данных = `HKDF(x25519 ‖ mlkem)`, `derive_keys_hybrid`). `plain` — классический X25519. Секреты с `zeroize` |
 | AEAD | ChaCha20-Poly1305 (`chacha20poly1305`) на дата-плоскости qeli; в `reality-tls` внешний TLS 1.3 — AES-128/256-GCM (`aes-gcm`/rustls-ring) |
 | Вывод ключей | HKDF-SHA256, раздельные ключи `server→client` / `client→server` (в `reality-tls` для `TLS_AES_256_GCM` — SHA-384) |
-| Пароли | Argon2id (`argon2`), параметры m=16384,t=2,p=1 |
+| Пароли | Argon2id (`argon2` 0.5.3) с **дефолтным профилем крейта** — сегодня это m=19456 KiB, t=2, p=1 (рекомендация OWASP). Параметры нигде не зафиксированы: **каждая** точка хеширования и проверки вызывает `Argon2::default()`, а `Params::new`/`ParamsBuilder` в дереве нет вовсе. То есть профиль — это ровно то, что крейт считает дефолтом, и обновление `argon2` изменит его молча |
 | Anti-replay | 2048-битное скользящее окно по счётчику в `protocol::packet` (размер как у WireGuard, с 0.7.1); отдельный replay-cache захваченного REALITY-ClientHello (анти-replay активного пробинга) |
 | Идентичность сервера | Долговременный X25519-ключ **на каждый профиль** в `/etc/qeli/identity/<name>.key` (0600) |
 
@@ -59,8 +59,14 @@
 - **Brute-force**: lockout по **связке user+IP** (окно/порог/блок настраиваются).
 - **UDP анти-амплификация**: клиентский initial добивается до ≥1200 байт, сервер
   режет мелкие initial — нельзя использовать сервер как рефлектор.
-- **Web-админка**: Basic-Auth с Argon2id, same-origin CSRF на мутирующих запросах,
-  path-whitelist для записи конфигов/чтения логов.
+- **Web-админка**: HTML-страницы аутентифицируются **подписанной сессионной cookie**
+  `qeli_session` (HMAC-SHA256, ключ = HKDF(per-process секрет, соль = хеш пароля
+  админа); TTL — `web.session_ttl_secs`, клампится 30 сутками). Cookie выдаёт
+  `POST /api/login` после проверки пароля Argon2id. Страницы **намеренно не
+  учитывают** HTTP Basic: иначе Argon2 крутился бы на каждый GET без rate-limit'а.
+  Basic остаётся для API/`curl`-пути и идёт через rate-limited `AuthGuard`.
+  Плюс same-origin CSRF на мутирующих запросах и path-whitelist для записи
+  конфигов/чтения логов.
 - **Crash-safe DNS**: восстановление `/etc/resolv.conf` (включая симлинк) с
   персистентным бэкапом и само-лечением при старте.
 
@@ -119,16 +125,26 @@
 
 ## Качество кода
 
-- Юнит-тесты: **225** (crypto round-trip, **2048-битное replay-окно** на сервере и
-  клиенте, PRP-биективность, channel-binding симуляция, keyed auth-OK round-trip,
-  qeli://-link round-trip, IpPool/RateLimiter/FailedAuthTracker, INI round-trip,
-  obfs roundtrip TCP + per-datagram UDP, plain raw-фрейминг + TCP-only guard,
-  REALITY token seal/open, realtls handshake-interop с rustls (оба cipher-suite +
-  PQ-гибрид), cert-borrowing, NewSessionTicket, авторизация по профилям, QR-рендер).
+- Юнит-тесты: **около 390** и растёт (`cargo test --workspace`). Точное число тут
+  специально не фиксируется — его всегда даёт job `build-test` в CI. Покрыто: crypto
+  round-trip, **2048-битное replay-окно** на сервере и клиенте, PRP-биективность,
+  channel-binding симуляция, keyed auth-OK round-trip, qeli://-link round-trip,
+  IpPool/RateLimiter/FailedAuthTracker, INI round-trip, obfs roundtrip TCP +
+  per-datagram UDP, plain raw-фрейминг + TCP-only guard, REALITY token seal/open,
+  realtls handshake-interop с rustls (оба cipher-suite + PQ-гибрид), cert-borrowing,
+  NewSessionTicket, авторизация по профилям, QR-рендер.
 - Сборка `cargo build --release` чистая, **0 warning'ов**; дерево
   rustfmt/clippy-нормализовано.
-- CI: `.github/workflows/ci.yml` — **два hard-гейта** (блокируют merge): build+test
-  (`cargo test --all`) и lint (`cargo fmt --check` + `cargo clippy --all-targets -- -D
-  warnings`); **+ три soft-гейта**: компиляция клиентов Android (gradle) / Windows /
-  macOS (dotnet). Локальный прогон полного гейта — `scripts/lab_sync_build.py`
-  (sync → build → test → clippy на лабе).
+- CI: `.github/workflows/ci.yml` — двенадцать job'ов. Актуальный состав всегда в самом
+  файле (список тут неизбежно устареет), поэтому по смыслу: сверка хешей закоммиченных
+  нативных ядер (`native-libs`), сборка + весь набор тестов (`build-test`), формат и
+  clippy `-D warnings` (`lint`), проверки документации и синхронности версий (`docs` →
+  `scripts/check_docs.py` + `scripts/sync_version.py`), `cargo audit` по базе RUSTSEC
+  (`security-audit`, в файле помечен `# HARD GATE`), компиляция клиентов Android /
+  Windows / macOS / iOS и кросс-сборка под роутер (`keenetic-cross`), а также fuzz —
+  короткий smoke на push и длинный прогон по расписанию. Единственный job с
+  `continue-on-error: true` — `fuzz-smoke` (нестабильный nightly-тулчейн); все
+  остальные валят прогон, хотя комментарии в файле по историческим причинам называют
+  клиентские сборки «soft». Отдельный workflow `.github/workflows/dco.yml` требует
+  `Signed-off-by` в каждом коммите PR. Локальный прогон полного гейта —
+  `scripts/lab_sync_build.py` (sync → build → test → clippy на лабе).

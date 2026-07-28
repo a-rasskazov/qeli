@@ -281,7 +281,7 @@ identity-ключ действительно сохранён.
 - **Панель лучше не публиковать.** Безопаснее оставить `bind = 127.0.0.1` и ходить через
   SSH-туннель: `ssh -L 8080:127.0.0.1:8080 root@сервер`. Если всё же публикуете —
   обязательны `password_hash` (без него публичный bind просто не стартует) и
-  `allowed_ips`. Учтите: `install-reality-server.sh` **включает панель на `0.0.0.0:8080`
+  `allowed_ips`. Учтите: `install-qeli-server.sh` **включает панель на `0.0.0.0:8080`
   сам** — см. §2 GETTING-STARTED.
 - **Правила для туннеля qeli ставит сам**, если у профиля включён `routing.nat.enabled`:
   `ip_forward`, MASQUERADE, `FORWARD … ACCEPT` и MSS-clamp, с тегом `qeli-nat:<профиль>`

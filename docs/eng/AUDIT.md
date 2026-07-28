@@ -12,7 +12,7 @@ reconsidered.
 | Key exchange | X25519 (ephemeral per-session), `x25519-dalek`; in all modes except `plain` — the PQ hybrid **X25519MLKEM768** (ML-KEM-768, `ml-kem`, the data keys = `HKDF(x25519 ‖ mlkem)`, `derive_keys_hybrid`). `plain` — classic X25519. The secrets with `zeroize` |
 | AEAD | ChaCha20-Poly1305 (`chacha20poly1305`) on the qeli data plane; in `reality-tls` the outer TLS 1.3 — AES-128/256-GCM (`aes-gcm`/rustls-ring) |
 | Key derivation | HKDF-SHA256, separate `server→client` / `client→server` keys (in `reality-tls` for `TLS_AES_256_GCM` — SHA-384) |
-| Passwords | Argon2id (`argon2`), parameters m=16384,t=2,p=1 |
+| Passwords | Argon2id (`argon2` 0.5.3) with the **crate's default profile** — today that means m=19456 KiB, t=2, p=1 (the OWASP recommendation). The parameters are pinned nowhere: **every** hashing and verification site calls `Argon2::default()`, and there is no `Params::new`/`ParamsBuilder` anywhere in the tree. So the profile is exactly whatever the crate calls its default, and bumping `argon2` will change it silently |
 | Anti-replay | a 2048-bit sliding window on the counter in `protocol::packet` (WireGuard-sized since 0.7.1); a separate replay cache of the captured REALITY ClientHello (anti-replay of active probing) |
 | Server identity | a long-term X25519 key **per profile** in `/etc/qeli/identity/<name>.key` (0600) |
 
@@ -60,7 +60,13 @@ changes):
   configurable).
 - **UDP anti-amplification**: the client initial is padded to ≥1200 bytes, the server
   rejects small initials — you can't use the server as a reflector.
-- **The web admin**: Basic Auth with Argon2id, same-origin CSRF on mutating requests, a
+- **The web admin**: HTML pages authenticate with a **signed session cookie**
+  `qeli_session` (HMAC-SHA256, the key = HKDF(a per-process secret, salt = the admin
+  password hash); the TTL comes from `web.session_ttl_secs` and is clamped to 30 days).
+  The cookie is minted by `POST /api/login` after an Argon2id password check. The pages
+  **deliberately do not consider** HTTP Basic: otherwise Argon2 would run on every GET
+  with no rate limit. Basic remains for the API/`curl` path and goes through the
+  rate-limited `AuthGuard`. Plus same-origin CSRF on mutating requests and a
   path-whitelist for writing configs/reading logs.
 - **Crash-safe DNS**: restoration of `/etc/resolv.conf` (including the symlink) with a
   persistent backup and self-healing at start.
@@ -118,16 +124,27 @@ sent when the in-tunnel DNS proxy is off (otherwise the client got a dead resolv
 
 ## Code quality
 
-- Unit tests: **225** (crypto round-trip, the **2048-bit replay window** on the server and
-  client, PRP bijectivity, a channel-binding simulation, the keyed auth-OK round-trip, the
-  qeli:// link round-trip, IpPool/RateLimiter/FailedAuthTracker, the INI round-trip, obfs
-  roundtrip TCP + per-datagram UDP, plain raw framing + the TCP-only guard, the REALITY
-  token seal/open, the realtls handshake interop with rustls (both cipher suites + the PQ
-  hybrid), cert-borrowing, NewSessionTicket, per-profile authorization, the QR render).
+- Unit tests: **roughly 390** and growing (`cargo test --workspace`). The exact number is
+  deliberately not recorded here — the CI `build-test` job always has it. Covered: crypto
+  round-trip, the **2048-bit replay window** on the server and client, PRP bijectivity, a
+  channel-binding simulation, the keyed auth-OK round-trip, the qeli:// link round-trip,
+  IpPool/RateLimiter/FailedAuthTracker, the INI round-trip, obfs roundtrip TCP +
+  per-datagram UDP, plain raw framing + the TCP-only guard, the REALITY token seal/open,
+  the realtls handshake interop with rustls (both cipher suites + the PQ hybrid),
+  cert-borrowing, NewSessionTicket, per-profile authorization, the QR render.
 - The `cargo build --release` build is clean, **0 warnings**; the tree is
   rustfmt/clippy-normalized.
-- CI: `.github/workflows/ci.yml` — **two hard gates** (block a merge): build+test
-  (`cargo test --all`) and lint (`cargo fmt --check` + `cargo clippy --all-targets -- -D
-  warnings`); **+ three soft gates**: compilation of the Android (gradle) / Windows /
-  macOS (dotnet) clients. A local run of the full gate — `scripts/lab_sync_build.py`
-  (sync → build → test → clippy on the lab).
+- CI: `.github/workflows/ci.yml` — twelve jobs. The current set is always in the file
+  itself (a list here would inevitably rot), so by intent: the hash check of the committed
+  native cores (`native-libs`), build + the whole test suite (`build-test`), formatting and
+  clippy `-D warnings` (`lint`), the documentation and version-consistency checks (`docs` →
+  `scripts/check_docs.py` + `scripts/sync_version.py`), `cargo audit` against the RUSTSEC
+  database (`security-audit`, marked `# HARD GATE` in the file), compilation of the Android
+  / Windows / macOS / iOS clients and the router cross-build (`keenetic-cross`), plus
+  fuzzing — a short smoke on push and a long scheduled run. The only job carrying
+  `continue-on-error: true` is `fuzz-smoke` (it rides the unstable nightly toolchain);
+  every other job fails the run, even though comments in the file still call the client
+  builds "soft" for historical reasons. A separate workflow,
+  `.github/workflows/dco.yml`, requires a `Signed-off-by` line on every PR commit. A local
+  run of the full gate — `scripts/lab_sync_build.py` (sync → build → test → clippy on the
+  lab).

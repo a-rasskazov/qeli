@@ -21,7 +21,7 @@ Status legend: ⬜ not started · 🟦 in progress · ✅ done · 🧪 awaiting 
 | H2 | ⚪ Hyg | ~250 one-off scripts in `scripts/` | ✅ (154 → `scripts/archive/`) |
 | B1 | 🔴 Blk | The clients' native cores (.so/.dll/.dylib) older than the realtls sources | ✅ rebuilt+laid out |
 | B2 | 🔴 Blk | The artifacts in `release/` are stale relative to the codebase | ✅ (APK/exe/app/server; mac — ad-hoc, notarization in M3) |
-| B3 | 🔴 Blk | The release tree is outside VCS (no .git in the working copy) | ⬜ process (commit/tag in the canonical repo) |
+| B3 | 🔴 Blk | The release tree is outside VCS (no .git in the working copy) | ✅ the tree is under git, releases are cut from `v*` tags |
 | S4 | — | `ObfsUdp::recv` → `Ok(0)` on a corrupt frame | ✅ already closed (`udp_handler.rs:99`) |
 
 > **Current status (2026-06-06): all code fixes (F1, F2, S1, S2, S3, E1–E5, H1, H2)
@@ -29,6 +29,10 @@ Status legend: ⬜ not started · 🟦 in progress · ✅ done · 🧪 awaiting 
 > are rebuilt from a fresh source and laid out in the standard folders; e2e on the lab
 > (.10↔.11, tcp/obfs/udp) — PASS, 0% loss. Open: B3 (a VCS tag) and the backlog
 > hardening (incl. the mac notarization M3).**
+>
+> **Update (2026-07-27): B3 is closed.** The tree is kept in git and releases are cut
+> from `v*` tags (the latest is `v0.7.12`). No release blocker is left; only the backlog
+> hardening below is still open.
 
 ---
 
@@ -48,7 +52,7 @@ first; then — a single build/test/e2e phase at the end.
 3. **B2** — `release/qeli-linux-amd64` + APK + the Windows exe + the mac `Qeli.app` from a fresh source ✅.
 4. e2e on the lab — ✅ PASS (.10↔.11, tcp/obfs/udp, 0% loss — see "e2e on the lab").
 
-**C. Process:** B3 (a tag under VCS with the current artifacts) — ⬜ remaining.
+**C. Process:** B3 (a tag under VCS with the current artifacts) — ✅ closed.
 
 The point of batching: each edit in Kotlin/C# did **not** require its own build — all
 client changes accumulated and were compiled once in phase B (a client build = both
@@ -214,13 +218,17 @@ in `release/`. Run `scripts/lab_sync_build.py` (build+test+clippy+e2e).
 
 ---
 
-## B3 — Release from VCS
+## B3 — Release from VCS ✅
 
-The working copy here is not under git. Make sure the edits are synced into the
-canonical repository (`/opt/qeli-src` on .10), committed, and the release is cut from
-a tag with the fresh B1/B2 artifacts included.
+*It was:* the working copy was not under git; the edits had to be synced into the
+canonical repository, committed, and the release cut from a tag with the fresh B1/B2
+artifacts included.
+
+**Closed (2026-07-27).** The tree is kept in git, releases are cut from `v*` tags
+(`v0.7.2` … `v0.7.12`), the assets are published on GitHub Releases, and the hashes of
+the committed native cores are held by the `native-libs` CI gate.
 **Acceptance.** A release tag exists; the tree is clean; the artifacts in the tag are
-current.
+current. — ✅
 
 ---
 
@@ -467,11 +475,10 @@ repeated drops), F2 on a non-/24 pool, S2 with a genuinely malicious low-order k
 
 ## Remaining (open items)
 
-All code fixes, builds, and the e2e regression are closed (see above). Genuinely open:
+All code fixes, builds, the e2e regression, and **B3** are closed (see above). No release
+blocker is left. Genuinely open:
 
-1. **B3** — a commit to the canonical repository (`/opt/qeli-src` on .10) + a release tag
-   with the current artifacts.
-2. **Backlog hardening** (not release blockers, a separate wave): A3/A5/A6 (UI:
+1. **Backlog hardening** (not release blockers, a separate wave): A3/A5/A6 (UI:
    biometrics, the TOFU warning, the kill-switch), WN3/WN4/WN5
    (service/task/BouncyCastle→native), M2 (NetworkExtension), **M3 (mac Developer-ID +
    notarization)**, S1-cfg (RateLimiter), X2 (`reality-tls` by default).
