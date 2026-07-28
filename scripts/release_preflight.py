@@ -12,11 +12,21 @@ commits, but the local jemalloc gate stayed green and nobody looked at CI):
   2. 32-bit    — optional belt-and-suspenders: cross-build the mipsel + armv7
                  router client on the lab, independent of CI. Runs only when
                  QELI_LAB_PASS is set; host from QELI_LAB_SERVER (default .10).
+                 The lab checkout must be AT the commit being released — the gate
+                 prints the SHA it actually built and fails on any divergence.
 
 Exit non-zero if any gate fails, so it can front a release script.
 
   python scripts/release_preflight.py [branch]      # branch default: current
+
+Environment:
+  QELI_LAB_PASS           enables gate 2 (SSH password for root on the lab host)
+  QELI_LAB_SERVER         lab host (default 10.66.116.10)
+  QELI_LAB_SRC            checkout on the lab host (default /opt/qeli-src)
+  QELI_LAB_TRUST_NEW_HOST=1
+                          accept a host key that is not in known_hosts (off by default)
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -24,9 +34,40 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 BRANCH = sys.argv[1] if len(sys.argv) > 1 else subprocess.run(
     ["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True
 ).stdout.strip()
+
+# Identity of the sources a qeli binary is built from. Deliberately the same recipe on
+# both sides so the two are comparable: `sha256sum` every file under qeli/src plus
+# Cargo.toml and Cargo.lock, sort those lines, hash the result. See gate 2. (O8)
+FP_FILES = ("qeli/Cargo.toml", "qeli/Cargo.lock")
+FP_TREE = "qeli/src"
+REMOTE_FINGERPRINT = (
+    "{ find " + FP_TREE + " -type f -print; "
+    "for f in " + " ".join(FP_FILES) + "; do [ -f \"$f\" ] && printf '%s\\n' \"$f\"; done; } "
+    "| xargs sha256sum | LC_ALL=C sort | sha256sum"
+    # The per-file lines are sorted, so the order sha256sum visits the files in does
+    # not matter; only the set of (digest, path) pairs does.
+)
+
+
+def source_fingerprint(base: str) -> str:
+    """Local half of REMOTE_FINGERPRINT — byte-for-byte the same digest."""
+    rels = []
+    tree = os.path.join(base, FP_TREE)
+    for root, dirs, files in os.walk(tree):
+        for name in files:
+            rels.append(os.path.relpath(os.path.join(root, name), base).replace(os.sep, "/"))
+    rels += [r for r in FP_FILES if os.path.isfile(os.path.join(base, r))]
+    lines = []
+    for rel in rels:
+        with open(os.path.join(base, rel), "rb") as fh:
+            lines.append(f"{hashlib.sha256(fh.read()).hexdigest()}  {rel}\n")
+    return hashlib.sha256("".join(sorted(lines)).encode()).hexdigest()
+
 
 failures = []
 
@@ -74,28 +115,91 @@ else:
     if paramiko is not None:
         host = os.environ.get("QELI_LAB_SERVER", "10.66.116.10")
         src = os.environ.get("QELI_LAB_SRC", "/opt/qeli-src")
-        c = paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        c.connect(host, username="root", password=lab_pass, timeout=25,
-                  look_for_keys=False, allow_agent=False)
+        c = paramiko.SSHClient()
+        # Host-key handling is now explicit. AutoAddPolicy trusted whatever answered on
+        # that address and then sent a root password to it — for a step whose whole job
+        # is to raise confidence before a release, that is the wrong default. known_hosts
+        # is honoured; an unknown host is only accepted when the operator says so.
+        # (Audit 2026-07-27, O8)
+        c.load_system_host_keys()
+        try:
+            c.load_host_keys(os.path.expanduser("~/.ssh/known_hosts"))
+        except OSError:
+            pass
+        if os.environ.get("QELI_LAB_TRUST_NEW_HOST") == "1":
+            print(f"  ! QELI_LAB_TRUST_NEW_HOST=1 — accepting an unverified host key for {host}")
+            c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        else:
+            c.set_missing_host_key_policy(paramiko.RejectPolicy())
+        try:
+            c.connect(host, username="root", password=lab_pass, timeout=25,
+                      look_for_keys=False, allow_agent=False)
+            connected = True
+        except Exception as e:                      # noqa: BLE001 — any failure is a gate failure
+            connected = False
+            failures.append(f"lab connect failed: {e}")
+            print(f"  ! cannot reach {host}: {e}")
+            print("    (unknown host key? add it to ~/.ssh/known_hosts, or set QELI_LAB_TRUST_NEW_HOST=1)")
 
+    if paramiko is not None and connected:
         def sh(cmd, t=2400):
             i, o, e = c.exec_command(cmd, timeout=t)
             return o.channel.recv_exit_status(), (o.read() + e.read()).decode("utf-8", "replace")
 
-        env = "export PATH=/root/.cargo/bin:$PATH; "
-        common = "--release --bin qeli-client --no-default-features --features client-bin"
-        builds = {
-            "armv7": f"{env} cd {src} && cargo zigbuild {common} --target armv7-unknown-linux-musleabihf",
-            "mipsel": f"{env} cd {src} && RUSTFLAGS='-C link-arg=-msoft-float' cargo +nightly zigbuild "
-                      f"-Z build-std=std,panic_abort {common} --target mipsel-unknown-linux-musl",
-        }
-        for arch, cmd in builds.items():
-            rc, out = sh(cmd)
-            ok = rc == 0   # a build error makes cargo exit non-zero
-            print(f"  {arch}: {'OK' if ok else 'FAIL'}")
-            if not ok:
-                failures.append(f"32-bit {arch} build failed")
-                print("\n".join(l for l in out.splitlines() if l.startswith("error"))[:600])
+        # WHICH tree is being built? This gate compiles on ANOTHER machine and never
+        # checked that the checkout there is the code being released — a lab tree days
+        # behind the branch produced a green gate certifying source that is not in the
+        # release. The identity actually built is printed and a divergence is fatal.
+        #
+        # The lab tree is fed by SFTP push, not by git, so a commit SHA is often absent
+        # there; the decidable identity is a fingerprint over the sources that go into
+        # the binary (qeli/src + Cargo.toml + Cargo.lock), computed the same way on both
+        # sides. The commit SHA is printed too whenever either side has one.
+        # (Audit 2026-07-27, O8)
+        local_sha = subprocess.run(
+            ["git", "rev-parse", BRANCH], capture_output=True, text=True,
+        ).stdout.strip()
+        local_dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--", "qeli/src", "qeli/Cargo.toml", "qeli/Cargo.lock"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        _, lab_sha = sh(f"git -C {src} rev-parse HEAD 2>/dev/null || true", t=60)
+        lab_sha = lab_sha.strip()
+        local_fp = source_fingerprint(ROOT)
+        _, lab_fp_out = sh(f"cd {src} && " + REMOTE_FINGERPRINT, t=120)
+        lab_fp = lab_fp_out.strip().split()[0] if lab_fp_out.strip() else ""
+
+        print(f"  releasing  : {local_sha or '<unknown>'}  ({BRANCH})"
+              f"{'  [LOCAL TREE DIRTY]' if local_dirty else ''}")
+        print(f"  lab {src} : {lab_sha or '<not a git checkout>'}")
+        print(f"  source fingerprint  local={local_fp[:16] or '<none>'}  lab={lab_fp[:16] or '<none>'}")
+        if local_dirty:
+            print("  ! the local qeli sources differ from the last commit — what gets released")
+            print("    is the COMMIT, so commit before relying on this gate.")
+
+        if not local_fp or not lab_fp or local_fp != lab_fp:
+            failures.append(
+                f"lab tree does not match the tree being released "
+                f"(local {local_fp[:16] or '<none>'} vs lab {lab_fp[:16] or '<none>'})"
+            )
+            print("  ! SKIPPING the cross-builds: building a different tree proves nothing.")
+            print(f"    Push the release sources to {host}:{src} first (or point QELI_LAB_SRC")
+            print(f"    at a checkout of {local_sha or BRANCH}), then re-run.")
+        else:
+            env = "export PATH=/root/.cargo/bin:$PATH; "
+            common = "--release --bin qeli-client --no-default-features --features client-bin"
+            builds = {
+                "armv7": f"{env} cd {src} && cargo zigbuild {common} --target armv7-unknown-linux-musleabihf",
+                "mipsel": f"{env} cd {src} && RUSTFLAGS='-C link-arg=-msoft-float' cargo +nightly zigbuild "
+                          f"-Z build-std=std,panic_abort {common} --target mipsel-unknown-linux-musl",
+            }
+            for arch, cmd in builds.items():
+                rc, out = sh(cmd)
+                ok = rc == 0   # a build error makes cargo exit non-zero
+                print(f"  {arch}: {'OK' if ok else 'FAIL'}  (from {local_sha[:8]})")
+                if not ok:
+                    failures.append(f"32-bit {arch} build failed")
+                    print("\n".join(l for l in out.splitlines() if l.startswith("error"))[:600])
         c.close()
 
 # ── verdict ──────────────────────────────────────────────────────────────────

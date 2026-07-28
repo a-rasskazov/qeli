@@ -11,10 +11,29 @@ PKG_RELEASE:=1
 # Built from the qeli Rust crate (client-only). Point PKG_SOURCE_URL at the repo,
 # or drop the crate into a local source dir. The realtls FFI core is part of the
 # same crate; client-bin pulls only the client path (no `ring` → builds on mips).
+#
+# PKG_SOURCE_VERSION is a full commit SHA, not `v$(PKG_VERSION)` (Audit 2026-07-27, G5).
+# A tag is mutable — retagging silently changes what this package builds — and the tag
+# for an unreleased version does not exist at all, so the package could not be built
+# from a dev tree. A SHA pins one immutable tree. Re-pin it at the release commit when
+# cutting a version.
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/litvinovtd/qeli.git
-PKG_SOURCE_VERSION:=v$(PKG_VERSION)
+PKG_SOURCE_VERSION:=5b2bc683127842124b421ee8dc3e692336e16ca2
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
+# OpenWrt REQUIRES a hash for a git source: without PKG_MIRROR_HASH the generated
+# tarball is accepted unverified, so the build trusts whatever github.com serves.
+# The value is the sha256 of the tarball OpenWrt itself produces from the checkout
+# above, so it cannot be computed without the SDK.
+#
+# TODO(release 0.7.13): replace the placeholder with the real hash. Produce it with,
+# from the OpenWrt buildroot after adding this package:
+#     make package/qeli/download V=s
+#     sha256sum dl/$(PKG_NAME)-$(PKG_VERSION).tar.xz
+# (or `make package/qeli/check FIXUP=1`, which rewrites the line in place). The
+# placeholder is deliberately a value that CANNOT match, so the build fails loudly
+# rather than proceeding unverified — do NOT replace it with `skip`.
+PKG_MIRROR_HASH:=0000000000000000000000000000000000000000000000000000000000000000
 PKG_MAINTAINER:=Alexandr
 PKG_LICENSE:=AGPL-3.0-only
 PKG_LICENSE_FILES:=LICENSE

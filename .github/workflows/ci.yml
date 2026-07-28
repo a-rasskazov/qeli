@@ -23,6 +23,10 @@ on:
       - 'scripts/**'
       - 'conformance/**'
       - '*.md'
+      # The `shellcheck` job lints the two root-level installer scripts — without
+      # them here it would be a gate that its own subject can never trigger.
+      # (Audit 2026-07-27, G2)
+      - '*.sh'
   pull_request:
     paths:
       - 'qeli/**'
@@ -41,6 +45,7 @@ on:
       - 'scripts/**'
       - 'conformance/**'
       - '*.md'
+      - '*.sh'
   workflow_dispatch:
   schedule:
     # Nightly continuous fuzzing (the `fuzz-nightly` job; other jobs also run as a
@@ -66,6 +71,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify native library hashes
         run: bash native-libs/verify.sh
+      # verify.sh only proves the two copies of each library agree with each other. It
+      # cannot tell whether they correspond to the Rust source beside them — and that is
+      # the failure that actually happened: the cores were built from the 0.7.12 source and
+      # stayed put while qeli/src moved on, so every GUI client shipped an older
+      # realtls/FFI core than the tree described, invisibly (a .so has no readable diff).
+      # (Audit 2026-07-27, G1/I4.)
+      - name: Native cores match the source in this tree
+        run: python3 native-libs/provenance.py --check
 
   # Hard gate: the crate is Linux-only (TUN/TAP via libc), so build + the full
   # unit-test suite must be green. This is what blocks a merge.
@@ -81,6 +94,91 @@ jobs:
         run: cargo build --bin qeli --release
       - name: Test
         run: cargo test --workspace
+      # The shared cross-language KAT fixtures (conformance/*.json) are GENERATED from the
+      # Rust canon. Without this gate they can silently fall out of step with the code they
+      # pin: the other three implementations would keep passing against a stale table and
+      # believe they still agree. Regenerates in memory and fails on any drift.
+      - name: Conformance fixtures are up to date
+        run: cargo run --features conformance-gen --bin gen-conformance -- --check
+
+  # Hard gate: build and INSTALL the artifact that actually ships. (Audit 2026-07-27, G2)
+  #
+  # `build-test` above runs a plain `cargo build --release` on the runner, which proves
+  # the code compiles and nothing else. The published artifact is a .deb produced by
+  # `make deb-portable` (cargo-zigbuild against a pinned glibc ABI) and NOTHING in CI
+  # ever built it, ran `check-abi`, or installed it anywhere. That gap is exactly how
+  # 0.7.8–0.7.11 shipped requiring GLIBC_2.39 while declaring `Depends: libc6 (>= 2.28)`:
+  # apt installed them without a word and they died at exec on Ubuntu 22.04.
+  #
+  # So: build it the way the release does, then prove it twice —
+  #   • debian:10 (glibc 2.28, the declared floor) — unpack and RUN the binary. No apt,
+  #     so an EOL archive repo can never make this step fail for an unrelated reason.
+  #   • ubuntu:22.04 — a real `apt-get install`, which also exercises the dependency
+  #     list and the postinst, then runs the installed binary.
+  deb-package:
+    runs-on: ubuntu-latest
+    # Repo root: the Makefile lives in qeli/debian and the containers mount the tree.
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.13.0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: qeli
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+      # deb-portable itself runs check-abi (glibc floor + the AES-NI baseline check),
+      # so a binary that outgrew either one fails right here.
+      - name: Build the portable .deb (the exact release recipe)
+        run: make -C qeli/debian deb-portable
+      - name: Locate the package
+        id: pkg
+        run: |
+          set -euo pipefail
+          deb=$(ls qeli/debian/qeli_*_amd64.deb | head -n1)
+          echo "deb=$deb" >> "$GITHUB_OUTPUT"
+          ls -la "$deb"
+      - name: Runs on the declared glibc floor (debian:10 = glibc 2.28)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/w" -w /w debian:10 sh -c '
+            set -e
+            dpkg -x "$0" /tmp/x
+            /tmp/x/usr/bin/qeli version
+          ' "${{ steps.pkg.outputs.deb }}"
+      - name: Installs and runs on an old supported distro (ubuntu:22.04)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:22.04 sh -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends "./$0"
+            qeli version
+          ' "${{ steps.pkg.outputs.deb }}"
+
+  # Hard gate: the two installer scripts are the ONLY thing between a fresh VPS and a
+  # running server, they run as root, and nothing ever linted them. (Audit 2026-07-27, G2)
+  # The gate is severity `warning` and above — that is a threshold, not an exemption:
+  # a second, non-gating pass prints every info/style suggestion so they stay visible.
+  shellcheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install shellcheck
+        run: command -v shellcheck >/dev/null || sudo apt-get install -y --no-install-recommends shellcheck
+      - name: shellcheck (gate — warning and above)
+        run: shellcheck -S warning install-qeli-server.sh update-qeli-server.sh
+      - name: shellcheck (advisory — every severity)
+        run: shellcheck install-qeli-server.sh update-qeli-server.sh || true
 
   # Hard gate: the tree was normalized (one-time `cargo fmt` + clippy pass), so
   # formatting and lint cleanliness are now enforced. `-D warnings` fails the
@@ -122,9 +220,15 @@ jobs:
       - name: version consistency
         run: python3 scripts/sync_version.py
 
-  # Soft gate: the client apps must at least compile. The native realtls core
-  # (libqeli.so / qeli.dll / libqeli.dylib) is committed under each client, so
-  # these jobs only need the platform toolchain — they do NOT cross-build Rust.
+  # HARD gates: the client apps must at least compile. None of these carry
+  # `continue-on-error`, so a broken client build blocks the merge — which is the intent.
+  # They were labelled "soft gate" here while behaving as hard ones; the only genuinely
+  # soft job in this file is `fuzz-smoke` (nightly toolchain). Keep the label and the
+  # mechanics in step: a comment that misstates whether a gate blocks is how people come
+  # to believe a red job is expected. (Audit 2026-07-27, Z5.)
+  #
+  # The native realtls core (libqeli.so / qeli.dll / libqeli.dylib) is committed under each
+  # client, so these jobs only need the platform toolchain — they do NOT cross-build Rust.
   android-build:
     runs-on: ubuntu-latest
     steps:
@@ -272,6 +376,13 @@ jobs:
           - arch: armv7
             target: armv7-unknown-linux-musleabihf
             toolchain: stable
+          # x86_64-musl was missing while `qeli-openwrt/dist/qeli-client-openwrt-x86_64`
+          # is PUBLISHED — a shipped artifact with no build gate at all. It is also the
+          # only musl target where the x86-specific code paths get compiled against musl
+          # rather than glibc. (Audit 2026-07-27, G2)
+          - arch: x86_64-musl
+            target: x86_64-unknown-linux-musl
+            toolchain: stable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -385,9 +496,10 @@ jobs:
           path: qeli/fuzz/artifacts/${{ matrix.target }}
           if-no-files-found: ignore
 
-  # Advisory: surface known RustSec advisories in the dependency tree. Non-gating
-  # for now (a transient upstream advisory shouldn't block a merge); promote to a
-  # hard gate once the tree is triaged clean.
+  # Surface known RustSec advisories in the dependency tree. This IS a hard gate — see the
+  # note inside the job. (The preamble here used to say "Non-gating for now … promote once
+  # the tree is triaged clean", contradicting the job it introduced, which had already been
+  # promoted. Audit 2026-07-27, Z5.)
   security-audit:
     runs-on: ubuntu-latest
     # HARD GATE (R-04). Was `continue-on-error: true` with a note to promote it "once the

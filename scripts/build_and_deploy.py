@@ -3,11 +3,11 @@
 Build and Deploy VPN to Servers
 
 OBSOLETE — targets the removed `vpn-obfuscated` binary + JSON config (pre flat-INI);
-superseded by install-reality-server.sh. Kept for reference only.
+superseded by install-qeli-server.sh. Kept for reference only.
 """
 import sys
 print("OBSOLETE: build_and_deploy.py targets the removed vpn-obfuscated/JSON layout; "
-      "use install-reality-server.sh instead.", file=sys.stderr)
+      "use install-qeli-server.sh instead.", file=sys.stderr)
 sys.exit(1)
 import os
 

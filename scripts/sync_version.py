@@ -7,14 +7,14 @@
 There are TWO versions in this repo and they are deliberately different:
 
   * the DEVELOPMENT version — what the tree currently builds. Source of truth:
-    `qeli/Cargo.toml`. It is mirrored into ten build files plus the two overview
+    `qeli/Cargo.toml`. It is mirrored into eleven build files plus the two overview
     READMEs ("Rust 2021, version X").
   * the RELEASED version — the newest published package. Source of truth: the
     newest `v*` git tag. It is quoted by the "these docs describe X" banner in
     ten documents, because a reader installing from a `.deb` gets that version,
     not whatever HEAD happens to be.
 
-Bumping by hand means editing 22 files, which is how docs once ended up claiming
+Bumping by hand means editing 23 files, which is how docs once ended up claiming
 0.7.11 while the crate was already 0.7.12. Markdown on GitHub has no variable
 substitution, so the only way to templatise this is to stamp at commit time —
 which is what `--write` does.
@@ -50,6 +50,15 @@ DEV_TARGETS: list[tuple[str, str, str]] = [
     ("qeli/debian/control", r"^Version: (\S+)", "deb control"),
     ("docs/ru/README.md", r"Rust 2021, версия (\S+) \(бета\)", "overview README (ru)"),
     ("docs/eng/README.md", r"Rust 2021, version (\S+) \(beta\)", "overview README (eng)"),
+]
+
+# The Win32 side-by-side manifest carries the SAME development version, but the
+# assemblyIdentity schema demands FOUR fields (X.Y.Z.B) — it cannot hold the 3-part
+# string every other file uses, which is why it was never added to DEV_TARGETS above.
+# The result was a file nothing checked: it sat at 0.7.11.0 while the whole tree said
+# 0.7.13 and this very gate reported "everything agrees". (Audit 2026-07-27, G4)
+WIN_MANIFEST_TARGETS: list[tuple[str, str, str]] = [
+    ("qeli-win/QeliWin/app.manifest", r'<assemblyIdentity version="([^"]+)"', "Windows app.manifest"),
 ]
 
 # The "these docs describe X" banner. Ten documents, two wordings.
@@ -136,6 +145,9 @@ def main() -> int:
         print("writing:")
 
     apply(DEV_TARGETS, dev, args.write)
+    # Same version, four-field form (the fourth field is the manifest build number and
+    # is not used by anything here, so it stays 0). See WIN_MANIFEST_TARGETS.
+    apply(WIN_MANIFEST_TARGETS, f"{dev}.0", args.write)
 
     # Build numbers are monotonic counters, not a function of the version, so they are
     # not derived from Cargo.toml. But iOS and Android have always been released as a

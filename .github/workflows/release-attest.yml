@@ -59,6 +59,16 @@ jobs:
       # anything. Attesting a file that does not match the sums the release publishes
       # would mint a signature over a mismatch and make the attestation actively
       # misleading — better to fail the workflow and have a human look.
+      #
+      # Two holes closed here (Audit 2026-07-27, G6):
+      #   • The check ran over SHA256SUMS and stopped there, while the attest step signs
+      #     `dist/*` wholesale — so an asset that was uploaded but never listed in the
+      #     sums file received a valid signature having been checked by NOTHING, which
+      #     is precisely what this workflow exists to prevent. The direction that
+      #     matters is dist → SHA256SUMS, and it is now enforced in both directions.
+      #   • `while read … done < SHA256SUMS` drops the final line when the file has no
+      #     trailing newline (read returns non-zero at EOF even though it assigned), so
+      #     the last asset silently went unverified. `|| [ -n "$sum$name" ]` keeps it.
       - name: Verify assets against SHA256SUMS
         run: |
           set -euo pipefail
@@ -67,19 +77,34 @@ jobs:
             echo "::error::the release publishes no SHA256SUMS — refusing to attest unverifiable assets"
             exit 1
           fi
-          # Check only the lines whose file is actually present (the sums file may list
-          # assets that were not uploaded, e.g. a skipped arch).
+          : > /tmp/listed.txt
           missing=0
-          while read -r sum name; do
+          while read -r sum name || [ -n "${sum:-}${name:-}" ]; do
             [ -n "${name:-}" ] || continue
+            printf '%s\n' "$name" >> /tmp/listed.txt
             if [ -f "$name" ]; then
               echo "${sum}  ${name}" | sha256sum -c -
             else
+              # The sums file may list an asset that was not uploaded (e.g. a skipped
+              # arch). That is allowed; the reverse is not.
               echo "note: ${name} listed in SHA256SUMS but not present — skipping"
               missing=$((missing+1))
             fi
           done < SHA256SUMS
-          echo "verified; ${missing} listed asset(s) absent"
+          uncovered=0
+          for f in *; do
+            if [ ! -f "$f" ]; then continue; fi
+            if [ "$f" = "SHA256SUMS" ]; then continue; fi
+            if ! grep -Fxq -- "$f" /tmp/listed.txt; then
+              echo "::error::${f} is published in the release but absent from SHA256SUMS — it would be signed without ever being verified"
+              uncovered=$((uncovered+1))
+            fi
+          done
+          if [ "$uncovered" -ne 0 ]; then
+            echo "::error::${uncovered} asset(s) not covered by SHA256SUMS — refusing to attest. Regenerate it with scripts/gen_checksums.py over the full asset set and re-upload."
+            exit 1
+          fi
+          echo "verified; every published asset is covered; ${missing} listed asset(s) absent"
 
       # Attest every asset except the sums file itself (which is the thing being
       # cross-checked, not an artifact users execute).

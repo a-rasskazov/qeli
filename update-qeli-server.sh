@@ -8,8 +8,10 @@
 # generated one). Safe to re-run; a no-op when you are already on the newest build.
 #
 # It mirrors the installer's release handling: newest GitHub release (pre-releases
-# included), SHA256-verified before install. If the new binary fails to start it
-# rolls the previous binary back so the tunnel does not stay down.
+# included), SHA256-verified before install. If the new build fails to start it rolls
+# back so the tunnel does not stay down — by REINSTALLING the previous .deb (kept in
+# /var/lib/qeli/packages), so dpkg and the binary stay in agreement; restoring only the
+# binary is the last-resort fallback and is reported as such.
 #
 # Usage (run as root — directly, or via sudo if you have it):
 #   ./update-qeli-server.sh              # update to the newest release, if newer
@@ -82,7 +84,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 command -v qeli >/dev/null 2>&1 || command -v docker >/dev/null 2>&1 \
-  || die "qeli is not installed — run install-reality-server.sh first."
+  || die "qeli is not installed — run install-qeli-server.sh first."
 
 # Strip a leading 'v' from a tag so v0.7.9 and 0.7.9 compare equal.
 norm(){ printf '%s' "$1" | sed 's/^v//'; }
@@ -265,18 +267,49 @@ if [ "${QELI_VERIFY_ATTESTATION:-0}" = "1" ] && [ -z "${QELI_DEB:-}" ]; then
   fi
 fi
 
-# ── 3. back up the current binary for emergency rollback ────────────────────
+# ── 3. prepare the rollback path: the previous .deb, and the binary as a fallback ──
+# Rolling back by copying the old BINARY over the new one leaves dpkg recording the NEW
+# version, with the new package's files still on disk. The next `apt upgrade` or
+# `apt --fix-broken install` then silently puts the broken binary back, and in the
+# meantime `qeli version` disagrees with `dpkg -s qeli` — which is what made the version
+# check at the top of this script see "an update is available" on every single run.
+# So the primary rollback is a PACKAGE downgrade, and for that a copy of the previously
+# installed .deb has to exist: nothing republishes a superseded pre-release into apt.
+# We cache each .deb we install here; the binary copy stays as a last resort for boxes
+# updated before this cache existed. (Audit 2026-07-27, O6)
+PKG_CACHE="/var/lib/qeli/packages"
 QBIN="$(command -v qeli || true)"
 BAK=""
 if [ -n "$QBIN" ] && [ -f "$QBIN" ]; then
   BAK="${QBIN}.prev-${CUR:-unknown}"
   cp -a "$QBIN" "$BAK" 2>/dev/null && echo "  backed up current binary → $BAK" || BAK=""
 fi
+PREV_DEB=""
+if [ -d "$PKG_CACHE" ] && [ -n "$CUR" ]; then
+  PREV_DEB="$(find "$PKG_CACHE" -maxdepth 1 -type f -name "qeli_${CUR}_*.deb" 2>/dev/null | sort | head -n1 || true)"
+fi
+if [ -n "$PREV_DEB" ]; then
+  echo "  rollback package on hand: $PREV_DEB"
+else
+  echo "  no cached .deb for ${CUR:-unknown} — a rollback would restore only the binary"
+fi
 
 # ── 4. install the package (deps already satisfied from the first install) ──
 log "Installing the update"
 apt-get install -y --no-install-recommends "$TMP_DEB" \
   || { dpkg -i "$TMP_DEB" || true; apt-get install -y --no-install-recommends -f; }
+
+# Keep the package we just installed so the NEXT update can downgrade back to it as a
+# package rather than only swapping the binary (see the note in section 3). Named from
+# what dpkg now records, so the lookup pattern above always finds it. (Audit 2026-07-27, O6)
+NEW_PKG_VER="$(dpkg-query -W -f='${Version}' qeli 2>/dev/null || true)"
+NEW_PKG_ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+if [ -n "$NEW_PKG_VER" ]; then
+  mkdir -p "$PKG_CACHE" 2>/dev/null || true
+  chmod 700 "$PKG_CACHE" 2>/dev/null || true
+  cp -a "$TMP_DEB" "${PKG_CACHE}/qeli_${NEW_PKG_VER}_${NEW_PKG_ARCH}.deb" 2>/dev/null \
+    || echo "  (could not cache the .deb — a future rollback will restore only the binary)"
+fi
 [ "$CLEANUP" = "1" ] && rm -f "$TMP_DEB"
 
 # ── 5. restart + health check; roll the old binary back on failure ──────────
@@ -297,17 +330,45 @@ if systemctl is-active --quiet "$SERVICE" && [ "$PID0" != "0" ] && [ "$PID0" = "
   # keep only the most recent rollback binary; drop older ones
   [ -n "$BAK" ] && find "$(dirname "$QBIN")" -maxdepth 1 -name "$(basename "$QBIN").prev-*" \
       ! -name "$(basename "$BAK")" -delete 2>/dev/null || true
+  # …and only the two most recent cached packages (the running one + its predecessor).
+  find "$PKG_CACHE" -maxdepth 1 -type f -name '*.deb' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -rn | tail -n +3 | cut -d' ' -f2- | xargs -r rm -f 2>/dev/null || true
   exit 0
 fi
 
 echo "Service failed to start after the update — attempting rollback…" >&2
-if [ -n "$BAK" ] && [ -f "$BAK" ]; then
+# 1 = the package was downgraded (dpkg and the binary agree again), 2 = only the binary
+# was restored (dpkg still records the NEW version — say so loudly, because the next
+# `apt upgrade` will undo it). (Audit 2026-07-27, O6)
+ROLLED_BACK=0
+if [ -n "$PREV_DEB" ] && [ -f "$PREV_DEB" ]; then
+  echo "  reinstalling the previous package: $PREV_DEB" >&2
+  systemctl stop "$SERVICE" 2>/dev/null || true
+  if apt-get install -y --allow-downgrades --no-install-recommends "$PREV_DEB"; then
+    ROLLED_BACK=1
+  else
+    echo "  package downgrade failed — falling back to the binary copy" >&2
+  fi
+fi
+if [ "$ROLLED_BACK" = "0" ] && [ -n "$BAK" ] && [ -f "$BAK" ]; then
   systemctl stop "$SERVICE" 2>/dev/null || true
   if cp -a "$BAK" "$QBIN"; then
-    systemctl restart "$SERVICE"; sleep 2
-    if systemctl is-active --quiet "$SERVICE"; then
-      die "update failed to start — rolled back to ${CUR}. Investigate: journalctl -u ${SERVICE} -e"
+    ROLLED_BACK=2
+  fi
+fi
+if [ "$ROLLED_BACK" != "0" ]; then
+  systemctl restart "$SERVICE" 2>/dev/null || true
+  sleep 2
+  if systemctl is-active --quiet "$SERVICE"; then
+    if [ "$ROLLED_BACK" = "2" ]; then
+      echo "" >&2
+      echo "WARNING: only the BINARY was rolled back — dpkg still records qeli ${NEW_PKG_VER:-<new>}." >&2
+      echo "         The next 'apt upgrade' or 'apt --fix-broken install' WILL restore the broken" >&2
+      echo "         binary, and 'qeli version' now disagrees with 'dpkg -s qeli'. Reinstall the" >&2
+      echo "         previous package by hand as soon as you can:" >&2
+      echo "           apt-get install -y --allow-downgrades ./qeli_${CUR:-<old>}_$(dpkg --print-architecture 2>/dev/null || echo amd64).deb" >&2
     fi
+    die "update failed to start — rolled back to ${CUR}. Investigate: journalctl -u ${SERVICE} -e"
   fi
 fi
 die "update failed AND rollback failed — ${SERVICE} is DOWN. Check now: journalctl -u ${SERVICE} -e"

@@ -8,8 +8,11 @@ Guards the documentation structure so it cannot silently rot:
                  language's index.md (no orphaned pages)
   3. parity    — docs/ru and docs/eng contain the SAME set of files
                  (this is what let `streams` exist in eng but not ru)
-  4. config    — every INI key the server actually emits (server_ini.rs) is
-                 mentioned in CONFIG.md, in BOTH languages
+  4. config    — every INI key the server actually emits (server_ini.rs) AND
+                 every key the client actually reads from `[qeli]`
+                 (client.rs::from_ini) is mentioned in CONFIG.md, in BOTH
+                 languages. Runtime-built keys (`pool.reservation.<user>`) are
+                 checked by their literal prefix
   5. source    — every source file a doc names in backticks still exists
                  (frozen records — archive/, CHANGELOG — are out of scope)
   6. placeholder — no GitHub URL left with `<owner>` unfilled; these hide in
@@ -74,6 +77,19 @@ def tracked_markdown() -> list[Path]:
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 
+# Fenced blocks and inline code spans, in that order. Link syntax inside either is
+# LITERAL TEXT in every Markdown renderer, so scanning it for links produces false
+# failures — e.g. a Rust/Swift type written as `[UInt8](raw)` in prose was reported as a
+# broken link to a file named "raw". Strip them before looking for links.
+# (Audit 2026-07-27, Z6.)
+CODE_SPAN_RE = re.compile(r"```.*?```|``.*?``|`[^`\n]*`", re.DOTALL)
+
+
+def strip_code(text: str) -> str:
+    """Blank out fenced blocks and inline code, preserving newlines so line numbers hold."""
+    return CODE_SPAN_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+
+
 def check_links(files: list[Path]) -> None:
     for f in files:
         try:
@@ -81,6 +97,7 @@ def check_links(files: list[Path]) -> None:
         except OSError as e:
             fail("links", f"cannot read {f.relative_to(ROOT)}: {e}")
             continue
+        text = strip_code(text)
         for target in LINK_RE.findall(text):
             t = target.strip()
             if t.startswith(("http://", "https://", "mailto:", "#")):
@@ -133,6 +150,29 @@ def check_parity() -> None:
 
 KEY_RE = re.compile(r'put(?:_str|_list)?\(\s*&mut\s+\w+\s*,\s*"([^"]+)"')
 
+# Keys whose tail is built at runtime:
+#   put_str(&mut s, &format!("pool.reservation.{}", name), ip)
+#   put_str(&mut s, &format!("metadata.{}", k), v)
+# KEY_RE only sees string literals, so these were invisible to the gate. The literal
+# stem is the documentable part (`pool.reservation.<user>`), so capture it and require
+# the reference to name it.
+PREFIX_KEY_RE = re.compile(
+    r'put(?:_str|_list)?\(\s*&mut\s+\w+\s*,\s*&format!\(\s*"([A-Za-z0-9_.]*?)\.?\{'
+)
+
+# The server extractor above reads the WRITER (`put*()` in server_ini.rs), which by
+# construction only ever sees SERVER keys. The client's `[qeli]` section is parsed by a
+# READER in client.rs, so its ~39 keys (`server`, `proto`, `exit_node`,
+# `password_command`, `allow_unpinned_tofu`, …) sat outside the gate entirely — which is
+# how the site could document `exclude_routes` for a parser that only ever reads
+# `exclude`, with nothing to catch it. Slice `from_ini` rather than the whole file: `q`
+# is the `[qeli]` section handle only inside that function.
+CLIENT_FN_START = "pub fn from_ini"
+CLIENT_FN_END = "pub fn to_link"
+CLIENT_KEY_RE = re.compile(
+    r'\bq\s*\.\s*(?:get|get_or|str_or|bool_or|parse_or|list)\(\s*"([^"]+)"'
+)
+
 
 def _documented(body: str, key: str) -> bool:
     """Is `key` covered by the reference?
@@ -151,25 +191,70 @@ def _documented(body: str, key: str) -> bool:
     return any(last in line and parent in line for line in body.splitlines())
 
 
+def _client_keys() -> set[str]:
+    """Keys the client reads out of the `[qeli]` section, from client.rs::from_ini.
+
+    Fails CLOSED like the rest of this script: if the function markers moved or the
+    accessor pattern drifted, an empty result would silently pass every key, so say so
+    instead."""
+    src = ROOT / "qeli" / "src" / "config" / "client.rs"
+    if not src.exists():
+        fail("config", f"{src.relative_to(ROOT)} not found — cannot verify client key coverage")
+        return set()
+    text = src.read_text(encoding="utf-8", errors="replace")
+    start = text.find(CLIENT_FN_START)
+    end = text.find(CLIENT_FN_END, start + 1) if start != -1 else -1
+    if start == -1 or end == -1:
+        fail(
+            "config",
+            f"cannot locate '{CLIENT_FN_START}'..'{CLIENT_FN_END}' in client.rs — "
+            "the client key extractor needs updating",
+        )
+        return set()
+    keys = set(CLIENT_KEY_RE.findall(text[start:end])) - CONFIG_KEY_ALLOWLIST
+    if not keys:
+        fail("config", "no client [qeli] keys extracted — the extractor pattern probably drifted")
+    return keys
+
+
 def check_config_keys() -> None:
     src = ROOT / "qeli" / "src" / "config" / "server_ini.rs"
     if not src.exists():
         fail("config", f"{src.relative_to(ROOT)} not found — cannot verify key coverage")
         return
-    keys = set(KEY_RE.findall(src.read_text(encoding="utf-8", errors="replace")))
-    keys -= CONFIG_KEY_ALLOWLIST
+    src_text = src.read_text(encoding="utf-8", errors="replace")
+    keys = set(KEY_RE.findall(src_text)) - CONFIG_KEY_ALLOWLIST
     if not keys:
         fail("config", "no INI keys extracted — the extractor pattern probably drifted")
         return
+    # `pool.reservation.<user>` etc. — the stem is what the reference can document.
+    prefixes = {p for p in PREFIX_KEY_RE.findall(src_text) if p}
+    client_keys = _client_keys()
+
     for lang in LANGS:
         cfg = ROOT / "docs" / lang / "CONFIG.md"
         if not cfg.exists():
             fail("config", f"docs/{lang}/CONFIG.md is missing")
             continue
         body = cfg.read_text(encoding="utf-8", errors="replace")
-        missing = sorted(k for k in keys if not _documented(body, k))
-        for k in missing:
+        for k in sorted(k for k in keys if not _documented(body, k)):
             fail("config", f"key '{k}' is emitted by the server but absent from docs/{lang}/CONFIG.md")
+        for p in sorted(p for p in prefixes if f"{p}." not in body):
+            fail(
+                "config",
+                f"dynamic key prefix '{p}.<…>' is emitted by the server but absent "
+                f"from docs/{lang}/CONFIG.md",
+            )
+        # Client keys are short, generic words (`key`, `mode`, `dev`, `user`) that a bare
+        # substring search would find anywhere in a 1300-line reference, making the check
+        # vacuous. Require the key as a backticked token — which is how CONFIG.md's
+        # `[qeli]` reference table writes them anyway.
+        for k in sorted(k for k in client_keys if f"`{k}`" not in body):
+            fail(
+                "config",
+                f"client key '[qeli] {k}' is read by client.rs but absent "
+                f"from docs/{lang}/CONFIG.md",
+            )
 
 
 # A GitHub URL whose OWNER slot is still a `<placeholder>`. The repo owner is a constant,
@@ -253,7 +338,10 @@ def main() -> int:
     check_version()
 
     if not failures:
-        print("OK — all 7 checks pass (links, index, parity, config keys, sources, placeholders, version).")
+        print(
+            "OK — all 7 checks pass (links, index, parity, config keys "
+            "[server + client + prefixes], sources, placeholders, version)."
+        )
         return 0
     by_check: dict[str, int] = {}
     for f in failures:

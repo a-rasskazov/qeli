@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generate a SHA256SUMS file over release assets, for the panel / CLI update command
-and install-reality-server.sh to verify downloads before installing.
+and install-qeli-server.sh to verify downloads before installing.
 
 Usage:
     python3 scripts/gen_checksums.py [ASSET_DIR]

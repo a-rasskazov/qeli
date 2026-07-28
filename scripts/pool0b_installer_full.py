@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full functional test of the REWORKED install-reality-server.sh (0.7.7):
+"""Full functional test of the REWORKED install-qeli-server.sh (0.7.7):
 profile choice (reality-tls/fake-tls), port choice + panel-port guard, DNS safety,
 random short_id, users+links, MSS clamp + sysctl, web panel, service up.
 
@@ -16,7 +16,7 @@ import paramiko
 LAB10 = ("10.66.116.10", "root", os.environ["QELI_LAB_PASS"])
 DOCK = (os.environ["QELI_DOCKER_HOST"], "root", os.environ["QELI_DOCKER_PASS"])
 DEB_REMOTE = "/opt/qeli-src/debian/qeli_0.7.7_amd64.deb"
-INSTALLER = r"C:\Users\litvi\OneDrive\Documents\OpenCode\VPN_CLAUDE\install-reality-server.sh"
+INSTALLER = r"C:\Users\litvi\OneDrive\Documents\OpenCode\VPN_CLAUDE\install-qeli-server.sh"
 DOMAINS = ["github.com", "cloudflare.com", "google.com"]
 EXAMPLE_SID = "0123456789abcdef"  # the sample short_id from the template — must be replaced
 
@@ -43,7 +43,7 @@ def fresh_container(d, name):
         if "running" in run(d, f"docker exec {name} systemctl is-system-running 2>&1 || true"):
             break
         time.sleep(2)
-    run(d, f"docker cp /root/qeli.deb {name}:/root/qeli.deb; docker cp /root/install-reality-server.sh {name}:/root/install-reality-server.sh")
+    run(d, f"docker cp /root/qeli.deb {name}:/root/qeli.deb; docker cp /root/install-qeli-server.sh {name}:/root/install-qeli-server.sh")
     dex(d, name, "apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq adduser procps iproute2 iptables >/dev/null 2>&1; "
                  "mkdir -p /etc/sysctl.d /etc/modules-load.d /etc/iptables; echo ready")
 
@@ -58,7 +58,7 @@ def main():
     d = conn(DOCK)
     sf = d.open_sftp(); buf.seek(0); sf.putfo(buf, "/root/qeli.deb")
     with open(INSTALLER, "rb") as f:
-        sf.putfo(io.BytesIO(f.read().replace(b"\r\n", b"\n")), "/root/install-reality-server.sh")
+        sf.putfo(io.BytesIO(f.read().replace(b"\r\n", b"\n")), "/root/install-qeli-server.sh")
     sf.close()
     print("deb bytes:", run(d, "stat -c%s /root/qeli.deb"))
     # ensure systemd image exists
@@ -72,7 +72,7 @@ def main():
     # ── C) port guard: QELI_PORT=8080 must be refused (fast — dies before install) ──
     print("\n===== [C] port guard: QELI_PORT=8080 (panel port) must be refused =====")
     fresh_container(d, "qeli-c")
-    gout = dex(d, "qeli-c", "QELI_PROFILE=reality-tls QELI_PORT=8080 QELI_DEB=/root/qeli.deb bash /root/install-reality-server.sh 203.0.113.7 2>&1 | tail -4")
+    gout = dex(d, "qeli-c", "QELI_PROFILE=reality-tls QELI_PORT=8080 QELI_DEB=/root/qeli.deb bash /root/install-qeli-server.sh 203.0.113.7 2>&1 | tail -4")
     guard_ok = "reserved for the web panel" in gout
     results["port-guard"] = guard_ok
     print("  refused 8080:", guard_ok, "|", gout.replace("\n", " ")[-120:])
@@ -83,7 +83,7 @@ def main():
     fresh_container(d, "qeli-a")
     base_dns = all("FAIL" not in dex(d, "qeli-a", f"getent hosts {x} | head -1 || echo FAIL") for x in DOMAINS)
     print("  baseline DNS ok:", base_dns)
-    inst = dex(d, "qeli-a", "QELI_PROFILE=reality-tls QELI_PORT=8443 QELI_DEB=/root/qeli.deb bash /root/install-reality-server.sh 203.0.113.7 2>&1 | tail -16", t=480)
+    inst = dex(d, "qeli-a", "QELI_PROFILE=reality-tls QELI_PORT=8443 QELI_DEB=/root/qeli.deb bash /root/install-qeli-server.sh 203.0.113.7 2>&1 | tail -16", t=480)
     print(inst)
     A = {}
     A["service"] = dex(d, "qeli-a", "systemctl is-active qeli 2>&1") == "active"
@@ -114,7 +114,7 @@ def main():
     # ── B) fake-tls on default port 443 — profile-diff check ──
     print("\n===== [B] fake-tls on default port 443 =====")
     fresh_container(d, "qeli-b")
-    instb = dex(d, "qeli-b", "QELI_PROFILE=fake-tls QELI_DEB=/root/qeli.deb bash /root/install-reality-server.sh 203.0.113.7 2>&1 | tail -6", t=480)
+    instb = dex(d, "qeli-b", "QELI_PROFILE=fake-tls QELI_DEB=/root/qeli.deb bash /root/install-qeli-server.sh 203.0.113.7 2>&1 | tail -6", t=480)
     B = {}
     B["service"] = dex(d, "qeli-b", "systemctl is-active qeli 2>&1") == "active"
     B["profile"] = "[profile:fake-tls]" in dex(d, "qeli-b", "cat /etc/qeli/server.conf")
