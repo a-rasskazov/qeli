@@ -149,7 +149,11 @@ final class PacketCodec: @unchecked Sendable {
         return decrypted[Self.counterSize..<dataEnd]
     }
 
-    private func acceptCounter(_ sequence: UInt64) -> Bool {
+    /// True if `sequence` is fresh (not a replay / not too old); records it as seen.
+    /// `internal` so the shared replay-window fixture (`conformance/replay-window.json`)
+    /// can drive it directly — the window is pure state, and going through `decrypt`
+    /// would need a valid record per sequence number.
+    func acceptCounter(_ sequence: UInt64) -> Bool {
         guard let highest = replayHighest else {
             replayHighest = sequence
             replayBits[0] = 1
@@ -197,17 +201,24 @@ final class PacketCodec: @unchecked Sendable {
     /// counter is monotonic — always map to distinct nonces (no AEAD reuse), while the on-wire
     /// value no longer increments by 1 (no visible-counter DPI tell).
     private func nonceFor(_ counter: UInt64) -> Data {
+        Self.prpNonce(key: noncePrpKey, raw: Self.rawNonce(seed: nonceSeed, counter: counter))
+    }
+
+    /// The pre-permutation nonce input: seed(4) ‖ counter big-endian(8). Split out of
+    /// `nonceFor` so the whole derivation is checkable against the shared fixture
+    /// (`conformance/prp-nonce.json`) without constructing a codec.
+    static func rawNonce(seed: Data, counter: UInt64) -> Data {
         var raw = Data()
-        raw.reserveCapacity(Self.nonceSize)
-        raw.append(nonceSeed)          // 4 bytes
+        raw.reserveCapacity(nonceSize)
+        raw.append(seed)               // 4 bytes
         raw.appendBigEndian(counter)   // 8 bytes
-        return Self.prpNonce(key: noncePrpKey, raw: raw)
+        return raw
     }
 
     /// 96-bit balanced Feistel permutation, 4 rounds; round fn = SHA256(key‖round‖half)[..6].
     /// Byte-for-byte identical to Rust `packet.rs prp_nonce` (not required for interop — the peer
     /// reads the nonce straight off the wire — but kept identical for auditability).
-    private static func prpNonce(key: Data, raw: Data) -> Data {
+    static func prpNonce(key: Data, raw: Data) -> Data {
         let bytes = [UInt8](raw)
         var l = Array(bytes[0..<6])
         var r = Array(bytes[6..<12])

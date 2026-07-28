@@ -1,0 +1,98 @@
+{
+  "_comment": [
+    "CONFORMANCE FIXTURES for the data-plane nonce (M6) — the ONE source of truth that all",
+    "four implementations are checked against (Rust canon, C#/desktop, Kotlin/Android,",
+    "Swift/iOS).",
+    "",
+    "GENERATED FILE. Do not edit by hand: regenerate with",
+    "  cargo run --features conformance-gen --bin gen-conformance",
+    "from the qeli/ directory. The vectors come from the Rust canon (protocol/packet.rs",
+    "prp_nonce); a hand-written vector only proves that the author and the code agree on",
+    "the same mistake.",
+    "",
+    "WHY: the nonce is derived as PRP(seed(4) || counter_be(8)) — a 4-round balanced Feistel",
+    "network, round function SHA256(key || round || half)[..6]. The network is bijective for",
+    "ANY round function, so distinct (seed,counter) inputs — the counter is monotonic — can",
+    "never collide, which is what removes the birthday risk of a random 96-bit nonce. It also",
+    "destroys the visible '+1 per packet' pattern a DPI box could key on.",
+    "",
+    "THIS FILE EXISTS BECAUSE THE FIX WAS MISSED ONCE: M6 landed in Rust, C# and Swift, but",
+    "Android kept generating a random nonce for a full release. Nothing caught it — there was",
+    "no PacketCodec test on Android at all, and the only cross-language fixture",
+    "(qeli-links.json) covers link parsing, not the wire codec.",
+    "",
+    "ONE-SIDED TRANSFORM: the nonce travels on the wire and the receiver never inverts the",
+    "PRP (it reads the nonce straight off the record), so the PRP key does NOT have to match",
+    "the peer's. Rust derives it from the AEAD key; C#, Kotlin and Swift use per-instance",
+    "randomness. Both are correct precisely because the transform is one-sided — these vectors",
+    "pin the FUNCTION, with the key supplied as an explicit input.",
+    "",
+    "HOW TO USE: feed `key` and `raw` to your prp-nonce function and assert it returns",
+    "`nonce`. Also build `raw` yourself from `seed` and `counter` and assert it matches, so",
+    "the seed||counter_be layout is pinned too — a port can be right about the permutation",
+    "and wrong about what it permutes.",
+    "",
+    "`platforms` lists the implementations REQUIRED to pass this file. A platform on that",
+    "list whose test skips the file must fail, not pass quietly — a green test that verified",
+    "nothing is the exact failure this fixture is here to prevent."
+  ],
+  "primitive": "prp-nonce",
+  "generator": "qeli/src/gen_conformance_main.rs",
+  "platforms": ["rust", "csharp", "kotlin", "swift"],
+  "cases": [
+    {
+      "name": "counter-zero",
+      "why": "First packet of a session — the counter every implementation starts at.",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "seed": "aabbccdd",
+      "counter": 0,
+      "raw": "aabbccdd0000000000000000",
+      "nonce": "289fe9a937b9d33bc24d3d4b"
+    },
+    {
+      "name": "counter-one",
+      "why": "Second packet: together with counter-zero this pins that consecutive counters do NOT produce consecutive nonces (the DPI tell M6 removes).",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "seed": "aabbccdd",
+      "counter": 1,
+      "raw": "aabbccdd0000000000000001",
+      "nonce": "b8b68234e54408ea9dc18d6c"
+    },
+    {
+      "name": "counter-two",
+      "why": "Third packet — catches an off-by-one in the Feistel round loop that happens to be identity for 0 and 1.",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "seed": "aabbccdd",
+      "counter": 2,
+      "raw": "aabbccdd0000000000000002",
+      "nonce": "7cb96371c342fccbcf5c7101"
+    },
+    {
+      "name": "counter-mid-range",
+      "why": "A counter with bytes set across the whole 8-byte field — catches a port that only shifts the low 32 bits (a real hazard in languages where the counter is a 32-bit int by default).",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "seed": "aabbccdd",
+      "counter": 1234567890,
+      "raw": "aabbccdd00000000499602d2",
+      "nonce": "110f292c571f8996572f6def"
+    },
+    {
+      "name": "counter-i64-max",
+      "why": "0x7FFFFFFFFFFFFFFF — the largest counter representable in the SIGNED 64-bit integer that Kotlin/C#/Swift use for it. Catches sign-extension bugs in the big-endian encoding.",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "seed": "aabbccdd",
+      "counter": 9223372036854775807,
+      "raw": "aabbccdd7fffffffffffffff",
+      "nonce": "756725127267cb2692959c18"
+    },
+    {
+      "name": "different-key-and-seed",
+      "why": "All-0xFF key with an all-zero seed: proves the output actually depends on BOTH the PRP key and the seed, so a port that ignores one of them fails here even though every case above passes.",
+      "key": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seed": "00000000",
+      "counter": 0,
+      "raw": "000000000000000000000000",
+      "nonce": "aa9f8637c3acdf8a7efb4f21"
+    }
+  ]
+}

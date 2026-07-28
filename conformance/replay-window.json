@@ -1,0 +1,80 @@
+{
+  "_comment": [
+    "CONFORMANCE FIXTURES for the anti-replay window — the ONE source of truth that all four",
+    "implementations are checked against (Rust canon, C#/desktop, Kotlin/Android, Swift/iOS).",
+    "",
+    "GENERATED FILE. Do not edit by hand: regenerate with",
+    "  cargo run --features conformance-gen --bin gen-conformance",
+    "from the qeli/ directory.",
+    "",
+    "WHY: the window is a sliding 2048-bit bitmap (WireGuard-sized), reimplemented from",
+    "scratch in four languages with hand-written multi-word shifts. It is pure state — no",
+    "crypto, no I/O — so it pins perfectly as a table, and it is exactly the kind of code",
+    "where an off-by-one is invisible in normal use: too tight and legitimate reordered UDP",
+    "datagrams are dropped (a real past bug — the pre-window check demanded strictly",
+    "increasing sequence numbers), too loose and genuine replays are accepted.",
+    "",
+    "HOW TO USE: feed `seqs` one at a time to a FRESH window and collect the accept/reject",
+    "verdicts; they must equal `verdicts` element for element. The window must RECORD every",
+    "acceptance — several cases replay a number that was already accepted out of order, which",
+    "a range-check-only implementation gets wrong.",
+    "",
+    "`platforms` lists the implementations REQUIRED to pass this file. A platform on that",
+    "list whose test skips the file must fail, not pass quietly — a green test that verified",
+    "nothing is the exact failure this fixture is here to prevent."
+  ],
+  "primitive": "replay-window",
+  "generator": "qeli/src/gen_conformance_main.rs",
+  "window_size": 2048,
+  "platforms": ["rust", "csharp", "kotlin", "swift"],
+  "cases": [
+    {
+      "name": "monotonic",
+      "why": "The ordinary case: strictly increasing sequence numbers are all fresh.",
+      "seqs": [0, 1, 2, 3, 4],
+      "verdicts": [true, true, true, true, true]
+    },
+    {
+      "name": "immediate-duplicate",
+      "why": "The same sequence number twice — the second is a replay and must be rejected.",
+      "seqs": [0, 1, 1, 2],
+      "verdicts": [true, true, false, true]
+    },
+    {
+      "name": "in-window-reordering",
+      "why": "UDP reorders as a matter of course. Arrivals BEHIND the highest but inside the window are fresh and must be accepted — the strict 'must be greater' check that predates the window dropped every reordered datagram.",
+      "seqs": [0, 5, 3, 4, 1, 2],
+      "verdicts": [true, true, true, true, true, true]
+    },
+    {
+      "name": "reordered-then-replayed",
+      "why": "A reordered arrival is accepted once and rejected the second time: the window must RECORD what it accepted, not merely range-check it.",
+      "seqs": [10, 7, 7, 8, 8],
+      "verdicts": [true, true, false, true, false]
+    },
+    {
+      "name": "older-than-window",
+      "why": "2048-packet window: after seq 5000, seq 1000 is 4000 behind and cannot be proven fresh, so it must be rejected regardless of whether it was ever seen.",
+      "seqs": [0, 5000, 1000, 5001],
+      "verdicts": [true, true, false, true]
+    },
+    {
+      "name": "window-edge",
+      "why": "Exactly at the boundary: with the highest at 3000, distance 2047 is still inside the 2048-wide window and distance 2048 is not. Off-by-one here either drops legitimate packets or accepts unprovable ones.",
+      "seqs": [3000, 953, 952],
+      "verdicts": [true, true, false]
+    },
+    {
+      "name": "jump-past-window",
+      "why": "A forward jump larger than the window clears it entirely; afterwards even a sequence number that was never seen, but is now too old, must be rejected.",
+      "seqs": [0, 1, 2, 100000, 99999, 50],
+      "verdicts": [true, true, true, true, true, false]
+    },
+    {
+      "name": "starts-nonzero",
+      "why": "The first sequence number seen initialises the window, whatever its value — a session that resumes mid-stream must not have its first packet rejected.",
+      "seqs": [42, 43, 42],
+      "verdicts": [true, true, false]
+    }
+  ]
+}

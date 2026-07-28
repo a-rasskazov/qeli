@@ -265,6 +265,154 @@ impl Default for Reassembler {
 mod tests {
     use super::*;
 
+    /// The Rust half of the SHARED UDP-fragmentation KAT (`conformance/udp-frag.json`).
+    ///
+    /// The reassembler is fed by the NETWORK — out of order, with duplicates, with gaps, and
+    /// with whatever an attacker sends — so the malformed cases matter as much as the happy
+    /// ones. A handshake that only hangs on LTE is the failure this pins against.
+    #[test]
+    fn udp_frag_matches_shared_conformance_vectors() {
+        fn unhex(s: &str) -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("bad hex in fixture"))
+                .collect()
+        }
+        fn hexs(b: &[u8]) -> String {
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        }
+
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/udp-frag.json"))
+                .expect("conformance/udp-frag.json is not valid JSON");
+        assert!(
+            fx["platforms"]
+                .as_array()
+                .expect("fixture has no `platforms`")
+                .iter()
+                .any(|p| p.as_str() == Some("rust")),
+            "rust is not listed in `platforms` of udp-frag.json"
+        );
+        assert_eq!(
+            fx["max_chunk"].as_u64(),
+            Some(MAX_CHUNK as u64),
+            "the fixture was generated for a different MAX_CHUNK than this build uses"
+        );
+        assert_eq!(
+            fx["max_frags"].as_u64(),
+            Some(MAX_FRAGS as u64),
+            "the fixture was generated for a different MAX_FRAGS than this build uses"
+        );
+
+        // ── fragment ────────────────────────────────────────────────────────────
+        for c in fx["fragment"].as_array().expect("no `fragment` section") {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let msg_id = c["msg_id"].as_u64().unwrap() as u8;
+            let expect = &c["expect"];
+
+            if expect["reject"].as_bool() == Some(true) {
+                // The oversize body is megabytes, so the fixture records its SHAPE.
+                let len = c["message_len"].as_u64().unwrap() as usize;
+                let msg: Vec<u8> = (0..len).map(|i| ((i * 31 + 7) % 256) as u8).collect();
+                assert!(
+                    fragment(msg_id, &msg).is_err(),
+                    "case {name}: an oversize message was fragmented instead of refused"
+                );
+            } else {
+                let msg = unhex(c["message"].as_str().unwrap());
+                let got = fragment(msg_id, &msg)
+                    .unwrap_or_else(|e| panic!("case {name}: refused a valid message: {e}"));
+                let want: Vec<String> = expect["fragments"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|f| f.as_str().unwrap().to_string())
+                    .collect();
+                assert_eq!(
+                    got.iter().map(|f| hexs(f)).collect::<Vec<_>>(),
+                    want,
+                    "case {name}: fragments disagree"
+                );
+            }
+        }
+
+        // ── reassemble ──────────────────────────────────────────────────────────
+        for c in fx["reassemble"]
+            .as_array()
+            .expect("no `reassemble` section")
+        {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let expect = &c["expect"];
+
+            // A FRESH reassembler per case.
+            let mut r = Reassembler::new();
+            let mut completed: Option<Vec<u8>> = None;
+            let mut rejected = false;
+            for d in c["feed"].as_array().unwrap() {
+                match r.push(&unhex(d.as_str().unwrap())) {
+                    Ok(Some(m)) => {
+                        completed = Some(m);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        rejected = true;
+                        break;
+                    }
+                }
+            }
+
+            if expect["reject"].as_bool() == Some(true) {
+                assert!(rejected, "case {name}: a malformed fragment was ACCEPTED");
+            } else if expect["incomplete"].as_bool() == Some(true) {
+                assert!(
+                    !rejected,
+                    "case {name}: an incomplete message was rejected outright"
+                );
+                assert!(
+                    completed.is_none(),
+                    "case {name}: completed a message that is missing a fragment"
+                );
+            } else {
+                let m = completed.unwrap_or_else(|| {
+                    panic!("case {name}: never completed (rejected={rejected})")
+                });
+                assert_eq!(
+                    hexs(&m),
+                    expect["message"].as_str().unwrap(),
+                    "case {name}: reassembled message disagrees"
+                );
+            }
+        }
+
+        // ── classify ────────────────────────────────────────────────────────────
+        for c in fx["classify"].as_array().expect("no `classify` section") {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let d = unhex(c["datagram"].as_str().unwrap());
+            let e = &c["expect"];
+            assert_eq!(
+                is_fragment(&d),
+                e["is_fragment"].as_bool().unwrap(),
+                "case {name}: is_fragment"
+            );
+            assert_eq!(
+                is_junk(&d),
+                e["is_junk"].as_bool().unwrap(),
+                "case {name}: is_junk"
+            );
+            assert_eq!(
+                is_mtu_probe(&d),
+                e["is_mtu_probe"].as_bool().unwrap(),
+                "case {name}: is_mtu_probe"
+            );
+            assert_eq!(
+                is_mtu_probe_ack(&d),
+                e["is_mtu_probe_ack"].as_bool().unwrap(),
+                "case {name}: is_mtu_probe_ack"
+            );
+        }
+    }
+
     fn reassemble_all(frags: &[Vec<u8>]) -> Vec<u8> {
         let mut re = Reassembler::new();
         let mut out = None;

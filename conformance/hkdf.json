@@ -1,0 +1,74 @@
+{
+  "_comment": [
+    "CONFORMANCE FIXTURES for the directional key derivation — the ONE source of truth that",
+    "all four implementations are checked against (Rust canon, C#/desktop, Kotlin/Android,",
+    "Swift/iOS).",
+    "",
+    "GENERATED FILE. Do not edit by hand: regenerate with",
+    "  cargo run --features conformance-gen --bin gen-conformance",
+    "from the qeli/ directory.",
+    "",
+    "WHY: this is the highest-stakes primitive in the set. Both ends must derive byte-",
+    "identical keys or the tunnel does not come up at all — and a subtler divergence, such as",
+    "the two DIRECTIONS swapped, produces a tunnel that authenticates and then decrypts",
+    "nothing. There are four schemes, three of which take several 32-byte secrets whose ORDER",
+    "is wire-format; getting that order wrong is silent until two different implementations",
+    "try to talk to each other.",
+    "",
+    "SCHEMES: `classic` = HKDF over the X25519 secret (the `plain` wire mode only).",
+    "`hybrid` = x25519 || mlkem, the post-quantum default for fake-tls / obfs / reality-tls /",
+    "UDP. `bound` = ee || es, binding the keys to the server's long-lived identity",
+    "(auth.bind_static_to_session). `hybrid-bound` = x25519 || mlkem || es. Each scheme has",
+    "its OWN salt, so a peer on one scheme cannot silently interop with a peer on another —",
+    "by design: there is no quiet PQ downgrade.",
+    "",
+    "HOW TO USE: feed the named `inputs` (hex, in the order given) to your implementation of",
+    "`scheme` and assert the two derived keys. `server_to_client` and `client_to_server` are",
+    "named by DIRECTION rather than enc/dec on purpose — which one is 'encrypt' depends on",
+    "which side you are, and that ambiguity is exactly how a port ends up with them swapped.",
+    "",
+    "`platforms` lists the implementations REQUIRED to pass this file. A platform on that",
+    "list whose test skips the file must fail, not pass quietly — a green test that verified",
+    "nothing is the exact failure this fixture is here to prevent."
+  ],
+  "primitive": "hkdf",
+  "generator": "qeli/src/gen_conformance_main.rs",
+  "platforms": ["rust", "csharp", "kotlin", "swift"],
+  "cases": [
+    {
+      "name": "classic",
+      "why": "The legacy classic-only derivation, still used by the `plain` wire mode (it has no TLS-shaped handshake to carry an ML-KEM share).",
+      "scheme": "classic",
+      "inputs": { "shared_secret": "0101010101010101010101010101010101010101010101010101010101010101" },
+      "expect": { "server_to_client": "3ed9b08c771b99b9f0ac508f0ff1b1ce08f751d6f4d10a76794629c230617d6b", "client_to_server": "94b7b34175f0075389b0ee1a52feca01e0d1cb8b22b086b27954c9713202ef33" }
+    },
+    {
+      "name": "classic-counting-secret",
+      "why": "A second classic vector with a non-uniform secret — an implementation that accidentally hashed a constant would pass the all-0x01 case and fail here.",
+      "scheme": "classic",
+      "inputs": { "shared_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" },
+      "expect": { "server_to_client": "9ea29769fc9012d638dc3c3d9885a49cf25378132e19c9e9bbac5e3083ed8ed6", "client_to_server": "f9ad9ee0c73436bccefa9369fb9542debe7bbe027d5cdc2c63c6d297159eba14" }
+    },
+    {
+      "name": "hybrid",
+      "why": "The post-quantum default (fake-tls / obfs / reality-tls / UDP): IKM is x25519 || mlkem with the v2 salt. The ORDER is wire-format — swapping the two secrets yields different keys and a tunnel that cannot interop.",
+      "scheme": "hybrid",
+      "inputs": { "x25519_shared": "0101010101010101010101010101010101010101010101010101010101010101", "mlkem_shared": "0202020202020202020202020202020202020202020202020202020202020202" },
+      "expect": { "server_to_client": "2fc7d9966789165f3e52fa889c08881cf4df9a7ccd5a5970ec53d50020e59db2", "client_to_server": "b7fb23d56b1b790cb4264add23f01c0c2939d3eee637ff82e2a40e63d5927920" }
+    },
+    {
+      "name": "bound",
+      "why": "`auth.bind_static_to_session` for the plain mode: IKM is ee || es, binding the data keys to the server's long-lived identity (Noise-IK style).",
+      "scheme": "bound",
+      "inputs": { "ee": "0101010101010101010101010101010101010101010101010101010101010101", "es": "0303030303030303030303030303030303030303030303030303030303030303" },
+      "expect": { "server_to_client": "2f771517488ee42b3153df13dd1336c73944567084842329b908516799c65580", "client_to_server": "3bb254eebad4f4da4be81d371ea1c836de61cd63cdd4fe22d03591ec970267cb" }
+    },
+    {
+      "name": "hybrid-bound",
+      "why": "Hybrid derivation with the static-ephemeral DH folded in (IKM is x25519 || mlkem || es) — three secrets, three chances to get the order wrong.",
+      "scheme": "hybrid-bound",
+      "inputs": { "x25519_shared": "0101010101010101010101010101010101010101010101010101010101010101", "mlkem_shared": "0202020202020202020202020202020202020202020202020202020202020202", "es": "0303030303030303030303030303030303030303030303030303030303030303" },
+      "expect": { "server_to_client": "3cb13e71bcc579469df033c9e75498a7d27b53197f7f0b29c8f11b49ce71bce8", "client_to_server": "05376a8187bfa13876166d1fe84be2d49b6a4ef733a650073e74360f7f609a20" }
+    }
+  ]
+}

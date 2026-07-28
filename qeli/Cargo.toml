@@ -28,6 +28,14 @@ name = "qeli-client"
 path = "src/client_main.rs"
 required-features = ["client-bin"]
 
+# Generator for the shared cross-language KAT fixtures in conformance/. Built ONLY
+# under the off-by-default `conformance-gen` feature, so normal builds are untouched.
+# NB: also lives outside src/bin/ — `.gitignore`'s `**/bin/` would exclude it from git.
+[[bin]]
+name = "gen-conformance"
+path = "src/gen_conformance_main.rs"
+required-features = ["conformance-gen"]
+
 [features]
 default = ["server", "client"]
 # Server side pulls the only MIPS-incompatible deps (rustls/ring via rcgen) plus
@@ -42,6 +50,10 @@ client-bin = ["client"]
 # turn it on, so `tikv-jemalloc-sys` (no Windows backend, finicky on musl) is never
 # compiled for them. See docs on the glibc arena-retention RSS plateau.
 jemalloc = ["dep:tikv-jemallocator"]
+# Builds the shared-KAT generator (`gen-conformance`). Off by default so normal
+# server/CI/FFI builds never compile it and stay byte-identical; CI turns it on only
+# for the fixture-freshness check.
+conformance-gen = []
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "signal", "sync", "macros", "process"] }
@@ -52,8 +64,13 @@ rand = "0.10"
 x25519-dalek = { version = "3", features = ["static_secrets", "getrandom", "zeroize"] }
 chacha20poly1305 = "0.11"
 chacha20 = "0.10"
-# `zeroize` feature wipes the AES key schedule on Drop (H-5) — parity with
-# chacha20poly1305, which zeroizes by default.
+# `zeroize` here is aes-gcm's implicit optional-dep feature. Be precise about what it
+# buys (audit 2026-07-27): it guards exactly one statement — `ghash_key.zeroize()` in
+# `From<Aes>`, wiping the 16-byte GHASH subkey temporary. It does NOT reach the expanded
+# AES round keys: those live in the `aes` crate's cipher object, and `aes` 0.8.4 exposes
+# no portable `zeroize` feature (its zeroize dep is gated on the aarch64 armv8 backend).
+# So the key-schedule residue documented as accepted debt in THREAT-MODEL.md §4 is real
+# and this flag does not close it — keep both statements in sync if the crate changes.
 aes-gcm = { version = "0.10", features = ["zeroize"] }
 # Pure-Rust ML-KEM-768 (FIPS 203) for the X25519MLKEM768 post-quantum key share
 # in the ClientHello — fingerprint parity with current Chrome. No C deps (unlike

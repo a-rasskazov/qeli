@@ -91,6 +91,52 @@ fn prp_nonce(key: &[u8; 32], raw: &[u8; NONCE_SIZE]) -> [u8; NONCE_SIZE] {
     out
 }
 
+/// Accessor for the conformance-vector generator (`src/gen_conformance_main.rs`).
+///
+/// The shared KAT files under `conformance/` MUST be produced by this canon and never
+/// hand-written: a hand-computed vector only proves that the author and the code agree on
+/// the same mistake. `#[doc(hidden)]` — not part of the supported API; the generator is the
+/// only caller, and `prp_nonce` itself stays private.
+#[doc(hidden)]
+pub fn conformance_prp_nonce(key: &[u8; 32], raw: &[u8; NONCE_SIZE]) -> [u8; NONCE_SIZE] {
+    prp_nonce(key, raw)
+}
+
+/// A codec with the per-session randomness pinned, for the conformance generator.
+///
+/// `PacketCodec::new` draws `nonce_seed` and derives `nonce_prp_key` from the key, so two
+/// runs of the generator would emit different records and the `--check` freshness gate
+/// could never pass. Fixing both makes `encrypt_packet` a pure function of its inputs, so
+/// the records in `conformance/packet-decode.json` are reproducible — while still being
+/// produced by the REAL encode path rather than re-implemented in the generator (which
+/// would pin the generator's idea of the format instead of the codec's).
+#[doc(hidden)]
+pub fn conformance_codec(
+    key: [u8; 32],
+    nonce_seed: [u8; 4],
+    nonce_prp_key: [u8; 32],
+    raw_framing: bool,
+) -> PacketCodec {
+    let mut c = if raw_framing {
+        PacketCodec::new_raw(key)
+    } else {
+        PacketCodec::new(key)
+    };
+    c.nonce_seed = nonce_seed;
+    c.nonce_prp_key = nonce_prp_key;
+    c
+}
+
+/// Run a sequence of sequence numbers through a fresh replay window, returning the
+/// accept/reject verdict for each. Exposed for the conformance generator: the window is a
+/// pure state machine (no crypto, no I/O), so it can be pinned across all four
+/// implementations as a plain table of inputs and verdicts.
+#[doc(hidden)]
+pub fn conformance_replay_sequence(seqs: &[u64]) -> Vec<bool> {
+    let mut w = ReplayWindow::new();
+    seqs.iter().map(|s| w.check_and_record(*s)).collect()
+}
+
 /// Sliding-window replay protection over a `REPLAY_WINDOW_SIZE`-bit window.
 /// The window is a little-endian bit array: bit at *distance* N (i.e. seq
 /// `highest - N`) lives in `bits[N/64]` at position `N%64`. Distance 0 is the
@@ -469,6 +515,175 @@ pub enum PacketError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decode a lowercase-hex string from a conformance fixture.
+    fn unhex(s: &str) -> Vec<u8> {
+        assert!(s.len().is_multiple_of(2), "odd-length hex string: {s}");
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("bad hex in fixture"))
+            .collect()
+    }
+
+    /// The Rust half of the SHARED cross-language KAT (`conformance/prp-nonce.json`).
+    ///
+    /// Rust is the canon that GENERATES the file, so this test is a tautology in the happy
+    /// path — deliberately. Its job is to fail when someone edits the fixture by hand or
+    /// changes `prp_nonce` without regenerating, which is exactly how the other three
+    /// implementations would start disagreeing with a file they still believe is authoritative.
+    #[test]
+    fn prp_nonce_matches_shared_conformance_vectors() {
+        // Compiled in, so the test cannot silently pass because a path moved.
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/prp-nonce.json"))
+                .expect("conformance/prp-nonce.json is not valid JSON");
+
+        let platforms: Vec<&str> = fx["platforms"]
+            .as_array()
+            .expect("fixture has no `platforms`")
+            .iter()
+            .map(|p| p.as_str().unwrap_or_default())
+            .collect();
+        assert!(
+            platforms.contains(&"rust"),
+            "rust is not listed in `platforms` — either add it or stop running this test"
+        );
+
+        let cases = fx["cases"].as_array().expect("fixture has no `cases`");
+        assert!(!cases.is_empty(), "fixture file has no cases");
+
+        for c in cases {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let key: [u8; 32] = unhex(c["key"].as_str().expect("case has no `key`"))
+                .try_into()
+                .expect("key is not 32 bytes");
+            let seed = unhex(c["seed"].as_str().expect("case has no `seed`"));
+            let counter = c["counter"].as_u64().expect("case has no `counter`");
+
+            // Rebuild `raw` from seed+counter rather than trusting the field: this is what
+            // pins the seed‖counter_be LAYOUT, independently of the permutation itself.
+            let mut raw = [0u8; NONCE_SIZE];
+            raw[..4].copy_from_slice(&seed);
+            raw[4..].copy_from_slice(&counter.to_be_bytes());
+            assert_eq!(
+                hex_lower(&raw),
+                c["raw"].as_str().unwrap(),
+                "case {name}: raw nonce layout (seed || counter_be) disagrees"
+            );
+
+            let got = prp_nonce(&key, &raw);
+            assert_eq!(
+                hex_lower(&got),
+                c["nonce"].as_str().unwrap(),
+                "case {name}: permuted nonce disagrees"
+            );
+        }
+    }
+
+    fn hex_lower(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    /// Assert this platform is on the fixture's `platforms` list. A listed platform whose
+    /// test silently skips is the failure the fixtures exist to prevent.
+    fn require_listed(fx: &serde_json::Value, file: &str) {
+        let listed = fx["platforms"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{file} has no `platforms`"))
+            .iter()
+            .any(|p| p.as_str() == Some("rust"));
+        assert!(listed, "rust is not listed in `platforms` of {file}");
+    }
+
+    /// The Rust half of the SHARED decode KAT (`conformance/packet-decode.json`).
+    ///
+    /// Decoding is deterministic given (key, record), so this pins the whole inbound path —
+    /// framing, AEAD, counter placement, padding-trailer stripping — with no test seam.
+    #[test]
+    fn packet_decode_matches_shared_conformance_vectors() {
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/packet-decode.json"))
+                .expect("conformance/packet-decode.json is not valid JSON");
+        require_listed(&fx, "packet-decode.json");
+
+        let cases = fx["cases"].as_array().expect("fixture has no `cases`");
+        assert!(!cases.is_empty(), "fixture file has no cases");
+
+        for c in cases {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let key: [u8; 32] = unhex(c["key"].as_str().unwrap())
+                .try_into()
+                .expect("key is not 32 bytes");
+            let record = unhex(c["record"].as_str().unwrap());
+            let raw_framing = c["framing"].as_str() == Some("raw");
+
+            let mut codec = if raw_framing {
+                PacketCodec::new_raw(key)
+            } else {
+                PacketCodec::new(key)
+            };
+            let got = codec.decrypt_packet(&record);
+            let expect = &c["expect"];
+
+            if expect["reject"].as_bool() == Some(true) {
+                assert!(
+                    got.is_err(),
+                    "case {name}: a corrupt/truncated record was ACCEPTED — decoded to {:?}",
+                    got.map(|p| hex_lower(&p))
+                );
+            } else {
+                let pt =
+                    got.unwrap_or_else(|e| panic!("case {name}: rejected a valid record: {e:?}"));
+                assert_eq!(
+                    hex_lower(&pt),
+                    expect["plaintext"].as_str().unwrap(),
+                    "case {name}: plaintext disagrees"
+                );
+            }
+        }
+    }
+
+    /// The Rust half of the SHARED replay-window KAT (`conformance/replay-window.json`).
+    #[test]
+    fn replay_window_matches_shared_conformance_vectors() {
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/replay-window.json"))
+                .expect("conformance/replay-window.json is not valid JSON");
+        require_listed(&fx, "replay-window.json");
+
+        assert_eq!(
+            fx["window_size"].as_u64(),
+            Some(REPLAY_WINDOW_SIZE as u64),
+            "the fixture was generated for a different window size than this build uses"
+        );
+
+        let cases = fx["cases"].as_array().expect("fixture has no `cases`");
+        assert!(!cases.is_empty(), "fixture file has no cases");
+
+        for c in cases {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let seqs: Vec<u64> = c["seqs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap())
+                .collect();
+            let want: Vec<bool> = c["verdicts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_bool().unwrap())
+                .collect();
+
+            // A FRESH window per case — the cases are independent by construction.
+            let mut w = ReplayWindow::new();
+            let got: Vec<bool> = seqs.iter().map(|s| w.check_and_record(*s)).collect();
+            assert_eq!(
+                got, want,
+                "case {name}: verdicts disagree for seqs {seqs:?}"
+            );
+        }
+    }
 
     #[test]
     fn encrypt_oversized_data_errors_not_truncates() {

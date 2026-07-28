@@ -118,6 +118,78 @@ pub fn derive_keys_hybrid(
 mod hybrid_tests {
     use super::*;
 
+    /// The Rust half of the SHARED key-derivation KAT (`conformance/hkdf.json`).
+    ///
+    /// Both ends must derive byte-identical keys or the tunnel does not come up; a subtler
+    /// divergence (the two DIRECTIONS swapped) yields a tunnel that authenticates and then
+    /// decrypts nothing. Rust generates the file, so the happy path is a tautology by
+    /// design — the job here is to fail when the fixture is hand-edited or the code changes
+    /// without regenerating, which is how the other three would start disagreeing with a
+    /// file they still believe is authoritative.
+    #[test]
+    fn hkdf_matches_shared_conformance_vectors() {
+        fn unhex(s: &str) -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("bad hex in fixture"))
+                .collect()
+        }
+        fn arr32(v: &serde_json::Value, k: &str) -> [u8; 32] {
+            unhex(
+                v[k].as_str()
+                    .unwrap_or_else(|| panic!("missing input `{k}`")),
+            )
+            .try_into()
+            .expect("input is not 32 bytes")
+        }
+        fn hexs(b: &[u8]) -> String {
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        }
+
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/hkdf.json"))
+                .expect("conformance/hkdf.json is not valid JSON");
+        assert!(
+            fx["platforms"]
+                .as_array()
+                .expect("fixture has no `platforms`")
+                .iter()
+                .any(|p| p.as_str() == Some("rust")),
+            "rust is not listed in `platforms` of hkdf.json"
+        );
+
+        let cases = fx["cases"].as_array().expect("fixture has no `cases`");
+        assert!(!cases.is_empty(), "fixture file has no cases");
+
+        for c in cases {
+            let name = c["name"].as_str().unwrap_or("<unnamed>");
+            let inp = &c["inputs"];
+            let (s2c, c2s) = match c["scheme"].as_str().unwrap() {
+                "classic" => derive_keys(&arr32(inp, "shared_secret")),
+                "hybrid" => {
+                    derive_keys_hybrid(&arr32(inp, "x25519_shared"), &arr32(inp, "mlkem_shared"))
+                }
+                "bound" => derive_keys_bound(&arr32(inp, "ee"), &arr32(inp, "es")),
+                "hybrid-bound" => derive_keys_hybrid_bound(
+                    &arr32(inp, "x25519_shared"),
+                    &arr32(inp, "mlkem_shared"),
+                    &arr32(inp, "es"),
+                ),
+                other => panic!("case {name}: unknown scheme `{other}`"),
+            };
+            assert_eq!(
+                hexs(&s2c),
+                c["expect"]["server_to_client"].as_str().unwrap(),
+                "case {name}: server_to_client key disagrees"
+            );
+            assert_eq!(
+                hexs(&c2s),
+                c["expect"]["client_to_server"].as_str().unwrap(),
+                "case {name}: client_to_server key disagrees"
+            );
+        }
+    }
+
     #[test]
     fn hybrid_is_deterministic_and_distinct_from_classic() {
         let x = [0x11u8; 32];

@@ -1,6 +1,7 @@
 package com.qeli.protocol
 
 import com.qeli.crypto.PacketCipher
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicLong
 
@@ -27,6 +28,15 @@ class PacketCodec(
 
     private val counter = AtomicLong(0)
 
+    // M6: per-instance nonce seed + PRP key. The nonce goes on the wire and the peer never
+    // inverts the PRP (it reads the nonce straight off the wire), so these are LOCAL randomness
+    // and need NOT match the peer's — they only have to make (seed‖counter) unique per key,
+    // which a monotonic counter + a fresh per-session key guarantee. A fresh seed per instance
+    // also keeps nonces unique across a reconnect that reused the key. (Rust derives this key
+    // from the AEAD key instead; both are correct precisely because it is one-sided.)
+    private val nonceSeed = ByteArray(4).also { random.nextBytes(it) }
+    private val noncePrpKey = ByteArray(32).also { random.nextBytes(it) }
+
     // Anti-replay sliding window (mirrors the server's packet.rs window). Bit i of
     // [replayBitmap] marks counter (replayHighest - i) as already seen. A strict
     // "must be > last" check (the old behaviour) dropped every reordered datagram
@@ -36,8 +46,11 @@ class PacketCodec(
     private var replayHighest: Long = -1
     private val replayBits = LongArray(REPLAY_WORDS) // 2048-bit window (M-13)
 
-    /** True if [seq] is fresh (not a replay / not too old); records it as seen. */
-    private fun acceptCounter(seq: Long): Boolean {
+    /** True if [seq] is fresh (not a replay / not too old); records it as seen.
+     *  `internal` so the shared replay-window fixture (`conformance/replay-window.json`) can
+     *  drive it directly — the window is pure state, and going through [decrypt] would need a
+     *  valid record per sequence number. */
+    internal fun acceptCounter(seq: Long): Boolean {
         if (replayHighest < 0) { replayHighest = seq; replayBits[0] = 1L; return true }
         if (seq > replayHighest) {
             val advance = seq - replayHighest
@@ -72,6 +85,16 @@ class PacketCodec(
         }
     }
 
+    // ── M6: counter-derived data-plane nonce (mirrors Rust packet.rs) ────────────
+    /** Build the 96-bit wire nonce for [counterValue] as PRP(seed(4) ‖ counter_be(8)).
+     *  A balanced Feistel network is bijective for any round function, so distinct
+     *  (seed,counter) inputs — the counter is monotonic — always map to distinct nonces
+     *  (no AEAD nonce reuse), while the on-wire value no longer increments by 1 (no
+     *  visible-counter DPI tell). Replaces the previous random 96-bit nonce, which carried
+     *  a birthday-collision risk the construction removes by design. */
+    private fun nonceForCounter(counterValue: Long): ByteArray =
+        prpNonce(noncePrpKey, rawNonce(nonceSeed, counterValue))
+
     companion object {
         const val HEADER_SIZE = 5
         const val NONCE_SIZE = 12
@@ -81,6 +104,50 @@ class PacketCodec(
         const val REPLAY_WORDS = REPLAY_WINDOW / 64
         const val APPLICATION_DATA: Byte = 0x17
         const val MAX_RECORD_SIZE = 16384 + NONCE_SIZE + TAG_SIZE + COUNTER_SIZE + 256
+
+        /** The pre-permutation nonce input: seed(4) ‖ counter big-endian(8). Split out of
+         *  [nonceForCounter] so the whole derivation is unit-testable without an instance
+         *  (building a codec needs a PacketCipher, which needs Conscrypt + android.util.Log). */
+        internal fun rawNonce(seed: ByteArray, counterValue: Long): ByteArray {
+            val raw = ByteArray(NONCE_SIZE)
+            System.arraycopy(seed, 0, raw, 0, 4)
+            raw[4] = ((counterValue shr 56) and 0xFF).toByte()
+            raw[5] = ((counterValue shr 48) and 0xFF).toByte()
+            raw[6] = ((counterValue shr 40) and 0xFF).toByte()
+            raw[7] = ((counterValue shr 32) and 0xFF).toByte()
+            raw[8] = ((counterValue shr 24) and 0xFF).toByte()
+            raw[9] = ((counterValue shr 16) and 0xFF).toByte()
+            raw[10] = ((counterValue shr 8) and 0xFF).toByte()
+            raw[11] = (counterValue and 0xFF).toByte()
+            return raw
+        }
+
+        /** 96-bit balanced Feistel permutation, 4 rounds; round fn = SHA256(key‖round‖half)[..6].
+         *  Byte-for-byte identical to Rust `packet.rs prp_nonce` (not required for interop —
+         *  the peer reads the nonce straight off the wire — but kept identical for auditability). */
+        internal fun prpNonce(key: ByteArray, raw: ByteArray): ByteArray {
+            var l = raw.copyOfRange(0, 6)
+            var r = raw.copyOfRange(6, 12)
+            for (round in 0 until 4) {
+                val f = prpRound(key, round.toByte(), r)
+                val nr = ByteArray(6)
+                for (i in 0 until 6) nr[i] = (l[i].toInt() xor f[i].toInt()).toByte()
+                l = r
+                r = nr
+            }
+            val out = ByteArray(NONCE_SIZE)
+            System.arraycopy(l, 0, out, 0, 6)
+            System.arraycopy(r, 0, out, 6, 6)
+            return out
+        }
+
+        private fun prpRound(key: ByteArray, round: Byte, half: ByteArray): ByteArray {
+            val md = MessageDigest.getInstance("SHA-256")
+            md.update(key)
+            md.update(round)
+            md.update(half)
+            return md.digest().copyOfRange(0, 6)
+        }
 
         private fun buildTlsRecordHeader(contentType: Byte, length: Int): ByteArray {
             return byteArrayOf(
@@ -110,7 +177,7 @@ class PacketCodec(
             throw PacketException("Counter exhausted - session must be renegotiated")
         }
 
-        val nonce = ByteArray(NONCE_SIZE).also { random.nextBytes(it) }
+        val nonce = nonceForCounter(currentCounter)
 
         val paddingLen = padLen.coerceIn(0, 65535)
         val padding = ByteArray(paddingLen).also { if (paddingLen > 0) random.nextBytes(it) }

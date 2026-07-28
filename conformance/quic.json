@@ -1,0 +1,101 @@
+{
+  "_comment": [
+    "CONFORMANCE FIXTURES for the QUIC masking layer — the ONE source of truth that all four",
+    "implementations are checked against (Rust canon, C#/desktop, Kotlin/Android, Swift/iOS).",
+    "",
+    "GENERATED FILE. Do not edit by hand: regenerate with",
+    "  cargo run --features conformance-gen --bin gen-conformance",
+    "from the qeli/ directory.",
+    "",
+    "WHY: the UDP wire modes dress each datagram as a QUIC packet. The masking itself is",
+    "simple and therefore easy to get subtly wrong (endianness of the packet number, a",
+    "packet number of 0 treated as absent), and the PARSER is attacker-facing: anyone who can",
+    "send the client a datagram controls these bytes. That is not hypothetical — a crafted",
+    "QUIC varint could crash the C# and Kotlin clients into a reconnect loop (a remote DoS)",
+    "at a time when Rust was already safe.",
+    "",
+    "NOTE: the QUIC layer only shapes the envelope. It does NOT encrypt — the payload it",
+    "carries is already sealed by the inner codec. These vectors pin the envelope, nothing",
+    "more.",
+    "",
+    "HOW TO USE: `wrap` cases give `payload`, `connection_id` and `packet_number`; your",
+    "wrapper must emit exactly `expect.packet`, and unwrapping that packet must give the",
+    "inputs back. `parse` cases give a crafted `packet`: a case with `reject: true` MUST be",
+    "rejected — cleanly, without panicking, aborting, or allocating from an attacker-supplied",
+    "length. The verdicts were RECORDED from the reference parser rather than asserted by",
+    "hand, so this file states what the canon actually does.",
+    "",
+    "`platforms` lists the implementations REQUIRED to pass this file. A platform on that",
+    "list whose test skips the file must fail, not pass quietly — a green test that verified",
+    "nothing is the exact failure this fixture is here to prevent."
+  ],
+  "primitive": "quic",
+  "generator": "qeli/src/gen_conformance_main.rs",
+  "platforms": ["rust", "csharp", "kotlin", "swift"],
+  "wrap": [
+    {
+      "name": "short-header-simple",
+      "why": "The ordinary masked datagram: flags, 4-byte connection id, 4-byte packet number, then the payload verbatim.",
+      "payload": "71656c69207061796c6f6164",
+      "connection_id": "deadbeef",
+      "packet_number": 1,
+      "expect": { "packet": "43deadbeef0000000171656c69207061796c6f6164" }
+    },
+    {
+      "name": "short-header-pn-zero",
+      "why": "Packet number 0 — catches a port that treats 0 as 'absent' and omits the field, shifting every following byte.",
+      "payload": "6669727374",
+      "connection_id": "deadbeef",
+      "packet_number": 0,
+      "expect": { "packet": "43deadbeef000000006669727374" }
+    },
+    {
+      "name": "short-header-pn-high",
+      "why": "A packet number with all four bytes significant (0xF0E1D2C3): catches a port that writes it as one byte, or little-endian.",
+      "payload": "78",
+      "connection_id": "deadbeef",
+      "packet_number": 4041331395,
+      "expect": { "packet": "43deadbeeff0e1d2c378" }
+    },
+    {
+      "name": "short-header-empty-payload",
+      "why": "An empty payload must still produce a well-formed header that round-trips.",
+      "payload": "",
+      "connection_id": "deadbeef",
+      "packet_number": 7,
+      "expect": { "packet": "43deadbeef00000007" }
+    }
+  ],
+  "parse": [
+    {
+      "name": "empty",
+      "why": "Zero bytes must be rejected, not indexed into.",
+      "packet": "",
+      "expect": { "reject": true }
+    },
+    {
+      "name": "long-header-flag-only",
+      "why": "A single byte with the long-header bit set: the length varint that follows is missing entirely. This is the shape that crashed the C#/Kotlin parsers.",
+      "packet": "80",
+      "expect": { "reject": true }
+    },
+    {
+      "name": "long-header-truncated-varint",
+      "why": "A long header whose varint claims a 4-byte encoding but supplies fewer bytes — a parser that trusts the length prefix reads past the end.",
+      "packet": "c000000001c0",
+      "expect": { "reject": true }
+    },
+    {
+      "name": "long-header-huge-length",
+      "why": "A varint declaring a length far larger than the datagram: must be rejected, and must not be used to size an allocation.",
+      "packet": "c000000001ffffffffffffffff",
+      "expect": { "reject": true }
+    },
+    {
+      "name": "short-header-truncated",
+      "why": "A short header cut off inside the connection id / packet number.",
+      "packet": "43dead",
+      "expect": { "reject": true }
+    }
+  ]
+}

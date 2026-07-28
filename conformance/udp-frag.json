@@ -1,0 +1,166 @@
+{
+  "_comment": [
+    "CONFORMANCE FIXTURES for UDP handshake fragmentation — the ONE source of truth that all",
+    "four implementations are checked against (Rust canon, C#/desktop, Kotlin/Android,",
+    "Swift/iOS).",
+    "",
+    "GENERATED FILE. Do not edit by hand: regenerate with",
+    "  cargo run --features conformance-gen --bin gen-conformance",
+    "from the qeli/ directory.",
+    "",
+    "WHY: the post-quantum UDP handshake does not fit one datagram (the ServerHello carries",
+    "an ML-KEM ciphertext plus the cert chain, ~2 KB). Left to IP fragmentation it is",
+    "silently DROPPED on mobile / CGNAT paths — the classic 'works on Wi-Fi, hangs on LTE'.",
+    "So we fragment at the app layer instead. The reassembler is then fed by the NETWORK: out",
+    "of order, with duplicates, with gaps, and with whatever an attacker cares to send.",
+    "",
+    "WIRE: [MAGIC(3) = f0 9b 71][msg_id(1)][idx(1)][count(1)][chunk...]. The magic cannot open",
+    "a TLS record (0x16 0x03), which is how a server tells a fragmented ClientHello from a",
+    "legacy single-datagram one. This layer sits BELOW the QUIC mask and the obfs XOR — each",
+    "fragment is wrapped independently.",
+    "",
+    "HOW TO USE:",
+    "  `fragment`   — split `message` with `msg_id` and compare the datagrams byte for byte,",
+    "                 or expect a refusal for a message that needs more than MAX_FRAGS.",
+    "  `reassemble` — feed `feed` in the given ORDER to a fresh reassembler. `message` = it",
+    "                 must complete with exactly those bytes; `incomplete` = it must return",
+    "                 'need more' and NOT invent a message; `reject` = it must refuse.",
+    "  `classify`   — the cheap predicates every receive path runs before anything else.",
+    "",
+    "NOTE ON CHUNK SIZES: the `reassemble` cases use deliberately tiny chunks. The reassembler",
+    "does not police chunk size (only idx/count consistency), so small chunks exercise exactly",
+    "the same logic while keeping this file readable instead of kilobytes of hex.",
+    "",
+    "NOT PINNED HERE: junk decoys and MTU probes carry RANDOM bodies by design, so their bytes",
+    "cannot be fixed. Their framing is covered by `classify`, and the deterministic probe ACK",
+    "is pinned in full.",
+    "",
+    "`platforms` lists the implementations REQUIRED to pass this file. A platform on that",
+    "list whose test skips the file must fail, not pass quietly — a green test that verified",
+    "nothing is the exact failure this fixture is here to prevent."
+  ],
+  "primitive": "udp-frag",
+  "generator": "qeli/src/gen_conformance_main.rs",
+  "max_chunk": 1200,
+  "max_frags": 24,
+  "platforms": ["rust", "csharp", "kotlin", "swift"],
+  "fragment": [
+    {
+      "name": "single-fragment",
+      "why": "A message that fits one datagram still gets the header, with idx 0 and count 1 — a sender that skips framing for the small case breaks the peer.",
+      "msg_id": 1,
+      "message": "0726456483a2c1e0ff1e",
+      "expect": { "fragments": ["f09b710100010726456483a2c1e0ff1e"] }
+    },
+    {
+      "name": "exact-chunk-boundary",
+      "why": "Exactly MAX_CHUNK bytes: still ONE fragment. An implementation using `>=` where it needs `>` emits a spurious empty second fragment here.",
+      "msg_id": 1,
+      "message": "0726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938",
+      "expect": { "fragments": ["f09b710100010726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938"] }
+    },
+    {
+      "name": "one-byte-over-boundary",
+      "why": "MAX_CHUNK + 1: two fragments, the second carrying a SINGLE byte. The classic off-by-one, and the shape most likely to be mis-sliced.",
+      "msg_id": 2,
+      "message": "0726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa193857",
+      "expect": { "fragments": ["f09b710200020726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938577695b4d3f211304f6e8daccbea0928476685a4c3e201203f5e7d9cbbdaf91837567594b3d2f1102f4e6d8cabcae90827466584a3c2e1001f3e5d7c9bbad9f81736557493b2d1f00f2e4d6c8baac9e80726456483a2c1e0ff1e3d5c7b9ab9d8f71635547392b1d0ef0e2d4c6b8aa9c8e70625446382a1c0dffe1d3c5b7a99b8d7f61534537291b0cfee0d2c4b6a89a8c7e60524436281a0bfdefd1c3b5a7998b7d6f51433527190afceed0c2b4a6988a7c6e504234261809fbeddfc1b3a597897b6d5f4133251708faecdec0b2a496887a6c5e4032241607f9ebddcfb1a39587796b5d4f31231506f8eadcceb0a29486786a5c4e30221405f7e9dbcdbfa1938", "f09b7102010257"] }
+    },
+    {
+      "name": "too-large-to-fragment",
+      "why": "More than MAX_FRAGS fragments' worth. It must FAIL AT THE SENDER: idx/count are single bytes and the receiver rejects count > MAX_FRAGS, so packing it 'successfully' would surface at the peer as a mysterious handshake hang.",
+      "msg_id": 2,
+      "message_len": 28801,
+      "message_fill": "i*31+7 mod 256",
+      "expect": { "reject": true }
+    }
+  ],
+  "reassemble": [
+    {
+      "name": "in-order",
+      "why": "The easy path: three fragments arriving in order complete the message.",
+      "feed": ["f09b7102000341414141", "f09b7102010342424242", "f09b7102020343434343"],
+      "expect": { "message": "414141414242424243434343" }
+    },
+    {
+      "name": "out-of-order",
+      "why": "UDP reorders as a matter of course. Fragments must be placed BY INDEX, not appended in arrival order — an implementation that concatenates as they come produces a corrupted handshake message that then fails to parse for an unrelated-looking reason.",
+      "feed": ["f09b7102020343434343", "f09b7102000341414141", "f09b7102010342424242"],
+      "expect": { "message": "414141414242424243434343" }
+    },
+    {
+      "name": "duplicate-fragment",
+      "why": "A retransmitted fragment must be idempotent: counted once, not twice. An implementation counting arrivals instead of distinct indices completes early here and returns a message with a hole in it.",
+      "feed": ["f09b7102000341414141", "f09b7102000341414141", "f09b7102010342424242", "f09b7102020343434343"],
+      "expect": { "message": "414141414242424243434343" }
+    },
+    {
+      "name": "missing-fragment",
+      "why": "A gap must stay incomplete — never completed with a hole, never padded.",
+      "feed": ["f09b7102000341414141", "f09b7102020343434343"],
+      "expect": { "incomplete": true }
+    },
+    {
+      "name": "index-out-of-range",
+      "why": "idx >= count is malformed and must be refused, not written past the end of the parts array.",
+      "feed": ["f09b7102050341414141"],
+      "expect": { "reject": true }
+    },
+    {
+      "name": "count-over-max-frags",
+      "why": "count > MAX_FRAGS must be refused up front: it is the sender's job to fail early, and an attacker can otherwise make the peer reserve state for a message that will never arrive.",
+      "feed": ["f09b7102001941414141"],
+      "expect": { "reject": true }
+    },
+    {
+      "name": "inconsistent-count",
+      "why": "Two fragments of the same message disagreeing on `count` — the state must be refused rather than silently re-sized.",
+      "feed": ["f09b7102000341414141", "f09b7102010442424242"],
+      "expect": { "reject": true }
+    },
+    {
+      "name": "not-a-fragment",
+      "why": "A datagram without the magic must be refused by the reassembler (the caller routes it elsewhere), not parsed as if the header were there.",
+      "feed": ["160303000501"],
+      "expect": { "reject": true }
+    }
+  ],
+  "classify": [
+    {
+      "name": "client-hello-fragment",
+      "why": "An ordinary fragment: magic present, msg_id 1.",
+      "datagram": "f09b710100016869",
+      "expect": { "is_fragment": true, "is_junk": false, "is_mtu_probe": false, "is_mtu_probe_ack": false }
+    },
+    {
+      "name": "junk-decoy",
+      "why": "An AWG junk decoy uses the SAME framing as a real fragment so it rides the identical obfs/QUIC transforms — only msg_id distinguishes it, and the peer must DROP it rather than feed it to the reassembler.",
+      "datagram": "f09b7103000100010203",
+      "expect": { "is_fragment": true, "is_junk": true, "is_mtu_probe": false, "is_mtu_probe_ack": false }
+    },
+    {
+      "name": "mtu-probe",
+      "why": "A path-MTU probe, likewise same framing, different msg_id.",
+      "datagram": "f09b71040001efbe7805",
+      "expect": { "is_fragment": true, "is_junk": false, "is_mtu_probe": true, "is_mtu_probe_ack": false }
+    },
+    {
+      "name": "mtu-probe-ack",
+      "why": "The probe ACK is fully deterministic (id + outer_size, little-endian), so it is pinned byte for byte here — id 0xBEEF, outer size 1400.",
+      "datagram": "f09b71050001efbe7805",
+      "expect": { "is_fragment": true, "is_junk": false, "is_mtu_probe": false, "is_mtu_probe_ack": true }
+    },
+    {
+      "name": "tls-record-not-a-fragment",
+      "why": "A real TLS record opener (0x16 0x03) must NOT look like a fragment — that is the whole reason the magic was chosen as it was.",
+      "datagram": "160303000501",
+      "expect": { "is_fragment": false, "is_junk": false, "is_mtu_probe": false, "is_mtu_probe_ack": false }
+    },
+    {
+      "name": "too-short",
+      "why": "Shorter than the 6-byte header: every predicate must say no without indexing.",
+      "datagram": "f09b",
+      "expect": { "is_fragment": false, "is_junk": false, "is_mtu_probe": false, "is_mtu_probe_ack": false }
+    }
+  ]
+}

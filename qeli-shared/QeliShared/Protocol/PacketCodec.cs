@@ -67,7 +67,11 @@ public sealed class PacketCodec
         _paddingMax = max;
     }
 
-    private bool AcceptCounter(long seq)
+    /// <summary>Anti-replay verdict for <paramref name="seq"/>, recording it as seen.
+    /// `internal` so the shared replay-window fixture (<c>conformance/replay-window.json</c>)
+    /// can drive it directly — the window is pure state, and going through Decrypt would
+    /// need a valid record per sequence number.</summary>
+    internal bool AcceptCounter(long seq)
     {
         if (_replayHighest < 0) { _replayHighest = seq; _replayBits[0] = 1UL; return true; }
         if (seq > _replayHighest)
@@ -208,10 +212,15 @@ public sealed class PacketCodec
     /// function, so distinct (seed,counter) inputs — counter is monotonic — always map to
     /// distinct nonces (no AEAD nonce reuse), while the on-wire value no longer increments by
     /// 1 (no visible-counter DPI tell). Replaces the previous random 96-bit nonce.</summary>
-    private byte[] NonceForCounter(long counter)
+    private byte[] NonceForCounter(long counter) => PrpNonce(_noncePrpKey, RawNonce(_nonceSeed, counter));
+
+    /// <summary>The pre-permutation nonce input: seed(4) ‖ counter big-endian(8). Split out of
+    /// <see cref="NonceForCounter"/> so the whole derivation is checkable against the shared
+    /// fixture (<c>conformance/prp-nonce.json</c>) without constructing a codec.</summary>
+    internal static byte[] RawNonce(byte[] seed, long counter)
     {
         var raw = new byte[NonceSize];
-        Buffer.BlockCopy(_nonceSeed, 0, raw, 0, 4);
+        Buffer.BlockCopy(seed, 0, raw, 0, 4);
         raw[4] = (byte)((counter >> 56) & 0xFF);
         raw[5] = (byte)((counter >> 48) & 0xFF);
         raw[6] = (byte)((counter >> 40) & 0xFF);
@@ -220,13 +229,13 @@ public sealed class PacketCodec
         raw[9] = (byte)((counter >> 16) & 0xFF);
         raw[10] = (byte)((counter >> 8) & 0xFF);
         raw[11] = (byte)(counter & 0xFF);
-        return PrpNonce(_noncePrpKey, raw);
+        return raw;
     }
 
     /// <summary>96-bit balanced Feistel permutation, 4 rounds; round fn = SHA256(key‖round‖half)[..6].
     /// Byte-for-byte identical to Rust <c>packet.rs prp_nonce</c> (not required for interop — the peer
     /// reads the nonce straight off the wire — but kept identical for auditability).</summary>
-    private static byte[] PrpNonce(byte[] key, byte[] raw)
+    internal static byte[] PrpNonce(byte[] key, byte[] raw)
     {
         var l = new byte[6];
         var r = new byte[6];

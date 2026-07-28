@@ -7,8 +7,51 @@ const QUIC_VERSION_V1: u32 = 0x00000001;
 const QUIC_LONG_HEADER_FLAG: u8 = 0xC0;
 const QUIC_SHORT_HEADER_FLAG: u8 = 0x40;
 
-pub const QUIC_LONG_HEADER_MIN: usize = 1 + 4 + 1 + 1 + 4 + 1;
+/// Smallest long header this parser will even look at: flags(1) + version(4) +
+/// dcid_len(1) + scid_len(1) + token_len varint(1) + length varint(1) + pn(1).
+///
+/// This is deliberately the RFC-minimum and NOT the size we emit — a peer may legally
+/// use empty connection IDs and 1-byte varints. Every field past this point is
+/// bounds-checked individually by `unwrap_quic`, so the gate only has to exclude
+/// packets too short to hold any header at all.
+pub const QUIC_LONG_HEADER_MIN: usize = 1 + 4 + 1 + 1 + 1 + 1 + 1;
 pub const QUIC_SHORT_HEADER_MIN: usize = 1 + 4 + 4;
+
+/// Exact size of the long header `wrap_quic_long` produces: flags(1) + version(4) +
+/// dcid_len(1) + dcid(4) + scid_len(1) + token_len(1) + length varint(2) + pn(4).
+///
+/// Kept separate from `QUIC_LONG_HEADER_MIN`, which used to be reused for the
+/// `with_capacity` hint while being computed from an older layout without the Token
+/// Length and Length fields — so every masked datagram under-reserved by 6 bytes and
+/// reallocated on the hot path. (Audit 2026-07-27, X3.)
+const QUIC_LONG_HEADER_EMITTED: usize = 1 + 4 + 1 + 4 + 1 + 1 + 2 + 4;
+
+/// Append `v` as a QUIC variable-length integer (RFC 9000 §16), choosing the shortest
+/// encoding that fits. Returns false when the value exceeds the 4-byte (30-bit) form —
+/// the caller decides what to do rather than emitting a corrupted field.
+///
+/// Replaces a hard-coded 2-byte varint built as `((pn_len + data.len()) as u16) & 0x3FFF`
+/// in `wrap_quic_long`: a silent truncation whose only guard was a `debug_assert!`, which
+/// release builds strip. No caller sends 16 KiB in a single datagram today, but
+/// "unreachable now, corrupt later" is precisely the class already fixed once in
+/// `packet.rs::encrypt_packet`. The parse side (`read_varint`) has always accepted every
+/// varint form, so emitting the longer encoding costs nothing. (Audit 2026-07-27, F5.)
+fn push_varint(out: &mut Vec<u8>, v: u64) -> bool {
+    if v < 0x40 {
+        out.push(v as u8);
+    } else if v < 0x4000 {
+        out.push(0x40 | (v >> 8) as u8);
+        out.push((v & 0xFF) as u8);
+    } else if v < 0x4000_0000 {
+        out.push(0x80 | (v >> 24) as u8);
+        out.push(((v >> 16) & 0xFF) as u8);
+        out.push(((v >> 8) & 0xFF) as u8);
+        out.push((v & 0xFF) as u8);
+    } else {
+        return false;
+    }
+    true
+}
 
 pub struct QuicHeader {
     pub connection_id: [u8; 4],
@@ -29,24 +72,20 @@ pub fn wrap_quic_long(
     // (though unencrypted) QUIC v1 Initial rather than a truncated long header.
     let flags = QUIC_LONG_HEADER_FLAG | ((packet_type & 0x03) << 4) | 0x03;
     let pn_len = 4usize;
-    // Length covers the packet number plus the payload; encoded as a 2-byte QUIC
-    // varint (0b01 prefix, 14-bit value) which spans any single UDP datagram. A larger
-    // value would need a 4-byte varint; a datagram never approaches 16 KiB (UDP MTU
-    // ~1200 B), but assert the invariant so a future larger caller can't silently truncate.
-    debug_assert!(
-        pn_len + data.len() < 0x4000,
-        "wrap_quic_long: pn+payload exceeds the 2-byte QUIC varint range"
-    );
-    let length = ((pn_len + data.len()) as u16) & 0x3FFF;
-    let mut header = Vec::with_capacity(QUIC_LONG_HEADER_MIN + data.len());
+    let mut header = Vec::with_capacity(QUIC_LONG_HEADER_EMITTED + data.len());
     header.push(flags);
     header.extend_from_slice(&QUIC_VERSION_V1.to_be_bytes());
     header.push(4);
     header.extend_from_slice(connection_id);
     header.push(0); // SCID length = 0
     header.push(0); // Token Length varint = 0
-    header.push(0x40 | (length >> 8) as u8); // Length varint, high byte
-    header.push((length & 0xFF) as u8); // Length varint, low byte
+
+    // Length = packet number + payload, shortest correct varint (see push_varint).
+    if !push_varint(&mut header, (pn_len + data.len()) as u64) {
+        // >= 2^30 bytes in one datagram is not reachable from any transport we speak;
+        // emit the payload unmasked rather than a packet whose Length field lies.
+        return data.to_vec();
+    }
     header.extend_from_slice(&packet_number.to_be_bytes());
     header.extend_from_slice(data);
     header
@@ -241,6 +280,87 @@ pub enum QuicError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Rust half of the SHARED QUIC KAT (`conformance/quic.json`).
+    ///
+    /// The wrap half pins the envelope byte-for-byte; the parse half feeds crafted packets
+    /// that anyone can send a client — the class that once crashed the C# and Kotlin parsers
+    /// into a reconnect loop while Rust was already safe.
+    #[test]
+    fn quic_matches_shared_conformance_vectors() {
+        fn unhex(s: &str) -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("bad hex in fixture"))
+                .collect()
+        }
+        fn hexs(b: &[u8]) -> String {
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        }
+
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../conformance/quic.json"))
+                .expect("conformance/quic.json is not valid JSON");
+        assert!(
+            fx["platforms"]
+                .as_array()
+                .expect("fixture has no `platforms`")
+                .iter()
+                .any(|p| p.as_str() == Some("rust")),
+            "rust is not listed in `platforms` of quic.json"
+        );
+
+        let wraps = fx["wrap"].as_array().expect("fixture has no `wrap`");
+        assert!(!wraps.is_empty(), "fixture has no wrap cases");
+        for w in wraps {
+            let name = w["name"].as_str().unwrap_or("<unnamed>");
+            let payload = unhex(w["payload"].as_str().unwrap());
+            let cid: [u8; 4] = unhex(w["connection_id"].as_str().unwrap())
+                .try_into()
+                .expect("connection_id is not 4 bytes");
+            let pn = w["packet_number"].as_u64().unwrap() as u32;
+
+            let packet = wrap_quic_short(&payload, &cid, pn);
+            assert_eq!(
+                hexs(&packet),
+                w["expect"]["packet"].as_str().unwrap(),
+                "case {name}: wrapped packet disagrees"
+            );
+
+            // Round-trip: what we wrapped must unwrap back to the same inputs.
+            let parsed = unwrap_quic(&packet)
+                .unwrap_or_else(|e| panic!("case {name}: own output failed to parse: {e:?}"));
+            assert_eq!(parsed.connection_id, cid, "case {name}: cid round-trip");
+            assert_eq!(
+                parsed.packet_number, pn,
+                "case {name}: packet number round-trip"
+            );
+            assert_eq!(
+                hexs(&parsed.payload),
+                hexs(&payload),
+                "case {name}: payload round-trip"
+            );
+        }
+
+        let parses = fx["parse"].as_array().expect("fixture has no `parse`");
+        assert!(!parses.is_empty(), "fixture has no parse cases");
+        for p in parses {
+            let name = p["name"].as_str().unwrap_or("<unnamed>");
+            let packet = unhex(p["packet"].as_str().unwrap());
+            let got = unwrap_quic(&packet);
+            if p["expect"]["reject"].as_bool() == Some(true) {
+                assert!(got.is_err(), "case {name}: a crafted packet was ACCEPTED");
+            } else {
+                let q =
+                    got.unwrap_or_else(|e| panic!("case {name}: rejected a valid packet: {e:?}"));
+                assert_eq!(
+                    hexs(&q.payload),
+                    p["expect"]["payload"].as_str().unwrap(),
+                    "case {name}: payload disagrees"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_long_header_roundtrip() {

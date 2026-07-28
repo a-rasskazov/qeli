@@ -39,6 +39,16 @@ android {
         }
     }
 
+    // Android framework stubs in the unit-test classpath throw "not mocked" by default, so
+    // ANY class touching android.util.Log is unconstructible in a JVM test. PacketCipher
+    // logs its chosen algorithm at class-init, which made the wire codec — the most
+    // safety-critical code in the app — untestable without a device. That is why Android had
+    // no PacketCodec test at all, and why the M6 nonce fix could go missing here unnoticed.
+    // Returning defaults instead of throwing lets the shared wire fixtures run on the JVM.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

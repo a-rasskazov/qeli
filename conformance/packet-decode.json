@@ -1,0 +1,100 @@
+{
+  "_comment": [
+    "CONFORMANCE FIXTURES for decoding a data-plane record — the ONE source of truth that all",
+    "four implementations are checked against (Rust canon, C#/desktop, Kotlin/Android,",
+    "Swift/iOS).",
+    "",
+    "GENERATED FILE. Do not edit by hand: regenerate with",
+    "  cargo run --features conformance-gen --bin gen-conformance",
+    "from the qeli/ directory.",
+    "",
+    "WHY DECODE AND NOT ENCODE: decoding is deterministic by construction — given a key and a",
+    "record, the plaintext is fixed. So this file pins the whole inbound path (framing, AEAD,",
+    "counter placement, padding-trailer stripping) in every language WITHOUT any test seam:",
+    "each client only needs its existing public decrypt entry point. Encoding draws a random",
+    "nonce seed and random padding, so pinning it byte-for-byte needs the randomness injected",
+    "— a separate fixture, and a separate decision.",
+    "",
+    "WIRE LAYOUT: [header][nonce(12)][ChaCha20-Poly1305( counter(8) || plaintext || padding ||",
+    "pad_len(2) )]. `header` is the 5-byte TLS application-data record header",
+    "([0x17 0x03 0x03][u16 len]) for the fake-tls / obfs / reality wire modes, or a bare",
+    "[u16 len] (2 bytes) for the `plain` mode — the `framing` field of each case says which.",
+    "",
+    "HOW TO USE: build your codec with `key`, feed it `record`, and compare. A case with",
+    "`expect.plaintext` must decode to exactly those bytes (hex, possibly empty). A case with",
+    "`reject: true` MUST be rejected — an implementation that returns any plaintext for it is",
+    "broken, and silently so.",
+    "",
+    "`expect.counter` is the counter carried INSIDE the record. No implementation's decrypt",
+    "returns it (they all yield plaintext only), so it is not asserted — it is recorded so a",
+    "failing case can be diagnosed without decrypting by hand.",
+    "",
+    "NOTE ON THE NONCE: the records were produced with the sender's nonce randomness pinned",
+    "so the file is reproducible. Decoders do not care — they read the nonce off the wire.",
+    "",
+    "`platforms` lists the implementations REQUIRED to pass this file. A platform on that",
+    "list whose test skips the file must fail, not pass quietly — a green test that verified",
+    "nothing is the exact failure this fixture is here to prevent."
+  ],
+  "primitive": "packet-decode",
+  "generator": "qeli/src/gen_conformance_main.rs",
+  "platforms": ["rust", "csharp", "kotlin", "swift"],
+  "cases": [
+    {
+      "name": "tls-simple",
+      "why": "The ordinary case: a TLS-framed record carrying a short payload and no padding.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "tls",
+      "record": "17030300308f6e283ca8255f804a0b9f98804a2424ae5f36e0a5292f12a43eed741b31a2aa2dc11454b653cf3571d1e36e2b0f8283",
+      "expect": { "plaintext": "68656c6c6f2071656c69", "counter": 0 }
+    },
+    {
+      "name": "tls-with-padding",
+      "why": "Padding is stripped using the 2-byte trailer, not the record length — a decoder that trusts the length returns the padding as payload.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "tls",
+      "record": "170303003e8f6e283ca8255f804a0b9f98804a2424ae5f36e0bd2d3a12a47ff8badcf30901fb8ffe7d02399fc50bfc629e6b9aadedb7258b733ded7c90503f2b1a793e",
+      "expect": { "plaintext": "7061796c6f6164", "counter": 0 }
+    },
+    {
+      "name": "tls-empty-plaintext",
+      "why": "An empty payload is the heartbeat / idle-cover record. Every client must decode it and then DROP it rather than injecting a 0-byte packet into the TUN.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "tls",
+      "record": "170303002e8f6e283ca8255f804a0b9f98804a2424ae5f36e0cd4c437ecb1e9c1177507676b5c712ac4c861973f3dcebb9521b",
+      "expect": { "plaintext": "", "counter": 0 }
+    },
+    {
+      "name": "raw-framing",
+      "why": "The `plain` wire mode: a bare 2-byte length prefix instead of the 5-byte TLS header. A decoder with the header size hardcoded to 5 fails only here.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "raw",
+      "record": "002e8f6e283ca8255f804a0b9f98804a2424ae5f36e0bf2d345ea671f87477580c38a3c8fae8b8915f42474ce2828496",
+      "expect": { "plaintext": "726177206d6f6465", "counter": 0 }
+    },
+    {
+      "name": "reject-corrupt-tag",
+      "why": "Last byte of the Poly1305 tag flipped: authentication must FAIL. A decoder that ignores the tag would happily return garbage plaintext.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "tls",
+      "record": "17030300358f6e283ca8255f804a0b9f98804a2424ae5f36e0ac393716ae70e8781439d6cf704930d6a93a8ffbfc63b6390cd3bb057e4ebafba2",
+      "expect": { "reject": true }
+    },
+    {
+      "name": "reject-truncated",
+      "why": "The record is cut short of its declared length — the decoder must reject it instead of reading past the buffer or returning a partial packet.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "tls",
+      "record": "17030300388f6e283ca8255f804a0b9f98804a2424ae5f36e0b93e3610a87fe8745735c78a204830b7daf7346eab5a41ed9cf4a82aca85",
+      "expect": { "reject": true }
+    },
+    {
+      "name": "reject-flipped-ciphertext",
+      "why": "A byte inside the ciphertext flipped: AEAD must catch it. Together with reject-corrupt-tag this proves the tag actually covers the payload.",
+      "key": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+      "framing": "tls",
+      "record": "17030300378f6e283ca8255f804a0b9f98804a2424ae5f36e0a422371bac6cf5650e78cfcb24503024da923449a2d4a1a1cb27f6997a6bb44d887ffd",
+      "expect": { "reject": true }
+    }
+  ]
+}
