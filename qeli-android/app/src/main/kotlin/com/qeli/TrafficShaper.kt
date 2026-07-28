@@ -1,8 +1,8 @@
 package com.qeli
 
+import java.security.SecureRandom
 import kotlin.math.ln
 import kotlin.math.max
-import kotlin.random.Random
 
 /**
  * Idle cover-traffic scheduler — the Kotlin mirror of the Rust `protocol::shaper`
@@ -29,6 +29,21 @@ class TrafficShaper(
      * TCP-only (the caller gates UDP off, mirroring the Rust core). */
     val stealth: Boolean = enabled && stealthIn
 
+    /**
+     * Cover-traffic sampler. MUST be a CSPRNG. (Audit 2026-07-27, E6)
+     *
+     * This used to be `kotlin.random.Random.Default` — an XorWow PRNG whose internal state
+     * is reconstructible from a handful of outputs. Cover gaps and sizes ARE outputs: an
+     * observer who watches enough of them recovers the state, predicts every following cover
+     * packet, and subtracts the cover from the flow — which leaves exactly the real traffic
+     * pattern the shaping exists to hide, so the feature actively cost battery for nothing.
+     * Seeding a fast PRNG (the C# fix) removes only the "guess it from process state" half;
+     * the sequence stays predictable once recovered. Rust uses `rand::rng()` (a ChaCha
+     * CSPRNG) for the same reason, so match that: SecureRandom is forward- and
+     * backward-secure, and at a few samples per second the cost is irrelevant.
+     */
+    private val rng: SecureRandom = SecureRandom()
+
     private val gapMax: Long = max(gapMinMs, gapMaxMs)
     private val sizeMax: Int = max(minSize, maxSize)
     private val stealthRateBps: Double = max(1, stealthRateMbps) * 1_000_000.0
@@ -53,13 +68,16 @@ class TrafficShaper(
 
     /** Next inter-cover gap (ms): exponential (inverse-CDF), clamped to [min,max]. */
     fun nextGapMs(): Long {
-        val u = Random.nextDouble()
+        val u = rng.nextDouble()
         val sampled = -max(1L, gapMeanMs).toDouble() * ln(max(1e-12, 1.0 - u))
         return sampled.toLong().coerceIn(gapMinMs, gapMax)
     }
 
     /** Sample a cover packet size in [minSize, maxSize]. */
-    fun nextSize(): Int = if (minSize >= sizeMax) minSize else Random.nextInt(minSize, sizeMax + 1)
+    // nextInt(origin, bound) is Java 17 / API 36 on java.util.Random, so build the range
+    // from the single-argument form to stay on minSdk 28.
+    fun nextSize(): Int =
+        if (minSize >= sizeMax) minSize else minSize + rng.nextInt(sizeMax - minSize + 1)
 
     /** Token-bucket check+spend; true (and deducts) if the budget allows [bytes]. */
     fun trySpend(bytes: Int): Boolean {

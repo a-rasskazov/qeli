@@ -31,6 +31,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -58,15 +59,6 @@ class VpnServiceImpl : VpnService() {
     @Volatile private var supervisor: Job? = null
     @Volatile private var coroutineScope: CoroutineScope? = null
     @Volatile private var vpnInterface: ParcelFileDescriptor? = null
-    @Volatile private var socketChannel: SocketChannel? = null
-    @Volatile private var udpSocket: DatagramSocket? = null
-    // TCP connect+handshake watchdog: a blocking SocketChannel connect/read ignores
-    // soTimeout and coroutine cancellation, so a server that accepts TCP then goes silent
-    // would pin the client in Connecting forever. The watchdog closes the channel after
-    // connectionTimeoutSecs unless the handshake completed, turning the hang into a
-    // reconnect. `tcpHandshakeComplete` is flipped when the data plane starts.
-    @Volatile private var tcpHandshakeComplete = false
-    @Volatile private var tcpHandshakeWatchdog: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
     // Watches the default network (Wi-Fi <-> LTE switch). On a change we close the
     // live sockets to force a prompt reconnect on the new network, instead of waiting
@@ -74,10 +66,57 @@ class VpnServiceImpl : VpnService() {
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile
     private var currentNetwork: Network? = null
-    // Secondary bonded sockets (stream-bonding / multipath). Closed on teardown so
-    // their blocking reads unblock and the per-stream coroutines exit; the primary
-    // is `socketChannel`. Empty in single-stream modes.
-    private val bondedSockets = java.util.Collections.synchronizedList(mutableListOf<SocketChannel>())
+    // Every non-VPN network we currently see, used ONLY on the pre-31 fallback path of
+    // [registerNetworkCallback] to tell "the link we are on died" from "some other link
+    // appeared". Empty on API 31+, which gets the best-matching callback instead.
+    private val underlyingNets = java.util.Collections.synchronizedSet(mutableSetOf<Network>())
+
+    /**
+     * The transport sockets of ONE connect attempt. (Audit 2026-07-27, M3)
+     *
+     * These used to be service fields (`socketChannel` / `udpSocket` / `bondedSockets`).
+     * Coroutine cancellation never reaches a thread blocked in `SocketChannel.connect/read`,
+     * so a retry-loop iteration could still be parked in connect() long after a NEWER attempt
+     * had published its own socket into those shared fields. When the stale one finally threw,
+     * its error path called `closeSockets()` — which by then closed the *live* session's
+     * socket, killing a healthy tunnel and blaming it on a bogus `ERR:` line. Per-attempt
+     * handles mean a late attempt can only ever close its own, already-dead sockets.
+     */
+    private class Attempt {
+        @Volatile var tcp: SocketChannel? = null
+        @Volatile var udp: DatagramSocket? = null
+        // Secondary bonded sockets (stream-bonding / multipath). Closed with the attempt so
+        // their blocking reads unblock and the per-stream coroutines exit; the primary is
+        // [tcp]. Empty in single-stream modes.
+        val bonded: MutableList<SocketChannel> =
+            java.util.Collections.synchronizedList(mutableListOf<SocketChannel>())
+        // TCP connect+handshake watchdog: a blocking SocketChannel connect/read ignores
+        // soTimeout and coroutine cancellation, so a server that accepts TCP then goes silent
+        // would pin the client in Connecting forever. The watchdog closes the channel after
+        // connectionTimeoutSecs unless the handshake completed, turning the hang into a
+        // reconnect. `handshakeComplete` is flipped when the data plane starts. Per-attempt
+        // for the same reason as the sockets: a stale watchdog must not stand down (or fire)
+        // on behalf of the attempt that replaced it.
+        @Volatile var handshakeComplete = false
+        @Volatile var watchdog: Thread? = null
+
+        /** Close every transport socket of THIS attempt (never the TUN). */
+        fun closeSockets() {
+            try { tcp?.close() } catch (_: Exception) {}
+            synchronized(bonded) {
+                bonded.forEach { try { it.close() } catch (_: Exception) {} }
+                bonded.clear()
+            }
+            try { udp?.close() } catch (_: Exception) {}
+            tcp = null
+            udp = null
+        }
+    }
+
+    // The attempt whose sockets are currently live. Published by the retry loop before each
+    // attempt, so a user Disconnect / network change can reach into the CURRENT attempt
+    // without any code path having to guess which one that is.
+    @Volatile private var liveAttempt: Attempt? = null
 
     // Stream-bonding wire constants, mirrored from protocol/mod.rs (JOIN_MAGIC /
     // JOIN_TOKEN_LEN). A secondary connection presents JOIN_MAGIC‖token‖index
@@ -206,7 +245,40 @@ class VpnServiceImpl : VpnService() {
                 userRequestedDisconnect = true
                 stopVpn()
             }
+            // Always-on VPN (Settings > Network > VPN > "Always-on", incl. "Block
+            // connections without VPN"). The OS starts us with exactly this action and no
+            // extras. There was no branch for it and no `else`, so the service started,
+            // did nothing at all, and stopped — always-on never connected on ANY device,
+            // and with lockdown enabled that left the phone with NO network whatsoever
+            // (the kill switch blocks everything until a VPN that never comes up does).
+            // BootReceiver's own KDoc even recommends always-on as the reliable
+            // alternative to autostart, which made this the advertised path.
+            // (Audit 2026-07-27, M1)
+            VpnService.SERVICE_INTERFACE -> {
+                val cfg = ProfileStore.activeProfileConfigText(this)
+                    ?.let { runCatching { VpnConfig.parse(it) }.getOrNull() }
+                if (cfg == null || cfg.serverAddress.isBlank() || cfg.serverAddress == "SERVER_IP_OR_HOST") {
+                    // Nothing to connect. Say so loudly: with lockdown on, the user sees a
+                    // dead network and no explanation anywhere.
+                    Log.e("VpnSvc", "Always-on VPN start: no usable active profile")
+                    broadcastStatus(STATUS_ERROR, "Always-on VPN: no usable profile — open Qeli and select one")
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                broadcastLog("Always-on VPN start requested by the system")
+                startVpn(cfg)
+                // REDELIVER_INTENT rather than the blanket NOT_STICKY below: an always-on
+                // tunnel is supposed to come back by itself if the process is killed. STICKY
+                // must NOT be used — it redelivers a NULL intent, which lands in the `null`
+                // branch above (stopVpn) and produces exactly the stop-loop / zombie tunnel
+                // that comment warns about. REDELIVER_INTENT hands this same
+                // "android.net.VpnService" intent back instead, so the restart reconnects.
+                return START_REDELIVER_INTENT
+            }
             null -> stopVpn()
+            // Anything else is not ours: do nothing rather than tearing a live tunnel down
+            // on an unrecognised action (the missing branch above is what this costs).
+            else -> Log.w("VpnSvc", "Ignoring unknown service action: ${intent?.action}")
         }
         // NOT_STICKY: never let the OS auto-restart this service after it stops
         // (STICKY redelivered a null intent -> stopVpn loop / zombie tunnel).
@@ -335,7 +407,17 @@ class VpnServiceImpl : VpnService() {
         val stableMs = 30_000L         // a session must run this long to count as "stable"
         var lastAttemptStart = 0L
         var firstAttempt = true        // very first connect: no reconnect gating / delay / status change
-        while (coroutineScope?.isActive == true) {
+        // Why the loop gave up, for the give-up broadcast below; null = still running / cancelled.
+        var giveUpReason: String? = null
+        // THIS coroutine's own liveness, not the service field. `coroutineScope?.isActive` read
+        // the SERVICE field, which teardown() nulls and startVpn() immediately replaces — so a
+        // cancelled retry loop that was still parked in a blocking socket call looked at the NEW
+        // scope, decided it was alive, and carried on operating on the new session's state.
+        // (Audit 2026-07-27, M3)
+        while (currentCoroutineContext().isActive) {
+            // Transport handles belong to this attempt alone; a stale iteration can then only
+            // close its own dead sockets, never the live session's. (Audit 2026-07-27, M3)
+            val transports = Attempt()
             try {
                 if (!firstAttempt) {
                     // The reconnect policy applies to EVERY reconnect — INCLUDING after an
@@ -343,9 +425,13 @@ class VpnServiceImpl : VpnService() {
                     // `attempt > 0`, and `attempt` reset to 0 after established, so on the
                     // common flapping path reconnectEnabled=false / max-retries were silently
                     // ignored and the Tile/UI stayed Connected while the TUN was torn down.
-                    if (!config.reconnectEnabled) { broadcastLog("Reconnect disabled, giving up"); break }
+                    if (!config.reconnectEnabled) {
+                        giveUpReason = "Reconnect is disabled — giving up"
+                        broadcastLog(giveUpReason); break
+                    }
                     if (config.reconnectMaxRetries in 0 until attempt) {
-                        broadcastLog("Max retries reached, giving up"); break
+                        giveUpReason = "Max reconnect retries (${config.reconnectMaxRetries}) reached — giving up"
+                        broadcastLog(giveUpReason); break
                     }
                     // Leave Connected BEFORE re-entering — no green-Tile leak window while the
                     // TUN/routes are down.
@@ -368,7 +454,11 @@ class VpnServiceImpl : VpnService() {
                 }
                 firstAttempt = false
                 lastAttemptStart = System.currentTimeMillis()
-                runVpnConnection(config)
+                // Publish before connecting: forceReconnect()/teardown() must be able to close
+                // the sockets of the attempt that is CURRENTLY running (a blocking connect is
+                // interruptible only that way).
+                liveAttempt = transports
+                runVpnConnection(config, transports)
                 broadcastLog("Connection closed cleanly")
                 if (userRequestedDisconnect) break
                 // Reset the backoff only after a STABLE session (established AND ran a while);
@@ -387,7 +477,11 @@ class VpnServiceImpl : VpnService() {
                 stopVpn()
                 return
             } catch (e: Exception) {
-                if (coroutineScope?.isActive != true) break
+                // Our OWN context, not the service scope — see the loop condition. A blocking
+                // connect/read only throws once someone closes the socket, which is long after
+                // cancellation; reading the service field here made a cancelled attempt log an
+                // alarming ERR and keep retrying against the new session. (Audit 2026-07-27, M3)
+                if (!currentCoroutineContext().isActive) { transports.closeSockets(); break }
                 if (forcedReconnectInFlight) {
                     // We closed the socket ourselves for a network change (forceReconnect);
                     // the recvfrom EBADF is expected — the "Network changed — reconnecting"
@@ -401,19 +495,31 @@ class VpnServiceImpl : VpnService() {
                 // Reset the backoff only after a STABLE established session; otherwise escalate.
                 val ran = System.currentTimeMillis() - lastAttemptStart
                 attempt = if (liveStatus == STATUS_CONNECTED && ran >= stableMs) 0 else attempt + 1
-                // Reconnect path: drop only the sockets. Keep the TUN so routing stays
-                // captured (fail-closed) across the backoff+re-handshake; setupTunInterface
-                // replaces it in place. (Full TUN teardown happens below on give-up / stop.)
-                closeSockets()
+                // Reconnect path: drop only OUR attempt's sockets. Keep the TUN so routing
+                // stays captured (fail-closed) across the backoff+re-handshake;
+                // setupTunInterface replaces it in place. (Full TUN teardown happens below on
+                // give-up / stop.)
+                transports.closeSockets()
             }
         }
-        if (userRequestedDisconnect) {
-            stopVpn()
-        } else {
-            // We fell out of the loop without a user disconnect — reconnect was disabled or
-            // max-retries hit (give up). The TUN was kept open across attempts; close it now
-            // so we don't leave a dead fail-closed tunnel lingering with no data plane.
-            closeTransports()
+        // We are out of the retry loop.
+        //
+        // If our own coroutine was cancelled, the teardown belongs to whoever cancelled us
+        // (stopVpn, or a startVpn that already replaced this session) — running it here would
+        // dismantle the NEW session. (Audit 2026-07-27, M3)
+        if (!currentCoroutineContext().isActive) return
+        // Full teardown on EVERY exit, user disconnect or give-up alike. The give-up path used
+        // to call only closeTransports(): the PARTIAL_WAKE_LOCK (taken without a timeout) was
+        // held forever, stopForeground never ran, and the last status broadcast was still
+        // CONNECTING — so the notification, the Quick Settings tile and the UI all sat on
+        // "Reconnecting…" over a service that had stopped trying, until the user force-stopped
+        // the app. (Audit 2026-07-27, B4)
+        stopVpn()
+        // Reconnect was disabled or max-retries ran out — that is a failure, not a clean stop.
+        // Broadcast it AFTER stopVpn (which ends on STATUS_DISCONNECTED) so the UI keeps the
+        // reason on screen ("tap to retry") instead of a bare "disconnected". (B4)
+        if (!userRequestedDisconnect) {
+            broadcastStatus(STATUS_ERROR, giveUpReason ?: "Connection lost")
         }
     }
 
@@ -425,16 +531,9 @@ class VpnServiceImpl : VpnService() {
      *  up. Closing+nulling the TUN here (as the old closeTransports did) opened a leak window
      *  for the whole backoff+handshake on every drop, defeating that handoff. */
     private fun closeSockets() {
-        try { socketChannel?.close() } catch (_: Exception) {}
-        // Close every secondary bonded socket so its blocking read unblocks and the
-        // per-stream coroutine exits (otherwise a reconnect leaks bonded streams).
-        synchronized(bondedSockets) {
-            bondedSockets.forEach { try { it.close() } catch (_: Exception) {} }
-            bondedSockets.clear()
-        }
-        try { udpSocket?.close() } catch (_: Exception) {}
-        socketChannel = null
-        udpSocket = null
+        // Only the CURRENT attempt's sockets — an earlier attempt owns (and closes) its own.
+        // (Audit 2026-07-27, M3)
+        liveAttempt?.closeSockets()
     }
 
     /** Full teardown of the data plane: sockets AND the TUN. Only for a real stop
@@ -451,6 +550,10 @@ class VpnServiceImpl : VpnService() {
         unregisterNetworkCallback()
         supervisor?.cancel(); supervisor = null; coroutineScope = null
         closeTransports()
+        // Retire the attempt AFTER its sockets are closed: closing is what unblocks the
+        // retry coroutine parked in connect/read, and dropping the reference first would
+        // leave it parked forever with nobody holding its socket. (Audit 2026-07-27, M3)
+        liveAttempt = null
     }
 
     // ── network-change fast reconnect ────────────────────────────────────────
@@ -463,41 +566,111 @@ class VpnServiceImpl : VpnService() {
      *  own tun becomes the default network, and watching it makes the tunnel's own
      *  bring-up look like a "network change" → immediate reconnect loop (even on a
      *  stable LAN). The NetworkRequest requires NOT_VPN and onAvailable also skips
-     *  TRANSPORT_VPN, so our tun is never treated as a network change. */
+     *  TRANSPORT_VPN, so our tun is never treated as a network change.
+     *
+     *  (Audit 2026-07-27, M2) It must equally not watch EVERY network. A plain
+     *  `registerNetworkCallback(INTERNET + NOT_VPN)` fires for every matching network on the
+     *  device, and the old `prev != network` test read any newly-appearing one as an
+     *  underlying switch: a phone parked on stable Wi-Fi with mobile data on tore its tunnel
+     *  down and re-handshaked every time the cell radio re-registered (lift, basement,
+     *  train) — while the default route never moved. The mirror case was worse: losing Wi-Fi
+     *  while LTE is ALREADY up produces no onAvailable at all, and onLost was not
+     *  implemented, so the one switch that really matters was noticed only by rxDead, ≥30 s
+     *  later. API 31+ therefore uses registerBestMatchingNetworkCallback, whose onAvailable
+     *  means "the best match CHANGED"; older releases (minSdk is 28) fall back to tracking
+     *  the set of candidates and reacting only when the link we are actually on disappears.
+     *  registerDefaultNetworkCallback is deliberately NOT the fallback: a VPN app is subject
+     *  to its own VPN, so once we establish, our default network IS the tun. */
     private fun registerNetworkCallback() {
         unregisterNetworkCallback()
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
-        val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                // Belt-and-suspenders: never react to our own VPN tun (the NOT_VPN
-                // request should already exclude it).
-                val caps = cm.getNetworkCapabilities(network)
-                if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
-                // The first callback just records the network; a LATER, different one =
-                // an actual underlying switch (Wi-Fi<->LTE). Reconnect only when connected.
-                val prev = currentNetwork
-                currentNetwork = network
-                if (prev != null && prev != network && liveStatus == STATUS_CONNECTED) {
-                    broadcastLog("Network changed — reconnecting on the new network")
-                    forceReconnect()
-                }
-            }
-        }
-        currentNetwork = null
-        netCallback = cb
         // NOT_VPN → our own tun is never reported (else it self-triggers a reconnect
         // loop right after connecting); INTERNET → ignore transient link-only networks.
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build()
-        try { cm.registerNetworkCallback(req, cb) }
-        catch (e: Exception) { broadcastLog("network callback unavailable: ${e.message}"); netCallback = null }
+        val bestMatching = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                // Belt-and-suspenders: never react to our own VPN tun (the NOT_VPN
+                // request should already exclude it).
+                val caps = cm.getNetworkCapabilities(network)
+                if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
+                val prev = currentNetwork
+                if (bestMatching) {
+                    // Best-matching callback: every onAvailable IS a change of the best
+                    // (non-VPN, internet-capable) network — i.e. of the link we ride on.
+                    currentNetwork = network
+                    if (prev != null && prev != network) switchedNetwork("Network changed")
+                    return
+                }
+                // Pre-31: we hear about EVERY candidate, so adopt one only while we have
+                // none (or the one we had is gone). A second network merely showing up is
+                // not a switch — that misreading is the bug this branch exists to avoid.
+                underlyingNets.add(network)
+                if (prev == null || !underlyingNets.contains(prev)) {
+                    currentNetwork = network
+                    if (prev != null) switchedNetwork("Network changed")
+                }
+            }
+
+            override fun onLost(network: Network) {
+                if (!bestMatching) underlyingNets.remove(network)
+                // Only the link we are actually on matters; any other one going away is
+                // none of our business.
+                if (network != currentNetwork) return
+                // Pre-31 we may already know a replacement (LTE that was up all along) —
+                // adopt it so the retry loop lands there immediately instead of waiting
+                // out rxDead. On 31+ the framework sends a fresh onAvailable for the new
+                // best match, so leave it unset.
+                currentNetwork = if (bestMatching) null
+                    else synchronized(underlyingNets) { underlyingNets.firstOrNull() }
+                switchedNetwork("Network lost")
+            }
+        }
+        currentNetwork = null
+        underlyingNets.clear()
+        // Pre-31 seed: we are called from startVpn BEFORE establish(), so at THIS moment the
+        // app's active network really is the underlying default (afterwards it is our own
+        // tun, which is why we can't just keep asking). Without the seed the fallback path
+        // adopts whichever candidate happens to call back first — often the cell radio while
+        // the phone is really on Wi-Fi — and would then miss the Wi-Fi loss it exists to
+        // catch. (Audit 2026-07-27, M2)
+        if (!bestMatching) {
+            val active = try { cm.activeNetwork } catch (_: Exception) { null }
+            val activeCaps = active?.let { cm.getNetworkCapabilities(it) }
+            if (activeCaps != null && !activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                currentNetwork = active
+                underlyingNets.add(active)
+            }
+        }
+        netCallback = cb
+        try {
+            if (bestMatching) {
+                cm.registerBestMatchingNetworkCallback(
+                    req, cb, android.os.Handler(android.os.Looper.getMainLooper())
+                )
+            } else {
+                cm.registerNetworkCallback(req, cb)
+            }
+        } catch (e: Exception) {
+            broadcastLog("network callback unavailable: ${e.message}"); netCallback = null
+        }
+    }
+
+    /** The underlying link changed or died: reconnect at once, but only from an established
+     *  tunnel (a connect already in flight is retried by the loop anyway). */
+    private fun switchedNetwork(why: String) {
+        if (liveStatus != STATUS_CONNECTED) return
+        broadcastLog("$why — reconnecting on the current network")
+        forceReconnect()
     }
 
     private fun unregisterNetworkCallback() {
         val cb = netCallback ?: return
         netCallback = null
+        underlyingNets.clear()
         try { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) } catch (_: Exception) {}
     }
 
@@ -514,9 +687,10 @@ class VpnServiceImpl : VpnService() {
         if (now - lastForceReconnectAt < 3000L) return
         lastForceReconnectAt = now
         forcedReconnectInFlight = true
-        try { socketChannel?.close() } catch (_: Exception) {}
-        synchronized(bondedSockets) { bondedSockets.forEach { try { it.close() } catch (_: Exception) {} } }
-        try { udpSocket?.close() } catch (_: Exception) {}
+        // The CURRENT attempt's sockets only (M3) — an older, abandoned attempt has already
+        // closed its own, and reaching into shared fields is how a stale loop used to close
+        // the live session's socket.
+        liveAttempt?.closeSockets()
     }
 
     private fun stopVpn() {
@@ -1246,8 +1420,8 @@ class VpnServiceImpl : VpnService() {
 
     // ── dispatch ─────────────────────────────────────────────────────────────
 
-    private suspend fun runVpnConnection(config: VpnConfig) {
-        if (config.isUdp) connectUdp(config) else connectTcp(config)
+    private suspend fun runVpnConnection(config: VpnConfig, transports: Attempt) {
+        if (config.isUdp) connectUdp(config, transports) else connectTcp(config, transports)
     }
 
     /**
@@ -1594,32 +1768,32 @@ class VpnServiceImpl : VpnService() {
         throw IllegalStateException(msg)
     }
 
-    private suspend fun connectTcp(config: VpnConfig) {
+    private suspend fun connectTcp(config: VpnConfig, transports: Attempt) {
         // Username omitted: broadcastLog also writes to Logcat (release), which lands in
         // bug reports / adb. Password/keys are never logged; keep the username out too. (LOW)
         broadcastLog("Connecting TCP ${config.serverAddress}:${config.port}...")
-        // Publish the channel into the instance field BEFORE the blocking connect(),
-        // so a user Disconnect or a network change can close it to interrupt connect()
-        // immediately. (A blocking SocketChannel.connect/read ignores coroutine
-        // cancellation — closing the channel from another thread is the only way to
-        // break it. Previously the field was assigned only AFTER connect returned, so a
-        // connect that hung on a dead/changed network couldn't be stopped — the
-        // Disconnect button did nothing until the OS TCP timeout.)
+        // Publish the channel into THIS ATTEMPT before the blocking connect(), so a user
+        // Disconnect or a network change can close it to interrupt connect() immediately.
+        // (A blocking SocketChannel.connect/read ignores coroutine cancellation — closing
+        // the channel from another thread is the only way to break it. Previously the field
+        // was assigned only AFTER connect returned, so a connect that hung on a dead/changed
+        // network couldn't be stopped — the Disconnect button did nothing until the OS TCP
+        // timeout.) Per-attempt since 0.7.13, see [Attempt]. (Audit 2026-07-27, M3)
         val sock = SocketChannel.open()
-        socketChannel = sock
+        transports.tcp = sock
         if (userRequestedDisconnect) { try { sock.close() } catch (_: Exception) {}; throw kotlinx.coroutines.CancellationException("disconnect requested") }
         // Bound the whole connect + handshake by connectionTimeoutSecs. A blocking
         // SocketChannel connect/read ignores soTimeout, so without this a server that
         // accepts TCP then stalls at the app layer would hang here forever with no
         // reconnect. Closing the channel from the watchdog throws AsynchronousCloseException
         // out of the blocking call → the retry loop reconnects. Cleared in runTcpAfterHandshake.
-        tcpHandshakeComplete = false
-        tcpHandshakeWatchdog = Thread {
+        transports.handshakeComplete = false
+        transports.watchdog = Thread {
             val deadline = System.currentTimeMillis() + config.connectionTimeoutSecs * 1000
-            while (!tcpHandshakeComplete && System.currentTimeMillis() < deadline) {
+            while (!transports.handshakeComplete && System.currentTimeMillis() < deadline) {
                 try { Thread.sleep(100) } catch (_: InterruptedException) { return@Thread }
             }
-            if (!tcpHandshakeComplete) {
+            if (!transports.handshakeComplete) {
                 broadcastLog("TCP connect/handshake exceeded ${config.connectionTimeoutSecs}s — " +
                     "closing socket to force a reconnect")
                 try { sock.close() } catch (_: Exception) {}
@@ -1644,7 +1818,7 @@ class VpnServiceImpl : VpnService() {
                 // records (Framing::Raw).
                 broadcastLog("plain mode: raw key exchange, no TLS mimicry")
                 val r = performHandshakePlain(config, io)
-                runTcpAfterHandshake(io, TcpTransport(io, raw = true), null, r)
+                runTcpAfterHandshake(io, TcpTransport(io, raw = true), null, r, transports)
             }
             config.wireMode.equals("reality-tls", ignoreCase = true) -> {
                 // Genuine browser TLS 1.3 (REALITY) carries the tunnel; the qeli
@@ -1652,7 +1826,7 @@ class VpnServiceImpl : VpnService() {
                 val tls = doRealTlsHandshake(config, io)
                 val transport = RealTlsTransport(TcpTransport(io), tls)
                 val r = performHandshake(config, transport, padToMin = 0)
-                runTcpAfterHandshake(io, transport, tls, r)
+                runTcpAfterHandshake(io, transport, tls, r, transports)
             }
             config.wireMode.equals("obfs", ignoreCase = true) -> {
                 // XOR the whole stream with a PSK-keyed ChaCha20 keystream; nonces
@@ -1667,13 +1841,13 @@ class VpnServiceImpl : VpnService() {
                     awgJmin = config.awgJmin, awgJmax = config.awgJmax)
                 val transport = TcpTransport(io)
                 val r = performHandshake(config, transport, padToMin = 0)
-                runTcpAfterHandshake(io, transport, null, r)
+                runTcpAfterHandshake(io, transport, null, r, transports)
             }
             else -> {
                 // fake-tls: TLS-record mimicry applied by the qeli handshake/codec.
                 val transport = TcpTransport(io)
                 val r = performHandshake(config, transport, padToMin = 0)
-                runTcpAfterHandshake(io, transport, null, r)
+                runTcpAfterHandshake(io, transport, null, r, transports)
             }
         }
     }
@@ -1681,13 +1855,13 @@ class VpnServiceImpl : VpnService() {
     /** Shared TCP tail: announce, bring up the TUN, then run the bonded multipath
      *  loop (server pushed max_streams>1 + a token) or the single-stream loop. */
     private suspend fun runTcpAfterHandshake(
-        io: SocketIO, transport: Transport, tls: RealTls?, r: HandshakeResult
+        io: SocketIO, transport: Transport, tls: RealTls?, r: HandshakeResult, transports: Attempt
     ) {
-        // Handshake done — stand the connect/handshake watchdog down before the data plane
-        // (whose own rxDead liveness takes over), so it can't close a live tunnel.
-        tcpHandshakeComplete = true
-        tcpHandshakeWatchdog?.interrupt()
-        tcpHandshakeWatchdog = null
+        // Handshake done — stand THIS attempt's connect/handshake watchdog down before the
+        // data plane (whose own rxDead liveness takes over), so it can't close a live tunnel.
+        transports.handshakeComplete = true
+        transports.watchdog?.interrupt()
+        transports.watchdog = null
         broadcastLog("Auth OK, IP ${r.session.clientIp}")
         logServerPush(r.config, r.session)
         vpnInterface = setupTunInterface(r.config, r.session)
@@ -1699,7 +1873,7 @@ class VpnServiceImpl : VpnService() {
             broadcastLog("Multipath: server allows up to ${r.session.maxStreams} bonded " +
                 "stream(s) (adaptive=${r.session.adaptive})")
             val primary = Stream(io, transport, r.enc, r.dec, tls)
-            runMultipathTunnelLoop(r.config, primary, r.session, r.pushedObf, vpnInterface!!)
+            runMultipathTunnelLoop(r.config, primary, r.session, r.pushedObf, vpnInterface!!, transports)
         } else {
             broadcastLog("TUN ready, entering tunnel loop")
             try {
@@ -1713,14 +1887,14 @@ class VpnServiceImpl : VpnService() {
         }
     }
 
-    private suspend fun connectUdp(config: VpnConfig) {
+    private suspend fun connectUdp(config: VpnConfig, transports: Attempt) {
         // Username omitted — see TCP path. (client-audit LOW: username-logging)
         broadcastLog("Connecting UDP ${config.serverAddress}:${config.port}...")
         val sock = DatagramSocket()
         protectSocket("server UDP") { protect(sock) }
         sock.connect(InetSocketAddress(config.serverAddress, config.port))
         sock.soTimeout = config.connectionTimeoutSecs.toInt() * 1000
-        udpSocket = sock
+        transports.udp = sock
 
         val quic = config.quicEnabled
         val connectionId = if (quic) Quic.generateConnectionId() else ByteArray(4)
@@ -2050,11 +2224,30 @@ class VpnServiceImpl : VpnService() {
 
     // ── shared tunnel loop (transport-agnostic) ──────────────────────────────
 
+    /**
+     * Scope for the data-plane children (upload / download / heartbeat / stats) of the
+     * CURRENT attempt.
+     *
+     * They used to be launched into the service-wide `coroutineScope`, read at loop entry.
+     * That field is nulled by teardown() and replaced by the next startVpn(), so a stale
+     * attempt still unwinding could hang its jobs off the NEW session's scope, where nothing
+     * that cancels the old attempt reaches them. Deriving the scope from the calling
+     * coroutine ties them to the attempt that created them instead.
+     *
+     * The job is a SupervisorJob so the behaviour is unchanged in the other direction: these
+     * children report failures through the tunnelError channel, and one of them dying must
+     * not cancel its siblings or the retry loop. (Audit 2026-07-27, M3)
+     */
+    private suspend fun dataPlaneScope(): CoroutineScope {
+        val ctx = currentCoroutineContext()
+        return CoroutineScope(ctx + SupervisorJob(ctx[Job]))
+    }
+
     private suspend fun runTunnelLoop(
         config: VpnConfig, transport: Transport, tunFd: ParcelFileDescriptor,
         encCodec: PacketCodec, decCodec: PacketCodec, isUdp: Boolean
     ) {
-        val scope = coroutineScope!!
+        val scope = dataPlaneScope()
         // false on Android 9/10 (no Os.fcntlInt) → the reads below must tolerate EAGAIN.
         val tunBlocking = forceBlocking(tunFd)
         val tunInput = FileInputStream(tunFd.fileDescriptor)
@@ -2215,12 +2408,15 @@ class VpnServiceImpl : VpnService() {
         try {
             cause = tunnelError.receive()
         } finally {
-            // Cancel only OUR data-plane jobs. Do NOT cancelChildren() on the scope
-            // here: connectWithRetry runs as a sibling child of the same scope, so
-            // cancelling all children would kill the reconnect loop itself — which
-            // made delay() throw CancellationException and spin the loop instantly
-            // on every disconnect.
+            // Cancel only OUR data-plane jobs — never the service-wide scope, of which
+            // connectWithRetry is itself a child: cancelling that would kill the reconnect
+            // loop, which made delay() throw CancellationException and spin the loop
+            // instantly on every disconnect. Since the jobs now hang off a per-attempt
+            // scope (see dataPlaneScope), cancelling that scope IS "only our jobs", and it
+            // also retires the attempt's own job instead of leaving one behind per
+            // reconnect. (Audit 2026-07-27, M3)
             uploadJob.cancel(); downloadJob.cancel(); heartbeatJob.cancel(); statsJob.cancel()
+            scope.cancel()
         }
         // Surface the REAL reason the tunnel dropped. Swallowing it here logged a
         // misleading "Connection closed cleanly" for what was actually an error (e.g. the
@@ -2460,7 +2656,9 @@ class VpnServiceImpl : VpnService() {
     /** Open one secondary bonded connection (same wire mode as the primary) and
      *  JOIN it to the session. The socket is protect()ed (so it doesn't loop back
      *  through the VPN) and registered for teardown. Works for every TCP mode. */
-    private fun openBondedStream(config: VpnConfig, token: ByteArray, index: Int): Stream {
+    private fun openBondedStream(
+        config: VpnConfig, token: ByteArray, index: Int, transports: Attempt
+    ): Stream {
         val ch = SocketChannel.open()
         var registered = false
         try {
@@ -2470,7 +2668,7 @@ class VpnServiceImpl : VpnService() {
             ch.socket().keepAlive = true
             ch.socket().tcpNoDelay = true
             ch.configureBlocking(true)
-            bondedSockets.add(ch)
+            transports.bonded.add(ch)
             registered = true
             val io = SocketIO(ch)
             return when {
@@ -2512,7 +2710,7 @@ class VpnServiceImpl : VpnService() {
             }
         } catch (e: Throwable) {
             // Don't leak the socket if connect or the JOIN handshake throws (T10).
-            if (registered) bondedSockets.remove(ch)
+            if (registered) transports.bonded.remove(ch)
             try { ch.close() } catch (_: Throwable) {}
             throw e
         }
@@ -2559,9 +2757,9 @@ class VpnServiceImpl : VpnService() {
      */
     private suspend fun runMultipathTunnelLoop(
         config: VpnConfig, primary: Stream, session: Session,
-        pushedObf: PushedObf?, tunFd: ParcelFileDescriptor
+        pushedObf: PushedObf?, tunFd: ParcelFileDescriptor, transports: Attempt
     ) {
-        val scope = coroutineScope!!
+        val scope = dataPlaneScope()
         // false on Android 9/10 (no Os.fcntlInt) → the reads below must tolerate EAGAIN.
         val tunBlocking = forceBlocking(tunFd)
         val tunInput = FileInputStream(tunFd.fileDescriptor)
@@ -2648,7 +2846,7 @@ class VpnServiceImpl : VpnService() {
             // FIXED: open the remaining streams now.
             for (idx in 1 until target) {
                 try {
-                    val s = openBondedStream(config, token, idx)
+                    val s = openBondedStream(config, token, idx, transports)
                     pushedObf?.let { s.enc.setPadding(it.paddingEnabled, it.paddingMin, it.paddingMax) }
                     streams.add(s); launchStreamJobs(s)
                     broadcastLog("Bonded stream #$idx joined (${streams.size} active)")
@@ -2678,7 +2876,7 @@ class VpnServiceImpl : VpnService() {
                         broadcastLog("Multipath adaptive: plateau at ${streams.size} stream(s)"); break
                     }
                     try {
-                        val s = openBondedStream(config, token, idx)
+                        val s = openBondedStream(config, token, idx, transports)
                         pushedObf?.let { s.enc.setPadding(it.paddingEnabled, it.paddingMin, it.paddingMax) }
                         streams.add(s); launchStreamJobs(s); idx++
                         broadcastLog("Multipath adaptive: ramped to ${streams.size} stream(s) (${rate / 1000} KB/s)")
@@ -2748,13 +2946,14 @@ class VpnServiceImpl : VpnService() {
             cause = tunnelError.receive()
         } finally {
             jobs.forEach { it.cancel() }
+            scope.cancel()   // retire this attempt's data-plane job too (M3)
             // Close every stream's socket + free its native TLS handle so a
             // reconnect starts clean (no leaked fds / native handles).
             streams.forEach {
                 try { it.tls?.close() } catch (_: Exception) {}
                 try { it.io.channel.close() } catch (_: Exception) {}
             }
-            synchronized(bondedSockets) { bondedSockets.clear() }
+            synchronized(transports.bonded) { transports.bonded.clear() }
         }
         // Re-throw for the same reason the single-stream loop does (see runTunnelLoop):
         // returning normally here is indistinguishable from a clean shutdown, so

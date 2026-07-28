@@ -20,7 +20,7 @@ data class UpdateInfo(val latest: String, val url: String, val isNewer: Boolean)
  * and it is notification-only — it never downloads or installs anything.
  *
  * Reads the releases LIST (not /releases/latest, which skips qeli's pre-releases) and
- * takes the first non-draft entry, mirroring install-reality-server.sh. Any failure
+ * takes the first non-draft entry, mirroring install-qeli-server.sh. Any failure
  * returns null (fail-soft).
  */
 object UpdateChecker {

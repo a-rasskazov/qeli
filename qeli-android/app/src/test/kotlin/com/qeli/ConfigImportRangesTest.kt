@@ -1,0 +1,108 @@
+package com.qeli
+
+import com.qeli.model.VpnConfig
+import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
+import org.junit.Test
+
+/**
+ * Range checks on IMPORTED numeric config values. (Audit 2026-07-27, C6)
+ *
+ * The server-PUSHED mtu was already clamped at the handshake (QeliService.parseOk), but the
+ * locally imported one was not: a hand-written `mtu = 40`, or a scanned
+ * `qeli://…?mtu=99999`, went straight through to VpnService.Builder.setMtu, where establish()
+ * fails and the retry loop reconnects forever behind an opaque error. Padding was the same
+ * bug one layer down — an oversized `padding_max` makes every data record exceed
+ * PacketCodec.MAX_RECORD_SIZE, so the peer drops all of them.
+ *
+ * The two entry points behave DIFFERENTLY on purpose, mirroring the Rust client
+ * (qeli/src/config/client.rs) and the C# port: a config FILE is a thing the user wrote, so a
+ * bad value is reported; a `qeli://` LINK is scanned or pasted and its import is infallible,
+ * so a bad value degrades to auto. Getting these the same way round on every client is the
+ * point — the divergence is what the conformance work keeps finding.
+ */
+class ConfigImportRangesTest {
+
+    private fun ini(vararg extra: String) = buildString {
+        append("[qeli]\n")
+        append("server = vpn.example.com:443\n")
+        append("user = alice\n")
+        append("pass = secret\n")
+        for (line in extra) append(line).append('\n')
+    }
+
+    private fun link(query: String) = "qeli://alice:secret@vpn.example.com:443?proto=tcp&$query"
+
+    @Test
+    fun `an INI file with an out-of-range mtu is rejected`() {
+        for (bad in listOf("99999", "40", "-1", "575", "9001")) {
+            try {
+                VpnConfig.fromIni(ini("mtu = $bad"))
+                fail("mtu = $bad must be rejected, not imported")
+            } catch (e: IllegalArgumentException) {
+                assertEquals(true, e.message?.contains("mtu"))
+            }
+        }
+    }
+
+    @Test
+    fun `an INI file with a valid mtu keeps it, and 0 stays auto`() {
+        assertEquals(1380, VpnConfig.fromIni(ini("mtu = 1380")).mtu)
+        assertEquals(576, VpnConfig.fromIni(ini("mtu = 576")).mtu)
+        assertEquals(9000, VpnConfig.fromIni(ini("mtu = 9000")).mtu)
+        assertEquals(0, VpnConfig.fromIni(ini("mtu = 0")).mtu)
+        assertEquals(0, VpnConfig.fromIni(ini()).mtu)   // absent = auto
+    }
+
+    @Test
+    fun `a JSON config with an out-of-range mtu is rejected`() {
+        try {
+            VpnConfig.fromJson("""{"server":{"address":"h","port":443},"tun":{"mtu":99999}}""")
+            fail("JSON mtu 99999 must be rejected")
+        } catch (e: IllegalArgumentException) {
+            assertEquals(true, e.message?.contains("mtu"))
+        }
+        assertEquals(1400, VpnConfig.fromJson(
+            """{"server":{"address":"h","port":443},"tun":{"mtu":1400}}"""
+        ).mtu)
+    }
+
+    /** A link must stay importable: the mtu falls back to auto, everything else survives. */
+    @Test
+    fun `a qeli link with an out-of-range mtu falls back to auto`() {
+        val cfg = VpnConfig.fromQeliUri(link("mode=fake-tls&mtu=99999"))
+        assertEquals(0, cfg.mtu)
+        assertEquals("vpn.example.com", cfg.serverAddress)
+        assertEquals("alice", cfg.username)
+        assertEquals(0, VpnConfig.fromQeliUri(link("mode=fake-tls&mtu=-5")).mtu)
+        // In range → carried through untouched.
+        assertEquals(1380, VpnConfig.fromQeliUri(link("mode=fake-tls&mtu=1380")).mtu)
+    }
+
+    /**
+     * Padding is CLAMPED rather than rejected: unlike mtu these are pure obfuscation knobs,
+     * so narrowing them costs the user nothing while an oversized max breaks every packet.
+     */
+    @Test
+    fun `imported padding bounds are clamped to the wire ceiling`() {
+        val c = VpnConfig.fromIni(ini("padding_min = -5", "padding_max = 60000"))
+        assertEquals(0, c.paddingMin)
+        assertEquals(1400, c.paddingMax)
+        // min above max must not survive as an inverted range (nextInt would throw).
+        val inverted = VpnConfig.fromIni(ini("padding_min = 900", "padding_max = 100"))
+        assertEquals(900, inverted.paddingMin)
+        assertEquals(900, inverted.paddingMax)
+        val j = VpnConfig.fromJson(
+            """{"server":{"address":"h","port":443},
+                "obfuscation":{"padding":{"min_bytes":-1,"max_bytes":99999}}}"""
+        )
+        assertEquals(0, j.paddingMin)
+        assertEquals(1400, j.paddingMax)
+    }
+
+    /** A clamped/accepted profile must still round-trip through the emit-side validator. */
+    @Test
+    fun `a clamped profile still passes validate on re-save`() {
+        VpnConfig.fromIni(ini("padding_min = -5", "padding_max = 60000", "mtu = 1380")).validate()
+    }
+}

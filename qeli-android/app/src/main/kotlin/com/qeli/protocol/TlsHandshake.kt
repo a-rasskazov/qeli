@@ -132,38 +132,14 @@ object TlsHandshake {
         buf.write(0x00); buf.write(0x00) // zero-length data
     }
 
-    fun parseServerHello(data: ByteArray): ByteArray? {
-        if (data.size < 5 || data[0] != SERVER_HELLO) return null
-        val bodyLen = readInt24(data, 1)
-        if (bodyLen < 43 || data.size < 4 + bodyLen) return null
-        var pos = 4
-
-        pos += 2 // version
-        pos += 32 // random
-        val sessionIdLen = readByte(data, pos); pos += 1 + sessionIdLen
-        pos += 2 // cipher suite
-        pos += 1 // compression
-        if (pos + 2 > data.size) return null
-        val extLen = readShort(data, pos); pos += 2
-        if (pos + extLen > data.size) return null
-        val extEnd = pos + extLen
-
-        while (pos + 4 <= extEnd) {
-            val extType = readShort(data, pos)
-            val extDataLen = readShort(data, pos + 2); pos += 4
-            if (pos + extDataLen > extEnd) break
-            if (extType == 0x0033) {
-                if (extDataLen < 6) return null
-                val group = readShort(data, pos + 2)
-                val keyLen = readShort(data, pos + 4)
-                if (group == 0x001d && keyLen >= 32) {
-                    return data.copyOfRange(pos + 6, pos + 6 + 32)
-                }
-            }
-            pos += extDataLen
-        }
-        return null
-    }
+    // The classic (x25519-only) `parseServerHello` lived here — DELETED
+    // (Audit 2026-07-27, F8). It had no call sites: every mode dials the hybrid PQ
+    // handshake, so [parseServerHelloPq] below is the live parser. Worse, it was the unsafe
+    // twin: where the PQ version guards `pos + 6 + keyLen <= extEnd` before slicing, this one
+    // sliced `copyOfRange(pos + 6, pos + 6 + 32)` on a key_share whose declared length a peer
+    // controls — a truncated/hostile ServerHello threw IndexOutOfBounds out of the handshake.
+    // Dead code that only ever offered a way to crash. (The C# twin was deleted for the same
+    // reason.)
 
     /** Hybrid ServerHello key_share: the ML-KEM ciphertext + the server's x25519 public. */
     data class PqServerHello(val ciphertext: ByteArray, val serverX25519: ByteArray)
