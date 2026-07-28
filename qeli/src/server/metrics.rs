@@ -81,21 +81,24 @@ impl Default for MetricsState {
 }
 
 /// Spawned by the supervisor: sample once a second forever.
-pub async fn run_sampler(metrics: Arc<MetricsState>) {
+///
+/// `tun_names` lists the tunnel interfaces configured on this server, so the WAN counters
+/// can exclude them by NAME. See `net_bytes`.
+pub async fn run_sampler(metrics: Arc<MetricsState>, tun_names: Vec<String>) {
     let mut tick = tokio::time::interval(SAMPLE_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tick.tick().await;
-        sample_once(&metrics).await;
+        sample_once(&metrics, &tun_names).await;
     }
 }
 
-async fn sample_once(m: &MetricsState) {
+async fn sample_once(m: &MetricsState, tun_names: &[String]) {
     let now = Instant::now();
     let cpu_now = cpu_times();
     let mem = mem_info();
     let load = loadavg();
-    let net_now = net_bytes();
+    let net_now = net_bytes(tun_names);
     let pid = m.worker_pid.load(Ordering::Relaxed);
     let proc_now = proc_stat(pid); // (cpu_jiffies, rss_bytes)
     let (agg_sent, agg_recv, clients) = tunnel_aggregate().await.unwrap_or((0, 0, 0));
@@ -288,7 +291,14 @@ fn disk_pct(path: &str) -> Option<f64> {
 /// Sum (rx, tx) bytes of physical-ish interfaces from /proc/net/dev — skips
 /// loopback and the VPN's own tun interfaces (we want the WAN load, not the
 /// tunnel doubled).
-fn net_bytes() -> Option<(u64, u64)> {
+///
+/// Exclusion is by CONFIGURED name (`tun_names`, from each profile's `tun.name`), with
+/// the historical `vpn*`/`tun*`/`qtest*` prefixes kept as a fallback for interfaces this
+/// process did not create. `tun.name` is a config key, so a profile named `qeli0` matched
+/// none of those prefixes and its entire tunnel volume was counted as WAN — the dashboard
+/// then showed roughly double the real load, on every graph an operator uses to judge
+/// capacity. (Audit 2026-07-27, S4.)
+fn net_bytes(tun_names: &[String]) -> Option<(u64, u64)> {
     let s = std::fs::read_to_string("/proc/net/dev").ok()?;
     let mut rx = 0u64;
     let mut tx = 0u64;
@@ -296,6 +306,7 @@ fn net_bytes() -> Option<(u64, u64)> {
         if let Some((name, rest)) = line.split_once(':') {
             let name = name.trim();
             if name == "lo"
+                || tun_names.iter().any(|t| t == name)
                 || name.starts_with("vpn")
                 || name.starts_with("tun")
                 || name.starts_with("qtest")
@@ -361,7 +372,7 @@ fn count_conns() -> (u64, u64) {
 /// read from the data-plane worker over the control socket.
 async fn tunnel_aggregate() -> Option<(u64, u64, usize)> {
     let reply = crate::server::control::send_command(
-        crate::server::control::CONTROL_SOCKET,
+        &crate::server::control::control_socket_path(),
         &json!({ "cmd": "list-clients" }).to_string(),
     )
     .await

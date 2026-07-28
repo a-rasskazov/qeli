@@ -9,7 +9,7 @@
 //!
 //! It reads the releases LIST (not `/releases/latest`, which silently skips
 //! pre-releases — and every qeli release so far is a pre-release), mirroring
-//! `install-reality-server.sh`. TLS reuses the notify rustls(ring) + webpki-roots
+//! `install-qeli-server.sh`. TLS reuses the notify rustls(ring) + webpki-roots
 //! stack, so the GitHub certificate is properly verified. Any failure is returned as
 //! an `Err(reason)` so the caller can stay quiet / fail soft.
 

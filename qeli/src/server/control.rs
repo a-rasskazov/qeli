@@ -6,7 +6,27 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
+/// Default control-socket path. Override with `QELI_CONTROL_SOCKET` — see
+/// [`control_socket_path`].
 pub const CONTROL_SOCKET: &str = "/var/run/qeli/control.sock";
+
+/// The control socket this process binds / connects to.
+///
+/// Every CLI subcommand advertises a `--socket` flag, but the SERVER always bound the
+/// constant, so pointing the flag anywhere else could only ever fail to connect: the flag
+/// was, in effect, decoration. That also made two qeli instances on one host impossible
+/// (they fight over the same path) and blocked any non-root run, where `/var/run` is not
+/// writable. Honouring one environment variable on BOTH sides makes the flag mean
+/// something without inventing a config key that has no natural section to live in — the
+/// systemd unit or a shell can set it, and the CLI inherits the same default.
+/// (Audit 2026-07-27, S3.)
+pub fn control_socket_path() -> String {
+    std::env::var("QELI_CONTROL_SOCKET")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| CONTROL_SOCKET.to_string())
+}
 
 #[derive(Deserialize)]
 struct Request {
@@ -67,7 +87,8 @@ pub struct ClientInfo {
 }
 
 pub async fn run_control_server(state: Arc<ServerState>) -> anyhow::Result<()> {
-    if let Some(parent) = std::path::Path::new(CONTROL_SOCKET).parent() {
+    let sock = control_socket_path();
+    if let Some(parent) = std::path::Path::new(&sock).parent() {
         std::fs::create_dir_all(parent).ok();
         // Lock the socket's directory to 0700 BEFORE binding, so that during the
         // unavoidable window between bind() (which creates the socket with the
@@ -80,16 +101,13 @@ pub async fn run_control_server(state: Arc<ServerState>) -> anyhow::Result<()> {
             let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
     }
-    std::fs::remove_file(CONTROL_SOCKET).ok();
+    std::fs::remove_file(&sock).ok();
 
-    let listener = UnixListener::bind(CONTROL_SOCKET)?;
+    let listener = UnixListener::bind(&sock)?;
     #[cfg(unix)]
-    std::fs::set_permissions(
-        CONTROL_SOCKET,
-        std::os::unix::fs::PermissionsExt::from_mode(0o600),
-    )?;
+    std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
 
-    log::info!("Control socket listening on {}", CONTROL_SOCKET);
+    log::info!("Control socket listening on {}", sock);
 
     // Bound concurrent control handlers: acquire a permit BEFORE accepting the
     // next connection, so a flood of connections queues in the kernel backlog

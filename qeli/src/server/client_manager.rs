@@ -151,10 +151,31 @@ impl ClientManager {
                 anyhow::anyhow!("cannot create client log dir {}: {e}", dir.display())
             })?;
         }
+        // APPEND, not truncate. Truncating destroyed the evidence at the worst possible
+        // moment: a tunnel dies, the operator opens the panel and presses "Connect", and
+        // the log explaining WHY it died is wiped before it can be read. Keeping history
+        // costs a bounded amount of disk — trim from the front when the file has grown
+        // past the cap, so an old log cannot fill the partition either.
+        // (Audit 2026-07-27, S5.)
+        const CLIENT_LOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
+        if let Ok(meta) = std::fs::metadata(&log) {
+            if meta.len() > CLIENT_LOG_MAX_BYTES {
+                // Keep the most recent half; a client log is read tail-first anyway.
+                if let Ok(existing) = std::fs::read(&log) {
+                    let keep_from = existing.len().saturating_sub(existing.len() / 2);
+                    // Resume at a line boundary so the first retained line isn't a fragment.
+                    let cut = existing[keep_from..]
+                        .iter()
+                        .position(|&b| b == b'\n')
+                        .map(|i| keep_from + i + 1)
+                        .unwrap_or(keep_from);
+                    let _ = std::fs::write(&log, &existing[cut..]);
+                }
+            }
+        }
         let logfile = std::fs::OpenOptions::new()
             .create(true)
-            .write(true)
-            .truncate(true)
+            .append(true)
             .open(&log)
             .map_err(|e| anyhow::anyhow!("cannot open client log {log}: {e}"))?;
         let errfile = logfile

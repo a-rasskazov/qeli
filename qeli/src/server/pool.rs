@@ -139,13 +139,40 @@ impl IpPool {
             return Some(ip_from_u32(*ip_val));
         }
 
-        // Check static reservation
-        for (uname, ip_val) in &self.static_reservations {
-            if uname == username {
-                self.allocated.insert(*ip_val);
-                self.user_allocations.insert(username.to_string(), *ip_val);
-                return Some(ip_from_u32(*ip_val));
+        // Static reservation — through allocate_fixed, so it passes the SAME gate as
+        // every other fixed assignment.
+        //
+        // This branch used to `allocated.insert(ip)` directly: no range check, no
+        // `excluded` check, no collision check. A reservation pointing at the tunnel
+        // gateway or the broadcast address (both in `excluded`) was refused by
+        // `allocate_fixed` — and then handed out anyway right here, because the caller
+        // falls back to `allocate()` when `allocate_fixed` returns None. Startup only
+        // logged a warning about it. Routing through `allocate_fixed` makes the two paths
+        // agree, and a reservation it rejects now falls through to a dynamic address
+        // (with a warning) instead of silently assigning an unusable one.
+        //
+        // NOTE on the key: `username` here is the caller's *device key*
+        // (`user` or `user:hex(device_id)`), while `static_reservations` is keyed by plain
+        // username — so this only matches a client without a device id. That is not the
+        // load-bearing path: both the TCP and UDP auth paths resolve reservations up front
+        // via `resolve_static_ip` (which looks them up by username) and call
+        // `allocate_fixed` themselves. This branch is the legacy-client safety net.
+        // (Audit 2026-07-27, C3.)
+        let reserved = self
+            .static_reservations
+            .iter()
+            .find(|(uname, _)| uname == username)
+            .map(|(_, ip_val)| *ip_val);
+        if let Some(ip_val) = reserved {
+            let want = ip_from_u32(ip_val);
+            if let Some(ip) = self.allocate_fixed(username, want) {
+                return Some(ip);
             }
+            log::warn!(
+                "pool: reservation {want} for '{username}' is outside the usable range or \
+                 excluded (network / gateway / broadcast / pool.exclude) — assigning a \
+                 dynamic address instead"
+            );
         }
 
         // Dynamic allocation: reuse a released address first (compact + O(1)), else
@@ -384,6 +411,39 @@ mod tests {
         // the reserved address is excluded from the dynamic range
         let other = pool.allocate("alice").unwrap();
         assert_ne!(other, "10.0.0.50".parse::<Ipv4Addr>().unwrap());
+    }
+
+    /// A reservation that `allocate_fixed` would refuse must not be honoured by
+    /// `allocate` either — the two used to disagree, and `allocate`'s branch skipped
+    /// every check, so an unusable address (here: the tunnel gateway, which is always in
+    /// `excluded`) was assigned anyway. (Audit 2026-07-27, C3.)
+    #[test]
+    fn unusable_static_reservation_falls_back_to_dynamic() {
+        let gateway = "10.0.0.1".parse::<Ipv4Addr>().unwrap();
+        let outside = "10.9.9.9".parse::<Ipv4Addr>().unwrap();
+
+        for bad in [gateway, outside] {
+            let mut cfg = pool_config("10.0.0.0/24");
+            cfg.static_reservations
+                .insert("bob".into(), bad.to_string());
+            let mut pool = IpPool::new(&cfg).unwrap();
+
+            // allocate_fixed refuses it...
+            assert_eq!(
+                pool.allocate_fixed("someone-else", bad),
+                None,
+                "allocate_fixed must refuse {bad}"
+            );
+            // ...so allocate must not hand it out through the reservation branch.
+            let got = pool
+                .allocate("bob")
+                .expect("a dynamic address is available");
+            assert_ne!(got, bad, "allocate honoured a reservation of {bad}");
+            assert!(
+                got != gateway,
+                "the dynamic fallback must not land on the gateway either"
+            );
+        }
     }
 
     #[test]

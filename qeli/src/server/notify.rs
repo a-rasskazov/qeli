@@ -151,6 +151,41 @@ pub fn load() -> NotifyConfig {
     }
 }
 
+/// [`load`], but served from a cache that is refreshed only when the sidecar's mtime or
+/// size changes.
+///
+/// The config is read on every notification-worthy event, most of which fire from the
+/// session hot path. Stat-and-maybe-read is far cheaper than read-and-parse, and an
+/// operator editing `notify.json` (or the panel saving it) still takes effect within one
+/// event because the metadata changes. (Audit 2026-07-27, S2.)
+pub fn load_cached() -> NotifyConfig {
+    use std::sync::Mutex as StdMutex;
+    /// (mtime_secs, size) of the sidecar when the cached copy was parsed; `None` when the
+    /// file was absent, so its appearance also invalidates the cache.
+    type FileStamp = Option<(i64, u64)>;
+    type Cache = OnceLock<StdMutex<Option<(FileStamp, NotifyConfig)>>>;
+    static CACHE: Cache = OnceLock::new();
+    let stamp = std::fs::metadata(NOTIFY_PATH).ok().map(|m| {
+        let mtime = m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        (mtime, m.len())
+    });
+    let cell = CACHE.get_or_init(|| StdMutex::new(None));
+    let mut g = cell.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((cached_stamp, cfg)) = g.as_ref() {
+        if *cached_stamp == stamp {
+            return cfg.clone();
+        }
+    }
+    let cfg = load();
+    *g = Some((stamp, cfg.clone()));
+    cfg
+}
+
 /// Persist atomically (temp + rename) so a crash can't truncate the file.
 pub fn save(cfg: &NotifyConfig) -> anyhow::Result<()> {
     let json = serde_json::to_vec_pretty(cfg).unwrap_or_default();
@@ -175,7 +210,19 @@ fn throttle_ok(key: &str, cooldown: i64) -> bool {
     }
     g.insert(key.to_string(), now);
     if g.len() > 512 {
+        // Age-based pruning ALONE is not a bound: keys include `authlock:<ip>`, so a
+        // distributed brute force adds one entry per source and they all stay for the
+        // full 24 h. Prune by age first, then hard-cap by evicting the oldest, so the map
+        // can never grow without limit. (Audit 2026-07-27, S2.)
         g.retain(|_, t| now - *t < 86_400);
+        const HARD_CAP: usize = 512;
+        if g.len() > HARD_CAP {
+            let mut by_age: Vec<(String, i64)> = g.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            by_age.sort_by_key(|(_, t)| *t);
+            for (k, _) in by_age.iter().take(g.len() - HARD_CAP) {
+                g.remove(k);
+            }
+        }
     }
     true
 }
@@ -193,7 +240,16 @@ fn server_prefix(name: &str) -> String {
 /// Fire an event to every configured channel (fire-and-forget). No-op if notify
 /// is disabled or this event's toggle is off.
 pub async fn fire(event: Event, detail: &str) {
-    let cfg = load();
+    let cfg = load_cached();
+    // Nothing to send: return before formatting anything. `fire_connect` /
+    // `fire_disconnect` are spawned on EVERY session setup and teardown, and this
+    // function used to `read_to_string` the sidecar synchronously on each one — inside a
+    // tokio worker — even with every channel switched off, which is the default. A worker
+    // restart with a few hundred clients reconnecting turned into a few hundred blocking
+    // reads on the runtime. (Audit 2026-07-27, S2.)
+    if !cfg.telegram_enabled && !cfg.webhook_enabled {
+        return;
+    }
     let text = format!(
         "{}{}\n{}",
         server_prefix(&cfg.server_name),

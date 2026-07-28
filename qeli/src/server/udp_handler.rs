@@ -93,6 +93,14 @@ struct UdpClient {
     /// Which SOURCE addresses this session may claim. Mirrors
     /// `SessionShared.src_guard` on the TCP path.
     src_guard: Option<crate::server::acl::SrcGuard>,
+    /// Shared with this client's `SessionShared`; raised by `kick_all` (kick, quota
+    /// cut-off, supersede). `None` until authenticated.
+    ///
+    /// Ingress is demultiplexed from THIS per-worker map, but every control action edits
+    /// `profile.sessions.by_ip` — a different registry. Without this link a revoked
+    /// client kept feeding the TUN until the reaper expired it, by which time its pool IP
+    /// could already belong to somebody else. (Audit 2026-07-27, A1/A2/A3.)
+    revoked: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Cumulative anti-amplification budget for this session, in wire bytes.
     ///
     /// `handle_new_udp_client` bounds the FIRST exchange (a ≥1200 B floor plus an
@@ -521,7 +529,9 @@ async fn send_handshake_response(
         };
         for (i, frag) in frags.into_iter().enumerate() {
             let pkt = if quic_enabled {
-                wrap_quic_long(&frag, connection_id, i as u32, 0x02)
+                // Initial, matching the single-datagram path below and the client — a
+                // Handshake packet has no Token Length field. (Audit 2026-07-27, E4.)
+                wrap_quic_long(&frag, connection_id, i as u32, 0x00)
             } else {
                 frag
             };
@@ -680,6 +690,29 @@ async fn handle_udp_datagram(
                 } else {
                     let _ = socket.send_to(&authok, addr).await;
                 }
+                return;
+            }
+            // Revoked? Forget the peer and drop the datagram, before spending any AEAD.
+            //
+            // `kick_all` raises this flag; the control plane calls it for an admin kick,
+            // for the quota sweep's cut-off, and when a reconnect supersedes an old
+            // session. Previously none of those reached ingress at all — they edit
+            // `profile.sessions.by_ip`, whereas this loop demultiplexes from the
+            // per-worker map — so a kicked client went on injecting packets into the TUN
+            // for the remaining 30-45 s of its reaper window, using a source address the
+            // pool had already released and might have reassigned.
+            // (Audit 2026-07-27, A2/A3.)
+            let revoked_now = client
+                .revoked
+                .as_ref()
+                .is_some_and(|r| r.load(std::sync::atomic::Ordering::Relaxed));
+            if revoked_now {
+                sessions_guard.remove(&addr);
+                drop(sessions_guard);
+                log::debug!(
+                    "UDP {}: dropping datagram — session revoked (kick / quota / supersede)",
+                    addr
+                );
                 return;
             }
             let is_awaiting_auth = matches!(client.state, UdpSessionState::AwaitingAuth);
@@ -1322,6 +1355,7 @@ async fn handle_udp_auth(
         rate: crate::server::handler::RateBucket::new(),
         dst_acl: dst_acl.clone(),
         src_guard,
+        revoked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     // The writer task outlives this function and needs the rate bucket + byte
     // counter, but `session` is moved into the profile map below — clone first.
@@ -1364,6 +1398,16 @@ async fn handle_udp_auth(
             .lock()
             .await
             .release(&writer_session.device_key);
+        // Drop the PER-WORKER entry too, not just the pool reservation.
+        //
+        // This client was already switched to `Authenticated` and already received its
+        // AuthOK several steps above, before the cap was consulted. Releasing the IP
+        // while leaving the ingress entry in place meant the refused client kept
+        // decrypting into the TUN — with a `src_guard` built around an address the pool
+        // had just handed back and could immediately reissue to somebody else — until
+        // the reaper expired it 30-45 s later. Forget the peer here so the refusal takes
+        // effect on the very next datagram. (Audit 2026-07-27, A1.)
+        sessions.write().await.remove(&addr);
         log::warn!(
             "UDP: profile '{}' at max_clients ({}) — rejecting {}",
             profile.name,
@@ -1371,6 +1415,17 @@ async fn handle_udp_auth(
             addr
         );
         return;
+    }
+    // Link the per-worker ingress entry to the session's revocation flag, so a later
+    // kick / quota cut-off / supersede stops this client's UPLOAD as well as its
+    // download. Ingress is keyed by source address here, but every control action edits
+    // `profile.sessions.by_ip` — the flag is the only thing joining the two registries.
+    // (Audit 2026-07-27, A2/A3.)
+    {
+        let mut sessions_guard = sessions.write().await;
+        if let Some(client) = sessions_guard.get_mut(&addr) {
+            client.revoked = Some(writer_session.revoked.clone());
+        }
     }
     // Program the kernel routes now the sessions lock is released.
     for cidr in &programmed_iroutes {
@@ -1557,6 +1612,7 @@ async fn handle_new_udp_client(
             tx_codec: Arc::new(std::sync::Mutex::new(server_tx)),
             state: UdpSessionState::AwaitingAuth,
             src_guard: None,
+            revoked: None,
             // Seed the budget with the exchange that just happened, so the session
             // starts already accounted for rather than with a free allowance.
             amp_received: initial_packet.len() as u64,

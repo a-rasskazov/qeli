@@ -318,9 +318,16 @@ fn authenticate_reality(
         &session_id,
         REALITY_WINDOW_SECS,
     )?;
+    // parse_short_id, not short_id_from_hex: the lenient parser turns a malformed entry
+    // (`short_ids = zzzz`) into all-zeros, and a client whose short_id is equally
+    // malformed degrades to the same value — so a typo in the server config silently
+    // admitted anyone who could reach the port. An entry that does not parse now
+    // contributes nothing to the allow-list, so the connection is bridged to the decoy
+    // exactly as an unauthenticated one is. (Audit 2026-07-27, C8.)
     short_ids
         .iter()
-        .any(|h| reality::short_id_from_hex(h) == got)
+        .filter_map(|h| reality::parse_short_id(h))
+        .any(|sid| sid == got)
         .then_some(session_id)
 }
 

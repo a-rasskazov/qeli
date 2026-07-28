@@ -662,14 +662,37 @@ impl ServerState {
             // otherwise swap in an empty password_hash and open the LIVE public panel (no
             // auth) until the next restart (which would then refuse to start). The bind can't
             // change without a restart, so decide loopback from the startup bind.
+            // Apply the SAME rule the startup gate uses (web/mod.rs::start): an empty
+            // password_hash is refused on ANY bind unless `insecure_no_auth` is set.
+            //
+            // The loopback exemption here was a hole the startup gate had already closed
+            // deliberately — "an open panel on 127.0.0.1 is still full admin for every
+            // local process, and for anything that can be induced to make a request on
+            // someone else's behalf (SSRF)". Because `put_config_raw` writes verbatim, a
+            // raw save could clear `password_hash` on a loopback panel and this reload
+            // would apply it live, leaving the panel unauthenticated until a restart — at
+            // which point the startup gate would refuse to serve it at all. So the two
+            // paths disagreed about the same config, in the unsafe direction.
+            // (Audit 2026-07-27, D2.)
             let bind = self.config.web.bind.as_str();
-            let is_loopback = matches!(bind, "127.0.0.1" | "::1" | "[::1]" | "localhost");
-            if !is_loopback && web.password_hash.is_empty() {
+            if web.password_hash.is_empty() && !web.insecure_no_auth {
                 log::error!(
-                    "panel: REFUSING live web-settings reload — it would leave the non-loopback \
-                     panel (bind {bind}) with NO admin password; keeping the previous settings"
+                    "panel: REFUSING live web-settings reload — it would leave the panel \
+                     (bind {bind}) with NO admin password. Set one with \
+                     `qeli set-web-password`, or set web.insecure_no_auth = true if an \
+                     unauthenticated panel is genuinely intended. Keeping the previous \
+                     settings."
                 );
                 return;
+            }
+            // Going password-less deliberately must be as loud live as it is at startup —
+            // previously the only trace was a cheerful "settings reloaded".
+            if web.password_hash.is_empty() {
+                log::warn!(
+                    "panel on bind {bind} is now running WITHOUT AUTHENTICATION \
+                     (web.insecure_no_auth): every local process — and any SSRF on this \
+                     host — has full admin access to users, password hashes and the config."
+                );
             }
             *self.live_web.write().await = web;
             log::info!(
@@ -763,6 +786,20 @@ pub fn generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<StaticKeypai
 /// the `check-config` subcommand (a separate bin crate) reaches the exact same
 /// validation, and its verdict cannot drift from a real start.
 pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
+    // Both brute-force policies, before anything profile-specific. This function is the
+    // one gate every write path shares — `check-config`, worker startup, `PUT /api/config`
+    // and `PUT /api/config/raw` all call it — so validating here is what stops a policy
+    // that silently cannot rate-limit from reaching disk. (Audit 2026-07-27, C1.)
+    config
+        .auth
+        .brute_force
+        .validate("[auth]")
+        .map_err(|e| anyhow::anyhow!(e))?;
+    config
+        .web
+        .brute_force
+        .validate("[web]")
+        .map_err(|e| anyhow::anyhow!(e))?;
     let mut seen = std::collections::HashSet::new();
     for p in &config.profiles {
         // Disabled profiles are not bound/served, so their config is not validated
@@ -908,6 +945,30 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                 p.name
             );
         }
+        // A NON-EMPTY but unusable list is just as dangerous, and used to be silent: the
+        // lenient hex parser dropped every non-hex character, so `short_ids = zzzz` became
+        // all-zeros and matched any client whose short_id was equally malformed. The
+        // allow-list now skips entries that don't parse (server/reality.rs), which would
+        // leave such a profile quietly rejecting everyone — so refuse to start instead and
+        // say which entry is at fault. (Audit 2026-07-27, C8.)
+        if rp.enabled {
+            let bad: Vec<&str> = rp
+                .short_ids
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty() && crate::crypto::reality::parse_short_id(s).is_none())
+                .collect();
+            if !bad.is_empty() {
+                anyhow::bail!(
+                    "profile '{}': obf.tls.reality_proxy.short_ids contains unusable \
+                     entries {:?} — each must be 1..=16 hex digits (0-9a-f, optionally \
+                     separated by ':' or '-') and must not be all zeros. Generate one with \
+                     `openssl rand -hex 8`",
+                    p.name,
+                    bad
+                );
+            }
+        }
         // REALITY camouflages as a real TLS site (mimicking its cert + ServerHello by
         // SNI); a bare-IP target can't present a matching hostname, weakening the
         // disguise. Warn (don't fail — an operator may have a reason).
@@ -982,13 +1043,24 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // the TUN device's [68, 65535] range with "mtu less/greater than device
         // minimum/maximum" — and the worker crash-loops on it. Same class as the
         // address fields above: check-config used to answer OK and the box died on
-        // every respawn. TUN min = ETH_MIN_MTU (68); max = 65535.
-        if p.tun.mtu < 68 || p.tun.mtu > 65535 {
+        // every respawn.
+        //
+        // The bound is now the shared MTU_MIN..=MTU_MAX rather than the kernel's raw
+        // 68..=65535, because the kernel accepting a value is not the same as the tunnel
+        // working with it: clients discard a pushed MTU outside 576..=9000 and fall back
+        // to 1400, so a server configured at, say, 300 came up fine and then black-holed
+        // every packet over 300 bytes with nothing logged at either end. Reject it here
+        // instead, where the operator can still read the message. (Audit 2026-07-27, C4.)
+        if !crate::config::server::mtu_in_range(p.tun.mtu as i64) {
             anyhow::bail!(
-                "profile '{}': tun.mtu {} is out of range — the kernel accepts 68..=65535 \
-                 for a TUN device (a VPN typically wants ~1280-1420)",
+                "profile '{}': tun.mtu {} is out of range — expected {}..={} (a VPN \
+                 typically wants ~1280-1420). Values the kernel would accept but the \
+                 clients would discard are refused here, because the resulting one-way \
+                 MTU mismatch is silent on both sides.",
                 p.name,
-                p.tun.mtu
+                p.tun.mtu,
+                crate::config::server::MTU_MIN,
+                crate::config::server::MTU_MAX
             );
         }
         // DHCP pool bounds are parsed as IPv4 only when the server STARTS the DHCP
@@ -997,32 +1069,8 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // dhcp.pool_start/end". Mirror that parse (defaults included) and the
         // end >= start rule here so the two paths can't drift.
         if p.dhcp.enabled {
-            let parse_pool = |field: &str, val: &Option<String>, dflt: &str| {
-                val.as_deref()
-                    .filter(|v| !v.is_empty())
-                    .unwrap_or(dflt)
-                    .parse::<std::net::Ipv4Addr>()
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "profile '{}': invalid dhcp.{} '{}': {} — expected a plain IPv4 \
-                             address (e.g. 10.9.0.100)",
-                            p.name,
-                            field,
-                            val.as_deref().unwrap_or(dflt),
-                            e
-                        )
-                    })
-            };
-            let start = parse_pool("pool_start", &p.dhcp.pool_start, "10.0.0.2")?;
-            let end = parse_pool("pool_end", &p.dhcp.pool_end, "10.0.0.254")?;
-            if u32::from(end) < u32::from(start) {
-                anyhow::bail!(
-                    "profile '{}': dhcp.pool_end ({}) must not be below dhcp.pool_start ({})",
-                    p.name,
-                    end,
-                    start
-                );
-            }
+            crate::config::server::dhcp_pool_bounds(&p.dhcp, &p.tun.address, &p.tun.netmask)
+                .map_err(|e| anyhow::anyhow!("profile '{}': {}", p.name, e))?;
         }
         // dns.upstream entries are only validated lazily, per-query (`parse::<SocketAddr>()`
         // then `continue` on error in dns.rs), so a malformed resolver was accepted at load
@@ -1273,9 +1321,17 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
             .unwrap_or(false)
     };
     for pcfg in &state.config.profiles {
-        if pcfg.routing.nat.enabled {
-            nat::cleanup(&pcfg.name);
-        }
+        // Unconditional, not `if nat.enabled`. `routing.forward_private` installs rules
+        // through `nat::enable_routing` under the SAME `qeli-nat:<profile>` tag — mangle
+        // FORWARD TCPMSS plus filter FORWARD ACCEPT for the tun — and nothing removed
+        // them on the way out, so `systemctl stop qeli` left ACCEPT rules behind on a host
+        // with `FORWARD DROP`. They were only ever cleared by the NEXT start
+        // (`cleanup_all`), which never comes if the profile is deleted from the config or
+        // the service is disabled. `cleanup` deletes by exact tag and is a no-op when
+        // there is nothing to delete, so running it always is strictly safer — it also
+        // covers a profile whose NAT was toggled off while running.
+        // (Audit 2026-07-27, B6.)
+        nat::cleanup(&pcfg.name);
         if hooks_ok && !pcfg.routing.post_down.is_empty() {
             crate::hooks::run(
                 &format!("post_down:{}", pcfg.name),
@@ -1479,7 +1535,10 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
         worker_tx: Some(worker_tx),
         client_manager: Arc::new(client_manager::ClientManager::new()),
         metrics: Arc::new(metrics::MetricsState::new()),
-        usage: Arc::new(usage::UsageStore::load(usage::USAGE_PATH)),
+        // READ-ONLY on purpose: the worker owns this file. The supervisor only serves
+        // /api/usage (which calls reload() first), and a writable handle here rolled the
+        // file back to its startup snapshot via Drop on every clean shutdown. (K3)
+        usage: Arc::new(usage::UsageStore::load_read_only(usage::USAGE_PATH)),
         live_web,
     });
 
@@ -1497,8 +1556,16 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // with the panel up, so gate it on web.enabled like the panel itself.
     if state.config.web.enabled {
         let m = state.metrics.clone();
+        // Exclude THIS server's tunnel interfaces from the WAN counters by name — a
+        // profile whose tun.name is not vpn*/tun* used to be counted as WAN. (S4)
+        let tun_names: Vec<String> = state
+            .config
+            .profiles
+            .iter()
+            .map(|p| p.tun.name.clone())
+            .collect();
         tokio::spawn(async move {
-            metrics::run_sampler(m).await;
+            metrics::run_sampler(m, tun_names).await;
         });
     }
 
@@ -2054,7 +2121,14 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                     let probe = crate::protocol::realtls::server::probe_borrow_profile(&host, port);
                     match tokio::time::timeout(Duration::from_secs(8), probe).await {
                         Ok(Ok((bp, cert))) => {
-                            let mut g = state.write().expect("reality_borrow lock");
+                            // Recover a poisoned lock rather than panicking, matching the
+                            // reader in server/reality.rs (which documents exactly this).
+                            // The two sides of one lock disagreed: a poisoned lock would
+                            // kill the refresh task for good under panic=unwind, so the
+                            // borrowed shape would silently freeze and JA3S would drift
+                            // away from the live target while the server reported nothing.
+                            // (Audit 2026-07-27, S6.)
+                            let mut g = state.write().unwrap_or_else(|e| e.into_inner());
                             g.profile = bp;
                             if cert.is_some() {
                                 g.cert = cert;
@@ -2212,9 +2286,17 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                             let pad_cfg = &fwd_profile.config.obfuscation.padding;
                             let mut obf = crate::protocol::Obfuscator::new();
                             let pad_cap = {
+                                // Cap against THIS profile's tun.mtu, not a hard-coded 1400.
+                                // The constant assumed one particular path MTU while
+                                // `tun.mtu` is configurable: on a profile at 1280 (common on
+                                // mobile / IPv6 paths) padding still inflated packets toward
+                                // 1400 and got them fragmented or dropped on UDP, and on a
+                                // profile at 1500 the cap clamped to 0 on almost every packet
+                                // so the obfuscation quietly did nothing at all.
+                                // (Audit 2026-07-27, E7.)
+                                let mtu = fwd_profile.config.tun.mtu.max(0) as usize;
                                 let base = packet.len().saturating_add(60);
-                                (pad_cfg.max_bytes as usize).min(1400usize.saturating_sub(base))
-                                    as u16
+                                (pad_cfg.max_bytes as usize).min(mtu.saturating_sub(base)) as u16
                             };
                             let padding = obf.generate_padding_opts(
                                 pad_cfg.enabled,
@@ -2335,28 +2417,14 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
 
     // DHCP server (per-profile)
     if pcfg.dhcp.enabled {
-        let pool_start: std::net::Ipv4Addr = pcfg
-            .dhcp
-            .pool_start
-            .as_deref()
-            .unwrap_or("10.0.0.2")
-            .parse()
-            .map_err(|e| anyhow::anyhow!("profile '{}': invalid dhcp.pool_start: {}", name, e))?;
-        let pool_end: std::net::Ipv4Addr = pcfg
-            .dhcp
-            .pool_end
-            .as_deref()
-            .unwrap_or("10.0.0.254")
-            .parse()
-            .map_err(|e| anyhow::anyhow!("profile '{}': invalid dhcp.pool_end: {}", name, e))?;
-        if u32::from(pool_end) < u32::from(pool_start) {
-            anyhow::bail!(
-                "profile '{}': dhcp.pool_end ({}) must not be below dhcp.pool_start ({})",
-                name,
-                pool_end,
-                pool_start
-            );
-        }
+        // Same helper `validate_profiles` uses, so the runtime cannot resolve a different
+        // pool than the one that was validated. (Audit 2026-07-27, C9.)
+        let (pool_start, pool_end) = crate::config::server::dhcp_pool_bounds(
+            &pcfg.dhcp,
+            &pcfg.tun.address,
+            &pcfg.tun.netmask,
+        )
+        .map_err(|e| anyhow::anyhow!("profile '{}': {}", name, e))?;
         let server_ip: std::net::Ipv4Addr = pcfg
             .tun
             .address

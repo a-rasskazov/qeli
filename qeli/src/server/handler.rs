@@ -140,6 +140,21 @@ pub struct SessionShared {
     /// subnets). Without it an authenticated client could forge any source and
     /// walk past `client_to_client = false`.
     pub src_guard: crate::server::acl::SrcGuard,
+    /// Set once this session has been revoked (kick, quota cut-off, supersede).
+    ///
+    /// The UDP data plane demultiplexes ingress from a PER-WORKER
+    /// `HashMap<SocketAddr, UdpClient>`, while every control action operates on
+    /// `profile.sessions.by_ip`. Those are two different registries, and nothing
+    /// connected them: `kick_all` reached only the writer task, because the UDP
+    /// `shutdown_tx` is a `watch` channel with no receiver by construction. So a kicked
+    /// or over-quota client stopped RECEIVING but kept injecting packets into the TUN
+    /// until the reaper expired it 30-45 s later — with its pool IP already released and
+    /// possibly reassigned to somebody else, which defeats `client_to_client = false`
+    /// and misattributes traffic in NAT and the logs. This flag is the missing link: it
+    /// lives in the session both registries point at, `kick_all` raises it, and the UDP
+    /// receive loop drops (and forgets) the peer the moment it sees it.
+    /// (Audit 2026-07-27, A1/A2/A3.)
+    pub revoked: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SessionShared {
@@ -157,13 +172,24 @@ impl SessionShared {
     }
 
     /// All streams' kick channels (used by control-plane kick / supersede).
+    ///
+    /// Also raises `revoked`, which is what actually stops the UDP INGRESS — the stream
+    /// handles below only cover the TCP reader and the (UDP or TCP) writer. See the
+    /// `revoked` field for why the two paths need separate treatment.
     pub fn kick_all(&self) {
+        self.revoked
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let streams = lock_or_recover(&self.streams, "kick_all");
         for s in streams.iter() {
             let _ = s.kick_tx.try_send(());
             // ...and the reader, which kick_tx never reached.
             let _ = s.shutdown_tx.send(true);
         }
+    }
+
+    /// True once this session has been kicked / cut off / superseded.
+    pub fn is_revoked(&self) -> bool {
+        self.revoked.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Atomically attach a stream iff the session is still under its
@@ -485,6 +511,7 @@ where
                 rate: RateBucket::new(),
                 dst_acl,
                 src_guard,
+                revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
             {
                 let mut sessions = profile.sessions.write().await;
@@ -529,7 +556,18 @@ where
 
             // AUTH OK carries the join token + stream cap so the client can open
             // the remaining bonded streams.
-            let auth_response = {
+            // Everything from here is already COMMITTED: the session sits in
+            // by_ip/by_token, the pool IP is taken, and the iroutes are in the kernel. The
+            // only code that undoes all that lives in `run_stream`, which is reached only
+            // if we return Ok — so a failure below used to leak the lot. A client that
+            // authenticates and immediately RSTs (write_all → EPIPE) left a ghost session
+            // holding a pool address, a max_clients slot and a live `ip route … dev vpn0`,
+            // with no reaper for a session that never had a stream. `device_id` is
+            // client-controlled, so a legitimate user could repeat that with fresh device
+            // ids until the pool or the cap was exhausted (`max_sessions = 0` is the
+            // default). Roll the whole thing back before propagating the error.
+            // (Audit 2026-07-27, B5.)
+            let send_result = async {
                 let msg = build_auth_ok(
                     &client_ip.to_string(),
                     pcfg,
@@ -537,9 +575,34 @@ where
                     &token,
                     max_streams,
                 );
-                server_tx_codec.encrypt_packet(msg.as_bytes(), &[])?
-            };
-            stream.write_all(&auth_response).await?;
+                let auth_response = server_tx_codec.encrypt_packet(msg.as_bytes(), &[])?;
+                stream.write_all(&auth_response).await?;
+                Ok::<(), anyhow::Error>(())
+            }
+            .await;
+            if let Err(e) = send_result {
+                let orphan_routes = {
+                    let mut sessions = profile.sessions.write().await;
+                    sessions.by_ip.remove(&client_ip);
+                    sessions.by_token.remove(&token);
+                    sessions.take_client_routes(client_ip)
+                };
+                for cidr in &orphan_routes {
+                    program_client_subnet_route(false, cidr, &pcfg.tun.name).await;
+                }
+                profile.pool.lock().await.release(&dkey);
+                log::warn!(
+                    "Client {} ({}) failed to receive AUTH OK on profile '{}' ({}) — session, \
+                     pool address {} and {} iroute(s) rolled back",
+                    addr,
+                    username,
+                    profile.name,
+                    e,
+                    client_ip,
+                    orphan_routes.len()
+                );
+                return Err(e);
+            }
 
             log::info!(
                 "Client {} ({}) connected on profile '{}', IP: {}, bandwidth_limit: {} Mbps, streams<={}",
@@ -1056,13 +1119,20 @@ async fn run_stream<R, W>(
             }
 
             _ = idle_check.tick() => {
+                // saturating_sub, not `-`: `now` is sampled before the atomic load, and the
+                // READER task (a different task) writes `last_act`/`last_rx` in between. A
+                // timestamp newer than `now` therefore happens under load, and release
+                // builds have `overflow-checks` off — plain subtraction wrapped to ~2^64,
+                // sailed past the threshold and reaped a perfectly healthy session. The
+                // cover-traffic arm above already uses saturating_sub for the same value.
+                // (Audit 2026-07-27, F2.)
                 let now = base.elapsed().as_millis() as u64;
                 if idle_timeout.as_secs() > 0
-                    && now - last_act.load(Ordering::Relaxed) > idle_ms {
+                    && now.saturating_sub(last_act.load(Ordering::Relaxed)) > idle_ms {
                     break;
                 }
                 let rx_dead = hb_ms.saturating_mul(3).max(120_000);
-                if now - last_rx.load(Ordering::Relaxed) > rx_dead {
+                if now.saturating_sub(last_rx.load(Ordering::Relaxed)) > rx_dead {
                     log::info!("Stream {} ({}) reaped: no inbound for >{}s on profile '{}'",
                         addr, session.username, rx_dead / 1000, profile.name);
                     break;
@@ -1319,7 +1389,12 @@ fn dummy_password_hash() -> &'static str {
     H.get_or_init(|| {
         use argon2::password_hash::{PasswordHasher, SaltString};
         let salt = SaltString::encode_b64(b"qeli-dummy-salt!").expect("valid dummy salt");
-        argon2::Argon2::default()
+        // Must use the SAME profile as real password hashing: this hash exists so an
+        // unknown username costs the attacker exactly what a known one does. If the two
+        // ever diverge — say the real cost is raised here but the dummy keeps the crate
+        // default — the work gap becomes a username oracle again, which is the whole
+        // thing this dummy prevents. (Audit 2026-07-27, H2.)
+        crate::crypto::password_hasher()
             .hash_password(b"qeli-nonexistent-user", &salt)
             .expect("hash dummy password")
             .to_string()

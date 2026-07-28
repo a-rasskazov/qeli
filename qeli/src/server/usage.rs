@@ -69,19 +69,54 @@ struct Inner {
 pub struct UsageStore {
     path: String,
     inner: Mutex<Inner>,
+    /// When set, this handle NEVER writes: `flush` is a no-op and `Drop` does nothing.
+    ///
+    /// The supervisor and the worker are separate processes (`qeli _worker`) that each
+    /// open this same file. Only the worker accumulates — it folds live counters and
+    /// flushes periodically, then flushes once more on SIGTERM before
+    /// `std::process::exit(0)`, which deliberately skips destructors. The supervisor
+    /// merely serves `/api/usage`, refreshing its copy with `reload()` when the panel
+    /// asks. But it held a full read-write store, so its `Drop::flush` fired on a normal
+    /// shutdown and wrote back the snapshot it had read at STARTUP — silently rolling the
+    /// file back to that point. Every `systemctl restart qeli`, including the panel's
+    /// "Apply & Restart" button, therefore discarded all accounting since the supervisor
+    /// booted, and users past their quota passed the check again. Quotas effectively did
+    /// not survive a restart. (Audit 2026-07-27, K3.)
+    read_only: bool,
 }
 
 impl UsageStore {
-    /// Load the sidecar. Absent → empty (normal first run). Present-but-unparsable
-    /// → empty too, but LOUD: silently resetting the file wiped every user's
-    /// lifetime total (and quota) with no trace, and the next `flush` would then
-    /// overwrite the corrupt file with the empty set — so warn before that happens.
+    /// Load the sidecar read-write (the worker's handle).
+    ///
+    /// Absent → empty (normal first run). Present-but-unparsable → empty too, but LOUD:
+    /// silently resetting the file wiped every user's lifetime total (and quota) with no
+    /// trace, and the next `flush` would then overwrite the corrupt file with the empty
+    /// set — so warn before that happens.
     pub fn load(path: &str) -> Self {
+        Self::load_inner(path, false)
+    }
+
+    /// Load the sidecar for READING only — see the `read_only` field.
+    ///
+    /// Also skips moving a corrupt file aside: that is a write, and the worker owns this
+    /// file. Two processes renaming it concurrently is exactly the race this avoids.
+    pub fn load_read_only(path: &str) -> Self {
+        Self::load_inner(path, true)
+    }
+
+    fn load_inner(path: &str, read_only: bool) -> Self {
         let usage = match std::fs::read_to_string(path) {
             Ok(s) => match serde_json::from_str::<HashMap<String, UserUsage>>(&s) {
                 Ok(mut u) => {
                     migrate_legacy(&mut u);
                     u
+                }
+                Err(e) if read_only => {
+                    log::warn!(
+                        "usage: {path} is unparsable ({e}); this read-only handle reports \
+                         EMPTY totals and leaves the file alone for the worker to handle."
+                    );
+                    HashMap::new()
                 }
                 Err(e) => {
                     // Preserve the corrupt file BEFORE returning empty: otherwise the next
@@ -114,6 +149,7 @@ impl UsageStore {
                 usage,
                 committed: HashMap::new(),
             }),
+            read_only,
         }
     }
 
@@ -197,7 +233,14 @@ impl UsageStore {
     }
 
     /// Persist atomically (temp + rename) so a crash can't truncate the file.
+    ///
+    /// A read-only handle never writes — see the `read_only` field for why the
+    /// supervisor must not.
     pub fn flush(&self) {
+        if self.read_only {
+            log::trace!("usage: flush skipped (read-only handle)");
+            return;
+        }
         let snap = self.snapshot();
         if let Ok(json) = serde_json::to_vec_pretty(&snap) {
             if let Err(e) = crate::util::write_atomic(&self.path, &json) {
@@ -237,6 +280,51 @@ mod tests {
         let _ = std::fs::remove_file(&p);
         p.to_string_lossy().into_owned()
     }
+    /// A read-only handle must not write the file — not via `flush`, and not via `Drop`.
+    ///
+    /// Reproduces the supervisor/worker interaction that rolled accounting back on every
+    /// restart: the supervisor loads at T0, the worker accumulates to T1, the supervisor
+    /// exits and its destructor writes T0 over T1. (Audit 2026-07-27, K3.)
+    #[test]
+    fn read_only_handle_never_writes_the_file() {
+        let path = empty_store_path("k3");
+
+        // T0: the supervisor's view at startup — empty.
+        let supervisor = UsageStore::load_read_only(&path);
+        assert!(supervisor.snapshot().is_empty());
+
+        // The worker accumulates and persists T1.
+        {
+            let worker = UsageStore::load(&path);
+            worker.fold(1, "alice", 1_000, 100);
+            worker.flush();
+        }
+        let after_worker = std::fs::read_to_string(&path).expect("worker must have written");
+        assert!(after_worker.contains("alice"));
+
+        // An explicit flush on the read-only handle must be a no-op...
+        supervisor.flush();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            after_worker,
+            "read-only flush must not touch the file"
+        );
+
+        // ...and so must its Drop, which is what actually caused the regression.
+        drop(supervisor);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            after_worker,
+            "read-only Drop must not roll the file back to the startup snapshot"
+        );
+
+        // Sanity: the writable handle still round-trips what the worker stored.
+        let reread = UsageStore::load(&path);
+        assert_eq!(reread.used_down("alice"), 1_000);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn fold_counts_each_session_once() {
         let s = UsageStore::load(&empty_store_path("a4"));
