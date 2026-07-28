@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 async fn control(cmd: Value) -> Option<Value> {
     let reply = crate::server::control::send_command(
-        crate::server::control::CONTROL_SOCKET,
+        &crate::server::control::control_socket_path(),
         &cmd.to_string(),
     )
     .await

@@ -24,7 +24,7 @@ pub async fn hash_password(
     let result = tokio::task::spawn_blocking(move || {
         use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
         let salt = SaltString::generate(&mut OsRng);
-        let hasher = argon2::Argon2::default();
+        let hasher = crate::crypto::password_hasher();
         hasher
             .hash_password(password.as_bytes(), &salt)
             .map(|h| h.to_string())

@@ -16,7 +16,7 @@ pub struct ProfileQuery {
 /// panel then shows an empty / offline view rather than erroring.
 async fn control(cmd: Value) -> Option<Value> {
     let reply = crate::server::control::send_command(
-        crate::server::control::CONTROL_SOCKET,
+        &crate::server::control::control_socket_path(),
         &cmd.to_string(),
     )
     .await
@@ -319,19 +319,19 @@ fn validate_bf(v: &Value) -> Result<(bool, u32, u64, u64), String> {
     let max_attempts = v["max_attempts"].as_u64().unwrap_or(0);
     let window_secs = v["window_secs"].as_u64().unwrap_or(0);
     let lockout_secs = v["lockout_secs"].as_u64().unwrap_or(0);
-    // 0 attempts would lock on the very first check; the upper bounds just reject
-    // absurd values (window ≤ 1 day, lockout ≤ 30 days). Bounds are validated even
-    // when disabled, so re-enabling later can't silently activate a bad policy.
-    if !(1..=10_000).contains(&max_attempts) {
-        return Err("max_attempts must be between 1 and 10000".into());
+    // The bounds themselves live on BruteForceConfig, so this handler and the config
+    // gate (`validate_profiles`) can no longer drift apart — they used to, and everything
+    // except this handler wrote the keys unchecked. (Audit 2026-07-27, C1.)
+    let max_attempts_u32 = u32::try_from(max_attempts).unwrap_or(u32::MAX);
+    crate::config::server::BruteForceConfig {
+        enabled,
+        max_attempts: max_attempts_u32,
+        window_secs,
+        lockout_secs,
     }
-    if !(1..=86_400).contains(&window_secs) {
-        return Err("window_secs must be between 1 and 86400 (24h)".into());
-    }
-    if !(1..=2_592_000).contains(&lockout_secs) {
-        return Err("lockout_secs must be between 1 and 2592000 (30d)".into());
-    }
-    Ok((enabled, max_attempts as u32, window_secs, lockout_secs))
+    .validate("")
+    .map_err(|e| e.trim_start().to_string())?;
+    Ok((enabled, max_attempts_u32, window_secs, lockout_secs))
 }
 
 /// The four dotted keys a brute-force policy occupies inside its `[section]`.

@@ -218,11 +218,28 @@ async fn csrf_same_origin(
         if allowed_hosts.iter().any(|h| host_port == h.as_str()) {
             return true;
         }
-        // Trust any loopback Origin regardless of port. A remote page cannot forge a
-        // loopback Origin (the browser sets Origin to its own page's origin), so this is
-        // safe against cross-site CSRF while covering the common case of reaching the
-        // panel over an SSH port-forward at localhost:<other-port> — which otherwise
-        // never matches the panel's own port and 403s every mutating request.
+        // Trust a loopback Origin regardless of PORT — but only when the panel itself is
+        // bound to loopback.
+        //
+        // The reasoning behind the port-agnostic rule is sound as far as it goes: a REMOTE
+        // page cannot forge a loopback Origin, and an operator reaching the panel through
+        // an SSH port-forward arrives as localhost:<some other port>, which would 403 every
+        // mutating request. What it missed is that "not remote" is not the same as "not
+        // hostile": any other page served from localhost — a dev server on :3000, a
+        // notebook, a documentation preview, a page shipped by an npm package — carries a
+        // loopback Origin too, and could drive `/api/restore`,
+        // `/api/server/full-restart` or `/api/identity/{p}/rotate` against the operator's
+        // logged-in panel. Gating on the panel's own bind keeps the SSH-forward case
+        // working (that panel IS on loopback) while a publicly-bound panel — where the
+        // operator is browsing from elsewhere and a local page has no business talking to
+        // it — no longer accepts arbitrary local origins. (Audit 2026-07-27, P3.)
+        let panel_is_loopback = matches!(
+            state.config.web.bind.as_str(),
+            "127.0.0.1" | "::1" | "[::1]" | "localhost"
+        );
+        if !panel_is_loopback {
+            return false;
+        }
         let host = if let Some(end) = host_port.find(']') {
             &host_port[..=end] // bracketed IPv6 literal ("[::1]:8080" -> "[::1]")
         } else {
@@ -441,6 +458,27 @@ async fn security_headers(
         header::REFERRER_POLICY,
         HeaderValue::from_static("no-referrer"),
     );
+    // Keep the admin panel out of search engines. On a public bind the login page is a
+    // reachable URL a crawler can index — leaking the panel's existence, host and version
+    // into search results (a real report: the login page showed up in Yandex). This header
+    // on EVERY response de-indexes an already-listed page (the crawler sees it on the next
+    // fetch and drops it) and blocks future indexing. It is the panel's own defence; the
+    // real fix is to not expose the panel to the whole internet (web.allowed_ips / a
+    // loopback bind + SSH tunnel), which stops a crawler reaching it at all.
+    h.insert(
+        header::HeaderName::from_static("x-robots-tag"),
+        HeaderValue::from_static("noindex, nofollow, noarchive"),
+    );
+    // Nothing the panel serves may be stored. Several GETs return material that must not
+    // outlive the response: `/api/config/raw` includes the admin's argon2 hash and inline
+    // user secrets, `/api/users` the user list, and `/api/backup` streams the whole of
+    // /etc/qeli including the private identity keys. All are ordinary GETs with no
+    // validators, which makes them heuristically cacheable — so they settled into the
+    // browser's on-disk cache, and into any caching proxy an operator put in front of the
+    // panel. `entry()` rather than `insert()`: the static-asset handler sets its own
+    // long-lived caching headers deliberately, and those must win. (Audit 2026-07-27, P4.)
+    h.entry(header::CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store, private"));
     // `connect-src` also allows api.github.com: the opt-in update check runs in the
     // OPERATOR'S BROWSER by design (so the server never phones home and the admin's
     // IP is the only one GitHub sees), but `'self'` alone silently blocked it — the

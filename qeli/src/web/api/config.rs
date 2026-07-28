@@ -101,6 +101,26 @@ pub async fn put_config(
     if let Some(e) = bad_name {
         return Ok(Json(super::err_json(e)));
     }
+    // Usernames must be UNIQUE, not merely well-formed. The parser keeps the first
+    // `[user:x]` block and drops the rest (first-wins, matching `find_user`), so a second
+    // block saved through here would silently vanish on the next read — or worse, if the
+    // duplicate is the one the admin edited, the change appears to save and has no effect.
+    // (Audit 2026-07-27, C7.)
+    {
+        let mut seen = std::collections::HashSet::new();
+        if let Some(dup) = parsed
+            .auth
+            .users
+            .iter()
+            .find(|u| !seen.insert(u.username.as_str()))
+        {
+            return Ok(Json(super::err_json(format!(
+                "duplicate username '{}' — each user may appear only once; \
+                 only the first entry would ever be used",
+                dup.username
+            ))));
+        }
+    }
 
     // A non-empty admin password_hash must be a REAL Argon2 PHC string. It is applied
     // verbatim, and the hash doubles as the session-signing salt — so a truncated
@@ -295,7 +315,15 @@ pub async fn put_config(
         // here does NOT take effect on a worker restart, only on a full process
         // restart. Without this the panel said "applied live" while still serving on
         // the old prefix, sending the operator on a 404 hunt behind their proxy.
-        || w.base_path != cur.base_path;
+        || w.base_path != cur.base_path
+        // `auth.users_file` too, even though it is not a `[web]` key. Every CRUD path in
+        // the panel resolves it from the BOOT-TIME snapshot (`state.config.auth.users_file`
+        // in api/users.rs, share.rs and usage.rs), while the worker re-reads the config on
+        // its own restart. Change the path and press the worker-restart button and the two
+        // processes end up on different files: users created in the panel do not exist for
+        // the VPN, users deleted there keep connecting, and nothing says so.
+        // (Audit 2026-07-27, D1.)
+        || parsed.auth.users_file != state.config.auth.users_file;
 
     let config_str = parsed.to_ini_string();
     // Fail-closed defense-in-depth: never write a config we can't read back. The
@@ -419,11 +447,202 @@ pub async fn get_config_raw(
         }
     };
     match std::fs::read_to_string(&canon) {
-        Ok(raw) => Ok(Json(
-            json!({"ok": true, "raw": raw, "path": canon.display().to_string()}),
-        )),
+        // Secrets are masked on the way out and restored on the way back in
+        // (`put_config_raw`), so the raw editor keeps working without the browser ever
+        // holding the admin hash or a user's stored password. (Audit 2026-07-27, P1.)
+        Ok(raw) => Ok(Json(json!({
+            "ok": true,
+            "raw": mask_raw_secrets(&raw),
+            "path": canon.display().to_string(),
+            "masked": RAW_SECRET_MASK,
+        }))),
         Err(e) => Ok(Json(super::err_json(format!("read error: {}", e)))),
     }
+}
+
+/// Structural checks both config-write paths must apply. Returns the error message.
+///
+/// The raw editor reached disk through a MUCH thinner gate than the structured one, at
+/// identical privilege: no `is_valid_ident` on names that become INI section headers, no
+/// uniqueness check on usernames, and no validation of advertised routes. Anything the
+/// structured path rejects with an explanation was simply accepted here — so the raw
+/// editor was both the easier way to author a broken config and the one that said
+/// nothing about it. (Audit 2026-07-27, C2.)
+fn validate_config_structure(parsed: &crate::config::server::ServerConfig) -> Option<String> {
+    let name_err = |what: &str, name: &str| {
+        format!(
+            "{what} {name:?} is invalid — it must be non-empty, at most 128 bytes, and carry no \
+             control characters or surrounding whitespace (names become INI section headers, so a \
+             newline there could forge config lines)"
+        )
+    };
+    if let Some(p) = parsed
+        .profiles
+        .iter()
+        .find(|p| !crate::util::is_valid_ident(&p.name))
+    {
+        return Some(name_err("profile name", &p.name));
+    }
+    if let Some(g) = parsed
+        .auth
+        .groups
+        .keys()
+        .find(|g| !crate::util::is_valid_ident(g))
+    {
+        return Some(name_err("group name", g));
+    }
+    if let Some(u) = parsed
+        .auth
+        .users
+        .iter()
+        .find(|u| !crate::util::is_valid_ident(&u.username))
+    {
+        return Some(name_err("username", &u.username));
+    }
+    if let Some(k) = parsed
+        .auth
+        .users
+        .iter()
+        .flat_map(|u| u.metadata.keys())
+        .find(|k| !crate::util::is_valid_ident(k))
+    {
+        return Some(name_err("metadata key", k));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if let Some(dup) = parsed
+        .auth
+        .users
+        .iter()
+        .find(|u| !seen.insert(u.username.as_str()))
+    {
+        return Some(format!(
+            "duplicate username '{}' — each user may appear only once; \
+             only the first entry would ever be used",
+            dup.username
+        ));
+    }
+    for p in &parsed.profiles {
+        for r in &p.routing.advertised_routes {
+            if !crate::util::is_valid_cidr(&r.cidr) {
+                return Some(format!(
+                    "profile '{}': route CIDR is missing or invalid ({:?}). The network goes in \
+                     the CIDR field, e.g. 172.16.20.0/24 — `gateway` takes a next-hop IP, not a \
+                     subnet.",
+                    p.name, r.cidr
+                ));
+            }
+            if let Some(ref gw) = r.gateway {
+                if !crate::util::is_valid_gateway(gw) {
+                    return Some(format!(
+                        "profile '{}': route {} — gateway must be a bare next-hop IP (e.g. \
+                         10.0.0.1) or left empty to use the profile's tun address; got {:?}.",
+                        p.name, r.cidr, gw
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Keys whose VALUE must never leave the server, in any section.
+///
+/// The structured `GET /api/config` marks these `#[serde(skip_serializing)]` with
+/// comments stating the browser never sees them. The raw editor returned the file
+/// byte-for-byte and so handed out exactly what the structured path was careful to
+/// withhold: the admin's argon2 verifier (offline-crackable) and every inline user's
+/// hash and reversibly-encrypted password. Any XSS — the CSP still carries
+/// `'unsafe-eval'` for Alpine — or one borrowed session was enough to collect them.
+/// (Audit 2026-07-27, P1.)
+const RAW_SECRET_KEYS: &[&str] = &["password_hash", "password_enc", "password"];
+
+/// Placeholder shown in place of a secret. Sent back unchanged by the editor, it means
+/// "keep what is on disk"; the operator can still overwrite a value by typing a new one.
+const RAW_SECRET_MASK: &str = "<unchanged>";
+
+/// Split an INI line into `(key, value)` when it is a `key = value` assignment.
+fn ini_kv(line: &str) -> Option<(&str, &str)> {
+    let t = line.trim_start();
+    if t.starts_with('#') || t.starts_with(';') || t.starts_with('[') {
+        return None;
+    }
+    let (k, v) = t.split_once('=')?;
+    Some((k.trim(), v.trim()))
+}
+
+/// Replace every secret VALUE with [`RAW_SECRET_MASK`], preserving the rest of the file
+/// (comments, ordering, spacing) exactly.
+fn mask_raw_secrets(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for line in raw.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let eol = &line[body.len()..];
+        match ini_kv(body) {
+            Some((k, v)) if RAW_SECRET_KEYS.contains(&k) && !v.is_empty() => {
+                let indent_len = body.len() - body.trim_start().len();
+                out.push_str(&body[..indent_len]);
+                out.push_str(k);
+                out.push_str(" = ");
+                out.push_str(RAW_SECRET_MASK);
+                out.push_str(eol);
+            }
+            _ => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// Put the real secrets back: any masked value in `incoming` is replaced with the value
+/// the same `(section, key)` holds in `on_disk`.
+///
+/// Keyed by section so two users' hashes can never be swapped. A masked value with no
+/// counterpart on disk becomes empty, which the parser treats as "unset" — the same
+/// outcome the structured path produces for a user it cannot match.
+fn unmask_raw_secrets(incoming: &str, on_disk: &str) -> String {
+    let mut disk: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    let mut section = String::new();
+    for line in on_disk.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            section = t.to_string();
+            continue;
+        }
+        if let Some((k, v)) = ini_kv(line) {
+            if RAW_SECRET_KEYS.contains(&k) {
+                disk.insert((section.clone(), k.to_string()), v.to_string());
+            }
+        }
+    }
+
+    let mut out = String::with_capacity(incoming.len());
+    let mut section = String::new();
+    for line in incoming.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let eol = &line[body.len()..];
+        let t = body.trim();
+        if t.starts_with('[') {
+            section = t.to_string();
+            out.push_str(line);
+            continue;
+        }
+        match ini_kv(body) {
+            Some((k, v)) if RAW_SECRET_KEYS.contains(&k) && v == RAW_SECRET_MASK => {
+                let real = disk
+                    .get(&(section.clone(), k.to_string()))
+                    .cloned()
+                    .unwrap_or_default();
+                let indent_len = body.len() - body.trim_start().len();
+                out.push_str(&body[..indent_len]);
+                out.push_str(k);
+                out.push_str(" = ");
+                out.push_str(&real);
+                out.push_str(eol);
+            }
+            _ => out.push_str(line),
+        }
+    }
+    out
 }
 
 /// Write raw INI text **verbatim** (preserving hand-written comments/formatting),
@@ -438,6 +657,19 @@ pub async fn put_config_raw(
     let raw = match body.get("raw").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
         None => return Ok(Json(super::err_json("raw field required"))),
+    };
+
+    // Put back any secret the editor received masked, BEFORE parsing — otherwise the
+    // placeholder would be validated as an argon2 hash and the save would either fail or
+    // (worse) persist the placeholder and lock the operator out. Restoration is keyed by
+    // (section, key), so hashes cannot be swapped between users. (Audit 2026-07-27, P1.)
+    let raw = {
+        let path = state.config_path.lock().await.clone();
+        let on_disk = path
+            .as_deref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        unmask_raw_secrets(&raw, &on_disk)
     };
 
     // Validate by parsing — catches INI syntax errors and invalid/missing values.
@@ -521,6 +753,12 @@ pub async fn put_config_raw(
         }
     }
 
+    // Same STRUCTURAL validation as the structured path — names, unique usernames,
+    // advertised routes. (Audit 2026-07-27, C2.)
+    if let Some(e) = validate_config_structure(&parsed) {
+        return Ok(Json(super::err_json(e)));
+    }
+
     // Same startup validation as the structured path: the raw editor is the EASIER
     // way to produce a config the worker refuses (deleting a whole `performance`
     // object yields derived-Default zeros, not the documented defaults), so it must
@@ -540,9 +778,77 @@ pub async fn put_config_raw(
     // for profile/bind/tun/TLS.
     state.reload_web_settings().await;
 
+    // Report whether the PANEL's own socket changed, exactly as the structured path does.
+    // Without it the raw editor always claimed a worker restart would suffice, so an
+    // operator who moved web.port there restarted the worker, watched the panel stay on
+    // the old port, and had nothing pointing at the cause. (Audit 2026-07-27, C2.)
+    let cur = &state.config.web;
+    let w = &parsed.web;
+    let needs_full_restart = w.bind != cur.bind
+        || w.port != cur.port
+        || w.enabled != cur.enabled
+        || w.tls != cur.tls
+        || w.tls_cert != cur.tls_cert
+        || w.tls_key != cur.tls_key
+        || w.base_path != cur.base_path
+        || parsed.auth.users_file != state.config.auth.users_file;
+
+    let message = if needs_full_restart {
+        "raw config saved (comments preserved). This changes the PANEL socket          (web.bind/port/tls/enabled/base_path) or auth.users_file — apply it with a FULL          restart: the `Apply & Restart` button does one, or run `systemctl restart qeli`."
+    } else {
+        "raw config saved (comments preserved) — web/panel settings applied live; restart to apply profile/bind/tun changes"
+    };
+
     Ok(Json(json!({
         "ok": true,
-        "message": "raw config saved (comments preserved) — web/panel settings applied live; restart to apply profile/bind/tun changes",
+        "message": message,
+        "needs_full_restart": needs_full_restart,
         "path": canon.display().to_string(),
     })))
+}
+
+#[cfg(test)]
+mod raw_secret_tests {
+    use super::*;
+
+    const SAMPLE: &str = "[web]\nusername = admin\npassword_hash = $argon2id$v=19$m=19456,t=2,p=1$abc$def\n\n[user:alice]\npassword_hash = $argon2id$alice\npassword_enc = ZW5jcnlwdGVk\n\n[user:bob]\npassword_hash = $argon2id$bob\n";
+
+    #[test]
+    fn secrets_are_masked_and_nothing_else_changes() {
+        let masked = mask_raw_secrets(SAMPLE);
+        assert!(!masked.contains("$argon2id$v=19"), "admin hash leaked");
+        assert!(!masked.contains("$argon2id$alice"), "user hash leaked");
+        assert!(!masked.contains("ZW5jcnlwdGVk"), "password_enc leaked");
+        // Everything that is not a secret survives verbatim.
+        assert!(masked.contains("[web]"));
+        assert!(masked.contains("username = admin"));
+        assert!(masked.contains("[user:bob]"));
+        assert_eq!(masked.matches(RAW_SECRET_MASK).count(), 4);
+    }
+
+    #[test]
+    fn masked_values_round_trip_back_to_the_originals() {
+        let masked = mask_raw_secrets(SAMPLE);
+        let restored = unmask_raw_secrets(&masked, SAMPLE);
+        assert_eq!(restored, SAMPLE, "round-trip must be byte-identical");
+    }
+
+    /// Restoration is keyed by section: alice's hash must not land on bob.
+    #[test]
+    fn restoration_does_not_swap_secrets_between_users() {
+        let masked = mask_raw_secrets(SAMPLE);
+        let restored = unmask_raw_secrets(&masked, SAMPLE);
+        let alice = restored.split("[user:alice]").nth(1).unwrap();
+        let alice_block = alice.split("[user:bob]").next().unwrap();
+        assert!(alice_block.contains("$argon2id$alice"));
+        assert!(!alice_block.contains("$argon2id$bob"));
+    }
+
+    /// An operator typing a NEW value must override, not be treated as unchanged.
+    #[test]
+    fn an_explicitly_edited_secret_is_kept() {
+        let edited = SAMPLE.replace("$argon2id$alice", "$argon2id$NEWVALUE");
+        let restored = unmask_raw_secrets(&edited, SAMPLE);
+        assert!(restored.contains("$argon2id$NEWVALUE"));
+    }
 }

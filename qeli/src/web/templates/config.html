@@ -422,7 +422,11 @@
             <p class="field-desc">Shape of the line itself — not implemented yet, the line is always plain</p>
             <select class="inp" x-model="cfg.logging.format" @change="markDirty()">
               <option value="plain">plain (human-readable)</option>
-              <option value="json">json (structured) — not implemented yet</option>
+              <!-- DISABLED until the logger actually emits JSON. The key parses and
+                   survives a restart, so leaving it selectable let an operator switch to
+                   "json", see it stick, and build log shipping around a format that is
+                   never produced. (Audit 2026-07-27, P6.) -->
+              <option value="json" disabled>json (structured) — not implemented yet</option>
             </select>
           </div>
           <div>
@@ -1262,7 +1266,12 @@
           <!-- Anti-fingerprinting -->
           <div class="pt-3 border-t border-[#21314e]">
             <div class="field-toggle mb-3">
-              <div class="toggle-wrap" @click="cfg.profiles[activeTab].obfuscation.anti_fingerprinting.enabled = !cfg.profiles[activeTab].obfuscation.anti_fingerprinting?.enabled; markDirty()">
+              <!-- Not clickable while the transport ignores the value: an operator who
+                   turned this on saw it persist across a restart and could reasonably
+                   conclude they had gained DPI resistance they do not have. The existing
+                   value is still displayed and still round-trips through the config.
+                   (Audit 2026-07-27, P6.) -->
+              <div class="toggle-wrap opacity-50 cursor-not-allowed" title="Planned — has no effect yet">
                 <div class="toggle" :class="cfg.profiles[activeTab].obfuscation.anti_fingerprinting?.enabled ? 'bg-blue-600' : 'bg-slate-700'">
                   <div class="toggle-dot" :class="cfg.profiles[activeTab].obfuscation.anti_fingerprinting?.enabled ? 'translate-x-4' : 'translate-x-0.5'"></div>
                 </div>

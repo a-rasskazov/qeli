@@ -285,14 +285,33 @@ function app() {
 
     // Build the copy-paste command the OPERATOR runs on the server (qeli never runs it).
     // Matches how the server was installed; the .deb path verifies SHA256SUMS when present.
+    // Accept only a plain https URL on a GitHub release host, with a path made of safe
+    // characters. `deb`/`sha` come from api.github.com's JSON and land inside a
+    // double-quoted shell word in a command the operator is told to run as ROOT — a
+    // release asset whose name or URL contained a quote (which GitHub permits, and which
+    // an account with release-publish rights could set deliberately) would close the quote
+    // and append arbitrary commands. Nothing validated them before.
+    // (Audit 2026-07-27, P2.)
+    safeAssetUrl(u) {
+      if (typeof u !== 'string' || u.length > 512) return null;
+      if (!/^https:\/\/[A-Za-z0-9.-]*github(usercontent)?\.com\/[A-Za-z0-9._~\-\/]+$/.test(u)) return null;
+      return u;
+    },
+
     buildUpdateCmd(kind, deb, sha) {
       if (kind === 'docker') {
         return 'docker pull ghcr.io/litvinovtd/qeli:latest \\\n  && docker restart qeli   # or recreate your container';
       }
-      if (kind !== 'deb' || !deb) return '';
-      const name = deb.split('/').pop() || 'qeli.deb';
-      let c = 'cd /tmp \\\n  && curl -fsSLO "' + deb + '" \\\n';
-      if (sha) c += '  && curl -fsSLO "' + sha + '" \\\n  && sha256sum --ignore-missing -c SHA256SUMS \\\n';
+      if (kind !== 'deb') return '';
+      const debUrl = this.safeAssetUrl(deb);
+      if (!debUrl) return '';
+      const name = debUrl.split('/').pop() || 'qeli.deb';
+      // The filename is a path segment of an already-validated URL, so it cannot contain
+      // a quote — assert it anyway rather than rely on that reasoning holding forever.
+      if (!/^[A-Za-z0-9._~-]+$/.test(name)) return '';
+      const shaUrl = this.safeAssetUrl(sha);
+      let c = 'cd /tmp \\\n  && curl -fsSLO "' + debUrl + '" \\\n';
+      if (shaUrl) c += '  && curl -fsSLO "' + shaUrl + '" \\\n  && sha256sum --ignore-missing -c SHA256SUMS \\\n';
       c += '  && sudo dpkg -i "' + name + '" && sudo systemctl restart qeli';
       return c;
     },

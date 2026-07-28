@@ -29,7 +29,7 @@ pub(super) fn validate_argon2_hash(hash: &str) -> Result<(), String> {
 pub(crate) fn hash_and_enc(pw: &str) -> Result<(String, Option<String>), String> {
     use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
     let salt = SaltString::generate(&mut OsRng);
-    let hash = argon2::Argon2::default()
+    let hash = crate::crypto::password_hasher()
         .hash_password(pw.as_bytes(), &salt)
         .map_err(|e| format!("hashing failed: {}", e))?
         .to_string();
@@ -232,7 +232,7 @@ async fn reload_worker(state: &Arc<ServerState>) {
 /// sessions: kick / set-bandwidth). Best-effort — ignored if the worker is down.
 async fn worker_control(cmd: Value) {
     let _ = crate::server::control::send_command(
-        crate::server::control::CONTROL_SOCKET,
+        &crate::server::control::control_socket_path(),
         &cmd.to_string(),
     )
     .await;
