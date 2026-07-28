@@ -1,0 +1,24 @@
+# Provenance of the committed native cores
+
+WHY THIS FILE EXISTS. `SHA256SUMS` proves the two copies of each library match each
+other. It says nothing about whether they match the SOURCE — and they did not: the cores
+shipped in this tree were built from the 0.7.12 source while `qeli/src` had moved on, so
+the GUI clients silently carried an older realtls/FFI core than the repository described.
+Nothing in review or CI could have caught that. This file records what the current
+binaries were actually built from, so the question has an answer.
+
+source-digest : 1eb13e08e4fb5f7c2ffe66dcbd6b94cd5d634abc719b8b787fbe9c2bd9bd365f
+base-commit   : f90616a77d19ab3a463e2fff3f2bcb0b9a776d2a
+dirty-sources : 40 file(s) modified vs base-commit at build time
+built-on      : lab .10 (win/mac), lab .11 (android)
+toolchain     : rustc 1.96.0
+panic         : CARGO_PROFILE_RELEASE_PANIC=unwind  (REQUIRED — the catch_unwind guards in
+                protocol/realtls/{ffi,jni}.rs are inert under panic=abort)
+targets       : x86_64-pc-windows-gnu · universal2-apple-darwin ·
+                aarch64-linux-android · x86_64-linux-android
+
+`source-digest` is SHA256 over `"<path> <sha256>
+"` for every `qeli/src/**/*.rs` plus
+`qeli/Cargo.toml` and `qeli/Cargo.lock`, paths sorted. Recompute it with
+`python native-libs/provenance.py --check`: a mismatch means the cores are stale relative
+to the source in this tree and must be rebuilt before release.
