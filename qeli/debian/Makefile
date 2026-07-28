@@ -69,8 +69,14 @@ check-abi:
 	 fi
 	@objdump -d "$(BINARY)" | awk '/aesenc|aesdec|aeskeygenassist|aesimc/{a++} /cpuid/{c++} END{printf "AES-NI baseline: %d aes insn(s), %d cpuid probe(s)\n", a, c; if (a>0 && c==0) {print "ERROR: AES-NI is baked in with no runtime CPU detection left - the binary will SIGILL"; print "       on any CPU without AES-NI, and Depends: cannot express a CPU feature."; print "       Drop -C target-feature=+aes (see qeli/.cargo/config.toml)."; exit 1}}'
 
+# -Zxz is NOT cosmetic: dpkg >= 1.21.10 (Ubuntu 24.04, Debian 13 — i.e. every current build
+# host) defaults to zstd, and dpkg on the oldest distro we promise to support (debian:10,
+# glibc 2.28) cannot read it: `dpkg -x` dies with "unknown compression for member
+# control.tar.zst" before the binary is ever unpacked. The package built fine and passed
+# every objdump/Depends check while being undeployable on its own declared floor. xz is
+# understood by dpkg since 1.15, so it covers everything from debian:10 upward.
 deb-prebuilt: stage
-	dpkg-deb --root-owner-group --build $(DEB_DIR)
+	dpkg-deb --root-owner-group -Zxz --build $(DEB_DIR)
 	mv $(BUILD_DIR)/$(PACKAGE_NAME)_$(VERSION)_$(ARCH).deb .
 	@echo "OK: $(PACKAGE_NAME)_$(VERSION)_$(ARCH).deb"
 

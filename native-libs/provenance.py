@@ -41,7 +41,14 @@ def source_digest() -> str:
     for path in files:
         rel = os.path.relpath(path, ".").replace("\\", "/")
         with open(path, "rb") as fh:
-            agg.update(f"{rel} {hashlib.sha256(fh.read()).hexdigest()}\n".encode())
+            # Normalise CRLF -> LF before hashing. .gitattributes stores these files with
+            # LF, but a Windows checkout materialises them with CRLF, so hashing the bytes
+            # on disk yields a different digest per platform: a digest recorded on Windows
+            # can never match the Linux CI checkout, and the check fails for a reason that
+            # has nothing to do with the cores being stale. Line endings do not change what
+            # rustc compiles, so they must not change the digest either.
+            data = fh.read().replace(b"\r\n", b"\n")
+            agg.update(f"{rel} {hashlib.sha256(data).hexdigest()}\n".encode())
     return agg.hexdigest()
 
 

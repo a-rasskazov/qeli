@@ -1368,11 +1368,16 @@ private final class UnderlyingPathMonitor: @unchecked Sendable {
     private let lock = NSLock()
     private var signature: UInt8?
 
-    init(initialPath: NWPath?) {
+    // Network.NWPath, spelled out: this file imports both Network and NetworkExtension, and
+    // each exports a type called NWPath (NetworkExtension carries the legacy one), so the
+    // bare name is ambiguous here and the build fails. Transport.swift only imports Network,
+    // which is why the same spelling compiles there. The members used below (`status`,
+    // `usesInterfaceType`) are the modern Network one.
+    init(initialPath: Network.NWPath?) {
         signature = initialPath.map(Self.signature)
     }
 
-    func requiresReconnect(for path: NWPath) -> Bool {
+    func requiresReconnect(for path: Network.NWPath) -> Bool {
         guard path.status == .satisfied else { return true }
         let next = Self.signature(path)
         return lock.withLock {
@@ -1386,7 +1391,7 @@ private final class UnderlyingPathMonitor: @unchecked Sendable {
         }
     }
 
-    private static func signature(_ path: NWPath) -> UInt8 {
+    private static func signature(_ path: Network.NWPath) -> UInt8 {
         var value: UInt8 = 0
         if path.usesInterfaceType(.wifi) { value |= 1 << 0 }
         if path.usesInterfaceType(.cellular) { value |= 1 << 1 }
