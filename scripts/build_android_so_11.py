@@ -7,6 +7,7 @@ current local Rust source, then pull the per-ABI .so into the tracked jniLibs.
 """
 import os
 import posixpath
+import shutil
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -15,6 +16,11 @@ import paramiko
 HOST = ("10.66.116.11", "root", os.environ.get("QELI_LAB_PASS", ""))
 LOCAL_QELI = r"C:\Users\litvi\OneDrive\Documents\OpenCode\VPN_CLAUDE\qeli"
 LOCAL_JNI = r"C:\Users\litvi\OneDrive\Documents\OpenCode\VPN_CLAUDE\qeli-android\app\src\main\jniLibs"
+# The canonical copy. Every native library lives TWICE — here, and where the build stack
+# reads it (LOCAL_JNI). This script used to write only the latter, so each Android rebuild
+# left the canonical copy stale; `native-libs/verify.sh --update` then recorded the two
+# different hashes without complaint and certified the drift. Write both.
+LOCAL_CANONICAL = r"C:\Users\litvi\OneDrive\Documents\OpenCode\VPN_CLAUDE\native-libs\android"
 REMOTE = "/root/qeli-src"
 NDK = "/root/android-sdk/ndk/26.3.11579264"
 OUT = "/root/qeli-jni"
@@ -79,10 +85,14 @@ def main():
         print(f"[{abi}] libqeli.so = {sz} bytes, qeli_realtls exports = {nm}")
         local_dir = os.path.join(LOCAL_JNI, abi)
         os.makedirs(local_dir, exist_ok=True)
-        sf.get(so, os.path.join(local_dir, "libqeli.so"))
+        pulled = os.path.join(local_dir, "libqeli.so")
+        sf.get(so, pulled)
+        canonical_dir = os.path.join(LOCAL_CANONICAL, abi)
+        os.makedirs(canonical_dir, exist_ok=True)
+        shutil.copyfile(pulled, os.path.join(canonical_dir, "libqeli.so"))
     sf.close()
     c.close()
-    print("[done] Android .so rebuilt and pulled into jniLibs")
+    print("[done] Android .so rebuilt, pulled into jniLibs and native-libs/android")
 
 
 if __name__ == "__main__":

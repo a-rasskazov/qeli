@@ -601,6 +601,103 @@ under load, because the asymmetric carrier flow never gets through.
 qeli list-clients                      # session SENT/RECV (0/0 = data plane not flowing)
 ```
 
+### 6.9 The panel cannot issue a QR / link — "no permission on `/etc/qeli`"
+
+**Symptom:** the install went fine and the VPN works, but the panel will not issue a link
+or a QR code; the log shows a permission denial on `/etc/qeli/users.conf.lock` (or on
+`users.conf` itself).
+
+**Cause.** The service and the panel run as the `qeli` user, but the CLI is normally run
+under `sudo`. An atomic write — write a temp file, then `rename` — swapped in a **new inode
+owned by the writer**, so a single `sudo qeli add-client` flipped `/etc/qeli/users.conf`
+from `qeli:qeli` to `root:root`. The lock file is created with the owner of the file it
+guards, so it went root-owned too — and the panel, running as `qeli`, could no longer take
+it. The `chown -R` in postinst does not help here: it runs at install time, **before** those
+writes.
+
+**Fixed** in 0.7.13: an atomic write now preserves the owner of the file it replaces
+(regression test `atomic_write_preserves_owner`, run as root). On an **already broken**
+install the ownership has to be restored by hand, once:
+```bash
+sudo chown -R qeli:qeli /etc/qeli
+sudo systemctl restart qeli
+```
+Check (everything should belong to `qeli`):
+```bash
+ls -la /etc/qeli/
+```
+
+### 6.10 `resolvectl is not installed` / systemd-resolved is not the resolver
+
+**Symptom:** the client log warns about `resolvectl`, and the warning **does not go away
+after installing systemd-resolved**.
+
+**Cause.** The client picks its DNS path not by whether the binary exists, but by what
+actually **resolves** on this machine: whether `/etc/resolv.conf` points at the
+systemd-resolved stub. If the service is installed but not enabled, or `resolv.conf` was
+left as a plain file (the usual state after removing `resolvconf` on Ubuntu), then
+`resolvectl dns` is a silent no-op — so the client manages `/etc/resolv.conf` directly.
+Before 0.7.13 the message read "resolvectl unavailable", which sent operators off to
+install the package — that is, to fix the one thing that was not broken.
+
+**Fixed** in 0.7.13: the message now distinguishes the two cases and states what was
+actually checked. It is **not an error** by itself — managing `/etc/resolv.conf` directly
+works. If you specifically want the per-link path through systemd-resolved:
+```bash
+sudo systemctl enable --now systemd-resolved
+sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+```
+Check (it should be a symlink to the stub):
+```bash
+ls -l /etc/resolv.conf
+```
+
+### 6.11 After saving settings in the panel the service still needs a manual restart
+
+**Symptom:** "Apply & Restart" reports no visible error, but the service keeps running the
+old configuration.
+
+**Cause.** The panel does not run as root, and what lets an unprivileged user call
+`systemctl restart` is a polkit rule. The `.deb` ships one; a script or manual install does
+not. The panel detects this up front and should return `polkit_missing` with the hint.
+Install it once:
+```bash
+sudo qeli install-polkit
+sudo systemctl restart qeli
+```
+Check:
+```bash
+ls -l /etc/polkit-1/rules.d/49-qeli.rules
+```
+
+**In a container** the rule will not help: `systemctl` there does not manage the host, so
+"Apply & Restart" cannot restart the service — the panel reports that separately
+(`kind: container`). Restart from outside:
+```bash
+docker restart <container-name>
+```
+
+### 6.12 Windows: slow recovery after sleep
+
+**Symptom:** after waking from sleep the tunnel takes about a minute to come back;
+sometimes it disappears entirely during that window and traffic goes outside the VPN.
+
+**Cause.** The exponential reconnect backoff exists so we do not hammer a server that is
+down, but it also counted attempts that failed into a **network that was not up yet** (Wi-Fi
+reassociating, DHCP pending). At the default base delay of 1 s the delay doubles every
+attempt, so the handful of attempts burned while the network came up left the client asleep
+for 16–32 s **after** it became usable. With a finite `max_retries` those same attempts
+could exhaust it, and giving up tears down the TUN and routes — hence traffic leaving
+outside the tunnel.
+
+**Fixed** in 0.7.13: for 30 s after a resume or a network change the attempt counter is
+capped (retry at least every ~4 s), so the reconnect happens as soon as the network is
+ready. The backoff still applies where it is meant to — when the server really is down. No
+action is required beyond running a 0.7.13+ client.
+
+If the delay persists on 0.7.13+, we need a client log covering wake → `Connected`
+(**Log** tab → **Copy log**): it shows exactly where the time goes.
+
 ---
 
 ## 7. Reference

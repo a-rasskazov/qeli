@@ -229,8 +229,16 @@ public abstract class VpnTunnelBase
         Interlocked.Exchange(ref _lastForceReconnectTick, now);
         Log($"{reason} — reconnecting");
         _forcedReconnectInFlight = true;
+        Interlocked.Exchange(ref _settlingUntilTick, now + SettlingWindowMs);
         CloseTransports(keepTun: true);
     }
+
+    // We know WHY we are reconnecting (resume-from-sleep, network change), and for a while
+    // afterwards a failure says nothing about the server — the network is simply not carrying
+    // traffic yet. See the escalation site in ConnectWithRetry for what this suppresses.
+    private const int SettlingWindowMs = 30_000;
+    private const int SettlingAttemptCap = 3;   // ≤ base·2² — 4 s at the default base of 1 s
+    private long _settlingUntilTick;
 
     /// <summary>Resume-from-sleep variant of <see cref="ForceReconnect"/>. The OS raises Resume
     /// while Wi-Fi is still reassociating and DHCP is pending, so cycling right then tears the
@@ -373,6 +381,40 @@ public abstract class VpnTunnelBase
     }
 
     // ── reconnect loop ─────────────────────────────────────────────────────────
+    /// <summary>The clock-drift suspend detector's failure. Arms the settling window on the way
+    /// out, exactly as <see cref="ForceReconnect"/> does: this is the path that fires when the OS
+    /// power hook did not (a headless run, or a suspend the GUI never saw), and without it those
+    /// resumes would still escalate the backoff. See <see cref="NextAttempt"/>.</summary>
+    private Exception SuspendResumed(long driftMs)
+    {
+        Interlocked.Exchange(ref _settlingUntilTick, Environment.TickCount64 + SettlingWindowMs);
+        return new Exception($"resumed after ~{driftMs / 1000}s suspend — reconnecting");
+    }
+
+    /// <summary>Advance the backoff counter for a failed attempt — but not while the network is
+    /// still settling after a resume-from-sleep / network change, or while there is no physical
+    /// address at all.
+    ///
+    /// The exponential backoff exists to stop us hammering a server that is down. A failure into
+    /// a network that cannot yet carry a handshake is not that, and counting it was the
+    /// resume-from-sleep stall: with the default base of 1 s the delay doubles per attempt, so
+    /// the handful of attempts burned while Wi-Fi reassociated and DHCP completed left the client
+    /// parked in a 16–32 s sleep long AFTER the network became usable — the reported "about a
+    /// minute" to come back, against no delay at all from clients that just keep retrying. With a
+    /// finite `max_retries` those same attempts could also exhaust it, and giving up tears the
+    /// TUN and routes down (see the end of the loop) — dropping the user's traffic onto the bare
+    /// network, which is the leak reported alongside the delay. (Field report 2026-07-25, item 1.)
+    ///
+    /// Clamped rather than reset to zero: a machine that resumes with no network at all must not
+    /// spin in a delay-free retry loop, and the cap keeps settling failures from ever reaching a
+    /// `max_retries` above it.</summary>
+    private int NextAttempt(int attempt)
+    {
+        bool settling = Environment.TickCount64 < Interlocked.Read(ref _settlingUntilTick)
+                        || PhysicalNetSignature().Length == 0;
+        return settling ? Math.Min(attempt + 1, SettlingAttemptCap) : attempt + 1;
+    }
+
     private void ConnectWithRetry(VpnConfig config, CancellationToken ct)
     {
         int attempt = 0;          // consecutive UNSTABLE attempts → backoff + max-retries
@@ -418,7 +460,7 @@ public abstract class VpnTunnelBase
                 // Reset the backoff only after a STABLE session (ran a while). A connect-then-
                 // instant-drop keeps escalating, so it can't hot-loop AND still counts toward
                 // ReconnectMaxRetries.
-                attempt = (DateTime.UtcNow - startedAt >= TimeSpan.FromSeconds(30)) ? 0 : attempt + 1;
+                attempt = (DateTime.UtcNow - startedAt >= TimeSpan.FromSeconds(30)) ? 0 : NextAttempt(attempt);
             }
             catch (System.Security.SecurityException e) when (!ct.IsCancellationRequested)
             {
@@ -460,9 +502,10 @@ public abstract class VpnTunnelBase
                     ConnectionDropped?.Invoke(e.Message);
                 }
                 // Reset backoff only after a STABLE established session; otherwise escalate so a
-                // flapping / never-stable server hits the delay + max-retries.
+                // flapping / never-stable server hits the delay + max-retries — EXCEPT while the
+                // network is still settling, where escalating is simply wrong.
                 attempt = (wasEstablished && DateTime.UtcNow - startedAt >= TimeSpan.FromSeconds(30))
-                    ? 0 : attempt + 1;
+                    ? 0 : NextAttempt(attempt);
                 // persist-tun: on a reconnect (not a user Stop) keep the TUN + routes up
                 // so the next attempt reuses them (no flicker / route gap; fail-closed).
                 // Only when one is actually UP, though (`_persistedClientIp` is set next to
@@ -1824,7 +1867,7 @@ public abstract class VpnTunnelBase
                         lastWall = nowWall; lastTick = nowTick;
                         // L1 — resumed from sleep: session + NAT almost certainly gone.
                         if (drift > SuspendGapMs)
-                        { Fail(new Exception($"resumed after ~{drift / 1000}s suspend — reconnecting")); break; }
+                        { Fail(SuspendResumed(drift)); break; }
                         // L2 — user uplink active but nothing coming back ⇒ dead session
                         // (covers a network change with no suspend, and heartbeat+shaping-off).
                         if (nowTick - Interlocked.Read(ref lastTx) < TxActiveMs
@@ -1881,7 +1924,7 @@ public abstract class VpnTunnelBase
                     long nTick = Environment.TickCount64, nWall = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     long drift = (nWall - hbLastWall) - (nTick - hbLastTick);
                     hbLastWall = nWall; hbLastTick = nTick;
-                    if (drift > SuspendGapMs) { Fail(new Exception($"resumed after ~{drift / 1000}s suspend — reconnecting")); break; }
+                    if (drift > SuspendGapMs) { Fail(SuspendResumed(drift)); break; }
                 }
                 try
                 {
@@ -2432,7 +2475,7 @@ public abstract class VpnTunnelBase
                 lastWall = nowWall; lastTick = nowTick;
                 // L1 — resumed from sleep: every stream's session + NAT is almost certainly gone.
                 if (drift > SuspendGapMs)
-                { Fail(new Exception($"resumed after ~{drift / 1000}s suspend — reconnecting")); break; }
+                { Fail(SuspendResumed(drift)); break; }
                 // L2 — user uplink active but nothing coming back on any stream ⇒ dead.
                 if (nowTick - Interlocked.Read(ref lastTx) < TxActiveMs
                     && nowTick - Interlocked.Read(ref lastRx) > TxRxAsymmetryMs)

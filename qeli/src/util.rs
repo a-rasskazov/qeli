@@ -361,6 +361,33 @@ fn write_atomic_inner(path: impl AsRef<Path>, bytes: &[u8], private: bool) -> an
                         let _ = f.set_permissions(std::fs::Permissions::from_mode(mode));
                     }
                 }
+                // Carry the target's OWNERSHIP across the replace, not just its mode.
+                //
+                // `rename` swaps in a brand-new inode owned by whoever ran the process. The
+                // CLI is normally run with sudo while the service runs as `qeli`, so every
+                // root-run `qeli add-client` silently flipped /etc/qeli/users.conf from
+                // qeli:qeli to root:root. Nothing complained at the time — the next failure
+                // came later and elsewhere: `FileLock` chowns its sidecar to match the file
+                // it guards, so the lock turned root-owned too, and the panel (running as
+                // qeli) could no longer take it. The visible symptom was "cannot generate a
+                // QR / link", several steps removed from the write that caused it. postinst
+                // cannot fix this either — its `chown -R` runs at install time, before any
+                // of these writes happen.
+                //
+                // Best effort: only root can chown, so an unprivileged writer just keeps its
+                // own ownership, which is correct for a single-user setup.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    use std::os::unix::io::AsRawFd;
+                    if let Ok(target) = std::fs::metadata(path) {
+                        if let Ok(cur) = f.metadata() {
+                            if cur.uid() != target.uid() || cur.gid() != target.gid() {
+                                unsafe { libc::fchown(f.as_raw_fd(), target.uid(), target.gid()) };
+                            }
+                        }
+                    }
+                }
                 f.write_all(bytes)
                     .and_then(|()| f.sync_all())
                     .map_err(|e| anyhow::anyhow!("write {}: {}", tmp.display(), e))?;
@@ -532,5 +559,50 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A root-run atomic write must not steal ownership of the file it replaces.
+    ///
+    /// `rename` swaps in a new inode owned by the writer, so `sudo qeli add-client` used to
+    /// flip `/etc/qeli/users.conf` from `qeli:qeli` to `root:root`. The failure surfaced
+    /// much later and elsewhere — the panel, running as `qeli`, could no longer take the
+    /// lock sidecar (which is chowned to match the file it guards) and reported that it
+    /// could not issue a QR or link. (Field report 2026-07-25, item 2.)
+    ///
+    /// `#[ignore]` because it needs root to chown at all: run it explicitly with
+    /// `cargo test --lib -- --ignored atomic_write_preserves_owner`.
+    #[test]
+    #[ignore = "requires root (chown)"]
+    #[cfg(unix)]
+    fn atomic_write_preserves_owner() {
+        use std::os::unix::fs::MetadataExt;
+
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipped: not root");
+            return;
+        }
+        // `nobody` exists on every distro this server targets.
+        const NOBODY_UID: u32 = 65534;
+        const NOBODY_GID: u32 = 65534;
+
+        let path = std::env::temp_dir().join("qeli-atomic-owner-test.conf");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, b"original").expect("seed the target");
+        let c = std::ffi::CString::new(path.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(
+            unsafe { libc::chown(c.as_ptr(), NOBODY_UID, NOBODY_GID) },
+            0,
+            "could not chown the fixture"
+        );
+
+        // Now replace it AS ROOT, exactly as `sudo qeli add-client` does.
+        write_atomic(&path, b"replaced").expect("atomic write");
+
+        let m = std::fs::metadata(&path).expect("stat after replace");
+        assert_eq!(std::fs::read(&path).unwrap(), b"replaced");
+        assert_eq!(m.uid(), NOBODY_UID, "the replace stole ownership (uid)");
+        assert_eq!(m.gid(), NOBODY_GID, "the replace stole ownership (gid)");
+
+        let _ = std::fs::remove_file(&path);
     }
 }

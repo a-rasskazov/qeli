@@ -192,14 +192,21 @@ What the package does:
 web panel persist users there, and `usage.json` lives there too. That is exactly why the unit
 carries `ReadWritePaths=/etc/qeli`.
 
-`postinst` sets ownership **at install time**, but anything you create **afterwards** as root
+`postinst` sets ownership **at install time**, but anything you **create** afterwards as root
 stays root-owned:
 
 ```bash
 sudo cp /etc/qeli/server-multiprofile.conf.example /etc/qeli/server.conf   # → root:root
-sudo qeli add-client alice --config /etc/qeli/server.conf                   # writes as root
 sudo qeli show-identity --config /etc/qeli/server.conf                      # creates identity/ as root
 ```
+
+> **What changed in 0.7.13.** **Replacing an existing** file used to fall into the same trap:
+> an atomic write ends in `rename`, which swaps in a new inode owned by the writer — so a
+> single `sudo qeli add-client` flipped an already-correct `users.conf` from `qeli:qeli` to
+> `root:root`, and the panel broke next (the lock file is created with the owner of the file
+> it guards). Writes now preserve the owner of the file they replace, so that path is closed.
+> **Creating new files and directories as root is still a trap** — everything below still
+> applies.
 
 After that the `qeli` service cannot write those files. So **once the config is in place and
 you have run any root CLI command**, fix the ownership:
@@ -285,13 +292,33 @@ roles** (`qeli server` and `qeli client`) with every runtime dependency bundled
 (`iproute2`, `iptables`, CA certs) — it runs on any Linux host and on router container
 runtimes (MikroTik RouterOS v7, OpenWrt). The container needs `/dev/net/tun` and three
 capabilities — `NET_ADMIN` (TUN, routes, iptables), `NET_RAW` and `NET_BIND_SERVICE`
-(binding :443 as non-root); a ready `docker-compose.yml` (server + optional gateway client) is
+(binding ports below 1024); a ready `docker-compose.yml` (server + optional gateway client) is
 included. Build/run instructions, compose example and caveats:
 
 > 🐳 **[release/docker/README.md](../../release/docker/README.md)**
 
 With Docker you can skip the rest of this guide's install/systemd steps; profile and
 user management below (CLI or web panel) still apply inside the container.
+
+> **Permissions work differently in a container — and §A.3 does not apply to it.** The image
+> carries no `USER` directive and the entrypoint drops no privileges, so **the process inside
+> the container runs as root**. Three consequences:
+> - The privilege separation that the `qeli` user provides on a host is **absent** here:
+>   compromising the daemon means root inside the container (not on the host, but with
+>   `NET_ADMIN`/`NET_RAW` granted the boundary is thinner than it looks). Do not expose the
+>   panel without a password and `web.allowed_ips`.
+> - The `/etc/qeli` ownership trap **cannot occur** — everything inside is written as root
+>   anyway. But files in a mounted volume appear on the host owned by uid 0; if that same
+>   directory is later handed to a host service running as `User=qeli`, the ownership has to
+>   be fixed by hand.
+> - `post_up`/`post_down` hooks in a container really do run **as root** (unlike a `.deb`
+>   install, where they run as `qeli`).
+>
+> Restarting the service from the panel does **not** work in a container, and does not try:
+> there is no systemd inside. Profiles/users/DNS/NAT are applied by an automatic worker
+> restart, while panel-socket changes (`web.bind`/`web.port`/`web.tls*`/`web.enabled`) need
+> the container recreated from outside — see §6.11 in
+> [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ---
 
@@ -1069,6 +1096,20 @@ sudo ip6tables -D OUTPUT  -j $CH 2>/dev/null; true
 sudo ip6tables -D FORWARD -j $CH 2>/dev/null; true
 sudo ip6tables -F $CH            2>/dev/null; true
 sudo ip6tables -X $CH            2>/dev/null; true
+
+# Exit node / gateway (if exit_node = true or gateway_nat = true was set). These rules are
+# also lifted only on a CLEAN stop, and a crash leaves them — the host then keeps
+# masquerading and forwarding long after the tunnel died. Every rule carries a comment:
+# qeli-exit-node (exit_node) or qeli-gw-nat (gateway_nat) — that is how you find them.
+sudo iptables -t mangle -S | grep -e qeli-exit-node -e qeli-gw-nat
+sudo iptables -t nat    -S | grep -e qeli-exit-node -e qeli-gw-nat
+sudo iptables           -S | grep -e qeli-exit-node -e qeli-gw-nat
+# Delete them line by line: take a printed line, swap -A for -D and run it as-is, e.g.
+#   sudo iptables -t nat -D POSTROUTING -o eth0 -m mark --mark 0x51/0x51 -j MASQUERADE \
+#        -m comment --comment qeli-exit-node
+# ip_forward and rp_filter were changed on the fly — restore them if they had been off:
+#   sudo sysctl -w net.ipv4.ip_forward=0
+#   sudo sysctl -w net.ipv4.conf.eth0.rp_filter=1        # eth0 = your WAN
 
 sudo ip link del vpn0 2>/dev/null; true        # tun — name from `dev = …`
 # Remove the binary, config, state:

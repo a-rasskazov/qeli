@@ -195,14 +195,21 @@ identity-ключи профилей (`/etc/qeli/identity/<profile>.key`), ту�
 пользователей `add-client` и веб-панель, там же `usage.json`. Под это в юните специально
 разрешён `ReadWritePaths=/etc/qeli`.
 
-`postinst` выставляет владельца **в момент установки**, но всё, что вы создадите
-**после** — под root, — останется root-овым:
+`postinst` выставляет владельца **в момент установки**, но всё, что вы **создадите** после —
+под root, — останется root-овым:
 
 ```bash
 sudo cp /etc/qeli/server-multiprofile.conf.example /etc/qeli/server.conf   # → root:root
-sudo qeli add-client alice --config /etc/qeli/server.conf                   # пишет от root
 sudo qeli show-identity --config /etc/qeli/server.conf                      # создаёт identity/ от root
 ```
+
+> **Что изменилось в 0.7.13.** Раньше под ловушку попадала и **перезапись существующего**
+> файла: атомарная запись делает `rename`, а он подставляет новый inode, принадлежащий тому,
+> кто пишет, — поэтому один `sudo qeli add-client` переводил уже правильный
+> `users.conf` из `qeli:qeli` в `root:root`, и следом ломалась панель (файл блокировки
+> создаётся с владельцем охраняемого файла). Теперь запись сохраняет владельца заменяемого
+> файла, так что этот сценарий закрыт. **Создание новых файлов и каталогов от root ловушкой
+> быть не перестало** — всё, что ниже, по-прежнему нужно.
 
 После этого служба под `qeli` не сможет писать в эти файлы. Поэтому **после создания
 конфига и любых CLI-команд под root** приведите права в порядок:
@@ -288,7 +295,7 @@ sudo QELI_BIN=qeli/target/release/qeli QELI_SRC=. ./install-qeli-server.sh <пу
 `iptables`, CA-сертификаты) — работает на любом Linux-хосте и в контейнерных рантаймах
 роутеров (MikroTik RouterOS v7, OpenWrt). Контейнеру нужны `/dev/net/tun` и три
 capability — `NET_ADMIN` (TUN, маршруты, iptables), `NET_RAW` и `NET_BIND_SERVICE`
-(привязка к :443 не от root); готовый `docker-compose.yml` (сервер + опц.
+(привязка к портам < 1024); готовый `docker-compose.yml` (сервер + опц.
 gateway-клиент) в комплекте.
 Сборка/запуск, пример compose и нюансы:
 
@@ -296,6 +303,25 @@ gateway-клиент) в комплекте.
 
 С Docker остальные шаги установки/systemd из этого гайда можно пропустить; управление
 профилями и пользователями ниже (CLI или веб-панель) внутри контейнера работает так же.
+
+> **Права в контейнере устроены иначе — и §A.3 к нему не относится.** В образе нет
+> директивы `USER` и сброса привилегий в entrypoint, поэтому **процесс внутри контейнера
+> работает от root**. Отсюда три следствия:
+> - Разделения привилегий, ради которого на хосте существует пользователь `qeli`, здесь
+>   **нет**: компрометация демона — это root внутри контейнера (не на хосте, но с выданными
+>   `NET_ADMIN`/`NET_RAW` граница тоньше, чем кажется). Не выставляйте панель наружу без
+>   пароля и `web.allowed_ips`.
+> - Ловушки с владельцем `/etc/qeli` **не возникает** — всё внутри и так пишется от root.
+>   Но файлы в примонтированном томе появятся на хосте с uid 0; если тот же каталог потом
+>   отдать хостовой службе под `User=qeli`, права придётся привести в порядок вручную.
+> - Хуки `post_up`/`post_down` в контейнере действительно исполняются **от root** (в отличие
+>   от `.deb`-установки, где это `qeli`).
+>
+> Перезапуск службы из панели в контейнере **не работает** и не пытается: systemd внутри
+> нет. Профили/пользователи/DNS/NAT применяются рестартом worker'а автоматически, а
+> изменения сокета панели (`web.bind`/`web.port`/`web.tls*`/`web.enabled`) требуют
+> пересоздания контейнера снаружи — см. §6.11 в
+> [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ---
 
@@ -1074,6 +1100,20 @@ sudo ip6tables -D OUTPUT  -j $CH 2>/dev/null; true
 sudo ip6tables -D FORWARD -j $CH 2>/dev/null; true
 sudo ip6tables -F $CH            2>/dev/null; true
 sudo ip6tables -X $CH            2>/dev/null; true
+
+# Exit-узел / шлюз (если был exit_node = true или gateway_nat = true). Эти правила тоже
+# снимаются только на ЧИСТОЙ остановке, а краш их оставляет — и тогда хост продолжает
+# маскарадить и форвардить уже после того, как туннель умер. Каждое правило помечено
+# комментарием: qeli-exit-node (exit_node) или qeli-gw-nat (gateway_nat) — по нему и ищем.
+sudo iptables -t mangle -S | grep -e qeli-exit-node -e qeli-gw-nat
+sudo iptables -t nat    -S | grep -e qeli-exit-node -e qeli-gw-nat
+sudo iptables           -S | grep -e qeli-exit-node -e qeli-gw-nat
+# Удалять построчно: в найденной строке заменить -A на -D и выполнить как есть, например:
+#   sudo iptables -t nat -D POSTROUTING -o eth0 -m mark --mark 0x51/0x51 -j MASQUERADE \
+#        -m comment --comment qeli-exit-node
+# ip_forward и rp_filter клиент менял на лету — вернуть, если они были выключены:
+#   sudo sysctl -w net.ipv4.ip_forward=0
+#   sudo sysctl -w net.ipv4.conf.eth0.rp_filter=1        # eth0 = ваш WAN
 
 sudo ip link del vpn0 2>/dev/null; true        # tun — имя из `dev = …`
 # Удалить бинарь, конфиг, состояние:

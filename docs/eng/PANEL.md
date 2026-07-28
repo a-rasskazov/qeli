@@ -377,6 +377,13 @@ preserved**. The `Form` and `JSON` views go through parse-and-reserialize, so
 hand-written comments in the file are lost on save; edit a comment-heavy config in Raw
 INI (or directly on the server).
 
+> **Secrets are masked in this view (since 0.7.13).** The values of `password_hash`,
+> `password_enc` and `password` are served as `<unchanged>` — the editor used to show them
+> verbatim, handing the admin password hash and every user secret to whoever opened the page.
+> The placeholder **can be left alone**: submitted back unchanged it means "keep what is on
+> disk". To change a value, type the new one over the placeholder. The rest of the file
+> (comments, ordering, spacing) is still preserved verbatim.
+
 Raw saves are guarded exactly like structured ones: the text must parse; `logging.file`
 must be inside `/var/log/qeli`; `auth.users_file`, `identity_key` and
 `web.tls_cert`/`tls_key` inside `/etc/qeli`; `web.password_hash` must be a valid argon2

@@ -277,7 +277,19 @@ tun.queues = 0
 ## Tunnel MTU (`tun.mtu`) and the push to the client
 
 The server sets the MTU of its TUN via `tun.mtu` (per-profile, default 1400) **and
-pushes this value to the client** at auth. Priority on the client:
+pushes this value to the client** at auth.
+
+> **The accepted range is `576..=9000`, and it is hard (since 0.7.13).** 576 is the IPv4
+> minimum reassembly buffer (RFC 791), 9000 the conventional jumbo. A value outside it is no
+> longer **silently discarded with a fallback to the default**: the server refuses to start
+> the profile (`profile '<name>': tun.mtu <N> is out of range — expected 576..=9000`) and the
+> client rejects the link/config (`invalid mtu <N> — expected 0 (auto) or 576..=9000`). The
+> reason for the strictness: the UDP data plane has no application-layer fragmentation, so an
+> oversized MTU emits one over-large datagram and a tiny one breaks the tunnel — and both used
+> to present simply as "it doesn't work". On the client `0` still means "auto" and need not
+> be in range.
+
+Priority on the client:
 
 1. **an explicit client MTU** (`mtu` in `[qeli]` INI / `qeli://` link / `tun.mtu` in JSON, `> 0`) — wins;
 2. otherwise (auto, `mtu = 0`) — the **discovered / pushed** MTU, see below;
@@ -1245,9 +1257,21 @@ Client-side routing keys in flat-INI (`[qeli]`, file-only — not carried in a
 | `autostart` | auto-connect this profile when the supervisor/panel starts (accepts `true`/`1`/`yes`/`on`). Read by the **panel client-manager**; ignored by the client runtime itself. Emitted to INI only when `true` |
 
 **Auto-reconnect** is on by default (there are no separate keys in flat-INI `[qeli]`
-— the defaults apply: exponential backoff, cap 60s, infinite retries). A client left
-on while the server is unreachable (even a day+) keeps retrying and **reconnects as
+— the defaults apply: exponential backoff, 1 s base, cap 60s, infinite retries). A client
+left on while the server is unreachable (even a day+) keeps retrying and **reconnects as
 soon as the server returns**.
+
+> **Resume-from-sleep and network changes no longer escalate the backoff** (desktop, since
+> 0.7.13). The backoff exists so we do not hammer a server that is down, but an attempt that
+> failed into a network that is **not up yet** (Wi-Fi reassociating, DHCP pending) says
+> nothing about the server. Such attempts used to count like any other, so a handful burned
+> while the network came up left the client asleep for 16–32 s **after** it became usable.
+> For 30 s after a resume or a network change the attempt counter is now capped — retries
+> happen at least every ~4 s at the default base — so the tunnel comes back as soon as the
+> network is ready. The full backoff still applies where it is meant to: when the server
+> really is down. The cap also means sleep-window attempts cannot exhaust `max_retries` (when
+> set above that cap), and exhausting `max_retries` tears down the TUN and routes — so a long
+> sleep used to be able to drop traffic outside the tunnel.
 
 A dead server on an idle tunnel is detected via **RX-liveness**: if no data arrives
 from the server for longer than `rx_dead = max(3 × heartbeat_interval, 30s)`, the
@@ -1320,9 +1344,34 @@ manual wiring or watchdog entrypoint needed.
 
 ## Kill-switch (`kill_switch`)
 
-A fail-closed firewall on the client (Linux/iptables, **full-tunnel only**): while the
-tunnel is down, all egress except loopback / tun / DHCP / the server IP is blocked, so a
-drop can't leak onto the physical interface. Enabled with `kill_switch = true` in `[qeli]`.
+A fail-closed firewall on the client, **full-tunnel only**: while the tunnel is down, all
+egress except loopback / tun / DHCP / the server IP is blocked, so a drop can't leak onto
+the physical interface. Enabled with `kill_switch = true` in `[qeli]`.
+
+The implementation is **different on every OS** — not one cross-platform layer but three
+independent mechanisms plus the system one on mobile. Summary:
+
+| Platform | Mechanism | Scope | Manual teardown |
+|---|---|---|---|
+| Linux | `iptables`/`ip6tables`, own `QELI_KS_<tun>` chain | per interface | §13.2 in GETTING-STARTED |
+| Windows | WFP via `NetSecurity` cmdlets: `DefaultOutboundAction=Block` + `qeli_ks` allow group | whole host (all profiles) | `Remove-NetFirewallRule -Group qeli_ks` + restore the default |
+| macOS | `pf`, anchor `qeli` (or `com.apple/qeli`) | whole host | flush the anchor (**not** `pfctl -f /etc/pf.conf`) |
+| Android | system "Always-on VPN + Block connections without VPN" | whole host | in Android settings |
+| iOS | none of its own — the system on-demand plays that role | — | — |
+
+**Common to every implementation.** The kill-switch is raised **before** the connect loop
+and **stays up across reconnects** — otherwise the reconnect window would be the leak
+window. If any single rule cannot be installed the client **refuses to arm** and tears down
+what it half-built, rather than leaving a leaky kill-switch. If the server IP cannot be
+resolved, `Engage` throws — otherwise the host would be locked with no path to the server.
+It is lifted only on a **clean** stop; a crash leaves the protection in place (fail-safe,
+not fail-open).
+
+> ⚠️ A bug in this subsystem blocks the machine's outbound traffic entirely. On Windows and
+> macOS the scope is the **whole host**, not a single interface. Exercise it on a machine
+> you can afford to lock out.
+
+### Linux (`iptables`)
 
 How it works (matters for manual teardown and for several instances on one host):
 
@@ -1346,6 +1395,71 @@ chain in place (fail-safe). **Never drop it with `iptables -F`** — that flushe
 `filter` table. The surgical manual teardown (OUTPUT + FORWARD + ip6tables) is in
 [GETTING-STARTED.md](GETTING-STARTED.md) §13.2.
 
+### Windows (WFP)
+
+Requires **administrator** — the VPN already does (Wintun). Implemented with the
+`NetSecurity` cmdlets: the per-profile `DefaultOutboundAction` is flipped to `Block`, and a
+small `qeli_ks` allow group permits only the tun adapter, the server IP(s), DNS and DHCP
+(Windows always permits loopback). Explicit Allow rules beat the Block default, so this is
+a true allow-list — no "block rule vs allow rule" precedence trap.
+
+The ordering is deliberate: the state file recording the previous per-profile
+`DefaultOutboundAction` is written first, then the allow rules are added, and **only then**
+is the default flipped to `Block` — so there is no window where egress is already blocked
+but the permits do not exist yet. The whole script runs as a single PowerShell invocation
+with `$ErrorActionPreference='Stop'`, so a failing rule aborts it **before** the default
+flips.
+
+**DNS is deliberately narrowed** to the resolvers actually configured on the system, never
+"port 53 to anywhere": a broad rule would let every application's DNS query egress in
+cleartext on the physical NIC exactly while the tunnel is down — the metadata leak the
+kill-switch exists to stop. The resolvers are needed so the server hostname can be
+re-resolved on reconnect. With no resolvers, no rule is created at all and the reconnect
+uses the cached server IP. Residual risk accepted: an application querying those same
+resolvers still leaks its own query.
+
+The state file is stamped with the process pid and start time, so the startup `Sweep` can
+tell a genuine crash (owner gone) from a live tunnel owned by another instance — a second
+launch must **not** sweep away an active kill-switch. With no saved state, `Disengage`
+restores the neutral `NotConfigured` rather than an explicit `Allow`, which would weaken a
+pre-existing firewall policy we have no record of.
+
+Manual teardown (after a crash, if `Sweep` somehow did not run):
+```powershell
+Remove-NetFirewallRule -Group qeli_ks
+Set-NetFirewallProfile -All -DefaultOutboundAction Allow
+```
+
+### macOS (`pf`)
+
+Requires **root** — the tunnel already does. A `block out all` ruleset is loaded that passes
+only loopback, the utun interface(s), the server IP(s), DNS and DHCP.
+
+The rules live in **their own anchor** (`qeli`), so arming and clearing never touch another
+tool's pf rules. If the host's main ruleset carries the stock `anchor "com.apple/*"`
+reference, the child anchor `com.apple/qeli` is used instead — it is already evaluated by
+that existing reference, so the main ruleset need not be touched at all. The reason for this
+design: `pfctl -f /etc/pf.conf` reloads the **file**, not whatever the host actually had
+loaded, so "restoring" through it discarded other tools' dynamic rules. The utun name is
+unknown before the device exists, so the rules cover `utun0..15`.
+
+Manual teardown — flush the anchor, **not** `pfctl -f /etc/pf.conf`:
+```bash
+sudo pfctl -a com.apple/qeli -F rules
+sudo pfctl -a qeli -F rules
+sudo pfctl -d        # only if pf was disabled BEFORE the run
+```
+
+### Android and iOS
+
+On Android the app does **not** raise a firewall of its own: the real kill-switch here is
+the system one. Settings → Network → VPN → qeli → **Always-on VPN** + **Block connections
+without VPN**. That is stronger than any in-app implementation because it holds even when
+the app process is killed.
+
+On iOS `kill_switch` is **not supported**; the system on-demand plays the fail-closed role
+(see the iOS footnotes in the client-keys table above).
+
 ## Exit node (`exit_node`)
 
 Topology: `Win client → server (public IP) → exit client (grey IP behind NAT) → internet`.
@@ -1365,23 +1479,52 @@ gateway   = false     # keep this host's own internet on the WAN — it is the e
 exit_node = true
 ```
 
-**Server** — register the exit behind the exit user and allow client-to-client:
+**Server** — register the exit behind the exit user, allow client-to-client, and push the
+default route to whoever is entitled to that exit:
 ```ini
-[user:exit]
-password_hash = ...
-client_subnet = 0.0.0.0/0    # "the whole internet is behind this client" (inbound iroute)
-
 [profile:tcp]
-routing.client_to_client = true
+routing.client_to_client = true   # without this the server won't move a packet session-to-session
+
+# The node traffic exits THROUGH
+[user:exit]
+password_hash = $argon2id$...
+client_subnet = 0.0.0.0/0         # "the whole internet is behind this client" (inbound iroute)
+
+# A consumer of the exit — the default route is pushed to THIS user
+[user:alice]
+password_hash = $argon2id$...
+route = 0.0.0.0/0                 # CIDR FIRST; see "Routes (route) — in detail"
+
+# A plain user without that line does NOT use the exit — it egresses via the server
+[user:bob]
+password_hash = $argon2id$...
 ```
 
-**Consumer** (Win/any client) — just receives a default route; knows nothing about the exit:
+**Consumer** (Win/any client) — knows nothing about the exit; it just accepts the pushed
+default:
 ```ini
 [qeli]
+server  = <public-IP-of-server>:443
+user    = alice
+pass    = ...
 gateway = true
 ```
-Who gets the exit is decided on the server: push the default (`route = 0.0.0.0/0` in `[user:*]`)
-only to the users who need it, so one exit node serves a chosen few, not everyone.
+
+Who gets the exit is decided **on the server**, by the `route = 0.0.0.0/0` line in the
+relevant `[user:*]`. One exit node therefore serves a chosen few rather than everyone: in the
+example above `bob` still egresses through the server itself (`routing.nat.enabled`) while
+`alice` goes out through the exit node.
+
+**Checking that it came up.** From the consumer, the public IP should become the exit node's,
+not the server's:
+```bash
+curl -s https://api.ipify.org ; echo      # expect the exit node's WAN IP
+```
+On the exit node the startup log carries `Exit-node engaged` with the WAN it picked, and the
+forward counters are visible there too:
+```bash
+sudo iptables -t nat -L POSTROUTING -v -n | grep MASQUERADE   # packets should climb
+```
 
 ### How it works and what the flag programs
 
@@ -1397,7 +1540,18 @@ a clean stop):
   packet mark, not source subnet: the pool is unknown until after auth, and locally-generated
   host traffic is never marked, so it is never masqueraded);
 - a `FORWARD … ACCEPT` both ways and a `TCPMSS` clamp (without it ping works but TCP/HTTPS stalls);
-- the WAN is auto-detected (`ip route get 1.1.1.1`).
+- the WAN is auto-detected: **`ip route show default`** is read first (with several defaults
+  the first line wins — the lowest metric, the one the kernel would pick), and only if there
+  is no default route does it fall back to probing with `ip route get 1.1.1.1`. The probe used
+  to be the only method, and on a host that routes that particular address specially (a
+  Pi-hole or corporate resolver at 1.1.1.1 over a management interface, or a blackhole entry
+  for it) `MASQUERADE` and `MARK` were installed on the **wrong interface**: traffic left with
+  a private source address, the return path was a black hole, and the log still said
+  `Exit-node engaged`.
+
+The rules are removed on a **clean** stop; **a crash leaves them in place** — like the
+kill-switch this is fail-safe, not forgetfulness. Manual cleanup after a crash is in
+[GETTING-STARTED.md](GETTING-STARTED.md) §13.2.
 
 ### Caveats
 
@@ -1555,7 +1709,14 @@ ip route add default dev "$QELI_TUN" table 100
 > called script's permissions are the operator's responsibility).
 
 ### Hook security (important)
-A hook runs **as root** (qeli usually runs as root). To keep that from becoming RCE —
+A hook runs **as whichever user the process runs as**, which is not always root: the unit
+shipped in the `.deb` is `User=qeli`, so the hook runs as `qeli` with the ambient
+`CAP_NET_ADMIN`/`CAP_NET_RAW`/`CAP_NET_BIND_SERVICE` capabilities. That is enough for
+networking commands (`ip`, `iptables`) but not for writing to `/etc` or anything else
+root-only. A hook does run as root when the service was deliberately moved there
+(`qeli set-service-user root`, see [GETTING-STARTED.md](GETTING-STARTED.md)), inside a
+container (the process is root there anyway), and when started by hand from root. To keep
+that from becoming RCE —
 **two barriers**:
 
 1. **File-permission check.** If the config is **group/world-writable**
@@ -1583,9 +1744,17 @@ Beyond pinning / H-1 (above), the `[auth]` section carries:
 | `password_hash` | `argon2id` | password hashing scheme (only argon2id is supported) |
 | `token_ttl_secs` | `86400` | auth/session token lifetime (seconds) |
 | `brute_force.enabled` | `true` | master switch for **VPN-auth** rate-limiting; `false` = off entirely |
-| `brute_force.max_attempts` | `5` | failed-attempt threshold before lockout (per source IP) |
-| `brute_force.window_secs` | `300` | window for counting failures (seconds) |
-| `brute_force.lockout_secs` | `900` | lockout duration after the threshold is exceeded (seconds) |
+| `brute_force.max_attempts` | `5` | failed-attempt threshold before lockout (per source IP); allowed `1..=10000` |
+| `brute_force.window_secs` | `300` | window for counting failures (seconds); allowed `1..=86400` (24h) |
+| `brute_force.lockout_secs` | `900` | lockout duration after the threshold is exceeded (seconds); allowed `1..=2592000` (30d) |
+
+> **The bounds are hard, and are checked even when `enabled = false` (since 0.7.13).** An
+> out-of-range config is **rejected at load** instead of being accepted silently. Zeros were
+> not harmless but dangerous in opposite directions: `max_attempts = 0` locked a source out on
+> the **very first** failed attempt (a self-inflicted denial of service), while
+> `window_secs = 0` cleared the failure history before every attempt, so the lockout **never
+> triggered** — it looked enabled while protecting against nothing. The check runs with the
+> switch off too, so turning it on later cannot activate a policy nobody validated.
 
 This `[auth] brute_force` policy governs **VPN authentication only**. The **web-panel
 login** has its own, independent policy — `[web] brute_force` (see [Web panel](#web-panel-web)
@@ -1711,6 +1880,14 @@ Per-profile.
 | `dhcp.pool_start` / `pool_end` | (none) | lease range (optional; else from `pool.cidr`) |
 | `dhcp.lease_time_secs` | `86400` | lease time |
 | `dhcp.domain_name` | `vpn` | domain name advertised to clients |
+
+> **The pool must lie inside the tunnel subnet (since 0.7.13).** The bounds are derived from
+> `tun.address` + `tun.netmask`, and the config is **rejected at load** if `pool_start` /
+> `pool_end` fall outside its usable range (`dhcp.<field> (<IP>) is outside the tunnel
+> subnet's usable range …`) or if `pool_end` is below `pool_start`. Such a pool used to be
+> accepted silently, handing clients addresses that **cannot route on that interface** — a
+> failure that presented as "it connects but no traffic flows". The values must also be plain
+> IPv4 addresses, with no CIDR prefix.
 
 ## Performance tuning (`perf.*`, `tun.tx_queue_len`)
 

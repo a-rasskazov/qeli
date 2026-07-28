@@ -138,7 +138,29 @@ pub fn setup_dns_for_interface(
         return Ok(());
     }
 
-    log::warn!("resolvectl unavailable, falling back to /etc/resolv.conf");
+    // Say WHY, precisely. This used to read "resolvectl unavailable", which sent operators
+    // off to install systemd-resolved — and the message did not change afterwards, because
+    // installing it was never the point. `resolved_is_active` does not look for the binary
+    // at all: it asks whether the box actually RESOLVES through systemd-resolved, i.e.
+    // whether /etc/resolv.conf points at the stub. With the service installed but not
+    // enabled, or resolv.conf left as a plain file (the usual state after removing
+    // `resolvconf` on Ubuntu), `resolvectl dns` is a silent no-op — so falling back is
+    // correct, and the old wording described the one thing that was not wrong.
+    // (Field report 2026-07-25, item 6.)
+    if which_resolvectl().is_none() {
+        log::warn!(
+            "resolvectl is not installed — managing /etc/resolv.conf directly instead. \
+             This is fine; it is the fallback path and it always takes effect."
+        );
+    } else {
+        log::warn!(
+            "systemd-resolved is installed but is NOT this system's resolver \
+             ({RESOLV_PATH} does not point at its stub), so `resolvectl dns` would be a \
+             silent no-op — managing {RESOLV_PATH} directly instead. To use the \
+             per-link path: `systemctl enable --now systemd-resolved` and \
+             `ln -sf ../run/systemd/resolve/stub-resolv.conf {RESOLV_PATH}`."
+        );
+    }
     ensure_state_dir()?;
     // Refcount the takeover: only the first holder captures the original. A second
     // concurrent client must NOT re-capture (capture_original is already idempotent), but
@@ -319,6 +341,22 @@ fn resolved_is_active() -> bool {
     std::fs::read_to_string(RESOLV_PATH)
         .map(|c| c.contains("127.0.0.53"))
         .unwrap_or(false)
+}
+
+/// Path to the `resolvectl` binary, if it is installed at all.
+///
+/// Used ONLY to word the fallback message correctly — the decision to use the per-link
+/// path is made by [`resolved_is_active`], which asks a different and more important
+/// question. Looked up by absolute path rather than via `PATH`: the client runs from a
+/// systemd unit whose environment may not carry a useful `PATH`.
+fn which_resolvectl() -> Option<&'static str> {
+    [
+        "/usr/bin/resolvectl",
+        "/bin/resolvectl",
+        "/usr/sbin/resolvectl",
+    ]
+    .into_iter()
+    .find(|p| std::path::Path::new(p).exists())
 }
 
 fn try_resolvectl(config: &ClientDnsConfig, ifname: &str, dns_addr: &str) -> bool {
