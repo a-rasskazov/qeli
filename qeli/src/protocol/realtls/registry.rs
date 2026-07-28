@@ -13,15 +13,22 @@
 //! managed side keeps passing it as an opaque `IntPtr` / `jlong` — **no C#/Kotlin
 //! change and no ABI change**; only the bytes' meaning changed (a key, not a ptr).
 //!
-//! Thread-safety is a single `Mutex`. The realtls/ML-KEM FFI is driven by a
-//! single-tunnel client on one thread, so holding the lock across an operation is
-//! uncontended; if a multi-tunnel use ever appears, a slot would become an
-//! `Arc<Mutex<T>>` looked up under a brief registry lock.
+//! Thread-safety: the registry lock is held only long enough to LOOK UP a slot; each
+//! slot owns an `Arc<Mutex<T>>` and the operation runs under that per-object lock.
+//!
+//! It used to hold the single registry mutex across the whole closure, which meant every
+//! `seal`/`open` in the process serialised on one lock. The premise recorded here — "a
+//! single-tunnel client on one thread" — was never true of the shipped clients: the C#
+//! desktop core runs upload, download and heartbeat as separate tasks, `OpenBondedStream`
+//! creates a SEPARATE realtls handle per bonded stream, and the Android client allows up
+//! to 8 of them. So stream bonding, which exists precisely to use more than one core,
+//! could not encrypt on more than one at a time — and only through the FFI, so the native
+//! Rust client showed none of it. (Audit 2026-07-27, S1.)
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 struct Slot<T> {
-    value: Option<Box<T>>,
+    value: Option<Arc<Mutex<T>>>,
     /// Bumped on every free; starts at 1 so a live handle is never `0` (which the
     /// FFI treats as null). Wraps to 1 (never 0) on the astronomically-unlikely
     /// 2^32-reuse of one slot.
@@ -76,12 +83,12 @@ impl<T> Registry<T> {
     pub fn insert(&self, value: T) -> u64 {
         let mut slots = self.lock();
         if let Some(index) = slots.iter().position(|s| s.value.is_none()) {
-            slots[index].value = Some(Box::new(value));
+            slots[index].value = Some(Arc::new(Mutex::new(value)));
             return pack(slots[index].generation, index as u32);
         }
         let index = slots.len() as u32;
         slots.push(Slot {
-            value: Some(Box::new(value)),
+            value: Some(Arc::new(Mutex::new(value))),
             generation: 1,
         });
         pack(1, index)
@@ -94,20 +101,35 @@ impl<T> Registry<T> {
     /// call — and `None` is returned; the lock is released either way.
     pub fn with<R>(&self, handle: u64, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         let (generation, index) = unpack(handle);
-        let mut slots = self.lock();
-        let slot = slots.get_mut(index as usize)?;
-        if slot.generation != generation || slot.value.is_none() {
-            return None;
-        }
-        let value = slot.value.as_mut().unwrap();
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(value))) {
+        // Registry lock: lookup ONLY. Cloning the Arc lets it go before the (potentially
+        // expensive) closure runs, so operations on DIFFERENT handles proceed in parallel.
+        let value = {
+            let slots = self.lock();
+            let slot = slots.get(index as usize)?;
+            if slot.generation != generation {
+                return None;
+            }
+            slot.value.as_ref()?.clone()
+        };
+
+        // Per-object lock. Two threads sharing ONE handle still serialise, which is the
+        // correct semantics — `SansIoClient` is a stateful codec.
+        let mut guard = value.lock().unwrap_or_else(|e| e.into_inner());
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut guard))) {
             Ok(r) => Some(r),
             Err(_) => {
-                // The closure unwound mid-operation: drop the (possibly
-                // inconsistent) object and burn the generation so this handle is
-                // dead. Returning None surfaces a clean FFI error.
-                slot.value = None;
-                slot.generation = bump(slot.generation);
+                // The closure unwound mid-operation: burn the generation so this handle is
+                // dead and the (possibly inconsistent) object can never be observed again.
+                // Drop the object guard first — re-taking the registry lock while holding
+                // it would invert the lock order used above.
+                drop(guard);
+                let mut slots = self.lock();
+                if let Some(slot) = slots.get_mut(index as usize) {
+                    if slot.generation == generation {
+                        slot.value = None;
+                        slot.generation = bump(slot.generation);
+                    }
+                }
                 None
             }
         }
@@ -222,5 +244,51 @@ mod tests {
         assert_eq!(r.with(good, |v| *v), Some(2));
         let fresh = r.insert(3);
         assert_eq!(r.with(fresh, |v| *v), Some(3));
+    }
+
+    /// Operations on DIFFERENT handles must run concurrently.
+    ///
+    /// The registry lock used to be held for the whole closure, so every FFI `seal`/`open`
+    /// in the process serialised on it — which silently capped stream bonding at one core
+    /// on the managed clients. This test deadlocks-by-timeout if that regresses: thread A
+    /// holds handle 1 and waits for thread B to enter handle 2, which is impossible while
+    /// a single global lock is held across the operation. (Audit 2026-07-27, S1.)
+    #[test]
+    fn operations_on_distinct_handles_do_not_serialise() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc as StdArc;
+        use std::time::{Duration, Instant};
+
+        static R: Registry<u32> = Registry::new();
+        let a = R.insert(1);
+        let b = R.insert(2);
+
+        let b_entered = StdArc::new(AtomicBool::new(false));
+        let b_entered_t = b_entered.clone();
+
+        let t = std::thread::spawn(move || {
+            R.with(b, |v| {
+                b_entered_t.store(true, Ordering::SeqCst);
+                *v
+            })
+        });
+
+        // Hold handle `a` open until `b`'s operation has been observed to start.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let saw_b = R
+            .with(a, |_| {
+                while !b_entered.load(Ordering::SeqCst) && Instant::now() < deadline {
+                    std::thread::yield_now();
+                }
+                b_entered.load(Ordering::SeqCst)
+            })
+            .expect("handle a is live");
+
+        assert_eq!(t.join().unwrap(), Some(2));
+        assert!(
+            saw_b,
+            "an operation on handle b never started while handle a was busy — \
+             the registry lock is still held across the whole operation"
+        );
     }
 }

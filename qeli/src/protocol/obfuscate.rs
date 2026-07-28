@@ -15,12 +15,26 @@ impl Obfuscator {
         Obfuscator { rng: rand::rng() }
     }
 
+    /// Random padding bytes, `min..=max` of them.
+    ///
+    /// `randomize` in `generate_padding_opts` selects the *length* policy — the CONTENT
+    /// is always random. Both fixed-length paths used to return `vec![0u8; n]`, and the
+    /// equal-bounds call `generate_padding(n, n)` is what most callers actually use
+    /// (cover traffic in `handler.rs`/`udp_handler.rs`, size normalisation in
+    /// `client/mod.rs`), so in practice nearly all padding this project emitted was a run
+    /// of zero bytes. That is invisible today because padding travels inside the AEAD
+    /// record — but the name and the doc promise otherwise, and any future caller that
+    /// emits padding outside the AEAD would inherit a perfect distinguisher.
+    /// (Audit 2026-07-27, E8.)
     pub fn generate_padding(&mut self, min: u16, max: u16) -> Vec<u8> {
-        if max <= min {
-            return vec![0u8; min as usize];
-        }
-        let len = self.rng.random_range(min..=max);
-        (0..len).map(|_| self.rng.random()).collect()
+        let len = if max <= min {
+            min
+        } else {
+            self.rng.random_range(min..=max)
+        };
+        let mut out = vec![0u8; len as usize];
+        self.rng.fill_bytes(&mut out);
+        out
     }
 
     /// Padding that honours the full PaddingConfig contract:
@@ -50,7 +64,8 @@ impl Obfuscator {
         if randomize {
             self.generate_padding(min, max)
         } else {
-            vec![0u8; min as usize]
+            // Fixed LENGTH, still random content — see generate_padding's note.
+            self.generate_padding(min, min)
         }
     }
 
@@ -131,16 +146,14 @@ impl Obfuscator {
         data.to_vec()
     }
 
-    #[allow(dead_code)]
-    pub fn generate_heartbeat(&mut self, data_size: u16) -> Vec<u8> {
-        let size = std::cmp::max(data_size as usize, 4);
-        let mut heartbeat = Vec::with_capacity(size + 5);
-        heartbeat.push(0x18); // TLS Heartbeat
-        heartbeat.extend_from_slice(&[0x03, 0x03]);
-        heartbeat.extend_from_slice(&(size as u16).to_be_bytes());
-        heartbeat.extend((0..size).map(|_| self.rng.random::<u8>()));
-        heartbeat
-    }
+    // NOTE: a `generate_heartbeat` helper used to live here, emitting a TLS record with
+    // content type 0x18 (Heartbeat, RFC 6520) full of random cleartext. It had no callers
+    // — and it must not acquire any. TLS 1.3 does not use heartbeats, and qeli's
+    // ClientHello never negotiates the heartbeat extension, so an unsolicited 0x18 record
+    // after the ServerHello would identify the flow immediately: the exact opposite of
+    // what this module exists for. Dead code shaped like a feature invites someone to
+    // "finally wire it up", so it is gone. The tunnel's real heartbeat is an EMPTY AEAD
+    // record scheduled by `Shaper`. (Audit 2026-07-27, X2.)
 }
 
 #[cfg(test)]
@@ -171,6 +184,34 @@ mod tests {
         let mut obf = Obfuscator::new();
         let padding = obf.generate_padding(0, 0);
         assert!(padding.is_empty());
+    }
+
+    /// Fixed-LENGTH padding must still carry random CONTENT. The equal-bounds call is
+    /// the one nearly every caller uses (cover traffic, size normalisation), and it used
+    /// to return a run of zero bytes. (Audit 2026-07-27, E8.)
+    #[test]
+    fn test_fixed_length_padding_is_not_all_zero() {
+        let mut obf = Obfuscator::new();
+        // 64 bytes of CSPRNG output being all-zero has probability 2^-512.
+        let padding = obf.generate_padding(64, 64);
+        assert_eq!(padding.len(), 64);
+        assert!(
+            padding.iter().any(|&b| b != 0),
+            "fixed-length padding must be random, not a zero run"
+        );
+
+        // Same for the randomize=false branch of the opts API.
+        let fixed = obf.generate_padding_opts(true, 64, 64, false, 1.0);
+        assert_eq!(fixed.len(), 64);
+        assert!(
+            fixed.iter().any(|&b| b != 0),
+            "randomize=false selects a fixed length, not zero content"
+        );
+
+        // Two draws of the same length must differ.
+        let a = obf.generate_padding(32, 32);
+        let b = obf.generate_padding(32, 32);
+        assert_ne!(a, b, "padding must not be deterministic");
     }
 
     #[test]
@@ -241,25 +282,5 @@ mod tests {
         let padded = obf.normalize_packet_length(&data, &sizes);
         // If larger than all round sizes, return as-is
         assert_eq!(padded.len(), 200);
-    }
-
-    #[test]
-    fn test_generate_heartbeat_min_size() {
-        let mut obf = Obfuscator::new();
-        let hb = obf.generate_heartbeat(0);
-        assert_eq!(hb[0], 0x18); // heartbeat content type
-        assert_eq!(hb[1..3], [0x03, 0x03]); // TLS version
-        assert!(hb.len() >= 9); // header + min 4 bytes payload
-    }
-
-    #[test]
-    fn test_generate_heartbeat_custom_size() {
-        let mut obf = Obfuscator::new();
-        let hb = obf.generate_heartbeat(100);
-        assert_eq!(hb[0], 0x18);
-        // size field at offset 3-4
-        let size = u16::from_be_bytes([hb[3], hb[4]]) as usize;
-        assert_eq!(size, 100);
-        assert_eq!(hb.len(), 5 + 100);
     }
 }

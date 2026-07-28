@@ -147,16 +147,26 @@ pub fn compute_client_key_proof(
 /// Parse a 32-byte public key from a hex string (tolerating `:`/`-`/space
 /// separators and case). Returns None on malformed input.
 pub fn parse_pubkey_hex(s: &str) -> Option<[u8; 32]> {
-    let clean: String = s
-        .chars()
-        .filter(|c| !matches!(c, ':' | '-' | ' '))
+    let clean: Vec<u8> = s
+        .bytes()
+        .filter(|b| !matches!(b, b':' | b'-' | b' '))
         .collect();
-    if clean.len() != 64 {
+    // Screen for ASCII hex BEFORE any slicing. The previous version collected into a
+    // `String`, so `len()` counted BYTES while the slice `&clean[i*2..i*2+2]` indexed by
+    // char boundary: a 64-BYTE string of multi-byte characters (e.g. 21×'€' + 'a') passed
+    // the length check and then panicked with "byte index is not a char boundary". That
+    // input arrives straight from an untrusted `qeli://` link (`config/client.rs`, the
+    // `key=` parameter), and the binary is built with `panic = "abort"` — so importing a
+    // hostile QR killed the client process. Operating on bytes plus an explicit
+    // is_ascii_hexdigit gate removes the panic entirely. (Audit 2026-07-27, F1.)
+    if clean.len() != 64 || !clean.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
     let mut out = [0u8; 32];
     for i in 0..32 {
-        out[i] = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).ok()?;
+        let hi = (clean[i * 2] as char).to_digit(16)?;
+        let lo = (clean[i * 2 + 1] as char).to_digit(16)?;
+        out[i] = ((hi << 4) | lo) as u8;
     }
     Some(out)
 }
@@ -301,5 +311,43 @@ mod tests {
         assert_eq!(parse_pubkey_hex(&hex), Some(*kp.public.as_bytes()));
         assert_eq!(parse_pubkey_hex("deadbeef"), None); // wrong length
         assert_eq!(parse_pubkey_hex("zz"), None);
+    }
+
+    /// A 64-BYTE string that is not 64 CHARACTERS must be rejected, not panic.
+    ///
+    /// The length gate counts bytes, so multi-byte input can satisfy it while the
+    /// per-pair slice lands inside a character — which used to abort the process
+    /// (`panic = "abort"`). The value reaches here straight from an untrusted
+    /// `qeli://` link, so this is a remote kill switch, not a theoretical edge.
+    /// (Audit 2026-07-27, F1.)
+    #[test]
+    fn parse_pubkey_hex_rejects_non_ascii_without_panicking() {
+        // 21 × '€' (3 bytes each) + 'a' = 64 bytes, 22 characters.
+        let s = "€".repeat(21) + "a";
+        assert_eq!(s.len(), 64, "fixture must hit the byte-length gate");
+        assert!(s.chars().count() != 64);
+        assert_eq!(parse_pubkey_hex(&s), None);
+
+        // Same shape, but the multi-byte character sits at the very end.
+        let s2 = "a".repeat(61) + "€";
+        assert_eq!(s2.len(), 64);
+        assert_eq!(parse_pubkey_hex(&s2), None);
+
+        // Separators are still tolerated, and a non-hex ASCII byte still fails.
+        let kp = StaticKeypair::generate();
+        let hex: String = kp
+            .public
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let spaced: String = hex
+            .as_bytes()
+            .chunks(2)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join(":");
+        assert_eq!(parse_pubkey_hex(&spaced), Some(*kp.public.as_bytes()));
+        assert_eq!(parse_pubkey_hex(&("g".to_string() + &hex[1..])), None);
     }
 }

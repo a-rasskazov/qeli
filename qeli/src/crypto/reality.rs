@@ -45,6 +45,14 @@ fn derive_key_nonce(shared: &[u8; 32]) -> ([u8; 32], [u8; 12]) {
 
 /// Parse a hex short_id into 8 bytes (zero-padded; extra hex ignored). Both sides
 /// parse identically, so the allow-list comparison is exact.
+///
+/// LENIENT ON PURPOSE for the zero-padding: a short_id shorter than 16 hex digits is a
+/// legitimate REALITY configuration and pads out to 8 bytes. It is NOT a validator —
+/// non-hex characters are dropped, so garbage collapses to all-zeros. Use
+/// [`parse_short_id`] anywhere the input has not already been validated; in particular
+/// the server allow-list must not use this function. (Audit 2026-07-27, C8.)
+///
+/// [`parse_short_id`]: crate::crypto::reality::parse_short_id
 pub fn short_id_from_hex(s: &str) -> [u8; SHORT_ID_LEN] {
     let mut out = [0u8; SHORT_ID_LEN];
     let hex: Vec<u8> = s.bytes().filter(|b| b.is_ascii_hexdigit()).collect();
@@ -56,6 +64,40 @@ pub fn short_id_from_hex(s: &str) -> [u8; SHORT_ID_LEN] {
         i += 2;
     }
     out
+}
+
+/// Strict short_id parse: `None` unless `s` is valid, usable hex.
+///
+/// Byte-for-byte identical to [`short_id_from_hex`] for every input it accepts — it only
+/// adds the gate, so no configuration that works today changes meaning. Rejected:
+/// * anything containing a non-hex character (after `:`/`-`/space are stripped),
+/// * an empty value,
+/// * more than 16 hex digits,
+/// * a value that parses to all-zero bytes.
+///
+/// WHY THIS EXISTS. The lenient parser *filters* non-hex away rather than failing, so a
+/// typo or a substituted value such as `short_ids = zzzz` parses to `[0u8; 8]` — and it
+/// does so on BOTH sides. The server built its allow-list with that parser, so a
+/// misconfigured server accepted any client whose short_id was equally invalid. The
+/// REALITY public key is not secret (it ships inside the `qeli://` link), which leaves
+/// the short_id as the only thing an active prober must guess — so a silent collapse to
+/// a constant is an authentication bypass, not a cosmetic issue. The all-zero result is
+/// refused for the same reason: it is exactly what the degenerate parse produced, so
+/// honouring it would keep the wildcard alive for operators who configured it literally.
+/// (Audit 2026-07-27, C8.)
+pub fn parse_short_id(s: &str) -> Option<[u8; SHORT_ID_LEN]> {
+    let hex: Vec<u8> = s
+        .bytes()
+        .filter(|b| !matches!(b, b':' | b'-' | b' '))
+        .collect();
+    if hex.is_empty() || hex.len() > SHORT_ID_LEN * 2 || !hex.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    let out = short_id_from_hex(s);
+    if out == [0u8; SHORT_ID_LEN] {
+        return None;
+    }
+    Some(out)
 }
 
 /// Client side: seal `{short_id, now}` into a 32-byte session_id using the
@@ -176,6 +218,55 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8]
         );
         assert_eq!(short_id_from_hex(" a1b2 "), [0xa1, 0xb2, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// The strict parser must agree with the lenient one on everything it accepts, so
+    /// switching the server allow-list over cannot change a working deployment.
+    #[test]
+    fn parse_short_id_matches_lenient_on_valid_input() {
+        for s in [
+            "0102030405060708",
+            "a1b2",
+            " a1b2 ",
+            "aa:bb:cc:dd",
+            "de-ad-be-ef",
+            "abc", // odd digit count: lenient drops the trailing nibble, so must we
+            "f",   // single digit: lenient yields all-zero -> rejected below, not here
+        ] {
+            if let Some(strict) = parse_short_id(s) {
+                assert_eq!(strict, short_id_from_hex(s), "mismatch for {s:?}");
+            }
+        }
+        assert_eq!(parse_short_id("a1b2"), Some(short_id_from_hex("a1b2")));
+    }
+
+    /// The whole point: garbage must NOT collapse to a constant that both sides agree on.
+    /// (Audit 2026-07-27, C8.)
+    #[test]
+    fn parse_short_id_rejects_unusable_values() {
+        assert_eq!(
+            parse_short_id("zzzz"),
+            None,
+            "non-hex must not become zeros"
+        );
+        assert_eq!(parse_short_id("hello"), None);
+        assert_eq!(parse_short_id(""), None);
+        assert_eq!(parse_short_id("   "), None);
+        assert_eq!(
+            parse_short_id("0000000000000000"),
+            None,
+            "all-zero is a wildcard"
+        );
+        assert_eq!(parse_short_id("00"), None);
+        assert_eq!(
+            parse_short_id("0102030405060708aa"),
+            None,
+            "more than 16 hex digits must not be silently truncated"
+        );
+        // A single digit parses to all-zero under the lenient rule, so it is unusable.
+        assert_eq!(parse_short_id("f"), None);
+        // The degenerate value the old parser produced is exactly what we now refuse.
+        assert_eq!(short_id_from_hex("zzzz"), [0u8; SHORT_ID_LEN]);
     }
 
     /// Full M1 path: client seals into a ClientHello session_id, server parses the

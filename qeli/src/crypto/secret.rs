@@ -28,20 +28,21 @@ pub fn load_or_create_key(path: &str) -> anyhow::Result<[u8; 32]> {
     // and the later write won — leaving the earlier one holding a key that is no longer
     // on disk. Everything sealed under it (re-issuable passwords, panel sessions) then
     // fails to decrypt. Serialize the create path and re-check inside the lock.
-    if !Path::new(path).exists() {
-        if let Some(parent) = Path::new(path).parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let _lock = crate::util::FileLock::acquire(path)?;
-        if !Path::new(path).exists() {
-            use rand::prelude::*;
-            let mut k = [0u8; 32];
-            rand::rng().fill_bytes(&mut k);
-            crate::util::write_atomic_private(path, &k)?;
-            return Ok(k);
-        }
-        // Someone else created it while we waited — fall through and read theirs.
+    // Take the lock ONCE and do create-or-read entirely inside it.
+    //
+    // The previous shape was `if !exists { lock; create }` followed by a second
+    // `if exists { read } else { generate + write }` — and that trailing `else` was an
+    // UNLOCKED generate/write path, reintroducing exactly the race the lock exists to
+    // prevent. It is reachable whenever the file disappears between the two `exists()`
+    // calls (a key rotation, a parallel cleanup of /etc/qeli), and then two processes can
+    // generate and write concurrently, last writer wins, and whatever the loser sealed —
+    // re-issuable passwords, panel sessions — can never be decrypted again. It also set
+    // permissions differently from the locked branch, which relies on
+    // `write_atomic_private`. (Audit 2026-07-27, R8.)
+    if let Some(parent) = Path::new(path).parent() {
+        std::fs::create_dir_all(parent).ok();
     }
+    let _lock = crate::util::FileLock::acquire(path)?;
     if Path::new(path).exists() {
         let b = std::fs::read(path)?;
         if b.len() != 32 {
@@ -49,22 +50,13 @@ pub fn load_or_create_key(path: &str) -> anyhow::Result<[u8; 32]> {
         }
         let mut k = [0u8; 32];
         k.copy_from_slice(&b);
-        Ok(k)
-    } else {
-        use rand::prelude::*;
-        let mut k = [0u8; 32];
-        rand::rng().fill_bytes(&mut k);
-        if let Some(parent) = Path::new(path).parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        crate::util::write_atomic_private(path, &k)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-        }
-        Ok(k)
+        return Ok(k);
     }
+    use rand::prelude::*;
+    let mut k = [0u8; 32];
+    rand::rng().fill_bytes(&mut k);
+    crate::util::write_atomic_private(path, &k)?;
+    Ok(k)
 }
 
 /// Encrypt `plaintext` → `base64(nonce ‖ ct)`.

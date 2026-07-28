@@ -20,15 +20,14 @@ impl Cipher {
         Cipher { cipher }
     }
 
-    /// Строит 12-байтовый nonce: [counter_be(8)] || [extra(4)]
-    /// Exercised by the crypto test-suite; the live codec builds nonces inline.
-    #[allow(dead_code)]
-    pub fn generate_nonce(counter: u64, extra: &[u8; 4]) -> [u8; NONCE_SIZE] {
-        let mut nonce = [0u8; NONCE_SIZE];
-        nonce[..8].copy_from_slice(&counter.to_be_bytes());
-        nonce[8..].copy_from_slice(extra);
-        nonce
-    }
+    // NOTE: there used to be a `generate_nonce(counter, extra)` helper here building
+    // `[counter_be(8)] || [extra(4)]`. It had no callers, and its layout had already
+    // diverged from the live one — `PacketCodec` builds `[seed(4)] || [counter_be(8)]` and
+    // then runs it through a Feistel PRP (see protocol/packet.rs). A second "source of
+    // truth" for nonce construction that disagrees with the real one is a trap: the unused
+    // helper and its green test would have reassured anyone who reached for it, and nonce
+    // layout is exactly where a mistake is unrecoverable. Removed rather than corrected —
+    // there is nothing for it to do. (Audit 2026-07-27, X1.)
 
     pub fn encrypt(
         &self,

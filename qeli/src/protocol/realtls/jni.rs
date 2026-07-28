@@ -31,6 +31,24 @@ fn to_array(env: &mut JNIEnv, data: &[u8]) -> jbyteArray {
         .unwrap_or(std::ptr::null_mut())
 }
 
+/// Run `f`, converting a panic into `fallback` instead of letting it unwind.
+///
+/// EVERY `Java_com_qeli_*` entry point below must go through this. The Android
+/// `libqeli.so` is built with `CARGO_PROFILE_RELEASE_PANIC=unwind`
+/// (`scripts/build_android_so_11.py`, `scripts/build_so_aes.py`) precisely so the
+/// `catch_unwind` guards in the sibling C-ABI module are effective — but this module had
+/// none, on any of its twelve functions. Unwinding across a JNI boundary is undefined
+/// behaviour; in practice ART aborts, killing the whole VPN service, where returning
+/// `0` / `null` / `JNI_FALSE` is something the Kotlin side already handles on every one
+/// of these calls. `Registry::with` only catches panics raised INSIDE its closure, so
+/// everything around it — `SansIoClient::new`, `mlkem768_keypair`, array conversion,
+/// `to_array` — was unprotected. The note in `qeli/Cargo.toml` that explains the unwind
+/// override lists only `ffi.rs`; that omission is what this fixes.
+/// (Audit 2026-07-27, K4.)
+fn guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(fallback)
+}
+
 /// `TlsHandshake.nativeFakeClientHello(x25519Pub, mlKemEk, sni, padToMin) -> byte[]`
 /// — the shared Rust-built fake-tls ClientHello (null on error). Lets the Android
 /// client emit the identical hello to the Rust/C# clients (same GREASE/shuffle/ALPN)
@@ -44,27 +62,29 @@ pub extern "system" fn Java_com_qeli_protocol_TlsHandshake_nativeFakeClientHello
     sni: JString<'local>,
     pad_to_min: jint,
 ) -> jbyteArray {
-    let pk_bytes = match env.convert_byte_array(&x25519_pub) {
-        Ok(b) if b.len() == 32 => b,
-        _ => return std::ptr::null_mut(),
-    };
-    let ek = match env.convert_byte_array(&ml_ek) {
-        Ok(b) if !b.is_empty() => b,
-        _ => return std::ptr::null_mut(),
-    };
-    let sni_str: String = match env.get_string(&sni) {
-        Ok(s) => s.into(),
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let mut pk = [0u8; 32];
-    pk.copy_from_slice(&pk_bytes);
-    let hello = crate::protocol::FakeTlsHandshake::build_client_hello_with_ek(
-        &PublicKey::from_bytes(&pk),
-        &sni_str,
-        pad_to_min.max(0) as usize,
-        &ek,
-    );
-    to_array(&mut env, &hello)
+    guard(std::ptr::null_mut(), || {
+        let pk_bytes = match env.convert_byte_array(&x25519_pub) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return std::ptr::null_mut(),
+        };
+        let ek = match env.convert_byte_array(&ml_ek) {
+            Ok(b) if !b.is_empty() => b,
+            _ => return std::ptr::null_mut(),
+        };
+        let sni_str: String = match env.get_string(&sni) {
+            Ok(s) => s.into(),
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&pk_bytes);
+        let hello = crate::protocol::FakeTlsHandshake::build_client_hello_with_ek(
+            &PublicKey::from_bytes(&pk),
+            &sni_str,
+            pad_to_min.max(0) as usize,
+            &ek,
+        );
+        to_array(&mut env, &hello)
+    })
 }
 
 /// `RealTls.nativeNew(realityPub, shortId, sni) -> long` (0 on error).
@@ -76,24 +96,26 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeNew<'local>(
     short_id: JByteArray<'local>,
     sni: JString<'local>,
 ) -> jlong {
-    let pub_bytes = match env.convert_byte_array(&reality_pub) {
-        Ok(b) if b.len() == 32 => b,
-        _ => return 0,
-    };
-    let sid_bytes = match env.convert_byte_array(&short_id) {
-        Ok(b) if b.len() >= SHORT_ID_LEN => b,
-        _ => return 0,
-    };
-    let sni_str: String = match env.get_string(&sni) {
-        Ok(s) => s.into(),
-        Err(_) => return 0,
-    };
-    let mut pk = [0u8; 32];
-    pk.copy_from_slice(&pub_bytes);
-    let mut sid = [0u8; SHORT_ID_LEN];
-    sid.copy_from_slice(&sid_bytes[..SHORT_ID_LEN]);
-    let (client, _hello) = SansIoClient::new(&PublicKey::from_bytes(&pk), &sid, &sni_str);
-    REALTLS.insert(client) as jlong
+    guard(0, || {
+        let pub_bytes = match env.convert_byte_array(&reality_pub) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return 0,
+        };
+        let sid_bytes = match env.convert_byte_array(&short_id) {
+            Ok(b) if b.len() >= SHORT_ID_LEN => b,
+            _ => return 0,
+        };
+        let sni_str: String = match env.get_string(&sni) {
+            Ok(s) => s.into(),
+            Err(_) => return 0,
+        };
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&pub_bytes);
+        let mut sid = [0u8; SHORT_ID_LEN];
+        sid.copy_from_slice(&sid_bytes[..SHORT_ID_LEN]);
+        let (client, _hello) = SansIoClient::new(&PublicKey::from_bytes(&pk), &sid, &sni_str);
+        REALTLS.insert(client) as jlong
+    })
 }
 
 /// `RealTls.nativeClientHello(handle) -> byte[]` — the ClientHello to send first.
@@ -103,10 +125,12 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeClientHello<'local>(
     _class: JClass<'local>,
     handle: jlong,
 ) -> jbyteArray {
-    match REALTLS.with(handle as u64, |client| client.client_hello().to_vec()) {
-        Some(hello) => to_array(&mut env, &hello),
-        None => std::ptr::null_mut(),
-    }
+    guard(std::ptr::null_mut(), || {
+        match REALTLS.with(handle as u64, |client| client.client_hello().to_vec()) {
+            Some(hello) => to_array(&mut env, &hello),
+            None => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// `RealTls.nativeRecv(handle, data) -> byte[]` — bytes to send (handshake done),
@@ -118,12 +142,14 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeRecv<'local>(
     handle: jlong,
     data: JByteArray<'local>,
 ) -> jbyteArray {
-    let bytes = env.convert_byte_array(&data).unwrap_or_default();
-    match REALTLS.with(handle as u64, |client| client.recv(&bytes)) {
-        Some(Ok(Progress::NeedMore)) => to_array(&mut env, &[]),
-        Some(Ok(Progress::Done(to_send))) => to_array(&mut env, &to_send),
-        Some(Err(_)) | None => std::ptr::null_mut(), // None = stale/invalid handle
-    }
+    guard(std::ptr::null_mut(), || {
+        let bytes = env.convert_byte_array(&data).unwrap_or_default();
+        match REALTLS.with(handle as u64, |client| client.recv(&bytes)) {
+            Some(Ok(Progress::NeedMore)) => to_array(&mut env, &[]),
+            Some(Ok(Progress::Done(to_send))) => to_array(&mut env, &to_send),
+            Some(Err(_)) | None => std::ptr::null_mut(), // None = stale/invalid handle
+        }
+    })
 }
 
 /// `RealTls.nativeSeal(handle, plaintext) -> byte[]` — one application_data record.
@@ -134,11 +160,13 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeSeal<'local>(
     handle: jlong,
     data: JByteArray<'local>,
 ) -> jbyteArray {
-    let bytes = env.convert_byte_array(&data).unwrap_or_default();
-    match REALTLS.with(handle as u64, |client| client.seal(&bytes)) {
-        Some(Ok(rec)) => to_array(&mut env, &rec),
-        Some(Err(_)) | None => std::ptr::null_mut(), // None = stale/invalid handle
-    }
+    guard(std::ptr::null_mut(), || {
+        let bytes = env.convert_byte_array(&data).unwrap_or_default();
+        match REALTLS.with(handle as u64, |client| client.seal(&bytes)) {
+            Some(Ok(rec)) => to_array(&mut env, &rec),
+            Some(Err(_)) | None => std::ptr::null_mut(), // None = stale/invalid handle
+        }
+    })
 }
 
 /// `RealTls.nativeOpen(handle, data) -> byte[]` — concatenated decrypted plaintext.
@@ -149,20 +177,22 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeOpen<'local>(
     handle: jlong,
     data: JByteArray<'local>,
 ) -> jbyteArray {
-    let bytes = env.convert_byte_array(&data).unwrap_or_default();
-    let result = REALTLS.with(handle as u64, |client| {
-        client.open_push(&bytes).map(|msgs| {
-            let mut cat = Vec::new();
-            for m in msgs {
-                cat.extend_from_slice(&m);
-            }
-            cat
-        })
-    });
-    match result {
-        Some(Ok(cat)) => to_array(&mut env, &cat),
-        Some(Err(_)) | None => std::ptr::null_mut(), // None = stale/invalid handle
-    }
+    guard(std::ptr::null_mut(), || {
+        let bytes = env.convert_byte_array(&data).unwrap_or_default();
+        let result = REALTLS.with(handle as u64, |client| {
+            client.open_push(&bytes).map(|msgs| {
+                let mut cat = Vec::new();
+                for m in msgs {
+                    cat.extend_from_slice(&m);
+                }
+                cat
+            })
+        });
+        match result {
+            Some(Ok(cat)) => to_array(&mut env, &cat),
+            Some(Err(_)) | None => std::ptr::null_mut(), // None = stale/invalid handle
+        }
+    })
 }
 
 /// `RealTls.nativeEstablished(handle) -> boolean`.
@@ -172,10 +202,12 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeEstablished<'local>(
     _class: JClass<'local>,
     handle: jlong,
 ) -> jboolean {
-    match REALTLS.with(handle as u64, |client| client.established()) {
-        Some(true) => JNI_TRUE,
-        _ => JNI_FALSE, // false, or a stale/invalid handle
-    }
+    guard(JNI_FALSE, || {
+        match REALTLS.with(handle as u64, |client| client.established()) {
+            Some(true) => JNI_TRUE,
+            _ => JNI_FALSE, // false, or a stale/invalid handle
+        }
+    })
 }
 
 /// `RealTls.nativeFree(handle)`.
@@ -185,8 +217,10 @@ pub extern "system" fn Java_com_qeli_RealTls_nativeFree<'local>(
     _class: JClass<'local>,
     handle: jlong,
 ) {
-    // A double free or a free of a never-issued handle is a safe no-op (C-1).
-    REALTLS.remove(handle as u64);
+    guard((), || {
+        // A double free or a free of a never-issued handle is a safe no-op (C-1).
+        REALTLS.remove(handle as u64);
+    })
 }
 
 // --- ML-KEM-768 bridge (`com.qeli.MlKem`) ---------------------------------
@@ -210,8 +244,10 @@ pub extern "system" fn Java_com_qeli_MlKem_nativeKeygen<'local>(
     _env: JNIEnv<'local>,
     _class: JClass<'local>,
 ) -> jlong {
-    let (dk, ek) = crate::crypto::mlkem::mlkem768_keypair();
-    MLKEM.insert(MlKemKeypair { dk, ek }) as jlong
+    guard(0, || {
+        let (dk, ek) = crate::crypto::mlkem::mlkem768_keypair();
+        MLKEM.insert(MlKemKeypair { dk, ek }) as jlong
+    })
 }
 
 /// `MlKem.nativeEncapKey(handle) -> byte[]` — the 1184-byte encapsulation key to
@@ -222,10 +258,12 @@ pub extern "system" fn Java_com_qeli_MlKem_nativeEncapKey<'local>(
     _class: JClass<'local>,
     handle: jlong,
 ) -> jbyteArray {
-    match MLKEM.with(handle as u64, |kp| kp.ek.clone()) {
-        Some(ek) => to_array(&mut env, &ek),
-        None => std::ptr::null_mut(),
-    }
+    guard(std::ptr::null_mut(), || {
+        match MLKEM.with(handle as u64, |kp| kp.ek.clone()) {
+            Some(ek) => to_array(&mut env, &ek),
+            None => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// `MlKem.nativeDecapsulate(handle, ct) -> byte[]` — the 32-byte shared secret
@@ -237,15 +275,17 @@ pub extern "system" fn Java_com_qeli_MlKem_nativeDecapsulate<'local>(
     handle: jlong,
     ct: JByteArray<'local>,
 ) -> jbyteArray {
-    let ct_bytes = env.convert_byte_array(&ct).unwrap_or_default();
-    let result = MLKEM.with(handle as u64, |kp| {
-        crate::crypto::mlkem::mlkem768_decapsulate(&kp.dk, &ct_bytes)
-    });
-    match result {
-        Some(Some(ss)) => to_array(&mut env, &ss),
-        // inner None = bad ciphertext; outer None = stale/invalid handle
-        Some(None) | None => std::ptr::null_mut(),
-    }
+    guard(std::ptr::null_mut(), || {
+        let ct_bytes = env.convert_byte_array(&ct).unwrap_or_default();
+        let result = MLKEM.with(handle as u64, |kp| {
+            crate::crypto::mlkem::mlkem768_decapsulate(&kp.dk, &ct_bytes)
+        });
+        match result {
+            Some(Some(ss)) => to_array(&mut env, &ss),
+            // inner None = bad ciphertext; outer None = stale/invalid handle
+            Some(None) | None => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// `MlKem.nativeFree(handle)`.
@@ -255,6 +295,8 @@ pub extern "system" fn Java_com_qeli_MlKem_nativeFree<'local>(
     _class: JClass<'local>,
     handle: jlong,
 ) {
-    // A double free or a free of a never-issued handle is a safe no-op (C-1).
-    MLKEM.remove(handle as u64);
+    guard((), || {
+        // A double free or a free of a never-issued handle is a safe no-op (C-1).
+        MLKEM.remove(handle as u64);
+    })
 }

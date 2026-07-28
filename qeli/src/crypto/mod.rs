@@ -15,6 +15,30 @@ pub use cipher::Cipher;
 pub use derive::{derive_keys, derive_keys_bound, derive_keys_hybrid, derive_keys_hybrid_bound};
 pub use exchange::{compute_auth_proof, Keypair, PublicKey, StaticKeypair};
 
+/// The Argon2id profile qeli hashes NEW passwords with: m = 19456 KiB, t = 2, p = 1.
+///
+/// Pinned rather than taken from `Argon2::default()`. The values are deliberately the
+/// same ones `argon2 0.5.3` defaults to (OWASP's second recommended profile), so this
+/// changes nothing today — the point is that a `cargo update` can no longer move the
+/// project's KDF cost silently. It was already out of step: the security documentation
+/// stated m=16384, which no code had produced for some time, and nothing would have
+/// flagged the next drift either. (Audit 2026-07-27, H2.)
+///
+/// VERIFICATION deliberately does NOT use this. A PHC hash string carries the parameters
+/// it was produced with, so `verify_password` must honour those, not today's policy —
+/// otherwise raising the cost here would invalidate every stored password. Verifiers
+/// keep using `Argon2::default()`, whose parameters are ignored for that call.
+pub fn password_hasher() -> argon2::Argon2<'static> {
+    let params = argon2::Params::new(
+        19456, // m_cost, KiB
+        2,     // t_cost, iterations
+        1,     // p_cost, lanes
+        None,  // output length: the algorithm default (32 bytes)
+    )
+    .expect("qeli Argon2id parameters are valid");
+    argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,19 +224,6 @@ mod tests {
         assert!(cipher
             .decrypt_in_place_detached(&nonce, &mut body2, &tag)
             .is_err());
-    }
-
-    #[test]
-    fn test_generate_nonce_format() {
-        let counter = 0x0102030405060708u64;
-        let extra = [0x0A, 0x0B, 0x0C, 0x0D];
-        let nonce = Cipher::generate_nonce(counter, &extra);
-
-        assert_eq!(nonce.len(), 12);
-        // first 8 bytes = big-endian counter
-        assert_eq!(&nonce[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
-        // last 4 bytes = extra
-        assert_eq!(&nonce[8..], &[0x0A, 0x0B, 0x0C, 0x0D]);
     }
 
     #[test]

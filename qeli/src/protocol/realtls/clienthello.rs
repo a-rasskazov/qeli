@@ -221,6 +221,17 @@ pub fn build_client_hello(
         extensions.extend_from_slice(e);
     }
     // GREASE last (empty), then padding (0x0015) to a realistic size.
+    //
+    // DO NOT "optimise" either of these away without a real Chrome capture to check
+    // against. An audit (2026-07-27, E5) proposed dropping the padding extension when it
+    // comes out zero-length and moving it ahead of the trailing GREASE, on the reasoning
+    // that Chrome with a post-quantum key_share sends no 0x0015. Both were tried and
+    // reverted: `ja4_matches_chrome` pins the published Chrome fingerprint
+    // `t13d1516h2_8daaf6152771`, whose SIXTEENTH extension is exactly this padding —
+    // removing it yields `t13d1515h2` and stops matching the browser being imitated.
+    // JA4 sorts extensions, so it cannot settle the ORDERING question either way; that
+    // needs byte-level vectors from a real Chrome hello, which is what the wire-vectors
+    // conformance set is for. Until those exist, the verified fingerprint wins.
     extensions.extend_from_slice(&grease_last.to_be_bytes());
     extensions.extend_from_slice(&[0x00, 0x00]);
     pad_extensions(&mut extensions);
@@ -264,6 +275,13 @@ pub fn build_client_hello(
 
 /// Pad the extensions block (RFC 7685) so the ClientHello falls in Chrome's
 /// usual 512-byte handshake bucket — Chrome pads to avoid certain TLS bugs.
+///
+/// The extension is emitted UNCONDITIONALLY, even when the computed pad is zero — which
+/// with an X25519MLKEM768 key_share (~1216 bytes) it always is, since `projected` lands
+/// near 1500. That is deliberate: the fingerprint this client targets,
+/// `t13d1516h2_8daaf6152771` (asserted by `ja4_matches_chrome`), counts SIXTEEN
+/// extensions, and the sixteenth is this one. A zero-length `00 15 00 00` is what keeps
+/// the count right. (Audit 2026-07-27, E5 — proposed removal, reverted for this reason.)
 fn pad_extensions(extensions: &mut Vec<u8>) {
     // ClientHello fixed part before extensions: 4 (hs hdr) + 2 (ver) + 32 (rnd)
     // + 1 + 32 (sid) + 2 + 2 + CHROME_CIPHERS*2 (ciphers) + 2 (compression)

@@ -11,6 +11,11 @@
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, Nonce};
 
+/// RFC 8446 §5.1: a TLSPlaintext fragment may not exceed 2^14 bytes. `encrypt`
+/// fragments at this boundary; anything larger in a single record would overflow the
+/// 16-bit length field in the header.
+pub const MAX_PLAINTEXT: usize = 16384;
+
 /// The negotiated AEAD (both GCM variants share a 12-byte nonce).
 enum Gcm {
     Aes128(Box<Aes128Gcm>),
@@ -80,10 +85,40 @@ impl RecordCrypto {
         .ok()
     }
 
-    /// Encrypt one record. `content_type` is the real TLS content type (e.g. 0x16
-    /// handshake, 0x17 application_data). Returns the full record incl. 5-byte
-    /// header. Advances the sequence number.
+    /// Encrypt `plaintext` as one or more TLS records. `content_type` is the real TLS
+    /// content type (e.g. 0x16 handshake, 0x17 application_data). Returns the full
+    /// record(s) incl. their 5-byte headers. Advances the sequence number once per
+    /// record emitted.
+    ///
+    /// FRAGMENTS at `MAX_PLAINTEXT`, as RFC 8446 §5.1 requires. The previous version
+    /// emitted a single record and built its length field with `(total >> 8) as u8` —
+    /// the high bits of anything over 65535 were silently dropped, so the header
+    /// disagreed with the body and the peer's framing desynchronised. Only `stream.rs`
+    /// capped its input, so the two paths that did not (`SansIoClient::seal`, and
+    /// `qeli_realtls_seal` across the C ABI) were exposed, as was the server emitting a
+    /// borrow target's certificate chain as one flight. realtls is TCP-only, so
+    /// back-to-back records are just bytes on the stream and the reader already handles
+    /// one record at a time. (Audit 2026-07-27, F3.)
     pub fn encrypt(&mut self, content_type: u8, plaintext: &[u8]) -> Vec<u8> {
+        // The inner plaintext is `plaintext || content_type`, so each fragment may carry
+        // at most MAX_PLAINTEXT - 1 caller bytes.
+        let chunk = MAX_PLAINTEXT - 1;
+        let mut out = Vec::with_capacity(plaintext.len() + 21);
+        // `chunks` yields nothing for an empty input, but an empty record is legal and
+        // is used as a keepalive — emit exactly one in that case.
+        if plaintext.is_empty() {
+            out.extend_from_slice(&self.encrypt_one(content_type, &[]));
+            return out;
+        }
+        for part in plaintext.chunks(chunk) {
+            out.extend_from_slice(&self.encrypt_one(content_type, part));
+        }
+        out
+    }
+
+    /// Encrypt exactly one record; `plaintext.len()` must be `< MAX_PLAINTEXT`.
+    fn encrypt_one(&mut self, content_type: u8, plaintext: &[u8]) -> Vec<u8> {
+        debug_assert!(plaintext.len() < MAX_PLAINTEXT);
         let mut inner = Vec::with_capacity(plaintext.len() + 1);
         inner.extend_from_slice(plaintext);
         inner.push(content_type);

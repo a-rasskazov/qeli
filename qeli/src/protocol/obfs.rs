@@ -203,9 +203,24 @@ mod ws {
     }
 
     /// Build a randomised WebSocket Upgrade request (the client's first bytes).
-    pub fn build_request() -> Vec<u8> {
+    ///
+    /// `host` is the value for the `Host:` header. Pass the name the client actually
+    /// connected to (or the operator's configured front); `None` falls back to a random
+    /// decoy from the SNI pool, which is only appropriate when connecting to a bare IP.
+    ///
+    /// The header used to ALWAYS be a random pick from a five-entry pool of big-name
+    /// domains, sent in the clear to whatever VPS the client dialled. A passive observer
+    /// only has to compare `Host: www.cloudflare.com` against a destination address that
+    /// demonstrably does not belong to Cloudflare — one packet, no statistics. Using the
+    /// real connect hostname makes the header consistent with the destination, and the
+    /// existing `obfuscation.sni` override lets an operator pin a genuine front domain
+    /// when one is actually in front. (Audit 2026-07-27, E2.)
+    pub fn build_request(host: Option<&str>) -> Vec<u8> {
         let mut rng = rand::rng();
-        let host = DEFAULT_SNI_POOL[rng.random_range(0..DEFAULT_SNI_POOL.len())];
+        let host = match host {
+            Some(h) if !h.is_empty() => h,
+            _ => DEFAULT_SNI_POOL[rng.random_range(0..DEFAULT_SNI_POOL.len())],
+        };
         let ua = USER_AGENTS[rng.random_range(0..USER_AGENTS.len())];
 
         // Random URL path: '/' + 12..28 url-safe chars (keeps the request-line's
@@ -236,25 +251,77 @@ mod ws {
         .into_bytes()
     }
 
-    /// Build the `101 Switching Protocols` response for a received request head.
-    /// If the request carries a `Sec-WebSocket-Key`, the `Accept` is spec-correct;
-    /// otherwise a random token is used (the exchange still looks like a WS upgrade).
-    pub fn build_response(req_head: &[u8]) -> Vec<u8> {
-        let accept = match header_value(req_head, "sec-websocket-key") {
-            Some(k) => accept_token(&k),
-            None => {
-                let mut rng = rand::rng();
-                let mut r = [0u8; 20];
-                rng.fill_bytes(&mut r);
-                b64(&r)
-            }
-        };
+    /// Build the `101 Switching Protocols` response for a received request head, or
+    /// `None` when the head is not a well-formed WebSocket upgrade.
+    ///
+    /// THIS GATE IS THE POINT. The previous version answered `101` to ANYTHING that ended
+    /// in a blank line, and when `Sec-WebSocket-Key` was absent it invented a RANDOM
+    /// `Sec-WebSocket-Accept`. So `curl -i http://server:port/` — a plain GET with no
+    /// `Upgrade` header — came back as `101 Switching Protocols`, which no real HTTP or
+    /// WebSocket server on earth does. That is a single-request, zero-ambiguity signature
+    /// for an active prober, in the one mode whose entire job is to look like ordinary
+    /// web traffic; the module doc even claimed the exchange "survives a WebSocket-aware
+    /// parser". RFC 6455 §4.2.1 requires all of: a GET, `Upgrade: websocket`,
+    /// `Connection` containing `upgrade`, and a `Sec-WebSocket-Key` that is 16 bytes of
+    /// base64. Anything else must get an ordinary error, not an upgrade.
+    /// (Audit 2026-07-27, E1.)
+    pub fn build_response(req_head: &[u8]) -> Option<Vec<u8>> {
+        let text = String::from_utf8_lossy(req_head);
+        let request_line = text.split("\r\n").next().unwrap_or("");
+        if !request_line.starts_with("GET ") {
+            return None;
+        }
+        let upgrade_ok = header_value(req_head, "upgrade")
+            .map(|v| v.trim().eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false);
+        // `Connection` may be a comma-separated list (`keep-alive, Upgrade`).
+        let connection_ok = header_value(req_head, "connection")
+            .map(|v| {
+                v.split(',')
+                    .any(|t| t.trim().eq_ignore_ascii_case("upgrade"))
+            })
+            .unwrap_or(false);
+        if !upgrade_ok || !connection_ok {
+            return None;
+        }
+        let ws_key = header_value(req_head, "sec-websocket-key")?;
+        // RFC 6455: the key is exactly 16 random bytes, base64-encoded.
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(ws_key.trim())
+            .ok()?;
+        if decoded.len() != 16 {
+            return None;
+        }
+        Some(
+            format!(
+                "HTTP/1.1 101 Switching Protocols\r\n\
+                 Upgrade: websocket\r\n\
+                 Connection: Upgrade\r\n\
+                 Sec-WebSocket-Accept: {}\r\n\
+                 \r\n",
+                accept_token(ws_key.trim())
+            )
+            .into_bytes(),
+        )
+    }
+
+    /// An unremarkable `400 Bad Request` for a head that is not a WebSocket upgrade.
+    ///
+    /// Deliberately dull and complete (status line, Server, Content-Type, Content-Length,
+    /// `Connection: close`, a short body) so a prober sees a boring web server rather than
+    /// either an upgrade it did not ask for or a silently dropped connection — both of
+    /// which are themselves distinguishing.
+    pub fn build_reject() -> Vec<u8> {
+        const BODY: &str = "<html><head><title>400 Bad Request</title></head>\
+                            <body><h1>400 Bad Request</h1></body></html>";
         format!(
-            "HTTP/1.1 101 Switching Protocols\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Accept: {accept}\r\n\
-             \r\n"
+            "HTTP/1.1 400 Bad Request\r\n\
+             Server: nginx\r\n\
+             Content-Type: text/html\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n{BODY}",
+            BODY.len()
         )
         .into_bytes()
     }
@@ -329,6 +396,33 @@ fn ws_frame_header(len: usize, mask: Option<[u8; 4]>) -> Vec<u8> {
 /// Wrap already-ciphered bytes into one or more WS binary frames, chunking the
 /// payload into `<= WS_FRAME_MAX` slices. When `masked`, each frame gets a fresh
 /// random 4-byte mask and the payload is `cipherbyte[i] ^ mask[i % 4]`.
+/// Control frames owed to the peer, shared between the read half (which detects the
+/// Ping/Close) and the write half (which is the only side able to send). See
+/// `WsReframer::control_out`. (Audit 2026-07-27, E3.)
+type ControlQueue = std::sync::Arc<std::sync::Mutex<Vec<(u8, Vec<u8>)>>>;
+
+/// Encode ONE control frame (FIN set, opcode `op`, payload verbatim). Control frames
+/// are never fragmented and carry at most 125 bytes (RFC 6455 §5.5), so the extended
+/// length forms `ws_frame_header` handles are never needed here.
+fn ws_encode_control(op: u8, payload: &[u8], masked: bool) -> Vec<u8> {
+    let payload = &payload[..payload.len().min(125)];
+    let mut out = Vec::with_capacity(payload.len() + 6);
+    out.push(0x80 | (op & 0x0f));
+    if masked {
+        let mut mask = [0u8; 4];
+        rand::rng().fill_bytes(&mut mask);
+        out.push(0x80 | payload.len() as u8);
+        out.extend_from_slice(&mask);
+        for (i, &b) in payload.iter().enumerate() {
+            out.push(b ^ mask[i % 4]);
+        }
+    } else {
+        out.push(payload.len() as u8);
+        out.extend_from_slice(payload);
+    }
+    out
+}
+
 fn ws_encode_frames(cipher_bytes: &[u8], masked: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(cipher_bytes.len() + 14);
     if cipher_bytes.is_empty() {
@@ -365,6 +459,20 @@ struct WsReframer {
     pending: Vec<u8>,
     /// Read cursor into `pending` (bytes before it were already returned).
     pending_off: usize,
+    /// Control frames owed to the peer as `(opcode, payload)`, emitted by the write path.
+    ///
+    /// RFC 6455 §5.5.2 requires a `Pong` in response to every `Ping`, and §5.5.1 requires
+    /// a `Close` to be answered with a `Close`. This reframer used to consume and discard
+    /// every non-binary opcode, so a WebSocket-aware middlebox or an active prober that
+    /// sent a Ping got silence — a plain giveaway from an endpoint whose whole purpose is
+    /// to pass for a WebSocket, and grounds for a proxy to tear the session down. The
+    /// reply is queued rather than sent inline because the parser runs on the READ path,
+    /// which holds no writer; the write path drains this before its own data, and the
+    /// tunnel writes continuously (heartbeat / cover traffic), so the delay is bounded.
+    /// (Audit 2026-07-27, E3.)
+    control_out: ControlQueue,
+    /// Set once a `Close` has been seen and answered, so it is answered only once.
+    close_echoed: bool,
 }
 
 impl WsReframer {
@@ -402,7 +510,18 @@ impl WsReframer {
             let mut a = [0u8; 8];
             a.copy_from_slice(&self.buf[off..off + 8]);
             off += 8;
-            u64::from_be_bytes(a) as usize
+            // Compare in u64 BEFORE narrowing. `as usize` truncates on the 32-bit targets
+            // this project ships (mipsel / armv7 routers), so a declared length of
+            // 0x0000_0001_0000_0400 became 0x400 there: the cap check below passed, the
+            // parser consumed 1024 bytes as payload and desynchronised the stream instead
+            // of erroring — while the same frame was correctly rejected on 64-bit. The WS
+            // header travels in the clear over ChaCha20, so an on-path party can craft it.
+            // (Audit 2026-07-27, F4.)
+            let declared = u64::from_be_bytes(a);
+            if declared > WS_FRAME_MAX as u64 {
+                return Err(io::Error::other("obfs ws: frame payload exceeds cap"));
+            }
+            declared as usize
         } else {
             len7
         };
@@ -420,12 +539,28 @@ impl WsReframer {
         if self.buf.len() < off + payload_len {
             return Ok(FrameParse::NeedMore); // full payload not yet buffered
         }
-        // opcode 0x2 = binary (deliver); 0x0 continuation (deliver); others skip.
+        // opcode 0x2 = binary (deliver); 0x0 continuation (deliver); others are control.
         let deliver = opcode == 0x2 || opcode == 0x0;
         if deliver {
             for (i, &b) in self.buf[off..off + payload_len].iter().enumerate() {
                 let plain = if masked { b ^ mask[i % 4] } else { b };
                 self.pending.push(plain);
+            }
+        } else if opcode == 0x9 || opcode == 0x8 {
+            // Ping -> Pong (echo the payload), Close -> Close (echo the status code).
+            // Both are answered exactly as RFC 6455 §5.5 requires; see `control_out`.
+            let payload: Vec<u8> = self.buf[off..off + payload_len]
+                .iter()
+                .enumerate()
+                .map(|(i, &b)| if masked { b ^ mask[i % 4] } else { b })
+                .collect();
+            if let Ok(mut q) = self.control_out.lock() {
+                if opcode == 0x9 {
+                    q.push((0xA, payload));
+                } else if !self.close_echoed {
+                    self.close_echoed = true;
+                    q.push((0x8, payload));
+                }
             }
         }
         self.buf.drain(..off + payload_len);
@@ -819,13 +954,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ObfsStream<S> {
     /// TCP connect when `fronting=false`) and before the nonce exchange. Both ends
     /// MUST be configured with the same `jc`.
     pub async fn connect(
-        mut inner: S,
+        inner: S,
         key: &[u8; 32],
         fronting: bool,
         awg: AwgParams,
     ) -> io::Result<Self> {
+        Self::connect_with_host(inner, key, fronting, awg, None).await
+    }
+
+    /// As [`connect`], but sets the WebSocket `Host:` header explicitly.
+    ///
+    /// Separate entry point so the seven existing test call sites keep working unchanged;
+    /// the real client passes the connect hostname here. See `ws::build_request`.
+    /// (Audit 2026-07-27, E2.)
+    ///
+    /// [`connect`]: ObfsStream::connect
+    pub async fn connect_with_host(
+        mut inner: S,
+        key: &[u8; 32],
+        fronting: bool,
+        awg: AwgParams,
+        host: Option<&str>,
+    ) -> io::Result<Self> {
         if fronting {
-            inner.write_all(&ws::build_request()).await?;
+            inner.write_all(&ws::build_request(host)).await?;
             inner.flush().await?;
             let head = ws::read_head(&mut inner).await?;
             if !head.starts_with(b"HTTP/1.1 101") {
@@ -907,8 +1059,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ObfsStream<S> {
     ) -> io::Result<Self> {
         if fronting {
             let head = ws::read_head(&mut inner).await?;
-            inner.write_all(&ws::build_response(&head)).await?;
-            inner.flush().await?;
+            match ws::build_response(&head) {
+                Some(resp) => {
+                    inner.write_all(&resp).await?;
+                    inner.flush().await?;
+                }
+                None => {
+                    // Not a WebSocket upgrade: answer like an ordinary web server and
+                    // close, instead of handing out a `101` that identifies us outright.
+                    // (Audit 2026-07-27, E1.)
+                    let _ = inner.write_all(&ws::build_reject()).await;
+                    let _ = inner.flush().await;
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "obfs ws: not a WebSocket upgrade request",
+                    ));
+                }
+            }
         }
         let jc = awg.effective_jc();
         let (jmin, jmax) = awg.clamp_window();
@@ -955,18 +1122,24 @@ impl ObfsStream<TcpStream> {
         // Partition the single WS state into read-side (reframer) and write-side
         // (mask + outbound buffer). Present only on the ws-fronting path.
         let (ws_read, ws_write) = match self.ws {
-            Some(st) => (
-                Some(WsReadState {
-                    reframer: st.reframer,
-                    read_scratch: st.read_scratch,
-                }),
-                Some(WsWriteState {
-                    masked: st.masked,
-                    out_buf: st.out_buf,
-                    out_off: st.out_off,
-                    pending_plain: st.pending_plain,
-                }),
-            ),
+            Some(st) => {
+                // Clone the handle BEFORE the reframer moves into the read half, so both
+                // sides keep pointing at the same queue. (E3)
+                let control_q = st.reframer.control_out.clone();
+                (
+                    Some(WsReadState {
+                        reframer: st.reframer,
+                        read_scratch: st.read_scratch,
+                    }),
+                    Some(WsWriteState {
+                        masked: st.masked,
+                        out_buf: st.out_buf,
+                        out_off: st.out_off,
+                        pending_plain: st.pending_plain,
+                        control_out: control_q,
+                    }),
+                )
+            }
             None => (None, None),
         };
         (
@@ -1080,6 +1253,8 @@ struct WsWriteState {
     out_buf: Vec<u8>,
     out_off: usize,
     pending_plain: usize,
+    /// Shared with the read half — see `WsReframer::control_out`.
+    control_out: ControlQueue,
 }
 
 /// WS-framed read (F3): decode complete binary frames buffered in the reframer,
@@ -1136,6 +1311,30 @@ fn ws_write<W: AsyncWrite + Unpin>(
     // If nothing is buffered from a previous call, cipher+frame the new plaintext
     // (commit the keystream advance exactly once). If a batch is still buffered, we
     // drain it and ignore `buf` this call (the caller retries with it next poll).
+    // Owed control frames go out FIRST, ahead of any tunnel data. They are queued by the
+    // read half (which cannot write) when the peer sends a Ping or a Close; emitting them
+    // here is what makes this endpoint answer like a real WebSocket instead of ignoring
+    // control frames outright. They carry no ChaCha20 keystream — a control frame is
+    // protocol scaffolding, not tunnel payload, so mixing it into the cipher would
+    // desynchronise the peer's stream. (Audit 2026-07-27, E3.)
+    if ws.out_off >= ws.out_buf.len() {
+        let owed: Vec<(u8, Vec<u8>)> = ws
+            .control_out
+            .lock()
+            .map(|mut q| std::mem::take(&mut *q))
+            .unwrap_or_default();
+        if !owed.is_empty() {
+            let mut frames = Vec::new();
+            for (op, payload) in owed {
+                frames.extend_from_slice(&ws_encode_control(op, &payload, ws.masked));
+            }
+            ws.out_buf = frames;
+            ws.out_off = 0;
+            // No plaintext was consumed, so report zero bytes accepted; the caller
+            // retries with its data on the next poll.
+            ws.pending_plain = 0;
+        }
+    }
     if ws.out_off >= ws.out_buf.len() {
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
@@ -1211,6 +1410,8 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ObfsStream<S> {
                     out_buf: std::mem::take(&mut st.out_buf),
                     out_off: st.out_off,
                     pending_plain: st.pending_plain,
+                    // Unsplit stream: the reframer this half owns IS the read side. (E3)
+                    control_out: st.reframer.control_out.clone(),
                 };
                 let r = ws_write(&mut this.inner, &mut this.write_cipher, &mut ws, cx, buf);
                 st.out_buf = ws.out_buf;
@@ -1378,6 +1579,107 @@ mod tests {
         );
     }
 
+    /// An active prober must NOT be able to elicit `101 Switching Protocols`.
+    ///
+    /// The old server answered 101 to anything ending in a blank line and invented a
+    /// random `Sec-WebSocket-Accept` when the key was missing — a one-request signature
+    /// no real server produces. (Audit 2026-07-27, E1.)
+    #[test]
+    fn ws_upgrade_is_refused_unless_well_formed() {
+        let bad: &[&[u8]] = &[
+            // A plain GET, i.e. `curl -i http://server:port/`.
+            b"GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+            // Upgrade without Connection.
+            b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n",
+            // Connection without Upgrade.
+            b"GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n",
+            // Everything but the key.
+            b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            // A key that is not 16 bytes of base64.
+            b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: c2hvcnQ=\r\n\r\n",
+            // Not a GET.
+            b"POST / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n",
+        ];
+        for head in bad {
+            assert!(
+                ws::build_response(head).is_none(),
+                "must refuse: {}",
+                String::from_utf8_lossy(&head[..head.len().min(40)])
+            );
+        }
+        // The reject body must look like an ordinary web server, not an upgrade.
+        let rej = ws::build_reject();
+        let text = String::from_utf8_lossy(&rej);
+        assert!(text.starts_with("HTTP/1.1 400 "));
+        assert!(!text.contains("101"));
+        assert!(!text.to_ascii_lowercase().contains("upgrade:"));
+
+        // A genuine client request from build_request must still be accepted, and the
+        // Accept token must be the spec value for its key (not a random one).
+        let req = ws::build_request(Some("example.com"));
+        let resp = ws::build_response(&req).expect("a real upgrade must be accepted");
+        let resp_text = String::from_utf8_lossy(&resp);
+        assert!(resp_text.starts_with("HTTP/1.1 101 "));
+        let req_text = String::from_utf8_lossy(&req);
+        let key = req_text
+            .split("\r\n")
+            .find_map(|l| l.strip_prefix("Sec-WebSocket-Key: "))
+            .expect("request carries a key");
+        assert!(resp_text.contains(&ws::accept_token(key)));
+    }
+
+    /// The `Host:` header must name the connect target, not an unrelated CDN.
+    /// (Audit 2026-07-27, E2.)
+    #[test]
+    fn ws_host_header_follows_the_connect_hostname() {
+        let req = String::from_utf8(ws::build_request(Some("vpn.example.com"))).unwrap();
+        assert!(
+            req.contains("\r\nHost: vpn.example.com\r\n"),
+            "explicit host must be used verbatim:\n{req}"
+        );
+        // With no host (bare-IP server) it still has to produce SOME plausible Host.
+        let fallback = String::from_utf8(ws::build_request(None)).unwrap();
+        assert!(fallback.contains("\r\nHost: "));
+    }
+
+    /// A `Ping` must be answered with a `Pong` carrying the same payload, and a `Close`
+    /// with a `Close` — the reframer used to swallow both. (Audit 2026-07-27, E3.)
+    #[test]
+    fn ws_control_frames_are_answered() {
+        let mut rf = WsReframer::default();
+        // Server-side view: a client frame is masked.
+        let payload = b"keepalive-42";
+        let mut ping = vec![0x89u8, 0x80 | payload.len() as u8];
+        let mask = [0x11u8, 0x22, 0x33, 0x44];
+        ping.extend_from_slice(&mask);
+        for (i, &b) in payload.iter().enumerate() {
+            ping.push(b ^ mask[i % 4]);
+        }
+        rf.feed(&ping);
+        rf.drain_frames().expect("control frame parses");
+
+        let owed = std::mem::take(&mut *rf.control_out.lock().unwrap());
+        assert_eq!(owed.len(), 1, "a Ping must queue exactly one reply");
+        assert_eq!(owed[0].0, 0xA, "reply opcode must be Pong");
+        assert_eq!(owed[0].1, payload, "Pong must echo the Ping payload");
+
+        // The encoded server->client Pong is unmasked, FIN set, opcode 0xA.
+        let frame = ws_encode_control(owed[0].0, &owed[0].1, false);
+        assert_eq!(frame[0], 0x8A);
+        assert_eq!(frame[1] as usize, payload.len());
+        assert_eq!(&frame[2..], payload);
+
+        // A Close is echoed once, and only once.
+        let mut rf2 = WsReframer::default();
+        let close = [0x88u8, 0x02, 0x03, 0xE8]; // status 1000
+        rf2.feed(&close);
+        rf2.feed(&close);
+        rf2.drain_frames().unwrap();
+        let owed2 = std::mem::take(&mut *rf2.control_out.lock().unwrap());
+        assert_eq!(owed2.len(), 1, "Close must be answered exactly once");
+        assert_eq!(owed2[0].0, 0x8);
+    }
+
     /// The client's first bytes (the WS Upgrade request) must satisfy at least one
     /// GFW "fully encrypted traffic" exemption so the connection is not dropped.
     /// We assert all three of the printable-based exemptions hold.
@@ -1385,7 +1687,13 @@ mod tests {
     fn ws_request_passes_fet_exemptions() {
         let printable = |b: u8| (0x20..=0x7e).contains(&b);
         for _ in 0..64 {
-            let req = ws::build_request();
+            // Both host sources must satisfy the exemptions: an explicit connect
+            // hostname and the decoy fallback used for a bare-IP server. (E2)
+            let req = if rand::random::<bool>() {
+                ws::build_request(Some("vpn.example.com"))
+            } else {
+                ws::build_request(None)
+            };
             // Ex2: first 6 bytes printable ("GET /x").
             assert!(
                 req[..6].iter().all(|&b| printable(b)),
