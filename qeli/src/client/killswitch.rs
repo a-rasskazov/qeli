@@ -392,7 +392,71 @@ pub fn refresh_server_ips(server_addr: &str, server_port: u16, tun_if: &str) {
             let _ = ipt(&path, &add);
             log::info!("kill-switch: allowed new server IP {canon} (address rotated)");
         }
+
+        // Now withdraw allowances for addresses the server NO LONGER resolves to.
+        //
+        // Add-only was deliberate ("no leak window"), and the ordering above preserves
+        // that: new addresses are inserted BEFORE anything is removed, so there is never
+        // a moment where the current server is unreachable. What add-only also did was
+        // accumulate — a DDNS or round-robin name on a long-lived client with a flapping
+        // link collected every address it had ever seen, each an ACCEPT straight past the
+        // tunnel. Those hosts are not ours any more, and with cloud addressing one of them
+        // may now belong to somebody else entirely; the chain also grew linearly, and it
+        // is consulted per packet. (Audit 2026-07-27, R3.)
+        let current: Vec<String> = ips
+            .iter()
+            .filter_map(|ip| match ip.parse::<IpAddr>() {
+                Ok(p) if p.is_ipv6() == want_v6 => Some(p.to_string()),
+                _ => None,
+            })
+            .collect();
+        if current.is_empty() {
+            // Resolution produced nothing for this family — keep what is there rather
+            // than stripping the client's only path to the server.
+            continue;
+        }
+        for stale in live_server_allows(&path, &chain) {
+            if current.iter().any(|c| c == &stale) {
+                continue;
+            }
+            let rule = ["-d", stale.as_str(), "-j", "ACCEPT"];
+            let mut del: Vec<&str> = vec!["-D", chain.as_str()];
+            del.extend_from_slice(&rule);
+            let _ = ipt(&path, &del);
+            log::info!("kill-switch: withdrew stale server IP {stale} (no longer resolves)");
+        }
     }
+}
+
+/// Destination addresses currently allowed by plain `-d <ip> -j ACCEPT` rules in `chain`.
+///
+/// Deliberately narrow: it matches only the shape `refresh_server_ips` and `engage` use
+/// for server addresses, so the loopback / tun / DHCP / DNS allowances — which have
+/// interface or port matchers — are never returned and can never be withdrawn.
+fn live_server_allows(path: &str, chain: &str) -> Vec<String> {
+    let Ok(out) = std::process::Command::new(path)
+        .args(["-S", chain])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let t: Vec<&str> = line.split_whitespace().collect();
+            // `-A <chain> -d <cidr> -j ACCEPT` and nothing else.
+            if t.len() == 6 && t[0] == "-A" && t[2] == "-d" && t[4] == "-j" && t[5] == "ACCEPT" {
+                // iptables -S prints a /32 (or /128) suffix; strip it back to a bare IP.
+                let addr = t[3].split('/').next().unwrap_or(t[3]);
+                addr.parse::<IpAddr>().ok().map(|p| p.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Remove the kill-switch chain on both families. Called only on a CLEAN stop.

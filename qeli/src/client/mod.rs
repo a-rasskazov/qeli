@@ -173,7 +173,9 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
             if gw_on { " + clearing gateway-NAT" } else { "" },
             if exit_on { " + clearing exit-node" } else { "" }
         );
-        dns::restore_dns();
+        // Name our own interface so a sibling client's resolvectl config is not
+        // reverted along with ours. (Audit 2026-07-27, R7.)
+        dns::restore_dns_for(&sig_tun);
         if ks_on {
             killswitch::disengage(&sig_tun);
         }
@@ -437,7 +439,21 @@ async fn connect_obfs(
             jmin: config.obfuscation.awg.jmin,
             jmax: config.obfuscation.awg.jmax,
         };
-        anyhow::Ok(crate::protocol::obfs::ObfsStream::connect(stream, &key, fronting, awg).await?)
+        // Same precedence as the fake-TLS SNI: an explicit `obfuscation.sni` wins, else
+        // the connect hostname, else `None` (a random decoy) when dialling a bare IP —
+        // so the cleartext `Host:` header agrees with where the packets are actually
+        // going instead of naming an unrelated CDN. (Audit 2026-07-27, E2.)
+        let ws_host: Option<&str> = match config.obfuscation.sni.as_deref() {
+            Some(s) if !s.is_empty() => Some(s),
+            _ if config.server.address.parse::<std::net::IpAddr>().is_ok() => None,
+            _ => Some(config.server.address.as_str()),
+        };
+        anyhow::Ok(
+            crate::protocol::obfs::ObfsStream::connect_with_host(
+                stream, &key, fronting, awg, ws_host,
+            )
+            .await?,
+        )
     })
     .await
     {
@@ -871,13 +887,26 @@ where
                         // socket write side still looks alive) so this writer exits too.
                         if stream_dead.load(Ordering::Relaxed) { break; }
                         let now = base.elapsed().as_millis() as u64;
-                        // rx-liveness reaping applies whether the peer keeps the link
-                        // alive via heartbeat OR shaping cover (both yield inbound).
-                        if heartbeat_enabled || shaping_on {
-                            let rx_dead = hb_ms.saturating_mul(3).max(30_000);
-                            if now.saturating_sub(last_rx.load(Ordering::Relaxed)) > rx_dead {
-                                break;
-                            }
+                        // rx-liveness reaping is ALWAYS on. It used to be gated on
+                        // `heartbeat_enabled || shaping_on`, which left a server-pushed
+                        // `heartbeat.enabled = false` with shaping off relying solely on the
+                        // TX-side idle timer below — and that one is reset by every packet
+                        // the client sends. So when the server vanished (restart, NAT
+                        // rebinding) while the TCP socket still accepted writes, nothing
+                        // noticed: no reconnect until the kernel's retransmit timeout gave
+                        // up, on the order of fifteen minutes. The threshold still follows
+                        // the heartbeat interval where there is one; without inbound cover
+                        // the floor is what matters, and 30 s of complete silence on a live
+                        // tunnel already means the peer is gone. (Audit 2026-07-27, R2.)
+                        let rx_dead = if heartbeat_enabled || shaping_on {
+                            hb_ms.saturating_mul(3).max(30_000)
+                        } else {
+                            // No inbound keepalive to pace against: use a fixed, generous
+                            // window so an idle-but-healthy link is never reaped.
+                            120_000
+                        };
+                        if now.saturating_sub(last_rx.load(Ordering::Relaxed)) > rx_dead {
+                            break;
                         }
                         if idle_ms > 0 && now.saturating_sub(last_tx_ms) > idle_ms { break; }
                     }
@@ -2009,9 +2038,37 @@ fn parse_auth_ok(response_str: &str) -> anyhow::Result<AuthOk> {
         .ok_or_else(|| anyhow::anyhow!("auth failed: {}", response_str))?;
     let v: serde_json::Value =
         serde_json::from_str(json).map_err(|e| anyhow::anyhow!("malformed auth OK json: {}", e))?;
+    // Validate BOTH addresses as IPv4 before anything downstream uses them.
+    //
+    // These were the last server-pushed fields taken on trust: `client_ip` was only
+    // checked for emptiness and `server_ip` not at all, while pushed DNS, CIDRs and
+    // gateways all go through parsers whose comments state that a hostile server must not
+    // be able to smuggle anything through. `client_ip` reaches `ip addr add <v>/<prefix>
+    // dev <tun>` and `server_ip` becomes the main gateway in `route::setup_routes`. Argv
+    // passing already prevents classic shell injection, so the damage was a confusing
+    // failure rather than an exploit: `ip route add` rejected the value, both halves of
+    // the full-tunnel default route failed, and the client looped through reconnects with
+    // no usable explanation. Reject it here, where the message names the field.
+    // (Audit 2026-07-27, C5.)
     let client_ip = v["client_ip"].as_str().unwrap_or("").to_string();
     if client_ip.is_empty() {
         return Err(anyhow::anyhow!("auth OK missing client_ip"));
+    }
+    if client_ip.parse::<std::net::Ipv4Addr>().is_err() {
+        return Err(anyhow::anyhow!(
+            "auth OK client_ip {:?} is not a valid IPv4 address — refusing to configure \
+             the tunnel with it",
+            client_ip
+        ));
+    }
+    let server_ip = v["server_ip"].as_str().unwrap_or("").to_string();
+    // Empty stays allowed: an older server omits it and the client falls back.
+    if !server_ip.is_empty() && server_ip.parse::<std::net::Ipv4Addr>().is_err() {
+        return Err(anyhow::anyhow!(
+            "auth OK server_ip {:?} is not a valid IPv4 address — refusing to install \
+             routes through it",
+            server_ip
+        ));
     }
     let dns_port = match &v["dns_port"] {
         serde_json::Value::Number(n) => n.to_string(),
@@ -2027,12 +2084,12 @@ fn parse_auth_ok(response_str: &str) -> anyhow::Result<AuthOk> {
     // Server-pushed TUN MTU; 0/absent => server did not push one.
     let mtu: i32 = v["mtu"]
         .as_i64()
-        .filter(|m| (576..=9000).contains(m))
+        .filter(|m| crate::config::server::mtu_in_range(*m))
         .map(|m| m as i32)
         .unwrap_or(0);
     Ok(AuthOk {
         client_ip,
-        server_ip: v["server_ip"].as_str().unwrap_or("").to_string(),
+        server_ip,
         prefix,
         mtu,
         dns_ip: v["dns"].as_str().unwrap_or("").to_string(),
@@ -2127,7 +2184,7 @@ impl Drop for TunGuard {
         // here directly, because the reader/writer threads may still be inside a
         // read/write on them and a closed number can be reused by another thread.
         self.stop.store(true, Ordering::Relaxed);
-        dns::restore_dns();
+        dns::restore_dns_for(&self.if_name); // R7: only this instance's link
         if self.owns_device {
             TunInterface::delete(&self.if_name).ok();
             route::cleanup_routes(&self.if_name, &self.server_addr, &self.exclude).ok();
@@ -2599,6 +2656,13 @@ fn setup_tunnel(
         TunInterface::set_up(&if_name, mtu)?;
         log::info!("{} {} is up (IP: {})", dev_label, if_name, client_ip);
     }
+    // NOW that the interface exists, apply the per-interface sysctl the gateway-NAT /
+    // exit-node paths need. They run before the connect loop, so their own attempt at
+    // this happened while /proc/sys/net/ipv4/conf/<tun>/ did not exist yet and silently
+    // did nothing. (Audit 2026-07-27, R1.)
+    if config.routing.gateway_nat || config.routing.forward || config.routing.exit_node {
+        crate::client::gateway::apply_tun_rp_filter(&if_name);
+    }
     tun.set_nonblocking()?;
 
     // Own the dups through the rest of this function. They used to be bare `i32`s, and
@@ -2625,7 +2689,23 @@ fn setup_tunnel(
 
     // Attach mode: routing belongs to the interface owner — don't install our own.
     if !attach {
-        route::setup_routes(&config.routing, server_ip, &if_name, &pin_target(config))?;
+        // Roll back on failure. `setup_routes` journals each route into `CREATED_ROUTES`
+        // as it installs it and can still bail afterwards — on the `include` overlap
+        // check, or on the FIB verification of the two default halves. `TunGuard`, the
+        // only thing that calls `cleanup_routes` on an error path, is constructed by the
+        // CALLER after `setup_tunnel` returns, so a failure here propagated with the
+        // journal full and nothing to drain it: the process exited leaving the server
+        // bypass route and, in full-tunnel, the IPv6 blackholes (`::/1`, `8000::/1`) on
+        // the host. No VPN, and no IPv6 either, fixable only by hand.
+        // (Audit 2026-07-27, B1.)
+        if let Err(e) =
+            route::setup_routes(&config.routing, server_ip, &if_name, &pin_target(config))
+        {
+            if let Err(ce) = route::cleanup_routes(&if_name, server_ip, &config.routing.exclude) {
+                log::warn!("route rollback after a failed setup also failed: {ce}");
+            }
+            return Err(e);
+        }
     }
     // On a full-tunnel host with dns=off, all traffic is routed through the tunnel but the
     // system resolver is left untouched — on a normal host (unlike a router with its own
@@ -2761,7 +2841,16 @@ async fn connect_and_run_udp(
             let send_data = if quic_enabled {
                 let pn = quic_pn;
                 quic_pn += 1;
-                wrap_quic_long(&junk, &connection_id, pn, 0x02)
+                // 0x00 = Initial, not 0x02 = Handshake. `wrap_quic_long` always writes a
+                // Token Length field, which ONLY an Initial has (RFC 9000 §17.2.2): a
+                // QUIC-aware middlebox reading a Handshake packet expects the Length varint
+                // right after the SCID, hit the stray zero byte, read Length = 0 and dropped
+                // the datagram as malformed. The sequence was impossible anyway — a
+                // Handshake packet cannot precede any Initial. The server's classifier
+                // (`looks_like_quic_initial`) checks only the long-header bit and the
+                // version, so this is compatible with older peers in both directions.
+                // (Audit 2026-07-27, E4.)
+                wrap_quic_long(&junk, &connection_id, pn, 0x00)
             } else {
                 junk
             };
@@ -2801,7 +2890,8 @@ async fn connect_and_run_udp(
             let send_data = if quic_enabled {
                 let pn = quic_pn;
                 quic_pn += 1;
-                wrap_quic_long(frag, &connection_id, pn, 0x02)
+                // Initial — see the note on the junk path above. (Audit 2026-07-27, E4.)
+                wrap_quic_long(frag, &connection_id, pn, 0x00)
             } else {
                 frag.clone()
             };
@@ -3788,6 +3878,46 @@ mod obf_push_tests {
         assert!(parse_auth_ok("ERR: bad credentials").is_err()); // not an OK frame
         assert!(parse_auth_ok("OK:not json").is_err()); // malformed JSON
         assert!(parse_auth_ok(r#"OK:{"server_ip":"x"}"#).is_err()); // missing client_ip
+    }
+
+    /// The two addresses must be parsed as IPv4, not merely non-empty.
+    ///
+    /// They were the last fields the client took from the server on trust, while every
+    /// other pushed value (DNS, CIDRs, gateways) is validated. `client_ip` is handed to
+    /// `ip addr add` and `server_ip` becomes the default-route gateway.
+    /// (Audit 2026-07-27, C5.)
+    #[test]
+    fn parse_auth_ok_validates_pushed_addresses() {
+        // Non-address client_ip.
+        for bad in [
+            "not-an-ip",
+            "-1.2.3.4",
+            "10.0.0.1 metric 0",
+            "1.2.3.4/24",
+            "::1",
+        ] {
+            let msg = format!(r#"OK:{{"client_ip":"{bad}","server_ip":"10.0.0.1"}}"#);
+            assert!(
+                parse_auth_ok(&msg).is_err(),
+                "client_ip {bad:?} must be rejected"
+            );
+        }
+        // Non-address server_ip.
+        for bad in ["-6", "10.0.0.1 via x", "gateway"] {
+            let msg = format!(r#"OK:{{"client_ip":"10.9.0.2","server_ip":"{bad}"}}"#);
+            assert!(
+                parse_auth_ok(&msg).is_err(),
+                "server_ip {bad:?} must be rejected"
+            );
+        }
+        // An ABSENT server_ip stays acceptable — an older server omits it.
+        let ok = parse_auth_ok(r#"OK:{"client_ip":"10.9.0.2"}"#).expect("absent server_ip is ok");
+        assert_eq!(ok.client_ip, "10.9.0.2");
+        assert_eq!(ok.server_ip, "");
+        // And the well-formed pair still parses.
+        let ok = parse_auth_ok(r#"OK:{"client_ip":"10.9.0.2","server_ip":"10.9.0.1"}"#)
+            .expect("valid pair parses");
+        assert_eq!(ok.server_ip, "10.9.0.1");
     }
 
     #[test]

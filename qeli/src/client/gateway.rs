@@ -88,9 +88,42 @@ const EXIT_MARK: &str = "0x51/0x51";
 /// it added even if the default route changed meanwhile (a re-detect could differ).
 static EXIT_WAN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// Detect the WAN (default-route) interface via `ip route get 1.1.1.1`. `None` if there
-/// is no default route — an exit node with no internet path has nothing to share.
+/// Extract the token following `dev` in an `ip route` line.
+fn dev_token(s: &str) -> Option<String> {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    toks.iter()
+        .position(|&t| t == "dev")
+        .and_then(|i| toks.get(i + 1))
+        .map(|s| s.to_string())
+}
+
+/// Detect the WAN (default-route) interface. `None` if there is no default route — an
+/// exit node with no internet path has nothing to share.
+///
+/// Asks the ROUTING TABLE for the default route first, and only falls back to probing a
+/// well-known address. The probe alone was wrong on any host that routes that specific
+/// address differently — a Pi-hole or corporate resolver at 1.1.1.1 reached over a
+/// management interface, or a blackhole entry for it. `MASQUERADE` and the `MARK` rule
+/// were then installed on the WRONG interface: tunnel traffic left with a private source
+/// address, the return path was a black hole, and the log still said "Exit-node engaged".
+/// (Audit 2026-07-27, R4.)
 fn detect_wan() -> Option<String> {
+    // 1. The default route itself. `ip route show default` prints e.g.
+    //    "default via 10.0.0.1 dev eth0 proto dhcp metric 100"; with several defaults the
+    //    first line is the lowest-metric one, which is what the kernel would pick.
+    if let Ok(out) = std::process::Command::new("ip")
+        .args(["route", "show", "default"])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            if let Some(dev) = s.lines().find_map(dev_token) {
+                return Some(dev);
+            }
+        }
+    }
+    // 2. Fallback: ask the kernel which interface it would use for a public address.
+    //    Kept because it also resolves policy-routing setups that `show default` misses.
     let out = std::process::Command::new("ip")
         .args(["route", "get", "1.1.1.1"])
         .output()
@@ -99,12 +132,7 @@ fn detect_wan() -> Option<String> {
         return None;
     }
     // "1.1.1.1 via 10.0.0.1 dev eth0 src ..." — the token after "dev".
-    let s = String::from_utf8_lossy(&out.stdout);
-    let toks: Vec<&str> = s.split_whitespace().collect();
-    toks.iter()
-        .position(|&t| t == "dev")
-        .and_then(|i| toks.get(i + 1))
-        .map(|s| s.to_string())
+    dev_token(&String::from_utf8_lossy(&out.stdout))
 }
 
 fn exit_mark_rule<'a>(tun_if: &'a str, wan_if: &'a str) -> Vec<&'a str> {
@@ -201,6 +229,31 @@ fn exit_mss(tun_if: &str) -> Vec<&str> {
 /// MASQUERADE of tun-forwarded traffic out the WAN, a FORWARD accept both ways, and an
 /// MSS-clamp. Idempotent; installs by interface name so it survives reconnects (rules
 /// stay while the tun is recreated), and is removed on a clean stop by [`disengage_exit`].
+/// Relax `rp_filter` on the tunnel interface, once it EXISTS.
+///
+/// `engage` / `engage_exit` run before the connect loop, i.e. before `setup_tunnel` has
+/// created the TUN — so their per-interface write to
+/// `/proc/sys/net/ipv4/conf/<tun>/rp_filter` hit a path that did not exist yet,
+/// `remember_prior` bailed on the read, the write failed and `set_sysctl` returned false
+/// into a discarded result. The knob was therefore NEVER applied, and neither function is
+/// replayed (they are documented as staying up across reconnects).
+///
+/// That matters because the kernel evaluates reverse-path filtering as
+/// `max(conf/all, conf/<incoming-iface>)`: setting `conf/all` to 0 does not help while
+/// the tun inherits `conf/default` = 1, which is the norm on many distributions. Strict
+/// RPF on the tun then drops exactly the asymmetric paths gateway-NAT and exit-node
+/// exist to carry, while the log cheerfully reported the feature engaged.
+///
+/// Called from `setup_tunnel` after the interface is up, on every connect.
+/// (Audit 2026-07-27, R1.)
+pub fn apply_tun_rp_filter(tun_if: &str) {
+    if !set_sysctl(&format!("/proc/sys/net/ipv4/conf/{tun_if}/rp_filter"), "0") {
+        log::warn!(
+            "could not relax rp_filter on {tun_if} — asymmetric paths (gateway-NAT /              exit-node) may be dropped by reverse-path filtering"
+        );
+    }
+}
+
 pub fn engage_exit(tun_if: &str) -> anyhow::Result<()> {
     if !valid_ifname(tun_if) {
         anyhow::bail!("exit-node: invalid TUN interface name {tun_if:?}");

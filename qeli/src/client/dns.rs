@@ -28,7 +28,23 @@ const STATE_DIR: &str = "/var/lib/qeli";
 const BACKUP_PATH: &str = "/var/lib/qeli/dns-backup.json";
 /// Records the interface a `resolvectl` config was applied to, so it can be
 /// reverted even on a later run.
-const RESOLVECTL_MARK: &str = "/var/lib/qeli/dns-resolvectl";
+///
+/// PER-INTERFACE. A single shared path meant two clients (`vpn0` and `vpn1`) overwrote
+/// each other's marker, and the first one to disconnect then reverted the OTHER's link —
+/// or logged "Reverted resolvectl config on …" naming an interface it never touched. The
+/// kill-switch chain and the route journal are already keyed per instance
+/// (`chain_for(tun_if)`); this was the one piece of teardown state that was not.
+/// (Audit 2026-07-27, R7.)
+fn resolvectl_mark_path(ifname: &str) -> String {
+    // `ifname` comes from config and is used in `ip`/`resolvectl` argv already; keep the
+    // filename conservative regardless.
+    let safe: String = ifname
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .take(32)
+        .collect();
+    format!("/var/lib/qeli/dns-resolvectl-{safe}")
+}
 const MARKER: &str = "# Managed by qeli VPN — original saved in /var/lib/qeli/dns-backup.json";
 
 /// One line per live client instance that has taken over the host DNS. `/etc/resolv.conf`
@@ -66,14 +82,30 @@ pub fn setup_dns_for_interface(
     // pointing at a dead pushed address.
     let fallback;
     let dns_server = if dns_server.is_empty() {
-        fallback = config
+        match config
             .servers
             .first()
             .or_else(|| config.fallback_servers.first())
-            .cloned()
-            .unwrap_or_else(|| "1.1.1.1".to_string());
-        log::info!("server pushed no DNS — using client resolver {}", fallback);
-        fallback.as_str()
+        {
+            Some(s) => {
+                fallback = s.clone();
+                log::info!("server pushed no DNS — using client resolver {}", fallback);
+                fallback.as_str()
+            }
+            None => {
+                // Refuse to silently hand the user's DNS to a third party.
+                //
+                // This used to default to 1.1.1.1. Someone who configured NO resolver had
+                // every query sent to Cloudflare without being told — for a
+                // censorship-circumvention tool that is a privacy decision the user did
+                // not make, and `dns.mode = tunnel` with nothing to point at is a
+                // misconfiguration worth surfacing. Failing here leaves the host's
+                // existing resolver untouched. (Audit 2026-07-27, R5.)
+                anyhow::bail!(
+                    "dns.mode = tunnel but the server pushed no DNS address and no client                      resolver is configured — set dns.servers (or dns.fallback_servers) in                      the client config, or use dns.mode = off to keep the host's resolver"
+                );
+            }
+        }
     } else {
         dns_server
     };
@@ -102,7 +134,7 @@ pub fn setup_dns_for_interface(
     if resolved_is_active() && try_resolvectl(config, ifname, &dns_addr) {
         log::info!("DNS set via resolvectl on {}: {}", ifname, dns_addr);
         let _ = ensure_state_dir();
-        let _ = std::fs::write(RESOLVECTL_MARK, ifname);
+        let _ = std::fs::write(resolvectl_mark_path(ifname), ifname);
         return Ok(());
     }
 
@@ -128,33 +160,93 @@ pub fn setup_dns_for_interface(
     Ok(())
 }
 
+/// Revert the `resolvectl` per-link config recorded for one interface, if any.
+fn revert_resolvectl_marker(path: &std::path::Path) {
+    let Ok(ifname) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let ifname = ifname.trim();
+    if ifname.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    let reverted = std::process::Command::new("resolvectl")
+        .args(["revert", ifname])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if reverted {
+        log::info!("Reverted resolvectl config on {}", ifname);
+        let _ = std::fs::remove_file(path);
+    } else {
+        // Keep the marker: dropping it discarded the only record that this link
+        // still carries our DNS config, so nothing would ever retry — matching
+        // how a failed resolv.conf restore keeps its backup.
+        log::error!(
+            "Failed to revert resolvectl on {} — the tunnel's DNS may still be configured              on that link; marker kept at {} for a later retry",
+            ifname,
+            path.display()
+        );
+    }
+}
+
+/// Does a network interface with this name currently exist?
+fn link_exists(ifname: &str) -> bool {
+    std::path::Path::new(&format!("/sys/class/net/{ifname}")).exists()
+}
+
 /// Restore DNS to its pre-tunnel state. Safe to call repeatedly and even when
 /// nothing was changed (it becomes a no-op).
+///
+/// Prefer [`restore_dns_for`] when the caller knows its own interface: without a name
+/// this can only guess which marker belongs to it. (Audit 2026-07-27, R7.)
 pub fn restore_dns() {
-    // 1. Revert any resolvectl per-link config.
-    if let Ok(ifname) = std::fs::read_to_string(RESOLVECTL_MARK) {
-        let ifname = ifname.trim();
-        if !ifname.is_empty() {
-            let reverted = std::process::Command::new("resolvectl")
-                .args(["revert", ifname])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            if reverted {
-                log::info!("Reverted resolvectl config on {}", ifname);
-                let _ = std::fs::remove_file(RESOLVECTL_MARK);
-            } else {
-                // Keep the marker: dropping it discarded the only record that this link
-                // still carries our DNS config, so nothing would ever retry — matching
-                // how a failed resolv.conf restore keeps its backup.
-                log::error!(
-                    "Failed to revert resolvectl on {} — the tunnel's DNS may still be                      configured on that link; marker kept at {} for a later retry",
-                    ifname,
-                    RESOLVECTL_MARK
-                );
+    restore_dns_inner(None)
+}
+
+/// Restore DNS, reverting the `resolvectl` config for THIS instance's `ifname` only.
+pub fn restore_dns_for(ifname: &str) {
+    restore_dns_inner(Some(ifname))
+}
+
+fn restore_dns_inner(ifname: Option<&str>) {
+    // 1. Revert resolvectl per-link config.
+    //
+    // Markers are per-interface (see `resolvectl_mark_path`). With an explicit `ifname`
+    // only that instance's marker is touched. Without one, revert markers whose interface
+    // is GONE — those are certainly stale — and, when exactly one marker exists, that one
+    // too, which is the single-instance case this function has always handled. A live
+    // foreign link is left alone: reverting it would strip a RUNNING sibling client's DNS,
+    // which is precisely what the old single shared marker did.
+    match ifname {
+        Some(name) => {
+            let p = resolvectl_mark_path(name);
+            let p = std::path::Path::new(&p);
+            if p.exists() {
+                revert_resolvectl_marker(p);
             }
-        } else {
-            let _ = std::fs::remove_file(RESOLVECTL_MARK);
+        }
+        None => {
+            let mut markers: Vec<std::path::PathBuf> = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(STATE_DIR) {
+                for e in rd.flatten() {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    if let Some(iface) = name.strip_prefix("dns-resolvectl-") {
+                        if !iface.is_empty() {
+                            markers.push(e.path());
+                        }
+                    }
+                }
+            }
+            let only_one = markers.len() == 1;
+            for p in markers {
+                let owner = std::fs::read_to_string(&p).unwrap_or_default();
+                let owner = owner.trim().to_string();
+                if only_one || owner.is_empty() || !link_exists(&owner) {
+                    revert_resolvectl_marker(&p);
+                }
+            }
         }
     }
 
@@ -193,7 +285,15 @@ pub fn restore_dns() {
 /// resolvectl marker exists, the previous run did not clean up — restore now.
 pub fn recover_stale() {
     let has_backup = Path::new(BACKUP_PATH).exists();
-    let has_mark = Path::new(RESOLVECTL_MARK).exists();
+    let has_mark = std::fs::read_dir(STATE_DIR)
+        .map(|rd| {
+            rd.flatten().any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("dns-resolvectl-")
+            })
+        })
+        .unwrap_or(false);
     if has_backup || has_mark {
         log::warn!("Found stale DNS state from a previous run — restoring before connecting");
         restore_dns();

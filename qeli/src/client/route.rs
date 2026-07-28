@@ -17,6 +17,18 @@ fn note_created(args: &[&str]) {
     }
 }
 
+/// Did WE install the route this undo-command would remove?
+///
+/// The journal records the undo command for everything qeli adds, so asking whether an
+/// undo is already queued answers "is this route ours". Used before any delete that is
+/// not paired with an add of our own. (Audit 2026-07-27, R6.)
+fn created_by_us(args: &[&str]) -> bool {
+    CREATED_ROUTES
+        .lock()
+        .map(|g| g.iter().any(|e| e.iter().eq(args.iter().copied())))
+        .unwrap_or(false)
+}
+
 /// Take the journal, leaving it empty (cleanup runs once per connection).
 fn take_created() -> Vec<Vec<String>> {
     CREATED_ROUTES
@@ -291,9 +303,31 @@ pub fn setup_routes(
                 }
             }
         } else {
-            let _ = std::process::Command::new("ip")
-                .args(["route", "del", subnet, "dev", ifname])
-                .output();
+            // No physical gateway to route around the tunnel, so the best we can do is
+            // stop sending this subnet INTO the tunnel — but only if the route through
+            // the tunnel is ours.
+            //
+            // This used to delete unconditionally and journal nothing, which breaks the
+            // rule the whole module is built on ("delete only what we created", see the
+            // header): with `dev_attach`, the tun is owned by an external manager that may
+            // have installed this very route, and `cleanup_routes` restores only what is
+            // in the journal — so the route was gone for good once qeli exited. Deleting
+            // only routes we added keeps the invariant; anything else is left alone and
+            // reported, because silently not-excluding is worse than saying so.
+            // (Audit 2026-07-27, R6.)
+            if created_by_us(&["route", "del", subnet]) {
+                let _ = std::process::Command::new("ip")
+                    .args(["route", "del", subnet, "dev", ifname])
+                    .output();
+            } else {
+                log::warn!(
+                    "exclude {}: no physical gateway is known and the tunnel route for it \
+                     was not installed by qeli — leaving it untouched (deleting a route we \
+                     did not create could not be undone on disconnect). Traffic to this \
+                     subnet keeps using the tunnel.",
+                    subnet
+                );
+            }
         }
     }
 
