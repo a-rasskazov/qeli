@@ -671,7 +671,9 @@ private enum ReachabilityProbe {
     private static func sendAndAwaitReply(
         payload: Data,
         host: String,
-        port: NWEndpoint.Port,
+        // Qualified: this file imports both Network and NetworkExtension, and the bare name
+        // is ambiguous for type lookup (it resolves fine in expression position below).
+        port: Network.NWEndpoint.Port,
         timeout: TimeInterval
     ) async throws -> Int {
         let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .udp)
