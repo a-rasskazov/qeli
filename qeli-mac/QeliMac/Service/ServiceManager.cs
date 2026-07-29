@@ -299,6 +299,15 @@ public static class ServiceManager
             <true/>
             <key>KeepAlive</key>
             <true/>
+            <!-- launchd will not start a job again within ThrottleInterval seconds of its last
+                 start, and the default is 10. Here the job is started by a person pressing
+                 Connect, so a disconnect followed by a reconnect landed inside that window and
+                 sat there doing nothing visible — the delay was launchd holding the job back,
+                 not the daemon being slow (it logs "Daemon starting" to "Auth OK" in about a
+                 second). Lowered to 1 rather than 0: KeepAlive is on, so a daemon that dies at
+                 startup would otherwise respawn as fast as the kernel can fork it. -->
+            <key>ThrottleInterval</key>
+            <integer>1</integer>
             <key>StandardErrorPath</key>
             <string>/Library/Application Support/Qeli/daemon.stderr.log</string>
         </dict>
