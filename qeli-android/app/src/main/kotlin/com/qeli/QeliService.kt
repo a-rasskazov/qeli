@@ -796,7 +796,7 @@ class VpnServiceImpl : VpnService() {
      *  this client acts on are decoded. */
     private class PushedObf(
         val paddingEnabled: Boolean, val paddingMin: Int, val paddingMax: Int,
-        val hbEnabled: Boolean, val hbIntervalMs: Long, val hbJitterMs: Long,
+        val hbEnabled: Boolean, val hbIntervalMs: Long, val hbJitterMs: Long, val hbDataSize: Int,
         val shEnabled: Boolean, val shGapMeanMs: Long, val shGapMinMs: Long,
         val shGapMaxMs: Long, val shBudget: Int, val shMinSize: Int, val shMaxSize: Int,
         val shStealth: Boolean, val shStealthRateMbps: Int
@@ -807,22 +807,47 @@ class VpnServiceImpl : VpnService() {
         val pad = obf.optJSONObject("padding") ?: JSONObject()
         val hb = obf.optJSONObject("heartbeat") ?: JSONObject()
         val sh = obf.optJSONObject("traffic_shaping") ?: JSONObject()
+        // Clamp everything the SERVER sends into a range this client can actually emit.
+        //
+        // These values were taken verbatim. A `padding.max_bytes` or shaping `max_size` past
+        // what fits in one record makes PacketCodec.encryptPadded throw MAX_RECORD_SIZE on
+        // the very first packet — the exception surfaces as a tunnel error, the client
+        // reconnects, gets the same push, and loops. A server does not have to be malicious
+        // for this: an operator typing an extra digit is enough, and until now the server did
+        // not validate these either (fixed in the same pass). The iOS client already clamps
+        // its push; this brings Android to the same footing.
+        //
+        // Bounds mirror what the codec can carry: padding rides inside one record, so cap it
+        // well below MAX_RECORD_SIZE; a gap of 0 ms would spin the cover loop; a zero budget
+        // means no cover at all, which `enabled` already expresses.
+        val padCap = 16384
+        val pMin = pad.optInt("min_bytes", 0).coerceIn(0, padCap)
+        val pMax = pad.optInt("max_bytes", 255).coerceIn(pMin, padCap)
+        val sMin = sh.optInt("min_size", 64).coerceIn(1, padCap)
+        val sMax = sh.optInt("max_size", 1024).coerceIn(sMin, padCap)
+        val gMin = sh.optLong("idle_gap_min_ms", 40).coerceIn(1, 3_600_000)
+        val gMax = sh.optLong("idle_gap_max_ms", 6000).coerceIn(gMin, 3_600_000)
         return PushedObf(
             paddingEnabled = pad.optBoolean("enabled", true),
-            paddingMin = pad.optInt("min_bytes", 0),
-            paddingMax = pad.optInt("max_bytes", 255),
+            paddingMin = pMin,
+            paddingMax = pMax,
             hbEnabled = hb.optBoolean("enabled", true),
-            hbIntervalMs = hb.optLong("interval_ms", 15000),
-            hbJitterMs = hb.optLong("jitter_ms", 2000),
+            hbIntervalMs = hb.optLong("interval_ms", 15000).coerceIn(1_000, 3_600_000),
+            hbJitterMs = hb.optLong("jitter_ms", 2000).coerceIn(0, 600_000),
+            // The heartbeat's padded size. The client now pads its keepalive to this, so
+            // dropping the pushed value meant the server's chosen size never arrived and
+            // the local default was used instead — the one knob the server has for making
+            // the beat less recognisable did nothing.
+            hbDataSize = hb.optInt("data_size_bytes", 16).coerceIn(0, padCap),
             shEnabled = sh.optBoolean("enabled", false),
-            shGapMeanMs = sh.optLong("idle_gap_mean_ms", 700),
-            shGapMinMs = sh.optLong("idle_gap_min_ms", 40),
-            shGapMaxMs = sh.optLong("idle_gap_max_ms", 6000),
-            shBudget = sh.optInt("budget_bytes_per_sec", 16384),
-            shMinSize = sh.optInt("min_size", 64),
-            shMaxSize = sh.optInt("max_size", 1024),
+            shGapMeanMs = sh.optLong("idle_gap_mean_ms", 700).coerceIn(gMin, gMax),
+            shGapMinMs = gMin,
+            shGapMaxMs = gMax,
+            shBudget = sh.optInt("budget_bytes_per_sec", 16384).coerceIn(1, 1 shl 26),
+            shMinSize = sMin,
+            shMaxSize = sMax,
             shStealth = sh.optBoolean("stealth", false),
-            shStealthRateMbps = sh.optInt("stealth_rate_mbps", 2)
+            shStealthRateMbps = sh.optInt("stealth_rate_mbps", 2).coerceIn(1, 10_000)
         )
     }
 
@@ -1572,7 +1597,7 @@ class VpnServiceImpl : VpnService() {
                 if (longHeader) UdpFrag.fragment(UdpFrag.MSG_CLIENT_HELLO, record) else listOf(record)
             for (piece in pieces) {
                 val framed = if (quic) {
-                    if (longHeader) Quic.wrapLong(piece, connectionId, pn.getAndIncrement(), 0x02)
+                    if (longHeader) Quic.wrapLong(piece, connectionId, pn.getAndIncrement(), 0x00)
                     else Quic.wrapShort(piece, connectionId, pn.getAndIncrement())
                 } else piece
                 val out = if (obfsKey != null) ObfsStream.datagramSeal(obfsKey, framed) else framed
@@ -1593,7 +1618,7 @@ class VpnServiceImpl : VpnService() {
                 val len = (if (jminC >= jmaxC) jminC else jminC + rng.nextInt(jmaxC - jminC + 1))
                     .coerceIn(1, UdpFrag.MAX_CHUNK)   // never IP-fragment on LTE/CGNAT
                 val junk = UdpFrag.junkDatagram(len)
-                val framed = if (quic) Quic.wrapLong(junk, connectionId, pn.getAndIncrement(), 0x02) else junk
+                val framed = if (quic) Quic.wrapLong(junk, connectionId, pn.getAndIncrement(), 0x00) else junk
                 val out = if (obfsKey != null) ObfsStream.datagramSeal(obfsKey, framed) else framed
                 synchronized(sendLock) { sock.send(DatagramPacket(out, out.size)) }
             }
@@ -1639,12 +1664,27 @@ class VpnServiceImpl : VpnService() {
             // datagram — must be SKIPPED, not indexed past its end: reading buf[pos+4] on a
             // <5-byte buffer threw ArrayIndexOutOfBoundsException (length=4; index=4) and, now
             // that the real error is surfaced, killed the tunnel loop into a reconnect storm.
-            while (pos + 5 > buf.size) fill()
-            val len = ((buf[pos + 3].toInt() and 0xFF) shl 8) or (buf[pos + 4].toInt() and 0xFF)
-            val end = (pos + 5 + len).coerceAtMost(buf.size)
-            val rec = buf.copyOfRange(pos, end)
-            pos = end
-            return rec
+            while (true) {
+                while (pos + 5 > buf.size) fill()
+                val len = ((buf[pos + 3].toInt() and 0xFF) shl 8) or (buf[pos + 4].toInt() and 0xFF)
+                // A datagram must carry the WHOLE record it declares. Clamping the end to the
+                // buffer (`coerceAtMost`) quietly turned a truncated record into a shorter
+                // valid-looking one: the AEAD then failed and the tunnel dropped, with the real
+                // cause — a peer or middlebox that cut the datagram — nowhere in the log. UDP
+                // has no continuation, so no later datagram can complete it; drop this one and
+                // read the next. The length is bounded too: a record larger than the codec will
+                // ever accept is garbage or a hostile length field, and must not size a copy.
+                // (Audit 2026-07-29, #17.)
+                if (len > PacketCodec.MAX_RECORD_SIZE || pos + 5 + len > buf.size) {
+                    buf = ByteArray(0)   // force fill() to pull the next datagram
+                    pos = 0
+                    continue
+                }
+                val end = pos + 5 + len
+                val rec = buf.copyOfRange(pos, end)
+                pos = end
+                return rec
+            }
         }
 
         override fun setReadTimeout(ms: Int) { sock.soTimeout = ms }
@@ -2045,6 +2085,10 @@ class VpnServiceImpl : VpnService() {
     ): HandshakeResult {
         val ke = KeyExchange()
         val clientKeyPair = ke.generateKeyPair()
+        // Which X25519 backend ran, plus API level and ABI. Android had no platform X25519
+        // before API 33, so on older devices this line is the difference between "it works"
+        // and a silent reconnect loop — worth one log line per connection.
+        broadcastLog(KeyExchange.describe())
         val sni = config.sni ?: pickSni(config.serverAddress)
         // Both UDP legs share ONE deadline, so the whole handshake still fits a single
         // connectionTimeoutSecs no matter how many datagrams are re-sent. TCP ignores it (the
@@ -2140,6 +2184,7 @@ class VpnServiceImpl : VpnService() {
                 heartbeatEnabled = po.hbEnabled,
                 heartbeatIntervalMs = po.hbIntervalMs,
                 heartbeatJitterMs = po.hbJitterMs,
+                heartbeatDataSize = po.hbDataSize,
                 shapingEnabled = po.shEnabled,
                 shapingGapMeanMs = po.shGapMeanMs,
                 shapingGapMinMs = po.shGapMinMs,
@@ -2206,6 +2251,7 @@ class VpnServiceImpl : VpnService() {
                 heartbeatEnabled = po.hbEnabled,
                 heartbeatIntervalMs = po.hbIntervalMs,
                 heartbeatJitterMs = po.hbJitterMs,
+                heartbeatDataSize = po.hbDataSize,
                 shapingEnabled = po.shEnabled,
                 shapingGapMeanMs = po.shGapMeanMs,
                 shapingGapMinMs = po.shGapMinMs,
@@ -2261,6 +2307,14 @@ class VpnServiceImpl : VpnService() {
         val bytesUp = AtomicLong(0)
         val bytesDown = AtomicLong(0)
         val rxDead = maxOf(config.heartbeatIntervalMs * 3, 30_000L)
+        // Does the SERVER owe us traffic on an idle tunnel? Only when its heartbeat or its
+        // flow-shaping cover is on. With both off the server is silent by design, so a
+        // silence-based reconnect fires on a perfectly healthy link — every rxDead, i.e.
+        // roughly every 30 s, forever. The Rust and C# clients already gate on this; Android
+        // did not, which is why an idle UDP session reconnected in a loop.
+        // (Audit 2026-07-29, #10.)
+        val expectServerData = (config.heartbeatEnabled && config.heartbeatIntervalMs > 0) ||
+            config.shapingEnabled
         val tunnelError = kotlinx.coroutines.channels.Channel<Throwable>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
         // Poll the UDP RX path every ~3s (not once per rxDead) so the dead-session / resume
@@ -2330,7 +2384,7 @@ class VpnServiceImpl : VpnService() {
                         if (now - lastTx.get() < 2000L && now - lastRx.get() > 8000L) {
                             tunnelError.trySend(Exception("uplink active but no downlink >8s")); break
                         }
-                        if (now - lastRx.get() > rxDead) {
+                        if (expectServerData && now - lastRx.get() > rxDead) {
                             tunnelError.trySend(Exception("no data from server for >${rxDead / 1000}s")); break
                         }
                         continue
@@ -2374,7 +2428,20 @@ class VpnServiceImpl : VpnService() {
                         if (isUdp) size = size.coerceAtMost((config.mtu - 60).coerceAtLeast(0))
                         if (shaper.trySpend(size)) transport.send(encCodec.encryptPadded(ByteArray(0), size))
                     } else {
-                        transport.send(encCodec.encrypt(ByteArray(0)))
+                        // Pad the keepalive to config.heartbeatDataSize (+ up to 32), the same
+                        // as the Rust client. It used to go out EMPTY, so the server-pushed
+                        // `data_size_bytes` this config parses did nothing here — and an empty
+                        // encrypted record at a fixed cadence is the most distinctive size a
+                        // DPI box could ask for, which is precisely what the setting exists to
+                        // avoid. Capped to the path MTU on UDP for the same reason as cover.
+                        var hb = config.heartbeatDataSize.coerceAtLeast(0)
+                        var hbHi = hb + 32
+                        if (isUdp) {
+                            val cap = (config.mtu - 60).coerceAtLeast(0)
+                            hb = hb.coerceAtMost(cap); hbHi = hbHi.coerceAtMost(cap)
+                        }
+                        val size = if (hbHi > hb) hb + rng.nextInt(hbHi - hb + 1) else hb
+                        transport.send(encCodec.encryptPadded(ByteArray(0), size))
                     }
                 } catch (e: Exception) {
                     // A failed keepalive/cover send is not fatal on UDP (drop, like data);
@@ -2383,7 +2450,7 @@ class VpnServiceImpl : VpnService() {
                     tunnelError.trySend(e); break
                 }
                 // TCP has no read timeout, so detect a dead server here.
-                if (!isUdp && System.currentTimeMillis() - lastRx.get() > rxDead) {
+                if (expectServerData && !isUdp && System.currentTimeMillis() - lastRx.get() > rxDead) {
                     tunnelError.trySend(Exception("no data from server for >${rxDead / 1000}s"))
                     break
                 }
@@ -2771,6 +2838,11 @@ class VpnServiceImpl : VpnService() {
         val bytesUp = AtomicLong(0)
         val bytesDown = AtomicLong(0)
         val rxDead = maxOf(config.heartbeatIntervalMs * 3, 30_000L)
+        // Same gate as the single-stream path: with the server's heartbeat and cover both
+        // off it is silent by design, and a silence-based reconnect would fire on a healthy
+        // bonded session too. (Audit 2026-07-29, #10.)
+        val expectServerData = (config.heartbeatEnabled && config.heartbeatIntervalMs > 0) ||
+            config.shapingEnabled
         val tunnelError = kotlinx.coroutines.channels.Channel<Throwable>(
             kotlinx.coroutines.channels.Channel.CONFLATED
         )
@@ -2935,7 +3007,7 @@ class VpnServiceImpl : VpnService() {
                 if (now - lastTx.get() < 2000L && now - lastRx.get() > 8000L) {
                     tunnelError.trySend(Exception("uplink active but no downlink >8s")); break
                 }
-                if (now - lastRx.get() > rxDead) {
+                if (expectServerData && now - lastRx.get() > rxDead) {
                     tunnelError.trySend(Exception("no data from server for >${rxDead / 1000}s")); break
                 }
             }

@@ -131,6 +131,17 @@ public abstract class VpnTunnelBase
             // attempt and every reconnect window is leak-proof. It stays up across
             // reconnects and is lifted only on Stop(). Fail closed: if the user asked for
             // it but it can't be raised, do NOT connect unprotected.
+            // Asked for but inapplicable: say so. The kill-switch blocks everything that is
+            // not the tunnel, which only means anything when the tunnel carries the default
+            // route — in split-tunnel the untunnelled traffic is the POINT, so there is
+            // nothing to fail closed to. Skipping is correct; skipping in silence is not:
+            // `kill_switch = true` then sits in the config looking like protection while
+            // doing nothing, and the log gives no hint either way.
+            if (config.KillSwitch && !config.IsFullTunnel)
+                Log("NOTE: kill_switch = true is ignored in split-tunnel mode (gateway = false) "
+                    + "— it only applies when the tunnel carries the default route. "
+                    + "Set gateway = true if you want fail-closed protection.");
+
             if (config.KillSwitch && config.IsFullTunnel)
             {
                 try { KillSwitchEngage(config); Interlocked.Exchange(ref _ksEngaged, 1); }
@@ -238,6 +249,31 @@ public abstract class VpnTunnelBase
         Log($"{reason} — reconnecting");
         _forcedReconnectInFlight = true;
         CloseTransports(keepTun: true);
+    }
+
+    /// <summary>Padding length for one keepalive, mirroring the Rust client.
+    ///
+    /// The keepalive used to go out with an EMPTY payload here, so `obf.heartbeat
+    /// .data_size_bytes` — which the server pushes and this config parses — did nothing on
+    /// Windows, macOS and Android; only the Rust client honoured it. That is the setting's
+    /// entire purpose: a fixed-size encrypted packet arriving at a fixed cadence is a clean
+    /// DPI signature, and an EMPTY one is the most distinctive size there is. The desktop
+    /// clients were therefore the easiest of the family to fingerprint while the knob meant
+    /// to prevent it sat in the config looking effective.
+    ///
+    /// Same shape as the Rust side: a random length in [size, size+32], capped to what the
+    /// path can carry so a DF-marked datagram is not dropped for being too large (which the
+    /// server would then reap as an idle client).</summary>
+    private static int HeartbeatPadLen(VpnConfig config, int effectiveMtu, bool isUdp, RandomNumberGenerator rng)
+    {
+        int want = Math.Max(0, config.HeartbeatDataSize);
+        int cap = isUdp ? Math.Max(0, effectiveMtu - 60) : int.MaxValue;
+        int lo = Math.Min(want, cap);
+        int hi = Math.Min(want + 32, cap);
+        if (hi <= lo) return lo;
+        var b = new byte[4];
+        rng.GetBytes(b);
+        return lo + (int)(BitConverter.ToUInt32(b, 0) % (uint)(hi - lo + 1));
     }
 
     /// <summary>First sentence of a message, for a one-line status detail. Falls back to a
@@ -683,7 +719,7 @@ public abstract class VpnTunnelBase
             foreach (var piece in pieces)
             {
                 byte[] outBuf = _quic
-                    ? (longHeader ? Quic.WrapLong(piece, _cid, _pn++, 0x02) : Quic.WrapShort(piece, _cid, _pn++))
+                    ? (longHeader ? Quic.WrapLong(piece, _cid, _pn++, 0x00) : Quic.WrapShort(piece, _cid, _pn++))
                     : piece;
                 if (_obfsKey != null) outBuf = ObfsStream.DatagramSeal(_obfsKey, outBuf);
                 lock (_sendLock) { _sock.Send(outBuf); }
@@ -704,7 +740,7 @@ public abstract class VpnTunnelBase
                 int len = System.Security.Cryptography.RandomNumberGenerator.GetInt32(jminC, jmaxC + 1);
                 len = Math.Clamp(len, 1, UdpFrag.MaxChunk);   // never IP-fragment on LTE/CGNAT
                 byte[] junk = UdpFrag.JunkDatagram(len);
-                byte[] outBuf = _quic ? Quic.WrapLong(junk, _cid, _pn++, 0x02) : junk;
+                byte[] outBuf = _quic ? Quic.WrapLong(junk, _cid, _pn++, 0x00) : junk;
                 if (_obfsKey != null) outBuf = ObfsStream.DatagramSeal(_obfsKey, outBuf);
                 lock (_sendLock) { _sock.Send(outBuf); }
             }
@@ -752,12 +788,29 @@ public abstract class VpnTunnelBase
             // whose (unwrapped) payload is shorter — a stray / tiny / malformed control
             // datagram — must be SKIPPED, not indexed past its end: reading _buf[_pos+4] on a
             // <5-byte buffer threw IndexOutOfRangeException and tore the tunnel loop down.
-            while (_pos + 5 > _buf.Length) Fill();
-            int len = ((_buf[_pos + 3] & 0xFF) << 8) | (_buf[_pos + 4] & 0xFF);
-            int end = Math.Min(_pos + 5 + len, _buf.Length);
-            var rec = _buf[_pos..end];
-            _pos = end;
-            return rec;
+            while (true)
+            {
+                while (_pos + 5 > _buf.Length) Fill();
+                int len = ((_buf[_pos + 3] & 0xFF) << 8) | (_buf[_pos + 4] & 0xFF);
+                // A datagram must carry the WHOLE record it declares. Clamping the end to the
+                // buffer (`Math.Min`) instead quietly turned a truncated record into a shorter
+                // valid-looking one: the AEAD then failed and the tunnel dropped, with the real
+                // cause — a peer or middlebox that cut the datagram — nowhere in the log. UDP
+                // has no continuation, so no later datagram can complete it; the only correct
+                // handling is to drop this datagram and read the next. The length is bounded
+                // too: a record bigger than the codec will ever accept is garbage or a hostile
+                // length field, and must not size an allocation. (Audit 2026-07-29, #17.)
+                if (len > PacketCodec.MaxRecordSize || _pos + 5 + len > _buf.Length)
+                {
+                    _buf = Array.Empty<byte>();   // force Fill() to pull the next datagram
+                    _pos = 0;
+                    continue;
+                }
+                int end = _pos + 5 + len;
+                var rec = _buf[_pos..end];
+                _pos = end;
+                return rec;
+            }
         }
 
         public void SetReadTimeout(int ms) => _sock.ReceiveTimeout = ms;
@@ -1442,7 +1495,7 @@ public abstract class VpnTunnelBase
         if (pushed != null)
         {
             enc.SetPadding(pushed.PaddingEnabled, pushed.PaddingMin, pushed.PaddingMax);
-            effConfig = config.WithPushedObf(pushed.HbEnabled, pushed.HbIntervalMs, pushed.HbJitterMs,
+            effConfig = config.WithPushedObf(pushed.HbEnabled, pushed.HbIntervalMs, pushed.HbJitterMs, pushed.HbDataSize,
                 pushed.ShEnabled, pushed.ShGapMeanMs, pushed.ShGapMinMs, pushed.ShGapMaxMs,
                 pushed.ShBudget, pushed.ShMinSize, pushed.ShMaxSize,
                 pushed.ShStealth, pushed.ShStealthRateMbps);
@@ -1501,7 +1554,7 @@ public abstract class VpnTunnelBase
         if (pushed != null)
         {
             enc.SetPadding(pushed.PaddingEnabled, pushed.PaddingMin, pushed.PaddingMax);
-            effConfig = config.WithPushedObf(pushed.HbEnabled, pushed.HbIntervalMs, pushed.HbJitterMs,
+            effConfig = config.WithPushedObf(pushed.HbEnabled, pushed.HbIntervalMs, pushed.HbJitterMs, pushed.HbDataSize,
                 pushed.ShEnabled, pushed.ShGapMeanMs, pushed.ShGapMinMs, pushed.ShGapMaxMs,
                 pushed.ShBudget, pushed.ShMinSize, pushed.ShMaxSize,
                 pushed.ShStealth, pushed.ShStealthRateMbps);
@@ -1541,7 +1594,7 @@ public abstract class VpnTunnelBase
     }
 
     private sealed record PushedObf(bool PaddingEnabled, int PaddingMin, int PaddingMax,
-        bool HbEnabled, long HbIntervalMs, long HbJitterMs,
+        bool HbEnabled, long HbIntervalMs, long HbJitterMs, int HbDataSize,
         bool ShEnabled, long ShGapMeanMs, long ShGapMinMs, long ShGapMaxMs,
         int ShBudget, int ShMinSize, int ShMaxSize,
         bool ShStealth, int ShStealthRateMbps);
@@ -1568,6 +1621,11 @@ public abstract class VpnTunnelBase
         return new PushedObf(
             GetBool(pad, "enabled", true), padMin, padMax,
             GetBool(hb, "enabled", true), GetLong(hb, "interval_ms", 15000), GetLong(hb, "jitter_ms", 2000),
+            // The heartbeat's padded size. The keepalive is padded to this now, so dropping
+            // the pushed value left the server's choice unused and the local default in its
+            // place — the one knob the server has for making the beat less recognisable did
+            // nothing. Clamped like every other sized field here. (Audit 2026-07-29, #9.)
+            Bounded(hb, "data_size_bytes", 16),
             GetBool(sh, "enabled", false), GetLong(sh, "idle_gap_mean_ms", 700),
             GetLong(sh, "idle_gap_min_ms", 40), GetLong(sh, "idle_gap_max_ms", 6000),
             GetInt(sh, "budget_bytes_per_sec", 16384), shMin, shMax,
@@ -2010,7 +2068,8 @@ public abstract class VpnTunnelBase
                         if (isUdp) size = Math.Min(size, Math.Max(0, effectiveMtu - 60));
                         if (shaper.TrySpend(size)) transport.Send(enc.EncryptPadded(Array.Empty<byte>(), size));
                     }
-                    else transport.Send(enc.Encrypt(Array.Empty<byte>()));
+                    else transport.Send(enc.EncryptPadded(Array.Empty<byte>(),
+                        HeartbeatPadLen(config, effectiveMtu, isUdp, rng)));
                 }
                 // A failed keepalive/cover send is not fatal on UDP (drop, like data); liveness
                 // is detected by the RX timeout. On TCP a write error is fatal.
@@ -2449,7 +2508,12 @@ public abstract class VpnTunnelBase
                                 int size = shaperM.NextSize();
                                 if (shaperM.TrySpend(size)) s.Transport.Send(s.Enc.EncryptPadded(Array.Empty<byte>(), size));
                             }
-                            else s.Transport.Send(s.Enc.Encrypt(Array.Empty<byte>()));
+                            // Bonding is TCP-only (see OpenBondedStream), so there is no
+                            // DF-marked datagram to overflow and no MTU cap to apply; pass
+                            // the config's own MTU and let IsUdp decide, rather than
+                            // hard-coding the assumption here.
+                            else s.Transport.Send(s.Enc.EncryptPadded(Array.Empty<byte>(),
+                                HeartbeatPadLen(config, config.Mtu, config.IsUdp, rng)));
                         }
                         catch (Exception e) { OnStreamDeath(s, e); break; }
                     }

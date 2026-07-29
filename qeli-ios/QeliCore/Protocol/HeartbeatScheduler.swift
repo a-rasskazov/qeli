@@ -47,14 +47,25 @@ struct HeartbeatPolicy: Equatable, Sendable {
         return max(1_000, overflow ? Int.max : sum)
     }
 
+    /// `expectServerData` — does the server owe us traffic on an idle tunnel? Only when its
+    /// heartbeat or its flow-shaping cover is on. With both off it is silent BY DESIGN, so
+    /// the silence check below would tear down a perfectly healthy link every
+    /// `receiveDeadAfterMilliseconds` — about every 30 s, forever. Defaulted to `true` so the
+    /// existing two-argument call sites keep their meaning (they exercise the case where the
+    /// server does send). Rust, C# and Android gate this the same way.
+    /// (Audit 2026-07-29, #10.)
+    ///
+    /// The uplink-active check is deliberately NOT gated: it fires only while WE are sending,
+    /// and a live tunnel always returns something to real uplink traffic.
     func livenessFailure(
         millisecondsSinceReceive: Int,
-        millisecondsSinceUserUplink: Int
+        millisecondsSinceUserUplink: Int,
+        expectServerData: Bool = true
     ) -> HeartbeatLivenessFailure? {
         if millisecondsSinceUserUplink < 2_000 && millisecondsSinceReceive > 8_000 {
             return .uplinkActiveWithoutDownlink
         }
-        if millisecondsSinceReceive > receiveDeadAfterMilliseconds {
+        if expectServerData && millisecondsSinceReceive > receiveDeadAfterMilliseconds {
             return .serverSilent(milliseconds: receiveDeadAfterMilliseconds)
         }
         return nil
@@ -190,7 +201,8 @@ final class HeartbeatScheduler: @unchecked Sendable {
         }
         return policy.livenessFailure(
             millisecondsSinceReceive: elapsed.0,
-            millisecondsSinceUserUplink: elapsed.1
+            millisecondsSinceUserUplink: elapsed.1,
+            expectServerData: policy.enabled || shaper.enabled
         )
     }
 

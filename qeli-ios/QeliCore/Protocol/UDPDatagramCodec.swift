@@ -133,7 +133,7 @@ final class UDPDatagramCodec: @unchecked Sendable {
                     payload,
                     connectionID: connectionID,
                     packetNumber: takePacketNumber(),
-                    packetType: 0x02
+                    packetType: 0x00
                 )
             } else {
                 masked = try QUICMask.wrapShort(

@@ -21,6 +21,41 @@ final class HeartbeatReconnectTests: XCTestCase {
         )
     }
 
+    /// A server with heartbeat AND shaping off is silent by design; treating that silence as
+    /// a dead session reconnected a healthy idle tunnel roughly every 30 s. The uplink-active
+    /// check must keep firing regardless — it only triggers while we are sending.
+    /// (Audit 2026-07-29, #10.)
+    func testSilenceIsNotAFailureWhenTheServerOwesNothing() {
+        var config = VPNConfig(serverAddress: "example.com", port: 443)
+        config.heartbeatIntervalMilliseconds = 15_000
+        let policy = HeartbeatPolicy(config: config, isUDP: true)
+
+        XCTAssertNil(
+            policy.livenessFailure(
+                millisecondsSinceReceive: 45_001,
+                millisecondsSinceUserUplink: 5_000,
+                expectServerData: false
+            )
+        )
+        XCTAssertEqual(
+            policy.livenessFailure(
+                millisecondsSinceReceive: 45_001,
+                millisecondsSinceUserUplink: 5_000,
+                expectServerData: true
+            ),
+            .serverSilent(milliseconds: 45_000)
+        )
+        // Our own uplink going unanswered is a real failure either way.
+        XCTAssertEqual(
+            policy.livenessFailure(
+                millisecondsSinceReceive: 8_001,
+                millisecondsSinceUserUplink: 1_999,
+                expectServerData: false
+            ),
+            .uplinkActiveWithoutDownlink
+        )
+    }
+
     func testReconnectExponentialBackoffAndCaps() {
         let policy = ReconnectPolicy(
             maximumRetries: -1,
