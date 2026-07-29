@@ -38,11 +38,21 @@ public static class ServiceHostRunner
         if (cfg == null)
         {
             ServiceState.AppendLog("No daemon profile configured — idling until a stop signal");
-            ServiceState.WriteStatus(VpnStatus.Disconnected, null);
             // Do NOT return: the plist's KeepAlive would respawn us in a tight restart loop.
             // Block until launchd sends SIGTERM (unload) so an unconfigured daemon idles
             // quietly instead. (C-08)
-            stop.Wait();
+            //
+            // Keep REPUBLISHING the status while idling, rather than writing it once. The GUI
+            // treats a status file older than 5 seconds as "the daemon is not running" — it has
+            // no other way to tell a stopped daemon from a stale file — so a single write made
+            // a live, running, merely-unconfigured daemon indistinguishable from a dead one.
+            // The user then saw the Connect button offer to connect again and again, each time
+            // asking for the administrator password, with nothing to explain why.
+            while (!stop.IsSet)
+            {
+                ServiceState.WriteStatus(VpnStatus.Disconnected, "no profile configured");
+                stop.Wait(1000);
+            }
             return;
         }
 

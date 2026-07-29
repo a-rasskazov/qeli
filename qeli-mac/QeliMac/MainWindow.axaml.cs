@@ -263,19 +263,18 @@ public partial class MainWindow : Window
     private void RefreshServiceMode()
     {
         bool nowService = ServiceManager.IsInstalled();
+        bool changed = nowService != _serviceMode;
         _serviceMode = nowService;
         if (nowService)
         {
             ConnectBtn.IsEnabled = true;
-            _serviceLogPos = 0;
-            LogClear();
-            StartServicePolling();
-            ServicePollTick(null, EventArgs.Empty);
+            if (changed) { _serviceLogPos = 0; LogClear(); }
         }
-        else
-        {
-            StopServicePolling();
-        }
+        // The timer runs in BOTH modes on purpose: it is the only thing that notices the
+        // daemon appearing or going away. It used to be stopped outside daemon mode, which
+        // made the mode a one-shot decision taken when the window opened — so a daemon
+        // installed afterwards was invisible until the app was restarted.
+        StartServicePolling();
     }
 
     private void StartServicePolling()
@@ -296,6 +295,13 @@ public partial class MainWindow : Window
 
     private void ServicePollTick(object? sender, EventArgs e)
     {
+        // Re-evaluate instead of trusting the value latched when the window opened. The daemon
+        // can appear or disappear without this window doing anything — installed from a
+        // terminal, removed by hand, or installed by an elevated helper whose failure the GUI
+        // mis-read — and this flag decides which path Connect takes. A window opened while no
+        // daemon existed kept answering "Connecting requires root" for as long as it stayed
+        // open, however healthy the daemon actually was.
+        if (ServiceManager.IsInstalled() != _serviceMode) RefreshServiceMode();
         if (!_serviceMode) return;
         var snapshot = ServiceState.ReadStatus();
         _svc = snapshot;
@@ -375,7 +381,14 @@ public partial class MainWindow : Window
         {
             await Dialogs.InfoAsync(this, Loc.F("ServiceApplyError", ex.Message), Loc.T("ServiceWord"));
         }
-        RefreshServiceMode();
+        finally
+        {
+            // In `finally`, because every early `return` above (no profile, install failed,
+            // user cancelled the password prompt) used to skip this and leave the window
+            // convinced the daemon was absent — after which Connect refused with "Connecting
+            // requires root" even though the daemon was installed and running.
+            RefreshServiceMode();
+        }
     }
 
     /// <summary>

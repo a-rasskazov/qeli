@@ -40,6 +40,52 @@ public static class ServiceManager
 
     [DllImport("libc")] private static extern uint geteuid();
 
+    // stat(2) straight from libc. On x86_64 the 64-bit-inode entry point is `stat$INODE64`
+    // (plain `stat` there is the legacy 32-bit-inode variant with a DIFFERENT layout, so
+    // calling it would read the wrong offsets); arm64 has only ever had the 64-bit form and
+    // exports it as `stat`.
+    [DllImport("libc", EntryPoint = "stat$INODE64", SetLastError = true)]
+    private static extern int stat_inode64(string path, byte[] buf);
+    [DllImport("libc", EntryPoint = "stat", SetLastError = true)]
+    private static extern int stat_plain(string path, byte[] buf);
+
+    /// <summary>Owner uid, owner gid and permission bits of <paramref name="path"/>.</summary>
+    /// <remarks>
+    /// Done with a syscall rather than by running /usr/bin/stat, which is what this used to
+    /// do — one spawned process per path component, five or more per check, each with its own
+    /// 20-second timeout, and with stderr discarded. When any of them failed to produce output
+    /// the caller could only say "Cannot stat '<c>path</c>'" about a file that plainly exists,
+    /// which is exactly how a working installation reported itself as broken. A syscall cannot
+    /// fail for reasons unrelated to the file, and when it does fail it says why.
+    ///
+    /// Offsets are those of macOS's 64-bit-inode `struct stat`, identical on arm64 and x86_64:
+    /// st_mode is a uint16 at 4, st_uid a uint32 at 16, st_gid a uint32 at 20.
+    /// </remarks>
+    private static (int uid, int gid, int mode) StatOrThrow(string path)
+    {
+        var buf = new byte[256];   // comfortably larger than struct stat (144 bytes)
+        int rc = RuntimeInformation.ProcessArchitecture == Architecture.X64
+            ? stat_inode64(path, buf)
+            : stat_plain(path, buf);
+        if (rc != 0)
+        {
+            int errno = Marshal.GetLastPInvokeError();
+            var why = errno switch
+            {
+                2 => "no such file or directory",
+                13 => "permission denied",
+                20 => "a path component is not a directory",
+                _ => $"errno {errno}",
+            };
+            throw new InvalidOperationException(
+                $"Cannot inspect \"{path}\" while validating the daemon path: {why}.");
+        }
+        return (
+            (int)BitConverter.ToUInt32(buf, 16),
+            (int)BitConverter.ToUInt32(buf, 20),
+            BitConverter.ToUInt16(buf, 4) & 0xFFF);
+    }
+
     /// <summary>True when the current process is NOT root, so privileged daemon
     /// operations must be routed through <see cref="RunSelfElevated"/> (admin prompt)
     /// instead of being run directly.</summary>
@@ -88,14 +134,7 @@ public static class ServiceManager
         var full = Path.GetFullPath(exePath);
         for (var path = full; !string.IsNullOrEmpty(path); path = Path.GetDirectoryName(path) ?? "")
         {
-            // %u = owner uid, %g = owner gid, %Lp = permission bits in octal.
-            var (outp, code) = Run2("/usr/bin/stat", $"-f \"%u %g %Lp\" \"{path}\"");
-            if (code != 0)
-                throw new InvalidOperationException($"Cannot stat '{path}' while validating the daemon path.");
-            var parts = outp.Trim().Split(' ');
-            if (parts.Length != 3 || !int.TryParse(parts[0], out var uid) || !int.TryParse(parts[1], out var gid))
-                throw new InvalidOperationException($"Unexpected stat output for '{path}': {outp.Trim()}");
-            var mode = Convert.ToInt32(parts[2], 8);
+            var (uid, gid, mode) = StatOrThrow(path);
 
             // World-writable is always fatal: ANY local account could swap the binary that
             // launchd then runs as root.
@@ -142,7 +181,7 @@ public static class ServiceManager
         // outside an Aqua login session (e.g. under the osascript privilege trampoline).
         Run($"bootout {ServiceTarget}");          // clear any stale registration (no-op if absent)
         Run($"enable {ServiceTarget}");           // clear a disabled override (the legacy `-w`)
-        Run($"bootstrap system \"{PlistPath}\""); // load + RunAtLoad start
+        LaunchctlChecked($"bootstrap system \"{PlistPath}\"", "Loading the daemon", IsRunning);
     }
 
     public static void Uninstall()
@@ -158,9 +197,15 @@ public static class ServiceManager
         // only the legacy one exists, and bootstrapping a path that isn't there would fail.
         // Install() writes the new plist and clears the legacy registration on the way.
         if (!File.Exists(PlistPath)) { Install(); return; }
+        // Validate the path here too. This branch used to skip it, which made the security
+        // check depend on whether a plist happened to exist — and launchd is about to run
+        // that binary as root either way, so an existing plist is no reason to trust it less
+        // carefully. It also made "start" behave differently from "install" for the same
+        // installation, which is how a GUI failure could look nothing like a terminal run.
+        EnsureProtectedLocation(ExePath);
         RemoveLegacy();
         Run($"enable {ServiceTarget}");
-        Run($"bootstrap system \"{PlistPath}\"");
+        LaunchctlChecked($"bootstrap system \"{PlistPath}\"", "Starting the daemon", IsRunning);
     }
 
     public static void Stop()
@@ -248,6 +293,23 @@ public static class ServiceManager
 
     private static (string outp, int code) Run2(string exe, string args)
     {
+        var (outp, _, code) = Run3(exe, args);
+        return (outp, code);
+    }
+
+    /// <summary>
+    /// Run a tool and return stdout, stderr and the exit code separately.
+    /// </summary>
+    /// <remarks>
+    /// stderr is kept rather than discarded because it is the ONLY place launchctl explains
+    /// itself: a failed `bootstrap` prints "Bootstrap failed: 5: Input/output error" there
+    /// and nothing on stdout. It used to be dropped on the floor, so a failure surfaced as
+    /// an empty message — the elevated helper then exited 0 and the GUI reported success
+    /// while nothing had been loaded. Kept SEPARATE from stdout, not merged: callers parse
+    /// stdout (stat's `uid gid mode`), and folding a warning into it would corrupt the parse.
+    /// </remarks>
+    private static (string outp, string err, int code) Run3(string exe, string args)
+    {
         var psi = new ProcessStartInfo(exe, args)
         {
             UseShellExecute = false, CreateNoWindow = true,
@@ -258,12 +320,32 @@ public static class ServiceManager
         // the other pipe's buffer fills) and bound the call so a wedged launchctl can't
         // hang the elevated helper forever.
         var so = p.StandardOutput.ReadToEndAsync();
-        _ = p.StandardError.ReadToEndAsync();
+        var se = p.StandardError.ReadToEndAsync();
         if (!p.WaitForExit(20_000))
         {
             try { p.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return ("timed out", -1);
+            return ("", $"`{exe} {args}` timed out after 20s", -1);
         }
-        return (so.GetAwaiter().GetResult(), p.ExitCode);
+        return (so.GetAwaiter().GetResult(), se.GetAwaiter().GetResult(), p.ExitCode);
+    }
+
+    /// <summary>
+    /// Run launchctl and throw with what it actually said when the step did not take effect.
+    /// </summary>
+    /// <remarks>
+    /// The outcome is verified with <paramref name="succeeded"/> instead of trusting the exit
+    /// code, because launchctl's codes are not a usable contract: `bootstrap` returns non-zero
+    /// for "already loaded" (a no-op that is fine) and `bootout` returns non-zero for "not
+    /// loaded" (equally fine), while a genuine failure can share the same code. Asking "is the
+    /// daemon there now?" is the property we actually care about.
+    /// </remarks>
+    private static void LaunchctlChecked(string args, string what, Func<bool> succeeded)
+    {
+        var (outp, err, code) = Run3("/bin/launchctl", args);
+        if (code == 0 || succeeded()) return;
+        var detail = string.IsNullOrWhiteSpace(err) ? outp.Trim() : err.Trim();
+        throw new InvalidOperationException(
+            $"{what} failed: `launchctl {args}` exited {code}" +
+            (string.IsNullOrWhiteSpace(detail) ? "" : $" — {detail}"));
     }
 }
