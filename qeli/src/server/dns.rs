@@ -80,7 +80,7 @@ fn answer_min_ttl(msg: &[u8]) -> Option<u32> {
 const MAX_INFLIGHT: usize = 512;
 
 pub async fn run_dns_proxy(_state: Arc<ServerState>, dns_cfg: DnsConfig) -> anyhow::Result<()> {
-    let bind_addr = format!("{}:{}", dns_cfg.listen, dns_cfg.port);
+    let bind_addr = crate::util::join_host_port(&dns_cfg.listen, dns_cfg.port);
     // Shared listen socket: query tasks send their answers back through it.
     let socket = Arc::new(UdpSocket::bind(&bind_addr).await?);
     log::info!("DNS proxy listening on {}", bind_addr);

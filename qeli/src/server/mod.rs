@@ -827,6 +827,35 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                 p.bind.transport
             );
         }
+        // The same class as bind.transport / obf.mode above, and left unguarded: these are
+        // compared verbatim against ONE literal at the use site, so anything else silently
+        // selects the other branch. `obf.fronting = "webscoket"` drops the WebSocket
+        // handshake the profile was configured for (and the peer then disagrees about the
+        // wire), `tun.device_type = "tapp"` quietly creates a TUN, and
+        // `dns.upstream_protocol = "tls"` — a value the docs advertise — falls back to
+        // plaintext UDP while looking like DoT. (Audit 2026-07-29, #23.)
+        if !matches!(p.obfuscation.fronting.as_str(), "websocket" | "none") {
+            anyhow::bail!(
+                "profile '{}': unknown obf.fronting '{}' — expected 'websocket' or 'none'",
+                p.name,
+                p.obfuscation.fronting
+            );
+        }
+        if !matches!(p.tun.device_type.as_str(), "tun" | "tap") {
+            anyhow::bail!(
+                "profile '{}': unknown tun.device_type '{}' — expected 'tun' or 'tap'",
+                p.name,
+                p.tun.device_type
+            );
+        }
+        if !matches!(p.dns.upstream_protocol.as_str(), "udp" | "tcp") {
+            anyhow::bail!(
+                "profile '{}': unknown dns.upstream_protocol '{}' — expected 'udp' or 'tcp' \
+                 (DoT/'tls' is not implemented; it would silently send plaintext UDP)",
+                p.name,
+                p.dns.upstream_protocol
+            );
+        }
         // Accepted server wire modes: plain, obfs, fake-tls (matched in
         // handler.rs / udp_handler.rs); reality-tls is honoured as a fake-tls
         // profile driven by obf.tls.reality_proxy (see server-multiprofile.conf).
@@ -885,9 +914,110 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                 );
             }
         }
+        // The same treatment for the rest of the obfuscation block. Heartbeat was validated
+        // and these were not, so a nonsensical value was accepted at load and only showed up
+        // as behaviour nobody could explain: an inverted min/max silently disables the
+        // feature, `max_fragments_per_packet = 0` leaves the fragmenter with nowhere to put
+        // the packet, and a probability outside 0..=1 (or NaN, which every comparison
+        // answers `false` to) makes padding fire always or never. Reject where the config is
+        // authored. (Audit 2026-07-29, #24.)
+        let pad = &p.obfuscation.padding;
+        if pad.enabled {
+            if pad.min_bytes > pad.max_bytes {
+                anyhow::bail!(
+                    "profile '{}': obf.padding.min_bytes ({}) must be <= max_bytes ({})",
+                    p.name,
+                    pad.min_bytes,
+                    pad.max_bytes
+                );
+            }
+            if !(pad.probability.is_finite() && (0.0..=1.0).contains(&pad.probability)) {
+                anyhow::bail!(
+                    "profile '{}': obf.padding.probability ({}) must be a number in 0.0..=1.0",
+                    p.name,
+                    pad.probability
+                );
+            }
+        }
+        let frag = &p.obfuscation.fragmentation;
+        if frag.enabled {
+            if frag.min_chunk_size == 0 || frag.min_chunk_size > frag.max_chunk_size {
+                anyhow::bail!(
+                    "profile '{}': obf.fragmentation.min_chunk_size ({}) must be > 0 and \
+                     <= max_chunk_size ({})",
+                    p.name,
+                    frag.min_chunk_size,
+                    frag.max_chunk_size
+                );
+            }
+            if frag.max_fragments_per_packet == 0 {
+                anyhow::bail!(
+                    "profile '{}': obf.fragmentation.max_fragments_per_packet must be > 0 \
+                     (set enabled = false to turn fragmentation off)",
+                    p.name
+                );
+            }
+        }
+        let norm = &p.obfuscation.traffic_normalization;
+        if norm.enabled && (norm.round_sizes.is_empty() || norm.round_sizes.contains(&0)) {
+            anyhow::bail!(
+                "profile '{}': obf.traffic_normalization.round_sizes must be non-empty and \
+                 carry no zero (set enabled = false to turn normalization off)",
+                p.name
+            );
+        }
+        let sh = &p.obfuscation.traffic_shaping;
+        if sh.enabled {
+            if sh.idle_gap_min_ms > sh.idle_gap_max_ms {
+                anyhow::bail!(
+                    "profile '{}': obf.traffic_shaping.idle_gap_min_ms ({}) must be <= \
+                     idle_gap_max_ms ({})",
+                    p.name,
+                    sh.idle_gap_min_ms,
+                    sh.idle_gap_max_ms
+                );
+            }
+            if sh.idle_gap_mean_ms == 0 {
+                anyhow::bail!(
+                    "profile '{}': obf.traffic_shaping.idle_gap_mean_ms must be > 0 when \
+                     shaping is enabled",
+                    p.name
+                );
+            }
+            if sh.min_size > sh.max_size {
+                anyhow::bail!(
+                    "profile '{}': obf.traffic_shaping.min_size ({}) must be <= max_size ({})",
+                    p.name,
+                    sh.min_size,
+                    sh.max_size
+                );
+            }
+            if sh.budget_bytes_per_sec == 0 {
+                anyhow::bail!(
+                    "profile '{}': obf.traffic_shaping.budget_bytes_per_sec must be > 0 when \
+                     shaping is enabled (0 sends no cover at all)",
+                    p.name
+                );
+            }
+        }
         if p.obfuscation.mode == "plain" && p.bind.transport == "udp" {
             anyhow::bail!(
                 "profile '{}': plain (raw) wire mode is TCP-only — set bind.transport = tcp",
+                p.name
+            );
+        }
+        // reality-tls on UDP is a profile that cannot do what its name says. REALITY wraps
+        // the tunnel in a REAL TLS 1.3 session, which is a TCP stream; the UDP handler has no
+        // such transport and falls through to fake-tls/obfs datagram framing. So the profile
+        // started, reported itself as reality-tls, and put no genuine TLS on the wire at all
+        // — the operator believes they have the strongest masking available and has the
+        // weakest. Only `plain` was rejected here; the iOS client already refuses both
+        // combinations, so the server was the more permissive end.
+        // (Audit 2026-07-29, #18.)
+        if p.obfuscation.mode == "reality-tls" && p.bind.transport == "udp" {
+            anyhow::bail!(
+                "profile '{}': reality-tls is TCP-only — it terminates a real TLS session, \
+                 which UDP cannot carry. Use bind.transport = tcp, or obfs for a UDP profile",
                 p.name
             );
         }
@@ -1079,6 +1209,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // a typo is visible instead of silent. Left non-fatal: one bad entry among good ones
         // still resolves.
         if p.dns.enabled {
+            let mut usable = 0usize;
             for up in &p.dns.upstream {
                 if up.trim().parse::<std::net::IpAddr>().is_err() {
                     log::warn!(
@@ -1087,7 +1218,35 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                         p.name,
                         up
                     );
+                } else {
+                    usable += 1;
                 }
+            }
+            // One bad entry among good ones is a warning; ALL of them bad is a resolver that
+            // can never answer anything. Since clients are handed this proxy as their DNS,
+            // that is a black hole for every name they look up — and the old behaviour was to
+            // start anyway and fail each query in silence. (Audit 2026-07-29, #22.)
+            if usable == 0 && !p.dns.upstream.is_empty() {
+                anyhow::bail!(
+                    "profile '{}': none of the {} dns.upstream entries is a valid IP address — \
+                     the DNS proxy would answer nothing while clients are pushed to use it",
+                    p.name,
+                    p.dns.upstream.len()
+                );
+            }
+        }
+        // The FIRST push_servers entry is what clients are told to use as their resolver, so
+        // a typo there silently deprives every client of DNS (the client strict-validates the
+        // pushed value and then has nothing left to use). Validate all of them: a later entry
+        // being wrong is a latent trap for the day the first one is removed.
+        for ps in &p.dns.push_servers {
+            if ps.trim().parse::<std::net::IpAddr>().is_err() {
+                anyhow::bail!(
+                    "profile '{}': dns.push_servers entry '{}' is not a valid IP address — \
+                     it is handed to clients as their resolver",
+                    p.name,
+                    ps
+                );
             }
         }
     }
@@ -1850,7 +2009,66 @@ fn validate_listen_addr(spec: &str) -> Option<String> {
     if addr.is_empty() || addr.split_whitespace().count() != 1 || !addr.contains(':') {
         return None;
     }
+    // "Contains a colon" is not a bind address. `host:99999`, `1.2.3.4:` and a bare IPv6
+    // literal all passed that test, sailed through `check-config`, and only failed later at
+    // bind time — where the error is never read (see the listener join below), so the port
+    // simply did not exist while the server looked healthy. Parse it the same way the bind
+    // itself will, and split host/port so a hostname (legitimate here, `SocketAddr` cannot
+    // hold one) is still accepted with its port range checked.
+    // (Audit 2026-07-29, #20.)
+    match addr.parse::<std::net::SocketAddr>() {
+        // Port 0 parses happily but asks the OS for an ephemeral port — a listener no client
+        // could ever be told to reach. Never what a `listen` entry means.
+        Ok(sa) if sa.port() != 0 => {}
+        Ok(_) => return None,
+        Err(_) => {
+            // Not an IP literal: a hostname is legitimate here (`SocketAddr` cannot hold
+            // one, it is resolved at bind time), so check the shape by hand.
+            let (host, port) = addr.rsplit_once(':')?;
+            // A bare IPv6 literal has several colons and must be bracketed to be
+            // unambiguous; unbracketed, `rsplit_once` would slice the address itself.
+            if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
+                return None;
+            }
+            if host.is_empty() || !matches!(port.parse::<u16>(), Ok(p) if p != 0) {
+                return None;
+            }
+        }
+    }
     Some(addr.to_string())
+}
+
+#[cfg(test)]
+mod listen_addr_tests {
+    use super::validate_listen_addr;
+
+    #[test]
+    fn accepts_real_binds_and_rejects_what_cannot_bind() {
+        for ok in [
+            "0.0.0.0:443",
+            "127.0.0.1:8080",
+            "[::1]:443",
+            "[2001:db8::5]:443",
+            "vpn.example.com:443", // a hostname is resolved at bind time
+        ] {
+            assert!(validate_listen_addr(ok).is_some(), "{ok} must be accepted");
+        }
+        for bad in [
+            "1.2.3.4:99999", // port out of range — used to pass check-config
+            "1.2.3.4:0",     // port 0 asks the OS for a random one; never intended here
+            "1.2.3.4:",
+            "1.2.3.4:http", // not numeric
+            "::1:443",      // unbracketed IPv6 — ambiguous
+            "1.2.3.4",      // no port at all
+            "",
+            "1.2.3.4:443 udp", // stray transport word
+        ] {
+            assert!(
+                validate_listen_addr(bad).is_none(),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
 }
 
 /// Best-effort systemd `sd_notify`: send `msg` (e.g. `"STATUS=qeli v0.7.11 …"` or `"READY=1"`)
@@ -2481,7 +2699,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         .parse()
         .unwrap_or(TransportProtocol::Tcp);
     let mut listeners: Vec<(String, TransportProtocol)> = vec![(
-        format!("{}:{}", pcfg.bind.address, pcfg.bind.port),
+        crate::util::join_host_port(&pcfg.bind.address, pcfg.bind.port),
         primary_transport,
     )];
     for spec in &pcfg.bind.listen {
@@ -2851,6 +3069,84 @@ mod tests {
     fn valid_address_fields_still_pass() {
         // The guard above must not start rejecting ordinary configs.
         assert!(validate_profiles(&cfg_addr("10.1.0.1", "255.255.255.0", "10.1.0.0/24")).is_ok());
+    }
+
+    /// Nonsensical obfuscation values must be refused at load, not accepted and then
+    /// silently misbehave. Each case below is a real failure mode: an inverted min/max
+    /// disables the feature without saying so, `max_fragments_per_packet = 0` leaves the
+    /// fragmenter nowhere to put the packet, and a probability outside 0..=1 — or NaN,
+    /// which every comparison answers `false` to — makes padding fire always or never.
+    #[test]
+    fn nonsensical_obfuscation_values_are_rejected() {
+        fn cfg_extra(extra: &str) -> ServerConfig {
+            let ini = format!(
+                "[profile:p]\n\
+                 bind.address = 0.0.0.0\n\
+                 bind.port = 4443\n\
+                 bind.transport = tcp\n\
+                 tun.name = vpn0\n\
+                 tun.address = 10.1.0.1\n\
+                 tun.netmask = 255.255.255.0\n\
+                 tun.mtu = 1400\n\
+                 pool.cidr = 10.1.0.0/24\n\
+                 obf.mode = fake-tls\n\
+                 {extra}"
+            );
+            crate::config::parse_server_config(&ini).expect("fixture INI must parse")
+        }
+
+        for (label, extra) in [
+            (
+                "padding min > max",
+                "obf.padding.enabled = true\nobf.padding.min_bytes = 200\nobf.padding.max_bytes = 100\n",
+            ),
+            (
+                "padding probability above 1",
+                "obf.padding.enabled = true\nobf.padding.probability = 1.5\n",
+            ),
+            (
+                "fragmentation max_fragments = 0",
+                "obf.fragmentation.enabled = true\nobf.fragmentation.max_fragments_per_packet = 0\n",
+            ),
+            (
+                "fragmentation min > max",
+                "obf.fragmentation.enabled = true\nobf.fragmentation.min_chunk_size = 900\nobf.fragmentation.max_chunk_size = 300\n",
+            ),
+            (
+                "shaping gap min > max",
+                "obf.traffic_shaping.enabled = true\nobf.traffic_shaping.idle_gap_min_ms = 9000\nobf.traffic_shaping.idle_gap_max_ms = 100\n",
+            ),
+            (
+                "shaping budget 0",
+                "obf.traffic_shaping.enabled = true\nobf.traffic_shaping.budget_bytes_per_sec = 0\n",
+            ),
+        ] {
+            assert!(
+                validate_profiles(&cfg_extra(extra)).is_err(),
+                "{label}: must be rejected at load"
+            );
+        }
+
+        // A profile that merely ENABLES these with sane values must still pass — the guard
+        // exists to catch nonsense, not to make the features unusable.
+        assert!(validate_profiles(&cfg_extra(
+            "obf.padding.enabled = true\nobf.fragmentation.enabled = true\nobf.traffic_shaping.enabled = true\n"
+        ))
+        .is_ok());
+    }
+
+    /// reality-tls terminates a real TLS session, which is a TCP stream. On UDP the handler
+    /// silently falls back to datagram framing, so the profile advertises the strongest
+    /// masking the project has and puts none of it on the wire.
+    #[test]
+    fn reality_tls_is_rejected_on_udp() {
+        let err = validate_profiles(&cfg_with("reality-tls", "udp")).unwrap_err();
+        assert!(
+            err.to_string().contains("TCP-only"),
+            "expected a TCP-only rejection, got: {err}"
+        );
+        // …and must still be allowed on TCP, which is where it belongs.
+        assert!(validate_profiles(&cfg_with("reality-tls", "tcp")).is_ok());
     }
 
     #[test]

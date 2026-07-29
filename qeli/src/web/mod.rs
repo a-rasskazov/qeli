@@ -541,7 +541,7 @@ async fn security_headers(
 pub async fn start(state: Arc<ServerState>) {
     // Owned clone so the config outlives `state` (moved into the router below).
     let web_cfg = state.config.web.clone();
-    let addr = format!("{}:{}", web_cfg.bind, web_cfg.port);
+    let addr = crate::util::join_host_port(&web_cfg.bind, web_cfg.port);
 
     let bind = web_cfg.bind.as_str();
     let is_loopback = matches!(bind, "127.0.0.1" | "::1" | "[::1]" | "localhost");

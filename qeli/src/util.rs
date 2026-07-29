@@ -2,6 +2,49 @@
 
 use std::path::Path;
 
+/// Join a bind address and port into something `parse::<SocketAddr>()` accepts.
+///
+/// An IPv6 literal must be bracketed: `format!("{addr}:{port}")` turns `::1` into `::1:8080`,
+/// which is not a socket address at all, so the listener fails to bind. Every listener in the
+/// tree grew its own copy of that concatenation, so an IPv6 `bind` silently could not work —
+/// for the VPN listener, the DNS proxy and the panel alike.
+///
+/// Already-bracketed input (`[::1]`, which the panel's own loopback check accepts as a
+/// spelling) is passed through rather than bracketed twice.
+pub fn join_host_port(host: &str, port: u16) -> String {
+    let h = host.trim();
+    if h.contains(':') && !h.starts_with('[') {
+        format!("[{h}]:{port}")
+    } else {
+        format!("{h}:{port}")
+    }
+}
+
+#[cfg(test)]
+mod host_port_tests {
+    use super::join_host_port;
+
+    #[test]
+    fn ipv6_is_bracketed_exactly_once_and_parses() {
+        for (host, want) in [
+            ("::1", "[::1]:8080"),
+            ("[::1]", "[::1]:8080"), // already bracketed — must not double up
+            ("2001:db8::5", "[2001:db8::5]:8080"),
+            ("0.0.0.0", "0.0.0.0:8080"),
+            ("127.0.0.1", "127.0.0.1:8080"),
+        ] {
+            let got = join_host_port(host, 8080);
+            assert_eq!(got, want, "join_host_port({host})");
+            assert!(
+                got.parse::<std::net::SocketAddr>().is_ok(),
+                "{got} must parse as a SocketAddr"
+            );
+        }
+        // The shape this function exists to prevent.
+        assert!("::1:8080".parse::<std::net::SocketAddr>().is_err());
+    }
+}
+
 /// Validate a route CIDR (`10.20.0.0/16`). The address must parse as an `IpAddr`
 /// and the prefix must be a decimal length in range for the family. Also rejects
 /// anything that could be read as an `ip` option (leading `-`).
