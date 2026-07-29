@@ -86,6 +86,20 @@ try:
     else:
         r = runs[0]
         print(f"  {r['headSha'][:8]}  status={r['status']}  conclusion={r['conclusion']}")
+        # WHICH COMMIT was green matters as much as whether it was green. The run's headSha
+        # was printed and then ignored, so a run from an earlier push on the same branch
+        # satisfied this gate for a commit CI had never seen — exactly the case a release
+        # gate exists to catch, and invisible because the output looked identical either way.
+        # (Audit 2026-07-29, #3.)
+        local_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT
+        ).stdout.strip()
+        if local_head and r.get("headSha") and r["headSha"] != local_head:
+            failures.append(
+                f"CI ran on {r['headSha'][:8]}, not on the commit being released "
+                f"({local_head[:8]}) — push and let CI finish first"
+            )
+            print(f"  ! CI covered {r['headSha'][:8]}, HEAD is {local_head[:8]}")
         if r["status"] != "completed":
             failures.append(f"CI still running ({r['status']})")
         elif r["conclusion"] != "success":

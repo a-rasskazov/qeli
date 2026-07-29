@@ -27,6 +27,12 @@ on:
       # them here it would be a gate that its own subject can never trigger.
       # (Audit 2026-07-27, G2)
       - '*.sh'
+      # Same reasoning, two directories that were still missing: a change confined to the
+      # OpenWrt package recipe or to the release/packaging assets ran NO ci at all, so the
+      # thing shipped to users could be edited without a single check.
+      # (Audit 2026-07-29, #3.)
+      - 'qeli-openwrt/**'
+      - 'release/**'
   pull_request:
     paths:
       - 'qeli/**'
@@ -45,6 +51,8 @@ on:
       - 'scripts/**'
       - 'conformance/**'
       - '*.md'
+      - 'qeli-openwrt/**'
+      - 'release/**'
       - '*.sh'
   workflow_dispatch:
   schedule:
@@ -256,6 +264,15 @@ jobs:
       - name: Android lint (release variant)
         working-directory: qeli-android
         run: ./gradlew --no-daemon lintRelease -Dlint.baselines.continue=true
+      # The APK users actually install was never BUILT here: assembleDebug proves the debug
+      # variant compiles, and lintRelease inspects sources without producing the artifact.
+      # R8/shrinking, resource merging and the packaging step therefore ran for the first
+      # time on a release machine — the one place a failure is most expensive.
+      # No signing config in CI, so this yields an unsigned APK; building it is the point.
+      # (Audit 2026-07-29, #3.)
+      - name: Android release APK builds
+        working-directory: qeli-android
+        run: ./gradlew --no-daemon assembleRelease
 
   windows-build:
     runs-on: windows-latest
