@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace QeliMac.Service;
 
@@ -172,6 +173,9 @@ public static class ServiceManager
     public static void Install()
     {
         EnsureProtectedLocation(ExePath);
+        // Same reason as Start(): do not depend on the caller having written the profile
+        // first for the daemon's log directory to exist.
+        ServiceState.EnsureDir();
         RemoveLegacy();   // never leave the pre-0.7.12 daemon running alongside the new one
         File.WriteAllText(PlistPath, Plist());
         // chown root:wheel + 0644 so launchd accepts it as a system daemon.
@@ -181,7 +185,9 @@ public static class ServiceManager
         // outside an Aqua login session (e.g. under the osascript privilege trampoline).
         Run($"bootout {ServiceTarget}");          // clear any stale registration (no-op if absent)
         Run($"enable {ServiceTarget}");           // clear a disabled override (the legacy `-w`)
-        LaunchctlChecked($"bootstrap system \"{PlistPath}\"", "Loading the daemon", IsRunning);
+        var beforeInstall = StatusStamp();
+        LaunchctlChecked($"bootstrap system \"{PlistPath}\"", "Loading the daemon",
+                         () => StatusStamp() > beforeInstall);
     }
 
     public static void Uninstall()
@@ -196,6 +202,14 @@ public static class ServiceManager
         // Deliberately checks the CURRENT plist rather than IsInstalled(): after an upgrade
         // only the legacy one exists, and bootstrapping a path that isn't there would fail.
         // Install() writes the new plist and clears the legacy registration on the way.
+        // launchd creates the plist's StandardErrorPath FILE but not its directory, and if it
+        // cannot open that path the job fails to spawn — `bootstrap` then wedges until our
+        // 20 s bound kills it, reporting only "timed out". The directory normally exists
+        // because daemon-install writes the profile into it first, so this held only by
+        // accident of call order: delete /Library/Application Support/Qeli (a reasonable
+        // thing to try when troubleshooting) and every later start hangs, with an error that
+        // names launchctl and never mentions the missing directory.
+        ServiceState.EnsureDir();
         if (!File.Exists(PlistPath)) { Install(); return; }
         // Validate the path here too. This branch used to skip it, which made the security
         // check depend on whether a plist happened to exist — and launchd is about to run
@@ -205,7 +219,9 @@ public static class ServiceManager
         EnsureProtectedLocation(ExePath);
         RemoveLegacy();
         Run($"enable {ServiceTarget}");
-        LaunchctlChecked($"bootstrap system \"{PlistPath}\"", "Starting the daemon", IsRunning);
+        var beforeStart = StatusStamp();
+        LaunchctlChecked($"bootstrap system \"{PlistPath}\"", "Starting the daemon",
+                         () => StatusStamp() > beforeStart);
     }
 
     public static void Stop()
@@ -341,11 +357,56 @@ public static class ServiceManager
     /// </remarks>
     private static void LaunchctlChecked(string args, string what, Func<bool> succeeded)
     {
-        var (outp, err, code) = Run3("/bin/launchctl", args);
-        if (code == 0 || succeeded()) return;
-        var detail = string.IsNullOrWhiteSpace(err) ? outp.Trim() : err.Trim();
+        var psi = new ProcessStartInfo("/bin/launchctl", args)
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        using var p = Process.Start(psi)!;
+        var so = p.StandardOutput.ReadToEndAsync();
+        var se = p.StandardError.ReadToEndAsync();
+
+        // Watch the OUTCOME, not the process. `launchctl bootstrap` regularly takes tens of
+        // seconds to return under the osascript privilege trampoline while the daemon it
+        // started is already up and serving after one — waiting for launchctl to finish was
+        // the whole of the delay users saw between pressing Connect and anything happening,
+        // and long enough that they pressed again. It is also why a hard timeout was the
+        // wrong tool: the call was not stuck, just slow to report.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (succeeded()) return;                       // daemon is alive — done, whatever launchctl is doing
+            if (p.HasExited && p.ExitCode == 0) return;    // nothing to wait for
+            Thread.Sleep(250);
+        }
+
+        try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        var detail = (se.IsCompletedSuccessfully ? se.Result : "").Trim();
+        if (detail.Length == 0) detail = (so.IsCompletedSuccessfully ? so.Result : "").Trim();
         throw new InvalidOperationException(
-            $"{what} failed: `launchctl {args}` exited {code}" +
-            (string.IsNullOrWhiteSpace(detail) ? "" : $" — {detail}"));
+            $"{what} failed: the daemon did not come up within 30s of `launchctl {args}`" +
+            (detail.Length == 0 ? "." : $" — {detail}"));
+    }
+
+    /// <summary>
+    /// Last-write time of the status file the daemon rewrites every second, or
+    /// <see cref="DateTime.MinValue"/> when it does not exist yet.
+    /// </summary>
+    /// <remarks>
+    /// Progress of this stamp is what "the daemon started" is judged by — deliberately NOT
+    /// `launchctl print`, which is the very tool whose slowness this works around; asking a
+    /// slow tool whether the slow tool succeeded only doubles the wait. Comparing against a
+    /// stamp taken BEFORE the attempt, rather than asking "is the file recent", matters when
+    /// restarting: the file left by the previous daemon is still seconds old and would have
+    /// answered yes before the new one had written anything at all.
+    /// </remarks>
+    private static DateTime StatusStamp()
+    {
+        try
+        {
+            var f = new FileInfo(ServiceState.StatusFile);
+            return f.Exists ? f.LastWriteTimeUtc : DateTime.MinValue;
+        }
+        catch { return DateTime.MinValue; }
     }
 }
