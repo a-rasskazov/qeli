@@ -41,6 +41,7 @@ import kotlinx.coroutines.withContext
 import com.qeli.protocol.ObfsStream
 import com.qeli.protocol.Quic
 import com.qeli.protocol.TlsHandshake
+import com.qeli.protocol.UdpFrag
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.DatagramPacket
@@ -670,7 +671,7 @@ sni = www.microsoft.com
         dialog.show()
         dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val cfgText = dlgBinding.editJson.text.toString().trim()
-            val cfg = try { VpnConfig.parse(cfgText) } catch (e: Exception) {
+            val cfg = try { VpnConfig.parse(cfgText).also { it.validate() } } catch (e: Exception) {
                 Toast.makeText(this, getString(R.string.invalid_config, e.message ?: ""), Toast.LENGTH_LONG).show(); return@setOnClickListener
             }
             // Re-emit as canonical INI so the stored text stays tidy/consistent.
@@ -748,7 +749,13 @@ sni = www.microsoft.com
                 ?.trim() ?: throw IllegalStateException("Empty file")
             // A file may hold a qeli:// link, a JSON config, or an INI config.
             if (text.startsWith("qeli://")) { addProfileFromQeliUri(text); return }
-            val cfg = VpnConfig.parse(text)   // validate (auto-detect INI/JSON)
+            // `parse` only PARSES — fromIni never called validate(), so the comment that
+            // used to sit here claiming otherwise was the whole bug: a raw INI file was stored
+            // verbatim with port 0 / 99999, an unknown proto or mode, an out-of-range timeout
+            // or a negative reconnect, and only failed much later at connect. Validate at the
+            // boundary where untrusted text enters, exactly as the qeli:// import already does.
+            // (Audit 2026-07-29, #5.)
+            val cfg = VpnConfig.parse(text).also { it.validate() }
             val ini = if (text.trimStart().startsWith("{")) cfg.toIni() else text
             val label = (commentLabel(text) ?: jsonName(text)).ifBlank { cfg.serverAddress }
             profiles.add(Profile(label, ini)); activeIndex = activeAfterAdd()
@@ -1164,15 +1171,23 @@ sni = www.microsoft.com
             // exclusive `when` sent a quic+obfs profile's probe quic-wrapped but UNSEALED,
             // so the server's obfs-open saw garbage and dropped it → a working server showed
             // a false "unreachable".
-            var framed = hello
-            if (cfg.quicEnabled)
-                framed = Quic.wrapLong(framed, Quic.generateConnectionId(), 0, 0x02)
-            if (cfg.wireMode.equals("obfs", ignoreCase = true))
-                framed = ObfsStream.datagramSeal(ObfsStream.deriveKey(cfg.obfsKey), framed)
+            // …and FRAGMENT it, like the data plane does. The post-quantum hello is padded
+            // past 1200 bytes, so sending it whole needs IP fragmentation — which mobile and
+            // CGNAT paths drop. The probe then reported "unreachable" on exactly the networks
+            // where a real connection, which fragments at the application layer, succeeds.
+            // (Audit 2026-07-29, #16.)
+            val cid = Quic.generateConnectionId()
+            var pn = 0
+            val datagrams = UdpFrag.fragment(UdpFrag.MSG_CLIENT_HELLO, hello).map { piece ->
+                var out = if (cfg.quicEnabled) Quic.wrapLong(piece, cid, pn++, 0x00) else piece
+                if (cfg.wireMode.equals("obfs", ignoreCase = true))
+                    out = ObfsStream.datagramSeal(ObfsStream.deriveKey(cfg.obfsKey), out)
+                out
+            }
             val recv = DatagramPacket(ByteArray(4096), 4096)
             val t0 = System.currentTimeMillis()
             repeat(2) { // one retry — a single UDP probe can be lost
-                sock.send(DatagramPacket(framed, framed.size))
+                datagrams.forEach { sock.send(DatagramPacket(it, it.size)) }
                 try {
                     sock.receive(recv)
                     if (recv.length > 0) return@withContext System.currentTimeMillis() - t0

@@ -912,16 +912,36 @@ public partial class MainWindow : Window
             string sni = string.IsNullOrWhiteSpace(cfg.Sni) ? "www.microsoft.com" : cfg.Sni!;
             using var mlkem = Qeli.Shared.Crypto.MlKem.Generate(); // hybrid PQ — server requires it
             byte[] hello = TlsHandshake.BuildClientHelloPq(pub, mlkem.EncapsulationKey, sni, padToMin: 1200);
-            byte[] framed = hello;
-            if (cfg.QuicEnabled)
-                framed = Quic.WrapLong(hello, Quic.GenerateConnectionId(), 0, 0x02);
-            else if (cfg.WireMode.Equals("obfs", StringComparison.OrdinalIgnoreCase) && cfg.ObfsKey.Length > 0)
-                framed = ObfsStream.DatagramSeal(ObfsStream.DeriveKey(cfg.ObfsKey), hello);
+
+            // Frame it EXACTLY as the data plane does, or the probe answers a different
+            // question than the one being asked. Three things were wrong here:
+            //   * the hello went out as ONE ≥1200-byte datagram, while the real client
+            //     fragments it via UdpFrag — mobile/CGNAT paths drop IP fragments, so the
+            //     probe reported "unreachable" on exactly the networks where a real
+            //     connection succeeds;
+            //   * QUIC and obfs were an if/else, but they are LAYERS: with `quic + obfs` the
+            //     probe sent QUIC with no outer obfs seal and the server dropped it, so that
+            //     combination could never show green;
+            //   * the long header was typed 0x02 (Handshake) while carrying Initial fields.
+            // (Audit 2026-07-29, #16.)
+            var cid = Quic.GenerateConnectionId();
+            int pn = 0;
+            byte[]? obfsKey = cfg.WireMode.Equals("obfs", StringComparison.OrdinalIgnoreCase)
+                              && cfg.ObfsKey.Length > 0
+                ? ObfsStream.DeriveKey(cfg.ObfsKey)
+                : null;
+            var datagrams = new List<byte[]>();
+            foreach (var piece in UdpFrag.Fragment(UdpFrag.MsgClientHello, hello))
+            {
+                byte[] outBuf = cfg.QuicEnabled ? Quic.WrapLong(piece, cid, pn++, 0x00) : piece;
+                if (obfsKey != null) outBuf = ObfsStream.DatagramSeal(obfsKey, outBuf);
+                datagrams.Add(outBuf);
+            }
 
             var buf = new byte[4096];
             for (int attempt = 0; attempt < 2; attempt++) // one retry — UDP can drop a probe
             {
-                sock.Send(framed);
+                foreach (var d in datagrams) sock.Send(d);
                 try
                 {
                     if (sock.Receive(buf) > 0) return true;

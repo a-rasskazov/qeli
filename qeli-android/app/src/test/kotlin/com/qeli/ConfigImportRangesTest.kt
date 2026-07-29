@@ -106,3 +106,59 @@ class ConfigImportRangesTest {
         VpnConfig.fromIni(ini("padding_min = -5", "padding_max = 60000", "mtu = 1380")).validate()
     }
 }
+
+/**
+ * A canonical JSON profile must survive import intact. (Audit 2026-07-29, #6)
+ *
+ * `fromJson` stopped filling fields at heartbeat, so shaping, an explicit
+ * `tun.mtu_probe = false` and the whole `[logging]` block were dropped: the imported profile
+ * silently came back with defaults, and re-exporting it wrote that loss back to disk. The
+ * values below are all non-default on purpose — with the old importer every assertion here
+ * fails, which is the point of the test.
+ */
+class ConfigJsonImportCompletenessTest {
+    private val json = """
+        {
+          "server": {"address": "example.com", "port": 8443, "protocol": "tcp"},
+          "auth": {"username": "u", "password": "p"},
+          "tun": {"mtu": 1280, "mtu_probe": false},
+          "logging": {"level": "debug", "time_format": "rfc3339"},
+          "obfuscation": {
+            "mode": "fake-tls",
+            "traffic_shaping": {
+              "enabled": true, "idle_gap_mean_ms": 800, "idle_gap_min_ms": 50,
+              "idle_gap_max_ms": 7000, "budget_bytes_per_sec": 4096,
+              "min_size": 128, "max_size": 900, "stealth": true, "stealth_rate_mbps": 5
+            }
+          }
+        }
+    """.trimIndent()
+
+    @Test
+    fun jsonImportKeepsShapingMtuProbeAndLogging() {
+        val c = VpnConfig.fromJson(json)
+        assertEquals(false, c.mtuProbe)
+        assertEquals(true, c.shapingEnabled)
+        assertEquals(800L, c.shapingGapMeanMs)
+        assertEquals(50L, c.shapingGapMinMs)
+        assertEquals(7000L, c.shapingGapMaxMs)
+        assertEquals(4096, c.shapingBudgetBytesPerSec)
+        assertEquals(128, c.shapingMinSize)
+        assertEquals(900, c.shapingMaxSize)
+        assertEquals(true, c.shapingStealth)
+        assertEquals(5, c.shapingStealthRateMbps)
+        assertEquals("debug", c.loggingLevel)
+        assertEquals("rfc3339", c.loggingTimeFormat)
+    }
+
+    /** And the values must still be there after a save/load round-trip through INI. */
+    @Test
+    fun theValuesSurviveAnIniRoundTrip() {
+        val back = VpnConfig.fromIni(VpnConfig.fromJson(json).toIni())
+        assertEquals(false, back.mtuProbe)
+        assertEquals(true, back.shapingEnabled)
+        assertEquals(800L, back.shapingGapMeanMs)
+        assertEquals(900, back.shapingMaxSize)
+        assertEquals("debug", back.loggingLevel)
+    }
+}

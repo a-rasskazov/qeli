@@ -1067,16 +1067,31 @@ public partial class MainWindow : Window
             string sni = string.IsNullOrWhiteSpace(cfg.Sni) ? "www.microsoft.com" : cfg.Sni!;
             using var mlkem = Qeli.Shared.Crypto.MlKem.Generate(); // hybrid PQ — server requires it
             byte[] hello = TlsHandshake.BuildClientHelloPq(pub, mlkem.EncapsulationKey, sni, padToMin: 1200);
-            byte[] framed = hello;
-            if (cfg.QuicEnabled)
-                framed = Quic.WrapLong(hello, Quic.GenerateConnectionId(), 0, 0x02);
-            else if (cfg.WireMode.Equals("obfs", StringComparison.OrdinalIgnoreCase) && cfg.ObfsKey.Length > 0)
-                framed = ObfsStream.DatagramSeal(ObfsStream.DeriveKey(cfg.ObfsKey), hello);
+
+            // Frame it EXACTLY as the data plane does — see the Windows client for the full
+            // reasoning. In short: the hello must be fragmented (a single ≥1200-byte datagram
+            // is dropped on the CGNAT/mobile paths where a real connection works), QUIC and
+            // obfs are LAYERS rather than alternatives (so `quic + obfs` could never show
+            // green), and the long header is an Initial (0x00), not a Handshake.
+            // (Audit 2026-07-29, #16.)
+            var cid = Quic.GenerateConnectionId();
+            int pn = 0;
+            byte[]? obfsKey = cfg.WireMode.Equals("obfs", StringComparison.OrdinalIgnoreCase)
+                              && cfg.ObfsKey.Length > 0
+                ? ObfsStream.DeriveKey(cfg.ObfsKey)
+                : null;
+            var datagrams = new List<byte[]>();
+            foreach (var piece in UdpFrag.Fragment(UdpFrag.MsgClientHello, hello))
+            {
+                byte[] outBuf = cfg.QuicEnabled ? Quic.WrapLong(piece, cid, pn++, 0x00) : piece;
+                if (obfsKey != null) outBuf = ObfsStream.DatagramSeal(obfsKey, outBuf);
+                datagrams.Add(outBuf);
+            }
 
             var buf = new byte[4096];
             for (int attempt = 0; attempt < 2; attempt++)
             {
-                sock.Send(framed);
+                foreach (var d in datagrams) sock.Send(d);
                 try { if (sock.Receive(buf) > 0) return true; }
                 catch (SocketException) { /* timeout — retry then fail */ }
             }

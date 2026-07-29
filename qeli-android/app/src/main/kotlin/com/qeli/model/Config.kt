@@ -541,6 +541,12 @@ data class VpnConfig(
             val heartbeat = obf.optJSONObject("heartbeat") ?: JSONObject()
             val quic = obf.optJSONObject("quic") ?: JSONObject()
             val awg = obf.optJSONObject("awg") ?: JSONObject()
+            // Sections the importer used to stop short of. A canonical JSON profile carrying
+            // shaping, an explicit `tun.mtu_probe = false` or a [logging] block lost all of it
+            // on import and came back with defaults — the profile looked configured and was
+            // not, and re-exporting it wrote the loss back out. (Audit 2026-07-29, #6.)
+            val shaping = obf.optJSONObject("traffic_shaping") ?: JSONObject()
+            val logging = root.optJSONObject("logging") ?: JSONObject()
 
             val password = when {
                 auth.has("password") && !auth.isNull("password") -> auth.optString("password")
@@ -595,7 +601,20 @@ data class VpnConfig(
                 heartbeatEnabled = heartbeat.optBoolean("enabled", true),
                 heartbeatIntervalMs = heartbeat.optLong("interval_ms", 15000),
                 heartbeatDataSize = heartbeat.optInt("data_size_bytes", 16),
-                heartbeatJitterMs = heartbeat.optLong("jitter_ms", 2000)
+                heartbeatJitterMs = heartbeat.optLong("jitter_ms", 2000),
+                mtuProbe = tun.optBoolean("mtu_probe", true),
+                shapingEnabled = shaping.optBoolean("enabled", false),
+                shapingGapMeanMs = shaping.optLong("idle_gap_mean_ms", 700),
+                shapingGapMinMs = shaping.optLong("idle_gap_min_ms", 40),
+                shapingGapMaxMs = shaping.optLong("idle_gap_max_ms", 6000),
+                shapingBudgetBytesPerSec = shaping.optInt("budget_bytes_per_sec", 16384),
+                shapingMinSize = shaping.optInt("min_size", 64),
+                shapingMaxSize = shaping.optInt("max_size", 1024),
+                shapingStealth = shaping.optBoolean("stealth", false),
+                shapingStealthRateMbps = shaping.optInt("stealth_rate_mbps", 2),
+                loggingLevel = logging.optString("level", "").takeIf { it.isNotEmpty() },
+                loggingFile = logging.optString("file", "").takeIf { it.isNotEmpty() },
+                loggingTimeFormat = logging.optString("time_format", "").takeIf { it.isNotEmpty() }
             )
         }
 

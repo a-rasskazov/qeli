@@ -294,7 +294,17 @@ struct VPNConfig: Codable, Equatable, Sendable {
         let heartbeat = dict("heartbeat", in: obfuscation)
         let quic = dict("quic", in: obfuscation)
         let awg = dict("awg", in: obfuscation)
-        let shaping = dict("shaping", in: obfuscation)
+        // Canonical name is `traffic_shaping` with `idle_gap_*` fields — what the Rust
+        // client, the server's AuthOK push and every exported profile use. This read
+        // `shaping` / `gap_*`, which matches nothing the rest of the project emits, so a
+        // canonical JSON profile imported here silently came back with shaping DEFAULTS: the
+        // feature looked configured and was not. The short spelling is still accepted so
+        // profiles written by older builds of this client keep loading.
+        // (Audit 2026-07-29, #8.)
+        let shaping: [String: Any] = {
+            let canonical = dict("traffic_shaping", in: obfuscation)
+            return canonical.isEmpty ? dict("shaping", in: obfuscation) : canonical
+        }()
 
         var config = VPNConfig(
             serverAddress: string("address", in: server, default: string("address", in: root, default: "127.0.0.1")),
@@ -337,9 +347,9 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.awgJunkMin = int("jmin", in: awg, default: 40)
         config.awgJunkMax = int("jmax", in: awg, default: 300)
         config.shapingEnabled = bool("enabled", in: shaping, default: false)
-        config.shapingGapMeanMilliseconds = int("gap_mean_ms", in: shaping, default: 700)
-        config.shapingGapMinMilliseconds = int("gap_min_ms", in: shaping, default: 40)
-        config.shapingGapMaxMilliseconds = int("gap_max_ms", in: shaping, default: 6_000)
+        config.shapingGapMeanMilliseconds = int("idle_gap_mean_ms", in: shaping, default: int("gap_mean_ms", in: shaping, default: 700))
+        config.shapingGapMinMilliseconds = int("idle_gap_min_ms", in: shaping, default: int("gap_min_ms", in: shaping, default: 40))
+        config.shapingGapMaxMilliseconds = int("idle_gap_max_ms", in: shaping, default: int("gap_max_ms", in: shaping, default: 6_000))
         config.shapingBudgetBytesPerSecond = int("budget_bytes_per_sec", in: shaping, default: 16_384)
         config.shapingMinSize = int("min_size", in: shaping, default: 64)
         config.shapingMaxSize = int("max_size", in: shaping, default: 1_024)
