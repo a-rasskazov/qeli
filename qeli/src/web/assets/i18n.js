@@ -132,6 +132,61 @@
       'Edit': 'Изменить',
       'Delete': 'Удалить',
       'Confirm': 'Подтвердить',
+      // Titles and buttons of the shared confirm dialog (layout.html). Bound with x-text,
+      // so the DOM walker cannot reach them — they go through qeliT() inside qeliConfirm().
+      // 'Rotate', 'Kick' and 'Unblock ALL …' are deliberately NOT repeated here — the
+      // dictionary already defines them further down, and a duplicate key is silently won
+      // by the LAST literal, so a second copy here would be dead weight at best (and, for
+      // 'Rotate', a different wording that never appears).
+      'Remove': 'Удалить',
+      'Restore': 'Восстановить',
+      'Set up': 'Настроить',
+      'Exact': 'Точное',
+      'Overlay (safe)': 'Наложением (безопасно)',
+      'Unblock all': 'Разблокировать все',
+      'Remove profile': 'Удалить профиль',
+      'Kick client': 'Отключить клиента',
+      'Delete client profile': 'Удалить клиентский профиль',
+      'Rotate identity key': 'Перевыпустить ключ идентичности',
+      'Restore /etc/qeli': 'Восстановить /etc/qeli',
+      'Exact restore?': 'Точное восстановление?',
+      'Set up and restart': 'Настроить и перезапустить',
+      // Dialog bodies. The template is the key; `{}` is filled by qeliTf() AFTER lookup,
+      // because a composed sentence ("Delete user \"bob\"?") matches nothing.
+      'Delete user "{}"?': 'Удалить пользователя «{}»?',
+      'Disable "{}"?': 'Отключить «{}»?',
+      'Delete group "{}"?': 'Удалить группу «{}»?',
+      'Delete client profile "{}"?': 'Удалить клиентский профиль «{}»?',
+      'Remove profile "{}"?': 'Удалить профиль «{}»?',
+      'Rotate the identity key for "{}"?': 'Перевыпустить ключ идентичности для «{}»?',
+      'Restore /etc/qeli from "{}"?': 'Восстановить /etc/qeli из «{}»?',
+      'Kick "{}" from "{}"?': 'Отключить «{}» от «{}»?',
+      'Set up the "{}" server ({}) and restart now?': 'Настроить сервер «{}» ({}) и перезапустить сейчас?',
+      '{} {} selected user(s)?': '{}: выбранных пользователей — {}?',
+      'This cannot be undone.': 'Это действие необратимо.',
+      'Active sessions will be kicked.': 'Активные сессии будут разорваны.',
+      'It is disconnected first.': 'Профиль сначала будет отключён.',
+      // Toast error prefixes. These predate the dialog work and were never translated —
+      // surfaced by the coverage check, so fixed here rather than left as known-English
+      // text. The trailing space is part of the key: the reason is appended to it.
+      'Failed to load config: ': 'Не удалось загрузить конфиг: ',
+      'Failed to load users: ': 'Не удалось загрузить пользователей: ',
+      'Network error: ': 'Сетевая ошибка: ',
+      'Restart failed: ': 'Не удалось перезапустить: ',
+      'restore failed: ': 'восстановление не удалось: ',
+      'Save failed: ': 'Не удалось сохранить: ',
+      'Test failed: ': 'Проверка не удалась: ',
+      'Quick start failed: ': 'Быстрый старт не удался: ',
+      'Users referencing it will fall back to their own values.':
+        'Пользователи, ссылающиеся на неё, вернутся к собственным значениям.',
+      'This adds or updates the profile and brings the server up.':
+        'Профиль будет добавлен или обновлён, сервер — поднят.',
+      'Every client of this profile must update its pinned server key, and a restart is needed for it to take effect.':
+        'Каждый клиент этого профиля должен обновить запиненный ключ сервера; для применения нужен перезапуск.',
+      'This OVERWRITES the current config, users and identity keys. A pre-restore snapshot is saved on the server first. A restart is needed to apply.':
+        'Это ПЕРЕЗАПИШЕТ текущий конфиг, пользователей и ключи идентичности. Перед восстановлением на сервере сохраняется снимок. Для применения нужен перезапуск.',
+      'Exact — DELETE anything in /etc/qeli that is not in this archive. Profiles and users created after the backup are lost, recoverable only from the pre-restore snapshot.\n\nOverlay — keep those files (safe).':
+        'Точное — УДАЛИТЬ всё в /etc/qeli, чего нет в архиве. Профили и пользователи, созданные после бэкапа, будут потеряны и восстановимы только из предвосстановительного снимка.\n\nНаложением — сохранить эти файлы (безопасно).',
       'Disable user': 'Отключить пользователя',
       'Delete user': 'Удалить пользователя',
       'Delete group': 'Удалить группу',
@@ -1147,6 +1202,15 @@
   // Translate a string from JS (e.g. confirm()/alert() text the DOM walker can't
   // reach). Falls back to the input for an unknown key or English.
   window.qeliT = (en) => tr(en);
+  // Same, for a string carrying values: translate the TEMPLATE (which is the dictionary
+  // key), then substitute. Composing the sentence first and translating afterwards cannot
+  // work — `Delete user "bob"?` matches no key, so the text silently stayed English while
+  // the title next to it was translated. Placeholders are `{}`, filled left to right.
+  //   qeliTf('Delete user "{}"?', name)
+  window.qeliTf = (en, ...args) => {
+    let i = 0;
+    return tr(en).replace(/\{\}/g, () => (i < args.length ? String(args[i++]) : '{}'));
+  };
   window.setQeliLang = function (code) {
     lang = code;
     try { localStorage.setItem(STORAGE_KEY, code); } catch (e) {}

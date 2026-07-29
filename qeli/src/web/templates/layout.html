@@ -48,6 +48,7 @@ async function apiFetch(url, opts = {}) {
 </script>
 </head>
 <body class="flex h-screen overflow-hidden" x-data="app()" x-init="init()" @notify.window="notify($event.detail.msg, $event.detail.type, $event.detail.timeout)"
+  @qeli-confirm.window="onConfirmRequest($event.detail)"
       @keydown.escape.window="sidebarOpen = false">
 
 <div class="bg-grid"></div>
@@ -212,7 +213,68 @@ async function apiFetch(url, opts = {}) {
   <span x-text="toast.msg"></span>
 </div>
 
+<!-- Shared confirm modal. Lives here, at body level, so every page gets the same dialog
+     instead of the browser's native dialog, which ignores the panel's styling, cannot
+     be translated by the i18n walker, and blocks the whole tab. The users page had a local
+     version of this; it now uses this one. Pages reach it through the global qeliConfirm()
+     below, mirroring how they already reach the toast via a window event. -->
+<div x-cloak x-show="confirmModal.show" class="modal-bg" @click.self="confirmResolve(false)"
+     @keydown.escape.window="confirmModal.show && confirmResolve(false)">
+  <!-- Header / body / footer, the same three zones every other modal in the panel uses, so
+       this one does not read as a foreign element. The first version was a single p-6 box:
+       the title sat 8px above the text while the blank line between paragraphs was wider,
+       which inverts the hierarchy (the strongest break should be under the heading), and the
+       buttons floated against the body with nothing dividing them.
+       Borders use var(--line) rather than the hard-coded #21314e the older modals carry —
+       that literal is a dark-theme navy and is simply wrong under data-theme=light. -->
+  <div class="modal" @click.stop style="max-width:440px">
+    <div class="flex items-start justify-between gap-4 px-6 pt-5 pb-4" style="border-bottom:1px solid var(--line)">
+      <h3 class="text-base font-semibold text-white leading-snug" x-text="confirmModal.title"></h3>
+      <button class="flex-shrink-0 -mr-1 -mt-0.5 text-slate-500 hover:text-white" @click="confirmResolve(false)" aria-label="Close">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <!-- One <p> per paragraph with an even rhythm, instead of leaning on pre-line and a
+         blank line — that produced a gap taller than the one under the heading. Single
+         newlines inside a paragraph are still honoured. -->
+    <div class="px-6 py-5 space-y-2.5">
+      <template x-for="(para, i) in confirmModal.paragraphs" :key="i">
+        <p class="text-sm leading-relaxed" style="color:var(--txt-mut);white-space:pre-line" x-text="para"></p>
+      </template>
+    </div>
+    <div class="flex gap-2 justify-end px-6 pt-4 pb-5" style="border-top:1px solid var(--line)">
+      <button class="btn btn-ghost" @click="confirmResolve(false)" x-text="confirmModal.cancelLabel"></button>
+      <button class="btn" :class="confirmModal.danger ? 'btn-danger' : 'btn-primary'"
+              @click="confirmResolve(true)" x-text="confirmModal.label"></button>
+    </div>
+  </div>
+</div>
+
 <script>
+// Promise-based replacement for the browser's native dialog, usable from any page:
+//   if (!await qeliConfirm('Delete user', 'This cannot be undone.', {danger:true, label:'Delete'})) return;
+// The resolver travels with the event, so several pages can never race over one slot.
+window.qeliConfirm = function (title, message, opts) {
+  opts = opts || {};
+  // Translate here, once, rather than at each call site. The dialog's text is bound with
+  // x-text, so the i18n DOM walker never sees it — this is the same reason qeliT() exists.
+  // Unknown keys fall through unchanged, so an interpolated message ("Delete profile
+  // \"web-1\"?") is simply left as-is instead of breaking.
+  var T = window.qeliT || function (s) { return s; };
+  return new Promise(function (resolve) {
+    window.dispatchEvent(new CustomEvent('qeli-confirm', {
+      detail: {
+        title: T(title),
+        message: T(message),
+        danger: !!opts.danger,
+        label: T(opts.label || 'Confirm'),
+        cancelLabel: T(opts.cancelLabel || 'Cancel'),
+        resolve: resolve,
+      },
+    }));
+  });
+};
+
 function app() {
   return {
     version: '—',
@@ -220,6 +282,7 @@ function app() {
     serverOk: true,
     totalClients: 0,
     toast: { show: false, msg: '', type: 'success', _t: null },
+    confirmModal: { show: false, title: '', message: '', paragraphs: [], danger: false, label: 'Confirm', cancelLabel: 'Cancel', _resolve: null },
     sidebarOpen: false,   // drawer state; only meaningful below the md breakpoint
     update: { show: false, tag: '', url: '', cmd: '' },
     installKind: 'other',
@@ -341,6 +404,31 @@ function app() {
       // to copy) wins. Success/info stay at 3.5s.
       const ms = timeout || (type === 'error' ? 5000 : 3500);
       this.toast = { show: true, msg, type, _t: setTimeout(() => this.toast.show = false, ms) };
+    },
+
+    // Driven by the global qeliConfirm() above via the `qeli-confirm` window event.
+    onConfirmRequest(d) {
+      // A dialog already open means a second request arrived before the first was answered.
+      // Reject the older one rather than dropping its resolver on the floor: an awaiting
+      // caller that never settles would hang its handler (and any cleanup in a finally).
+      if (this.confirmModal._resolve) this.confirmModal._resolve(false);
+      // Split on blank lines into paragraphs; the template spaces them evenly. Falls back
+      // to the whole message so a caller that passes no blank line still renders.
+      const paragraphs = String(d.message || '')
+        .split(/\n\s*\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      this.confirmModal = {
+        show: true, title: d.title, message: d.message,
+        paragraphs: paragraphs.length ? paragraphs : [String(d.message || '')],
+        danger: d.danger, label: d.label, cancelLabel: d.cancelLabel, _resolve: d.resolve,
+      };
+    },
+    confirmResolve(ok) {
+      const r = this.confirmModal._resolve;
+      this.confirmModal.show = false;
+      this.confirmModal._resolve = null;
+      if (r) r(ok);
     },
 
     async logout() {

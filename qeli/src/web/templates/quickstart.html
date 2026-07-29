@@ -268,7 +268,10 @@ function quickstartPage() {
         return;
       }
 
-      if (!confirm(`Set up the "${m.id}" server (${m.tag}) and restart now?\nThis adds/updates the profile and brings the server up.`)) {
+      if (!await qeliConfirm('Set up and restart',
+            qeliTf('Set up the "{}" server ({}) and restart now?', m.id, m.tag) + '\n\n'
+              + qeliT('This adds or updates the profile and brings the server up.'),
+            { label: 'Set up' })) {
         this.qs.busy = null; this.qs.step = '';
         return;
       }

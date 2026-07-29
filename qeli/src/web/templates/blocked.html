@@ -229,26 +229,32 @@ function blockedPage() {
       this.savingPolicy = false;
     },
 
+    notify(msg, type) { this.$dispatch('notify', { msg, type: type || 'success' }); },
+
     async unblock(surface, ip) {
-      if (!confirm(this.t('Unblock') + ' ' + ip + '?')) return;
+      if (!await qeliConfirm(this.t('Unblock'), this.t('Unblock') + ' ' + ip + '?',
+                             { label: this.t('Unblock') })) return;
       this.saving = surface + ':' + ip;
       try {
         const r = await apiFetch('api/blocked/' + encodeURIComponent(ip) + '/unblock?surface=' + surface, { method: 'POST' });
-        if (!r.ok) alert(r.error || this.t('Failed to unblock'));
+        if (!r.ok) this.notify(r.error || this.t('Failed to unblock'), 'error');
       } catch (e) {
-        alert(this.t('Request failed'));
+        this.notify(this.t('Request failed'), 'error');
       }
       this.saving = null;
       await this.load();
     },
 
     async clearAll(surface) {
-      if (!confirm(this.t('Unblock ALL currently-blocked addresses?'))) return;
+      // Destructive and not undoable — red button, and the title says what is being cleared.
+      if (!await qeliConfirm(this.t('Unblock all'),
+                             this.t('Unblock ALL currently-blocked addresses?'),
+                             { danger: true, label: this.t('Unblock all') })) return;
       try {
         const r = await apiFetch('api/blocked/clear?surface=' + surface, { method: 'POST' });
-        if (!r.ok) alert(r.error || this.t('Failed to clear'));
+        if (!r.ok) this.notify(r.error || this.t('Failed to clear'), 'error');
       } catch (e) {
-        alert(this.t('Request failed'));
+        this.notify(this.t('Request failed'), 'error');
       }
       await this.load();
     },

@@ -250,7 +250,10 @@ function clientPage() {
       await this.refresh();
     },
     async del(n) {
-      if (!confirm(`Delete client profile "${n}"? (disconnects first)`)) return;
+      if (!await qeliConfirm('Delete client profile',
+                             qeliTf('Delete client profile "{}"?', n)
+                               + '\n' + qeliT('It is disconnected first.'),
+                             { danger: true, label: 'Delete' })) return;
       const r = await apiFetch(`api/client/profiles/${encodeURIComponent(n)}`, {method:'DELETE'});
       if (r.ok) { this.notify('Deleted'); await this.refresh(); } else this.notify(r.error, 'error');
     },

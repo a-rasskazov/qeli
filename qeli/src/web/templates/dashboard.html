@@ -276,17 +276,22 @@ function dashboard() {
     async restore(ev) {
       const f = ev.target.files[0];
       if (!f) return;
-      if (!confirm(`Restore /etc/qeli from "${f.name}"?\nThis OVERWRITES the current config, users and identity keys. A pre-restore snapshot is saved on the server. Restart afterwards to apply.`)) {
+      if (!await qeliConfirm('Restore /etc/qeli',
+            qeliTf('Restore /etc/qeli from "{}"?', f.name) + '\n\n'
+              + qeliT('This OVERWRITES the current config, users and identity keys. A pre-restore snapshot is saved on the server first. A restart is needed to apply.'),
+            { danger: true, label: 'Restore' })) {
         ev.target.value = ''; return;
       }
-      // Exact restore is a SECOND, separate confirmation: it deletes live files the archive
-      // does not contain (profiles/users created after the backup). Default is No, and the
-      // question is only asked after the restore itself was already confirmed. (Р1)
-      const exact = confirm(
-        'Exact restore?\n\n' +
-        'OK = DELETE anything in /etc/qeli that is not in this archive (profiles and users ' +
-        'created after the backup will be lost — recoverable only from the pre-restore snapshot).\n\n' +
-        'Cancel = overlay (safe): keep those files.');
+      // Exact restore is a SECOND, separate question, asked only after the restore itself was
+      // confirmed: it deletes live files the archive does not contain (profiles/users created
+      // after the backup). Here BOTH buttons are real choices rather than confirm/abort, so
+      // they are labelled with the modes instead of Confirm/Cancel — and the safe one is what
+      // dismissing the dialog (Escape, backdrop) selects, keeping the old default. (Р1)
+      const exact = await qeliConfirm('Exact restore?',
+        'Exact — DELETE anything in /etc/qeli that is not in this archive. Profiles and users ' +
+        'created after the backup are lost, recoverable only from the pre-restore snapshot.\n\n' +
+        'Overlay — keep those files (safe).',
+        { danger: true, label: 'Exact', cancelLabel: 'Overlay (safe)' });
       try {
         const buf = await f.arrayBuffer();
         const r = await apiFetch('api/restore' + (exact ? '?exact=1' : ''), {
@@ -347,7 +352,9 @@ function dashboard() {
     },
 
     async kick(c) {
-      if (!confirm(`Kick "${c.username}" from "${c.profile}"?`)) return;
+      if (!await qeliConfirm('Kick client',
+                             qeliTf('Kick "{}" from "{}"?', c.username, c.profile),
+                             { danger: true, label: 'Kick' })) return;
       const r = await apiFetch(`api/clients/${encodeURIComponent(c.username)}/kick`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},

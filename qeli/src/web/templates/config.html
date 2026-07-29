@@ -1551,7 +1551,10 @@ function configPage() {
     },
 
     async rotateIdentity(name) {
-      if (!confirm(`Rotate identity key for "${name}"?\nClients of this profile must update their pinned server key, and you must restart for it to take effect.`)) return;
+      if (!await qeliConfirm('Rotate identity key',
+            qeliTf('Rotate the identity key for "{}"?', name) + '\n\n'
+              + qeliT('Every client of this profile must update its pinned server key, and a restart is needed for it to take effect.'),
+            { danger: true, label: 'Rotate' })) return;
       this.identityRotating = name;
       try {
         const r = await apiFetch('api/identity/' + encodeURIComponent(name) + '/rotate', { method: 'POST' });
@@ -1825,8 +1828,10 @@ function configPage() {
       this.markDirty();
     },
 
-    removeProfile(i) {
-      if (!confirm(qeliT('Remove profile "') + (this.cfg.profiles[i]?.name || i) + '"?')) return;
+    async removeProfile(i) {
+      if (!await qeliConfirm(qeliT('Remove profile'),
+            qeliTf('Remove profile "{}"?', this.cfg.profiles[i]?.name || i),
+            { danger: true, label: qeliT('Remove') })) return;
       this.cfg.profiles.splice(i, 1);
       this.activeTab = this.cfg.profiles.length > 0 ? 0 : '__global';
       this.markDirty();

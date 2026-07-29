@@ -467,17 +467,8 @@
     </div>
   </div>
 
-  <!-- Generic confirm modal (replaces native confirm() for destructive actions) -->
-  <div x-cloak x-show="confirmModal.show" class="modal-bg" @click.self="confirmResolve(false)" @keydown.escape.window="confirmModal.show && confirmResolve(false)">
-    <div class="modal p-6" @click.stop style="max-width:420px">
-      <h3 class="text-base font-semibold text-white mb-2" x-text="confirmModal.title"></h3>
-      <p class="text-sm mb-5" style="color:var(--txt-mut);white-space:pre-line" x-text="confirmModal.message"></p>
-      <div class="flex gap-2 justify-end">
-        <button class="btn btn-ghost" @click="confirmResolve(false)">Cancel</button>
-        <button class="btn" :class="confirmModal.danger ? 'btn-danger' : 'btn-primary'" @click="confirmResolve(true)" x-text="confirmModal.label"></button>
-      </div>
-    </div>
-  </div>
+  <!-- The confirm modal this page used to carry now lives in layout.html, so every page
+       shares one dialog; reach it with the global qeliConfirm(). -->
 
 </div>
 
@@ -501,21 +492,9 @@ function usersPage() {
     selected: [],
     usage: [],
     usageForm: { username: '', data_limit_gb: 0, expire_days: 0, mode: 'limit' },
-    confirmModal: { show: false, title: '', message: '', danger: false, label: 'Confirm', _resolve: null },
-
-    // Promise-based confirm so async handlers can `await this.confirmDialog(...)`
-    // instead of the native blocking confirm() — styled like every other modal.
-    confirmDialog(title, message, { danger = false, label = 'Confirm' } = {}) {
-      return new Promise((resolve) => {
-        this.confirmModal = { show: true, title, message, danger, label, _resolve: resolve };
-      });
-    },
-    confirmResolve(ok) {
-      const r = this.confirmModal._resolve;
-      this.confirmModal.show = false;
-      this.confirmModal._resolve = null;
-      if (r) r(ok);
-    },
+    // Thin shim over the shared dialog in layout.html, kept so the call sites below read
+    // the same as before. New code can call qeliConfirm() directly.
+    confirmDialog(title, message, opts = {}) { return qeliConfirm(title, message, opts); },
 
     get allSel() { return this.users.length > 0 && this.selected.length === this.users.length; },
     toggleAll() { this.selected = this.allSel ? [] : this.users.map(u => u.username); },
@@ -524,7 +503,10 @@ function usersPage() {
       const names = [...this.selected];
       if (!names.length) return;
       const verb = kind === 'delete' ? 'Delete' : (kind === 'enable' ? 'Enable' : 'Disable');
-      if (!await this.confirmDialog(`${verb} users`, `${verb} ${names.length} selected user(s)?` + (kind === 'delete' ? '\nThis cannot be undone.' : ''), { danger: kind === 'delete', label: verb })) return;
+      if (!await this.confirmDialog(`${verb} users`,
+            qeliTf('{} {} selected user(s)?', qeliT(verb), names.length)
+              + (kind === 'delete' ? '\n' + qeliT('This cannot be undone.') : ''),
+            { danger: kind === 'delete', label: verb })) return;
       let ok = 0, fail = 0;
       for (const u of names) {
         try {
@@ -815,7 +797,9 @@ function usersPage() {
 
     async setEnabled(u, enabled) {
       const action = enabled ? 'enable' : 'disable';
-      if (!enabled && !await this.confirmDialog('Disable user', `Disable "${u.username}"?\nActive sessions will be kicked.`, { danger: true, label: 'Disable' })) return;
+      if (!enabled && !await this.confirmDialog('Disable user',
+            qeliTf('Disable "{}"?', u.username) + '\n' + qeliT('Active sessions will be kicked.'),
+            { danger: true, label: 'Disable' })) return;
       this.saving = u.username;
       try {
         const r = await apiFetch('api/users/' + encodeURIComponent(u.username) + '/' + action, { method: 'POST' });
@@ -833,7 +817,9 @@ function usersPage() {
     },
 
     async del(u) {
-      if (!await this.confirmDialog('Delete user', `Delete user "${u.username}"?\nThis cannot be undone.`, { danger: true, label: 'Delete' })) return;
+      if (!await this.confirmDialog('Delete user',
+            qeliTf('Delete user "{}"?', u.username) + '\n' + qeliT('This cannot be undone.'),
+            { danger: true, label: 'Delete' })) return;
       try {
         const r = await apiFetch('api/users/' + encodeURIComponent(u.username), { method: 'DELETE' });
         if (r.ok) {
@@ -897,7 +883,10 @@ function usersPage() {
     },
 
     async delGroup(g) {
-      if (!await this.confirmDialog('Delete group', `Delete group "${g.name}"?\nUsers referencing it will fall back to their own values.`, { danger: true, label: 'Delete' })) return;
+      if (!await this.confirmDialog('Delete group',
+            qeliTf('Delete group "{}"?', g.name) + '\n'
+              + qeliT('Users referencing it will fall back to their own values.'),
+            { danger: true, label: 'Delete' })) return;
       try {
         const r = await apiFetch('api/groups/' + encodeURIComponent(g.name), { method: 'DELETE' });
         if (r.ok) {
