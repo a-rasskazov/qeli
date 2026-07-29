@@ -645,7 +645,7 @@ private enum ReachabilityProbe {
                 framed,
                 connectionID: try QUICMask.connectionID(),
                 packetNumber: 0,
-                packetType: 0x02
+                packetType: 0x00
             )
         }
         if config.wireMode.lowercased() == "obfs" {
