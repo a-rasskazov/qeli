@@ -791,7 +791,10 @@ where
                             let mut obf = Obfuscator::new();
                             let mut data = pt;
                             if cfg.norm_enabled && !cfg.norm_sizes.is_empty() {
-                                data = obf.normalize_packet_length(&data, &cfg.norm_sizes);
+                                // Same ceiling this block already uses for the pad cap
+                                // below. A stream has no datagram to overflow, so this
+                                // bounds the record rather than the path.
+                                data = obf.normalize_packet_length(&data, &cfg.norm_sizes, 1400);
                             }
                             let pad_cap = {
                                 let b = data.len().saturating_add(60);
@@ -2492,17 +2495,30 @@ async fn probe_udp_mtu(
     // qeli UDP record overhead (nonce+counter+tag+padlen+framing) + a small margin, so
     // a probe that fits certifies a real full-MTU data packet also fits.
     const REC_OVERHEAD: usize = 48;
-    const FLOOR: i32 = 1280; // IPv6 minimum — never probe below this
     let fd = socket.as_raw_fd();
     if !set_pmtudisc(fd, libc::IP_PMTUDISC_PROBE) {
         return None;
     }
-    let mut ladder: Vec<i32> = [ceiling, 1360, 1320, FLOOR]
-        .into_iter()
-        .filter(|&m| (FLOOR..=ceiling).contains(&m))
-        .collect();
-    ladder.sort_unstable_by(|a, b| b.cmp(a));
-    ladder.dedup();
+    // How many bytes of the PATH a probe for tunnel-MTU `m` occupies beyond `m` itself:
+    // our record overhead, the obfs seal, the QUIC short header, and the UDP + IP headers.
+    //
+    // This is the difference the ladder used to ignore. `m` is an INNER (tunnel) MTU, but
+    // the rungs were the IPv6 minimum PATH mtu — so the lowest rung, 1280, actually asked
+    // the path for ~1280 + overhead bytes. On a path whose real MTU is 1280 every rung
+    // therefore failed, the probe reported nothing, and the caller fell back to the pushed
+    // MTU (typically 1400) with fragmentation re-enabled: the exact outcome probing exists
+    // to avoid. Derive the floor from the overhead actually in play instead of hard-coding
+    // a number that silently means something else. (Audit 2026-07-29, #12.)
+    let outer_overhead = REC_OVERHEAD
+        + socket.seal_overhead()
+        + if quic_enabled {
+            crate::protocol::quic::QUIC_SHORT_HEADER_MIN
+        } else {
+            0
+        }
+        + 8 // UDP header
+        + if socket.peer_is_ipv6() { 40 } else { 20 };
+    let ladder = mtu_probe_ladder(ceiling, outer_overhead);
 
     let mut buf = vec![0u8; 2048];
     // Randomize the probe-id sequence per connection. A fixed start (0x4D54 "MT") + a
@@ -2564,6 +2580,62 @@ async fn probe_udp_mtu(
         },
     );
     found
+}
+
+/// Rungs of the path-MTU ladder, in TUNNEL (inner) MTU units, highest first.
+///
+/// `outer_overhead` is everything a probe for tunnel-MTU `m` adds on the wire: our record
+/// overhead, the obfs seal, the QUIC header and the UDP + IP headers. The floor is the
+/// largest tunnel MTU whose datagram still fits the IPv6 minimum path of 1280 — which is the
+/// whole point: rungs are inner MTUs, 1280 is an outer PATH mtu, and using it directly as
+/// the lowest rung meant asking a 1280-byte path for 1280 + overhead bytes. Every rung then
+/// failed on exactly the narrow paths probing exists for.
+fn mtu_probe_ladder(ceiling: i32, outer_overhead: usize) -> Vec<i32> {
+    const PATH_FLOOR: i32 = 1280; // IPv6 minimum path MTU — the narrowest path we must serve
+    let floor = (PATH_FLOOR - outer_overhead as i32).clamp(576, ceiling);
+    let mut ladder: Vec<i32> = [ceiling, 1360, 1320, 1280, 1200, floor]
+        .into_iter()
+        .filter(|&m| (floor..=ceiling).contains(&m))
+        .collect();
+    ladder.sort_unstable_by(|a, b| b.cmp(a));
+    ladder.dedup();
+    ladder
+}
+
+#[cfg(test)]
+mod mtu_ladder_tests {
+    use super::mtu_probe_ladder;
+
+    /// The narrowest rung must be reachable over a 1280-byte path once the probe's own
+    /// framing is counted; otherwise a path at the IPv6 minimum certifies nothing and the
+    /// caller falls back to the pushed MTU with fragmentation switched back on.
+    #[test]
+    fn the_lowest_rung_fits_the_ipv6_minimum_path() {
+        // Worst case in this codebase: obfs seal (13) + QUIC short header (9) + UDP (8)
+        // + IPv6 (40) + record overhead (48).
+        for overhead in [48 + 8 + 20, 48 + 13 + 9 + 8 + 40] {
+            let ladder = mtu_probe_ladder(1400, overhead);
+            let lowest = *ladder.last().expect("ladder must not be empty");
+            assert!(
+                lowest + overhead as i32 <= 1280,
+                "lowest rung {lowest} + overhead {overhead} exceeds the 1280 path floor"
+            );
+            // Still ordered high→low, and every rung is inside the ceiling.
+            assert!(
+                ladder.windows(2).all(|w| w[0] > w[1]),
+                "ladder must descend: {ladder:?}"
+            );
+            assert!(ladder.iter().all(|&m| m <= 1400));
+        }
+    }
+
+    #[test]
+    fn a_low_ceiling_collapses_to_a_single_rung_and_never_inverts() {
+        // A server that pushes a small MTU must not produce an empty or inverted ladder.
+        let ladder = mtu_probe_ladder(1000, 48 + 13 + 9 + 8 + 40);
+        assert!(!ladder.is_empty());
+        assert!(ladder.iter().all(|&m| m <= 1000));
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -3419,8 +3491,13 @@ async fn connect_and_run_udp(
                 let encrypted = {
                     let mut obf = Obfuscator::new();
                     let mut data_with_route = ip_packet;
+                    let mtu = tun_mtu.max(0) as usize;
                     if eff_obf.traffic_normalization.enabled && !norm_sizes.is_empty() {
-                        data_with_route = obf.normalize_packet_length(&data_with_route, norm_sizes);
+                        // Bounded by the SAME mtu the pad cap below uses: normalization that
+                        // rounds past it re-creates the oversized DF datagram the probe just
+                        // ruled out, and the pad cap cannot undo it (it only trims padding).
+                        data_with_route =
+                            obf.normalize_packet_length(&data_with_route, norm_sizes, mtu);
                     }
                     // Clamp padding so the whole record (data + padding) stays within the
                     // DISCOVERED/pushed tunnel MTU. The path-MTU probe certifies that a
@@ -3431,7 +3508,6 @@ async fn connect_and_run_udp(
                     // 1400 (ignoring a smaller probed MTU on LTE/CGNAT — full-size padded
                     // uplink packets were then silently dropped with EMSGSIZE under DF) and a
                     // `+60` overhead that under-counted obfs+quic (65) by 5 bytes.
-                    let mtu = tun_mtu.max(0) as usize;
                     let pad_cap =
                         (padding_max as usize).min(mtu.saturating_sub(data_with_route.len())) as u16;
                     let padding = obf.generate_padding_opts(

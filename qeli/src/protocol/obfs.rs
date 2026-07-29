@@ -821,6 +821,24 @@ impl ObfsUdp {
         Self { sock, key }
     }
 
+    /// Bytes [`obfs_datagram_seal`] adds, or 0 when this socket sends in the clear.
+    /// The path-MTU probe needs it to know how much of the path its own framing eats.
+    pub fn seal_overhead(&self) -> usize {
+        if self.key.is_some() {
+            1 + NONCE_LEN
+        } else {
+            0
+        }
+    }
+
+    /// True when the peer is reached over IPv6 (40-byte header instead of 20).
+    pub fn peer_is_ipv6(&self) -> bool {
+        self.sock
+            .peer_addr()
+            .map(|a| a.is_ipv6())
+            .unwrap_or_else(|_| self.sock.local_addr().map(|a| a.is_ipv6()).unwrap_or(false))
+    }
+
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, std::net::SocketAddr)> {
         let (n, addr) = self.sock.recv_from(buf).await?;
         match &self.key {

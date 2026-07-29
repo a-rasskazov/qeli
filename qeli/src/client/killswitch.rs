@@ -20,10 +20,14 @@
 //!
 //! DNS TRADE-OFF: port 53 is allowed so the client can resolve a *hostname* server
 //! address (otherwise the very first connect — which re-resolves the name with the
-//! drop policy active — would fail). The residual leak is only DNS metadata on the
-//! physical link while the tunnel is down; the actual data plane (your traffic and
-//! real IP to arbitrary sites) stays fully blocked. Use an IP server address to
-//! avoid even that.
+//! drop policy active — would fail). It is allowed **only to the resolvers this host is
+//! configured to use**, never to an arbitrary destination: a blanket `--dport 53` rule let
+//! every application's queries egress in cleartext on the physical link for as long as the
+//! tunnel was down, and to a server of the querier's choosing — the metadata leak this
+//! module exists to prevent. Fails CLOSED: with no non-loopback resolver readable, no
+//! port-53 rule is installed and reconnects run off the allow-listed server IPs. The
+//! residual leak is an application querying those same resolvers; use an IP server address
+//! to avoid even that. (Windows and macOS scope this identically.)
 //!
 //! FAIL-SAFE LIFECYCLE — this is the whole point, read carefully:
 //!   * [`engage`] installs the `QELI_KS` chain + OUTPUT jump and is idempotent (it
@@ -152,6 +156,62 @@ fn teardown_family(path: &str, chain: &str) {
     let _ = ipt(path, &["-X", chain]);
 }
 
+/// The resolvers this host actually uses, for the kill-switch's port-53 allowance.
+///
+/// Read BEFORE the tunnel's own DNS override is applied (engage runs ahead of the connect
+/// loop), so these are the operator's real upstreams.
+///
+/// Loopback entries are skipped deliberately: a `127.0.0.53` stub is already reachable via
+/// the `-o lo` ACCEPT, and allowing it would grant nothing. What matters in that setup is
+/// where systemd-resolved forwards to, and that list lives in its own resolv.conf — which is
+/// why it is read first.
+/// Is this address a resolver worth opening a hole for? Same rule as the Windows and macOS
+/// clients, so the three platforms agree on what counts as an upstream.
+///
+/// Loopback is excluded because a stub is reachable through the `lo` ACCEPT regardless, and
+/// treating it as "we have a resolver" would hide that the real upstreams are unknown — the
+/// decision this feeds is precisely "allow port 53 to these" versus the fail-closed "block
+/// physical DNS entirely". Link-local, the deprecated `fec0::/10` site-local range and IPv4
+/// APIPA are phantoms in the same way: Windows in particular reports `fec0:0:0:ffff::1/2/3`
+/// on nearly every IPv6 interface even though nothing routes there.
+fn usable_resolver(ip: &IpAddr) -> bool {
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(v4) => !v4.is_link_local(),
+        // `is_unicast_link_local` is stable; site-local (fec0::/10) has no stable predicate,
+        // so match the prefix directly.
+        IpAddr::V6(v6) => {
+            let seg = v6.segments()[0];
+            !v6.is_unicast_link_local() && (seg & 0xffc0) != 0xfec0
+        }
+    }
+}
+
+fn system_resolvers() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for path in ["/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"] {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("nameserver") {
+                if let Ok(ip) = rest.trim().parse::<IpAddr>() {
+                    if usable_resolver(&ip) {
+                        let s = ip.to_string();
+                        if !out.contains(&s) {
+                            out.push(s);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Build the `QELI_KS` chain on one family and hook it at the top of OUTPUT.
 /// `allow_ips` are the server addresses of THIS family to let through.
 fn engage_family(
@@ -194,10 +254,56 @@ fn engage_family(
     require(&["-o", tun_if, "-j", "ACCEPT"]);
     // DHCP client → server, so the physical lease can renew while locked.
     require(&["-p", "udp", "--dport", "67", "-j", "ACCEPT"]);
-    // DNS, so a hostname server can be (re)resolved during a reconnect (the data
-    // plane stays blocked; only DNS metadata can transit — see module docs).
-    require(&["-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
-    require(&["-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
+    // DNS, so a hostname server can be (re)resolved during a reconnect — but scoped to the
+    // resolvers this host actually uses, never `--dport 53` to any destination.
+    //
+    // The blanket rule let EVERY application's DNS queries egress in cleartext on the
+    // physical interface for as long as the tunnel was down: precisely the metadata leak the
+    // kill-switch exists to prevent, and wide open to a resolver of the querier's choosing.
+    // Windows and macOS were narrowed to the configured resolvers in the client audit; Linux
+    // kept the original rule, so the strictest of the three platforms was in fact the
+    // leakiest. Fails CLOSED to match them: with no resolver readable no port-53 rule is
+    // installed at all, and the reconnect still works off the server IPs allowed below.
+    // Residual (accepted, same as the other platforms): an application querying those same
+    // resolvers still leaks its own query.
+    // Family of THIS pass, taken from the binary's file name rather than a substring of the
+    // whole path (a directory could contain a '6' and silently invert the filter).
+    let is_v6 = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().starts_with("ip6"))
+        .unwrap_or(false);
+    let resolvers: Vec<String> = system_resolvers()
+        .into_iter()
+        .filter(|r| r.parse::<IpAddr>().map(|ip| ip.is_ipv6()) == Ok(is_v6))
+        .collect();
+    for r in &resolvers {
+        require(&[
+            "-p",
+            "udp",
+            "-d",
+            r.as_str(),
+            "--dport",
+            "53",
+            "-j",
+            "ACCEPT",
+        ]);
+        require(&[
+            "-p",
+            "tcp",
+            "-d",
+            r.as_str(),
+            "--dport",
+            "53",
+            "-j",
+            "ACCEPT",
+        ]);
+    }
+    if resolvers.is_empty() {
+        log::info!(
+            "kill-switch ({path}): no non-loopback resolver configured — port 53 stays \
+             blocked while the tunnel is down; reconnects use the allow-listed server IP(s)"
+        );
+    }
     for ip in allow_ips {
         require(&["-d", ip.as_str(), "-j", "ACCEPT"]);
     }
@@ -562,6 +668,85 @@ mod fault_injection {
     fn engage_test(ipt: &Ipt, tun_if: &str, guard_forward: bool) -> anyhow::Result<()> {
         let _ = ipt;
         engage("203.0.113.7", 443, tun_if, true, guard_forward)
+    }
+
+    /// The port-53 allowance must be scoped to real upstream resolvers.
+    ///
+    /// Guards the two properties the narrowing depends on: a loopback stub is NOT returned
+    /// (it is already covered by the `-o lo` ACCEPT, and allowing it grants nothing, while
+    /// treating it as "we have a resolver" would hide that the real upstreams are unknown),
+    /// and systemd-resolved's own resolv.conf — where the actual upstreams live when the stub
+    /// is in use — is read as well.
+    #[test]
+    fn resolver_parsing_skips_loopback_and_dedupes() {
+        fn parse(text: &str) -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            for line in text.lines() {
+                if let Some(rest) = line.trim().strip_prefix("nameserver") {
+                    if let Ok(ip) = rest.trim().parse::<IpAddr>() {
+                        if !ip.is_loopback() {
+                            let s = ip.to_string();
+                            if !out.contains(&s) {
+                                out.push(s);
+                            }
+                        }
+                    }
+                }
+            }
+            out
+        }
+
+        // The systemd-resolved shape: the stub in /etc/resolv.conf carries no useful
+        // destination, so nothing is allowed on its account.
+        assert!(parse("nameserver 127.0.0.53\noptions edns0\n").is_empty());
+
+        // Ordinary resolv.conf, with a duplicate and a comment.
+        assert_eq!(
+            parse(
+                "# comment\nnameserver 192.168.1.1\nnameserver 1.1.1.1\nnameserver 192.168.1.1\n"
+            ),
+            vec!["192.168.1.1".to_string(), "1.1.1.1".to_string()]
+        );
+
+        // Malformed lines must not become rules.
+        assert!(parse("nameserver\nnameserver not-an-ip\nsearch lan\n").is_empty());
+    }
+
+    /// Phantom resolver addresses must not count as "we have an upstream".
+    ///
+    /// Windows lists `fec0:0:0:ffff::1/2/3` on nearly every IPv6 interface; nothing routes
+    /// there. Letting them through does not leak, but it flips the decision away from the
+    /// fail-closed branch on a host whose only listed servers are phantoms — real queries
+    /// stay blocked while the log claims DNS was allowed.
+    #[test]
+    fn phantom_resolver_addresses_are_not_upstreams() {
+        for bad in [
+            "127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "::",
+            "fe80::1",          // link-local
+            "fec0:0:0:ffff::1", // Windows' deprecated site-local default
+            "fec0:0:0:ffff::3",
+            "169.254.1.1", // APIPA
+            "224.0.0.251", // multicast
+        ] {
+            assert!(
+                !usable_resolver(&bad.parse::<IpAddr>().unwrap()),
+                "{bad} must not be treated as an upstream resolver"
+            );
+        }
+        for good in [
+            "192.168.50.1",
+            "1.1.1.1",
+            "2606:4700:4700::1111",
+            "fd00::53",
+        ] {
+            assert!(
+                usable_resolver(&good.parse::<IpAddr>().unwrap()),
+                "{good} must be treated as an upstream resolver"
+            );
+        }
     }
 
     #[test]

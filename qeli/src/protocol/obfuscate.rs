@@ -131,11 +131,27 @@ impl Obfuscator {
         fragments
     }
 
-    #[allow(dead_code)]
-    pub fn normalize_packet_length(&mut self, data: &[u8], round_sizes: &[u16]) -> Vec<u8> {
+    /// Round the packet up to the next configured size, never past `max_len`.
+    ///
+    /// `max_len` is the tunnel MTU. Without it normalization could grow a packet BEYOND the
+    /// MTU the path-MTU probe just certified: the caller's cap applies to the padding only
+    /// (`mtu - data.len()`), so once the normalized data was already over the MTU the cap
+    /// saturated to zero and the oversized packet went out anyway — with DF armed after a
+    /// successful probe, straight into an EMSGSIZE drop. A round size larger than the tunnel
+    /// can carry is simply not usable, so skip it and try the next one.
+    /// (Audit 2026-07-29, #19.)
+    pub fn normalize_packet_length(
+        &mut self,
+        data: &[u8],
+        round_sizes: &[u16],
+        max_len: usize,
+    ) -> Vec<u8> {
         let current_len = data.len();
         for &size in round_sizes {
             let size = size as usize;
+            if size > max_len {
+                continue; // would not fit the tunnel — normalizing to it defeats the probe
+            }
             if current_len <= size {
                 let pad_len = size - current_len;
                 let mut padded = data.to_vec();
@@ -255,11 +271,11 @@ mod tests {
         let sizes = vec![64u16, 128, 256, 512, 1024];
 
         let data = vec![0xAAu8; 50];
-        let padded = obf.normalize_packet_length(&data, &sizes);
+        let padded = obf.normalize_packet_length(&data, &sizes, usize::MAX);
         assert_eq!(padded.len(), 64);
 
         let data = vec![0xAAu8; 70];
-        let padded = obf.normalize_packet_length(&data, &sizes);
+        let padded = obf.normalize_packet_length(&data, &sizes, usize::MAX);
         assert_eq!(padded.len(), 128);
     }
 
@@ -269,8 +285,25 @@ mod tests {
         let sizes = vec![64u16, 128, 256];
 
         let data = vec![0xABu8; 256];
-        let padded = obf.normalize_packet_length(&data, &sizes);
+        let padded = obf.normalize_packet_length(&data, &sizes, usize::MAX);
         assert_eq!(padded.len(), 256);
+    }
+
+    /// Normalization must never round a packet past what the tunnel can carry. The pad cap
+    /// downstream only trims PADDING, so an over-MTU normalized packet went out as-is and —
+    /// with DF armed after a successful path-MTU probe — was dropped with EMSGSIZE.
+    #[test]
+    fn normalize_never_exceeds_the_tunnel_mtu() {
+        let mut obf = Obfuscator::new();
+        let data = vec![0u8; 1200];
+        let sizes = [1500u16];
+        // A 1500 round size cannot fit a 1280 tunnel: leave the packet alone.
+        assert_eq!(obf.normalize_packet_length(&data, &sizes, 1280).len(), 1200);
+        // With room for it, the rounding still happens.
+        assert_eq!(obf.normalize_packet_length(&data, &sizes, 1500).len(), 1500);
+        // A usable smaller rung is still picked when a larger one does not fit.
+        let mixed = [1500u16, 1280];
+        assert_eq!(obf.normalize_packet_length(&data, &mixed, 1280).len(), 1280);
     }
 
     #[test]
@@ -279,7 +312,7 @@ mod tests {
         let sizes = vec![64u16, 128];
 
         let data = vec![0xABu8; 200];
-        let padded = obf.normalize_packet_length(&data, &sizes);
+        let padded = obf.normalize_packet_length(&data, &sizes, usize::MAX);
         // If larger than all round sizes, return as-is
         assert_eq!(padded.len(), 200);
     }
