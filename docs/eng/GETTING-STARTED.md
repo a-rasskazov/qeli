@@ -848,10 +848,27 @@ sudo qeli add-client alice \
      --max-sessions 2 \       # 0 = group default
      --link --host vpn.example.com:443 --link-profile reality   # print a qeli:// link (+QR)
 
+# RE-ISSUE the link for an EXISTING user (no password to retype):
+sudo qeli share-link alice \
+     --host vpn.example.com:443 \  # omit to use web.public_host
+     --profile reality \           # defaults to the first profile
+     --label 'My VPN'              # defaults to <profile>-<port>
+
 sudo qeli set-web-password --username admin [-p 'password'] [--no-enable]  # panel login (Argon2id); §9.1
 sudo qeli show-identity                     # each profile's pubkey (clients pin key=); creates keys if absent
 sudo qeli rotate-identity reality           # regenerate a profile key → clients update key=, restart to apply
 ```
+
+> **How `share-link` knows the password.** The users file stores a reversibly-encrypted copy
+> of the password next to the one-way Argon2 hash when the user is created; the link is built
+> from that copy, so a client's config can be re-sent at any time. Same mechanism as the
+> panel's share/QR button, and the link contents come from the same code.
+>
+> With no such copy (user created before this existed, or the key changed) the command
+> **refuses** and points at `--reset`: that generates a new password, stores it and prints it
+> once — and the config that user is currently on **stops working**. After `--reset` a running
+> server needs `systemctl reload qeli`, otherwise it keeps checking the old password (the
+> panel reloads the worker itself; the CLI has no such channel).
 
 ### 10.3. Live management (control socket, NO restart)
 

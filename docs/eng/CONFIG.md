@@ -1377,6 +1377,16 @@ How it works (matters for manual teardown and for several instances on one host)
 
 - The rules live in a **per-interface chain** — `QELI_KS_<tun_if>` (e.g. `QELI_KS_vpn0`),
   keyed on `dev = …`. Two clients on one host therefore **cannot wipe** each other's rules.
+- **DNS is scoped to the system resolvers** — the same as Windows and macOS. The rule used to
+  be `--dport 53` to any destination, so while the tunnel was down **every** application's DNS
+  queries egressed in cleartext on the physical interface, to a resolver of the querier's
+  choosing. The resolvers are read before the tunnel overrides DNS: first
+  `/run/systemd/resolve/resolv.conf` (the real upstreams when systemd-resolved is in use),
+  then `/etc/resolv.conf`; loopback entries are skipped, as the stub is already covered by the
+  `lo` rule. **Fail-closed:** with no resolver readable, no port-53 rule is installed at all
+  and reconnects run off the allow-listed server IPs. The residual leak is an application
+  querying those same resolvers; to avoid even that, give the server as an IP rather than a
+  hostname.
 - The chain holds ACCEPTs for loopback/tun/DHCP/server-IP and a terminal DROP, and is
   hooked in via a jump from **OUTPUT**. Every rule is verified with `iptables -C` (the
   iptables-nft wrapper can report success while doing nothing), and if a rule is missing
