@@ -1159,14 +1159,23 @@ public partial class MainWindow : Window
     private bool _toggleBusy;
     private async void ToggleConnection()
     {
-        if (_serviceMode) { await ToggleService(); return; }
         // Debounce re-entrant taps + run the blocking Start/Stop off the UI thread, so a
         // rapid double-tap can't disconnect-then-reconnect and the window can't freeze
         // (parity with qeli-win's fix).
+        //
+        // The guard covers the DAEMON path too. It used to sit after the `_serviceMode`
+        // branch had already returned, so in daemon mode there was no debounce at all —
+        // and that path is the slow one: an admin prompt, an elevated helper, a launchctl
+        // bootstrap and then a second or more before the daemon publishes a status the UI
+        // can see. Every tap during that window started ANOTHER privileged helper, and the
+        // queued ones then collided with the run already in flight. Disabling the button
+        // for the duration also gives the feedback whose absence invited the extra taps.
         if (_toggleBusy) return;
         _toggleBusy = true;
+        ConnectBtn.IsEnabled = false;
         try
         {
+            if (_serviceMode) { await ToggleService(); return; }
             if (_status is VpnStatus.Connected or VpnStatus.Connecting)
             {
                 await Task.Run(() => { try { _tunnel.Stop(); } catch { } });
@@ -1187,6 +1196,12 @@ public partial class MainWindow : Window
             _activeProfile = p;
             await Task.Run(() => _tunnel.Start(p));
         }
-        finally { _toggleBusy = false; }
+        finally
+        {
+            _toggleBusy = false;
+            // Same rule the profile-selection handler uses: enabled in daemon mode, or when
+            // a profile is selected.
+            ConnectBtn.IsEnabled = _serviceMode || Selected != null;
+        }
     }
 }
