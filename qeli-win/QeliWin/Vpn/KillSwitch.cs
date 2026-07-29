@@ -353,6 +353,32 @@ public static class KillSwitch
     /// Loopback and link-local are excluded (not real upstream resolvers / can't be a valid
     /// -RemoteAddress); IPv6 scope ids are stripped. Empty on failure -> caller emits no DNS
     /// rule (fail closed).</summary>
+    /// <summary>Is this address a resolver worth opening a hole for?
+    ///
+    /// Windows reports `fec0:0:0:ffff::1/2/3` as DNS servers on virtually every IPv6-enabled
+    /// interface — they are hardcoded defaults in a prefix (`fec0::/10`) that RFC 3879
+    /// deprecated in 2004, and nothing routes there. They used to sail through: the filter
+    /// skipped IPv6 LINK-local but not SITE-local. Two costs. Six pointless firewall rules
+    /// per connect, and — the one that matters — they make the resolver list look non-empty,
+    /// so on a machine whose only listed servers are these phantoms the code believes it has
+    /// allowed DNS while every real query is blocked. The fail-closed branch that would have
+    /// said "physical DNS blocked, reconnects use the cached server IP" is skipped, and a
+    /// hostname reconnect just fails with nothing in the log to explain it.
+    ///
+    /// Loopback is skipped for the same reason it is on the other platforms: a local stub is
+    /// reachable regardless, and counting it as "we have a resolver" hides that the real
+    /// upstreams are unknown. IPv4 link-local (169.254/16, APIPA) is the same class of
+    /// phantom as fec0::.</summary>
+    private static bool UsableResolver(System.Net.IPAddress a)
+    {
+        if (System.Net.IPAddress.IsLoopback(a)) return false;
+        if (a.Equals(System.Net.IPAddress.Any) || a.Equals(System.Net.IPAddress.IPv6Any)) return false;
+        if (a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            return !a.IsIPv6LinkLocal && !a.IsIPv6SiteLocal && !a.IsIPv6Multicast;
+        var b = a.GetAddressBytes();
+        return !(b[0] == 169 && b[1] == 254);   // APIPA
+    }
+
     private static List<string> ResolveDnsServers()
     {
         var list = new List<string>();
@@ -363,7 +389,7 @@ public static class KillSwitch
                 if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
                 foreach (var dns in ni.GetIPProperties().DnsAddresses)
                 {
-                    if (System.Net.IPAddress.IsLoopback(dns) || dns.IsIPv6LinkLocal) continue;
+                    if (!UsableResolver(dns)) continue;
                     // Strip any IPv6 scope id (%N) — New-NetFirewallRule -RemoteAddress rejects it.
                     var s = dns.ToString();
                     int pct = s.IndexOf('%');

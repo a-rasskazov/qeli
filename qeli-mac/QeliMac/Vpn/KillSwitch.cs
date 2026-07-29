@@ -317,6 +317,25 @@ public static class KillSwitch
     /// port-53 allowance to these resolvers instead of `to any`, so arbitrary DNS cannot
     /// egress on the physical path while the tunnel is down. Empty on any read/parse failure
     /// (caller then emits no 53 rule — fail closed).</summary>
+    /// <summary>Is this address a resolver worth opening a hole for? Mirrors the Windows
+    /// client's filter, so all three platforms agree on what counts as an upstream.
+    ///
+    /// Nothing was filtered here at all. A loopback stub (which `/etc/resolv.conf` carries
+    /// whenever a local resolver is in front) passed straight through: harmless as a rule —
+    /// lo0 is allowed anyway — but it made the list look non-empty, which is what decides
+    /// between "DNS allowed to these servers" and the fail-closed "physical DNS blocked".
+    /// Link-local and the deprecated `fec0::/10` site-local range are phantoms in the same
+    /// way; see the Windows counterpart for the full reasoning.</summary>
+    private static bool UsableResolver(System.Net.IPAddress a)
+    {
+        if (System.Net.IPAddress.IsLoopback(a)) return false;
+        if (a.Equals(System.Net.IPAddress.Any) || a.Equals(System.Net.IPAddress.IPv6Any)) return false;
+        if (a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            return !a.IsIPv6LinkLocal && !a.IsIPv6SiteLocal && !a.IsIPv6Multicast;
+        var b = a.GetAddressBytes();
+        return !(b[0] == 169 && b[1] == 254);   // APIPA
+    }
+
     private static List<string> ResolveSystemDnsServers()
     {
         var list = new List<string>();
@@ -327,7 +346,8 @@ public static class KillSwitch
                 var t = line.Trim();
                 if (!t.StartsWith("nameserver", StringComparison.Ordinal)) continue;
                 var parts = t.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length >= 2 && System.Net.IPAddress.TryParse(parts[1], out _))
+                if (parts.Length >= 2 && System.Net.IPAddress.TryParse(parts[1], out var ip)
+                    && UsableResolver(ip))
                     list.Add(parts[1]);
             }
         }

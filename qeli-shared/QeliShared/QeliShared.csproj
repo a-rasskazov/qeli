@@ -6,6 +6,15 @@
        net10.0 (not -windows), managed-only packages. Both clients reference it via
        ProjectReference; BouncyCastle flows transitively from here. -->
   <PropertyGroup>
+    <!-- Log lines must be greppable against the English error catalog in
+         docs/*/TROUBLESHOOTING.md. Framework exception text is otherwise localized to the
+         OS language, so a Russian Windows produced logs mixing qeli's own English strings
+         with .NET messages like "Удаленный хост принудительно разорвал…" — unsearchable,
+         and confusing when a user reports them. Shipping only the English resources keeps
+         `e.Message` in one language. The app's OWN ru/en UI is unaffected: it uses the
+         hand-written Loc table, not satellite assemblies. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
