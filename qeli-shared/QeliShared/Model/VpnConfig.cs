@@ -201,7 +201,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         AddDefaultGateway || RoutingMode.Equals("full-tunnel", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Clone applying server-pushed heartbeat + flow-shaping params after auth.</summary>
-    public VpnConfig WithPushedObf(bool hbEnabled, long hbIntervalMs, long hbJitterMs,
+    public VpnConfig WithPushedObf(bool hbEnabled, long hbIntervalMs, long hbJitterMs, int hbDataSize,
         bool shEnabled, long shGapMeanMs, long shGapMinMs, long shGapMaxMs,
         int shBudget, int shMinSize, int shMaxSize,
         bool shStealth, int shStealthRateMbps) => new()
@@ -223,7 +223,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         RealityShortId = RealityShortId,
         PaddingEnabled = PaddingEnabled, PaddingMin = PaddingMin, PaddingMax = PaddingMax,
         HeartbeatEnabled = hbEnabled, HeartbeatIntervalMs = hbIntervalMs,
-        HeartbeatDataSize = HeartbeatDataSize, HeartbeatJitterMs = hbJitterMs,
+        HeartbeatDataSize = hbDataSize, HeartbeatJitterMs = hbJitterMs,
         ShapingEnabled = shEnabled, ShapingGapMeanMs = shGapMeanMs, ShapingGapMinMs = shGapMinMs,
         ShapingGapMaxMs = shGapMaxMs, ShapingBudgetBytesPerSec = shBudget,
         ShapingMinSize = shMinSize, ShapingMaxSize = shMaxSize,
@@ -380,6 +380,40 @@ public sealed class VpnConfig : INotifyPropertyChanged
         if (DnsServers.Count > 0) sb.AppendLine($"dns = {string.Join(", ", DnsServers.Select(IniSafe))}");
         if (Mtu > 0) sb.AppendLine($"mtu = {Mtu}");  // 0 = auto, omit
         if (!MtuProbe) sb.AppendLine("mtu_probe = false");  // default true, emit only when off
+
+        // Reconnect / timeout / padding / heartbeat / shaping.
+        //
+        // These used to be missing here entirely, and FromIni did not read them either — so
+        // an INI round-trip silently reset all five groups to defaults. That is not just an
+        // export concern: the Windows and macOS config editors save through
+        // BuildFromForm().ToIni(), so merely OPENING a profile and pressing save discarded
+        // whatever the user (or an imported iOS/Android profile) had set. Android hit exactly
+        // this and fixed it; the key names below are its dialect, so profiles interchange
+        // between the mobile and desktop clients unchanged.
+        //
+        // Emitted only when they differ from the default, keeping a plain profile short —
+        // and matching how every other optional key here behaves.
+        if (!ReconnectEnabled) sb.AppendLine("reconnect = false");
+        if (ReconnectMaxRetries != -1) sb.AppendLine($"reconnect_retries = {ReconnectMaxRetries}");
+        if (ReconnectBaseDelaySecs != 1) sb.AppendLine($"reconnect_base_delay = {ReconnectBaseDelaySecs}");
+        if (ReconnectMaxDelaySecs != 60) sb.AppendLine($"reconnect_max_delay = {ReconnectMaxDelaySecs}");
+        if (ConnectionTimeoutSecs != 30) sb.AppendLine($"timeout = {ConnectionTimeoutSecs}");
+        if (!PaddingEnabled) sb.AppendLine("padding = false");
+        if (PaddingMin != 0) sb.AppendLine($"padding_min = {PaddingMin}");
+        if (PaddingMax != 255) sb.AppendLine($"padding_max = {PaddingMax}");
+        if (!HeartbeatEnabled) sb.AppendLine("heartbeat = false");
+        if (HeartbeatIntervalMs != 15000) sb.AppendLine($"heartbeat_interval = {HeartbeatIntervalMs}");
+        if (HeartbeatDataSize != 16) sb.AppendLine($"heartbeat_size = {HeartbeatDataSize}");
+        if (HeartbeatJitterMs != 2000) sb.AppendLine($"heartbeat_jitter = {HeartbeatJitterMs}");
+        if (ShapingEnabled) sb.AppendLine("shaping = true");
+        if (ShapingGapMeanMs != 700) sb.AppendLine($"shaping_gap_mean = {ShapingGapMeanMs}");
+        if (ShapingGapMinMs != 40) sb.AppendLine($"shaping_gap_min = {ShapingGapMinMs}");
+        if (ShapingGapMaxMs != 6000) sb.AppendLine($"shaping_gap_max = {ShapingGapMaxMs}");
+        if (ShapingBudgetBytesPerSec != 16384) sb.AppendLine($"shaping_budget = {ShapingBudgetBytesPerSec}");
+        if (ShapingMinSize != 64) sb.AppendLine($"shaping_min_size = {ShapingMinSize}");
+        if (ShapingMaxSize != 1024) sb.AppendLine($"shaping_max_size = {ShapingMaxSize}");
+        if (ShapingStealth) sb.AppendLine("shaping_stealth = true");
+        if (ShapingStealthRateMbps != 2) sb.AppendLine($"shaping_stealth_mbps = {ShapingStealthRateMbps}");
         return sb.ToString();
     }
 
@@ -418,6 +452,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         var obf = Obj(root, "obfuscation");
         var padding = Obj(obf, "padding");
         var heartbeat = Obj(obf, "heartbeat");
+        var shaping = Obj(obf, "traffic_shaping");
         var quic = Obj(obf, "quic");
         var awg = Obj(obf, "awg");
 
@@ -465,6 +500,21 @@ public sealed class VpnConfig : INotifyPropertyChanged
             HeartbeatIntervalMs = Long(heartbeat, "interval_ms", 15000),
             HeartbeatDataSize = Int(heartbeat, "data_size_bytes", 16),
             HeartbeatJitterMs = Long(heartbeat, "jitter_ms", 2000),
+            // Parsing stopped at heartbeat, so a canonical JSON profile lost its shaping
+            // block entirely and `tun.mtu_probe = false` came back as true — the client then
+            // probed a path the profile had deliberately told it not to. Section and field
+            // names are the canonical Rust ones (`traffic_shaping`, `idle_gap_*`), not the
+            // INI shorthand. (Audit 2026-07-29, #7.)
+            MtuProbe = Bool(tun, "mtu_probe", true),
+            ShapingEnabled = Bool(shaping, "enabled", false),
+            ShapingGapMeanMs = Long(shaping, "idle_gap_mean_ms", 700),
+            ShapingGapMinMs = Long(shaping, "idle_gap_min_ms", 40),
+            ShapingGapMaxMs = Long(shaping, "idle_gap_max_ms", 6000),
+            ShapingBudgetBytesPerSec = Int(shaping, "budget_bytes_per_sec", 16384),
+            ShapingMinSize = Int(shaping, "min_size", 64),
+            ShapingMaxSize = Int(shaping, "max_size", 1024),
+            ShapingStealth = Bool(shaping, "stealth", false),
+            ShapingStealthRateMbps = Int(shaping, "stealth_rate_mbps", 2),
         };
     }
 
@@ -569,6 +619,30 @@ public sealed class VpnConfig : INotifyPropertyChanged
                     : Get("dev").Length > 0 ? Get("dev") : null,
             Mtu = CheckedMtu(int.TryParse(Get("mtu"), out var miv) ? miv : 0),  // 0 = auto
             MtuProbe = Get("mtu_probe") is var mp && (mp.Length == 0 || IniBool(mp)),  // default true
+            // The counterpart of the block ToIni now emits. Every one of these defaults to
+            // the value the property already carries, so an absent key leaves it untouched
+            // and a profile without them behaves exactly as before. (Audit 2026-07-29, #7.)
+            ReconnectEnabled = Get("reconnect") is var rc && (rc.Length == 0 || IniBool(rc)),
+            ReconnectMaxRetries = int.TryParse(Get("reconnect_retries"), out var rr) ? rr : -1,
+            ReconnectBaseDelaySecs = long.TryParse(Get("reconnect_base_delay"), out var rb) && rb > 0 ? rb : 1,
+            ReconnectMaxDelaySecs = long.TryParse(Get("reconnect_max_delay"), out var rm) && rm > 0 ? rm : 60,
+            ConnectionTimeoutSecs = long.TryParse(Get("timeout"), out var ct) && ct > 0 ? ct : 30,
+            PaddingEnabled = Get("padding") is var pe && (pe.Length == 0 || IniBool(pe)),
+            PaddingMin = int.TryParse(Get("padding_min"), out var pmin) && pmin >= 0 ? pmin : 0,
+            PaddingMax = int.TryParse(Get("padding_max"), out var pmax) && pmax >= 0 ? pmax : 255,
+            HeartbeatEnabled = Get("heartbeat") is var he && (he.Length == 0 || IniBool(he)),
+            HeartbeatIntervalMs = long.TryParse(Get("heartbeat_interval"), out var hi) && hi > 0 ? hi : 15000,
+            HeartbeatDataSize = int.TryParse(Get("heartbeat_size"), out var hs) && hs >= 0 ? hs : 16,
+            HeartbeatJitterMs = long.TryParse(Get("heartbeat_jitter"), out var hj) && hj >= 0 ? hj : 2000,
+            ShapingEnabled = IniBool(Get("shaping")),
+            ShapingGapMeanMs = long.TryParse(Get("shaping_gap_mean"), out var sgm) && sgm > 0 ? sgm : 700,
+            ShapingGapMinMs = long.TryParse(Get("shaping_gap_min"), out var sgn) && sgn > 0 ? sgn : 40,
+            ShapingGapMaxMs = long.TryParse(Get("shaping_gap_max"), out var sgx) && sgx > 0 ? sgx : 6000,
+            ShapingBudgetBytesPerSec = int.TryParse(Get("shaping_budget"), out var sb2) && sb2 > 0 ? sb2 : 16384,
+            ShapingMinSize = int.TryParse(Get("shaping_min_size"), out var sms) && sms > 0 ? sms : 64,
+            ShapingMaxSize = int.TryParse(Get("shaping_max_size"), out var sxs) && sxs > 0 ? sxs : 1024,
+            ShapingStealth = IniBool(Get("shaping_stealth")),
+            ShapingStealthRateMbps = int.TryParse(Get("shaping_stealth_mbps"), out var ssr) && ssr > 0 ? ssr : 2,
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
