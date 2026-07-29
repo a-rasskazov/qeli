@@ -38,6 +38,9 @@ public partial class MainWindow : Window
     // user pick — not for a selection that shifts because the collection/filter was mutated.
     private bool _suppressAutoSwitch;
     private VpnStatus _status = VpnStatus.Disconnected;
+    // Status observed when the current Connect/Disconnect began, so the poll can tell a
+    // state the daemon has actually REACHED from the one it started in.
+    private VpnStatus _statusAtToggle = VpnStatus.Disconnected;
     private VpnStatus _prevStatus = VpnStatus.Disconnected;
     private string? _lastExtra;
     private TrayController? _tray;
@@ -315,6 +318,19 @@ public partial class MainWindow : Window
         if (!fresh) { status = VpnStatus.Disconnected; extra = null; }
 
         if (status != _status) OnStatus(status, extra);
+
+        // Release the button as soon as the daemon has actually REACHED a new settled state,
+        // without waiting for the privileged helper to return. Those are different moments:
+        // the helper waits on launchctl, which reports back long after the daemon is up or
+        // gone, so the window ended up showing a "Connect" caption on a button that could not
+        // be pressed. What the user is waiting for is the state change, and it has happened.
+        // The helper's own cleanup re-asserts the same enabled state later, harmlessly.
+        if (_toggleBusy && status != _statusAtToggle
+            && status is VpnStatus.Connected or VpnStatus.Disconnected or VpnStatus.Error)
+        {
+            _toggleBusy = false;
+            ConnectBtn.IsEnabled = _serviceMode || Selected != null;
+        }
         TailServiceLog();
     }
 
@@ -1172,6 +1188,7 @@ public partial class MainWindow : Window
         // for the duration also gives the feedback whose absence invited the extra taps.
         if (_toggleBusy) return;
         _toggleBusy = true;
+        _statusAtToggle = _status;
         ConnectBtn.IsEnabled = false;
         try
         {
