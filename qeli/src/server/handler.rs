@@ -106,6 +106,42 @@ pub struct StreamHandle {
 /// A client tunnel session, aggregating one or more bonded connections (streams)
 /// behind ONE tun IP. With multipath off there is exactly one stream (identical
 /// behaviour to the old single-connection model).
+/// Decide the MTU the downlink must respect, given what a client reported (`0` = nothing)
+/// and the profile's `tun.mtu`.
+///
+/// `None` means "nothing to enforce" and the caller skips the check entirely, so the hot path
+/// is untouched for a client that never reported. Split out from
+/// [`SessionShared::downlink_mtu`] so the policy is testable without building a session.
+pub fn downlink_mtu_for(reported: u32, profile_mtu: i32) -> Option<u16> {
+    if reported == 0 {
+        return None;
+    }
+    let profile = u32::try_from(profile_mtu).unwrap_or(0);
+    // A profile MTU of 0 or negative is not a real ceiling (it means "unset"), so a report
+    // stands on its own there rather than being compared against nonsense.
+    if profile != 0 && reported >= profile {
+        return None;
+    }
+    u16::try_from(reported).ok()
+}
+
+/// Store a client-reported tunnel MTU, logging only when it actually changes.
+///
+/// A client sends its report once per session, but a reconnect or a re-probe can repeat it,
+/// and a peer is free to send it as often as it likes — so the log is edge-triggered rather
+/// than one line per frame. Shared by both transports: the TCP reader has the session in
+/// hand, the UDP reader only the mirrored cell and the peer address.
+pub fn note_path_mtu(cell: &AtomicU32, who: std::fmt::Arguments<'_>, mtu: u16) {
+    let prev = cell.swap(u32::from(mtu), Ordering::Relaxed);
+    if prev != u32::from(mtu) {
+        if prev == 0 {
+            log::info!("client {who} reported tunnel MTU {mtu}");
+        } else {
+            log::info!("client {who} reported tunnel MTU {mtu} (was {prev})");
+        }
+    }
+}
+
 pub struct SessionShared {
     pub session_id: u64,
     pub username: String,
@@ -140,6 +176,16 @@ pub struct SessionShared {
     /// subnets). Without it an authenticated client could forge any source and
     /// walk past `client_to_client = false`.
     pub src_guard: crate::server::acl::SrcGuard,
+    /// Tunnel MTU the client reported after probing its path, or 0 when it never told us
+    /// (every pre-#13 client, and any client with probing off).
+    ///
+    /// The client discovers this AFTER the handshake and sends it as an in-tunnel control
+    /// frame (see [`crate::protocol::ctrl`]). Without it the server sizes the downlink by
+    /// the profile's `tun.mtu` alone, so on a path narrower than the profile every large
+    /// packet we forward is dropped somewhere downstream with no signal — the connection
+    /// establishes and then stalls on the first big transfer. 0 keeps the old behaviour
+    /// exactly, which is what an old client must get. (Audit 2026-07-30, #13.)
+    pub path_mtu: Arc<AtomicU32>,
     /// Set once this session has been revoked (kick, quota cut-off, supersede).
     ///
     /// The UDP data plane demultiplexes ingress from a PER-WORKER
@@ -158,6 +204,25 @@ pub struct SessionShared {
 }
 
 impl SessionShared {
+    /// The MTU the downlink to this client must respect: the profile's `tun.mtu` narrowed
+    /// by whatever the client reported, if anything.
+    ///
+    /// Returns `None` when there is nothing to enforce — no report, or a report that is not
+    /// narrower than the profile — so the hot path can skip the check entirely and behave
+    /// bit-for-bit as it did before #13.
+    pub fn downlink_mtu(&self, profile_mtu: i32) -> Option<u16> {
+        downlink_mtu_for(self.path_mtu.load(Ordering::Relaxed), profile_mtu)
+    }
+
+    /// Record a client's reported tunnel MTU (see [`note_path_mtu`]).
+    pub fn note_path_mtu(&self, mtu: u16) {
+        note_path_mtu(
+            &self.path_mtu,
+            format_args!("'{}' ({})", self.username, self.client_ip),
+            mtu,
+        );
+    }
+
     /// Pick the (codec, writer) of the bonded stream this packet's flow is pinned
     /// to (`flow_hash`). Pinning a flow to one stream keeps that inner connection's
     /// packets ordered (round-robin striping reordered them); returns `None` only
@@ -511,6 +576,9 @@ where
                 rate: RateBucket::new(),
                 dst_acl,
                 src_guard,
+                // 0 = the client has not reported a path MTU. Every pre-#13 client stays
+                // here, and the downlink check stays switched off for them.
+                path_mtu: Arc::new(AtomicU32::new(0)),
                 revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
             {
@@ -896,6 +964,21 @@ async fn run_stream<R, W>(
                                 // undecryptable traffic must not keep a dead session
                                 // (and its pool IP) alive past the rx-dead reaper.
                                 last_rx.store(now, Ordering::Relaxed);
+                                // In-tunnel control frame, not a packet: authenticated by
+                                // the AEAD above and bound to THIS session, which is why the
+                                // MTU report rides here rather than as a bare datagram next
+                                // to the UDP probes (those are keyed only by source address,
+                                // so anyone able to guess a session's IP:port could shrink
+                                // its MTU). Handled before the packet path so it never
+                                // reaches the ACLs or the TUN. (Audit 2026-07-30, #13.)
+                                if crate::protocol::ctrl::is_ctrl(&plaintext) {
+                                    if let Some(mtu) =
+                                        crate::protocol::ctrl::parse_mtu_report(&plaintext)
+                                    {
+                                        session_r.note_path_mtu(mtu);
+                                    }
+                                    continue;
+                                }
                                 if !plaintext.is_empty() {
                                     // Destination ACL (`allowed_networks`). Checked AFTER
                                     // AEAD/replay (so only authenticated traffic is judged)
@@ -1967,5 +2050,49 @@ mod rate_bucket_tests {
             "expected ~1s throttle on an empty bucket, got {:?}",
             d
         );
+    }
+}
+
+#[cfg(test)]
+mod downlink_mtu_tests {
+    use super::downlink_mtu_for;
+
+    /// The whole point of returning `None`: a client that never reported must leave the
+    /// forwarder's behaviour bit-for-bit as it was before #13.
+    #[test]
+    fn no_report_means_no_enforcement() {
+        assert_eq!(downlink_mtu_for(0, 1500), None);
+        assert_eq!(downlink_mtu_for(0, 0), None);
+    }
+
+    /// Only a NARROWER path is worth enforcing. A client on an equal or wider path must not
+    /// make the server start policing (or worse, shrinking) its own profile MTU.
+    #[test]
+    fn only_a_narrower_report_is_enforced() {
+        assert_eq!(downlink_mtu_for(1280, 1500), Some(1280));
+        assert_eq!(downlink_mtu_for(1499, 1500), Some(1499));
+        assert_eq!(downlink_mtu_for(1500, 1500), None, "equal is not narrower");
+        assert_eq!(
+            downlink_mtu_for(9000, 1500),
+            None,
+            "wider must not raise the ceiling"
+        );
+    }
+
+    /// An unset/absurd profile MTU is not a ceiling to compare against, so the report stands
+    /// alone rather than being silently discarded (or compared against a negative).
+    #[test]
+    fn unset_profile_mtu_lets_the_report_stand() {
+        assert_eq!(downlink_mtu_for(1280, 0), Some(1280));
+        assert_eq!(downlink_mtu_for(1280, -1), Some(1280));
+    }
+
+    /// A report too large for u16 cannot be represented on the wire we act on; drop it rather
+    /// than truncating into a plausible-looking small MTU.
+    #[test]
+    fn unrepresentable_report_is_dropped_not_truncated() {
+        assert_eq!(downlink_mtu_for(70_000, 0), None);
+        // 65_536 truncates to 0 in 16 bits — exactly the value that would look like "unset".
+        assert_eq!(downlink_mtu_for(65_536, 0), None);
     }
 }

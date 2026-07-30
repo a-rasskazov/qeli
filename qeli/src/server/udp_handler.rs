@@ -101,6 +101,10 @@ struct UdpClient {
     /// client kept feeding the TUN until the reaper expired it, by which time its pool IP
     /// could already belong to somebody else. (Audit 2026-07-27, A1/A2/A3.)
     revoked: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Shared with this client's `SessionShared.path_mtu` — the tunnel MTU it reported after
+    /// probing its path, written here by the receive loop and read by the TUN forwarder.
+    /// `None` until authenticated; 0 inside means "never reported". (Audit 2026-07-30, #13.)
+    path_mtu: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
     /// Cumulative anti-amplification budget for this session, in wire bytes.
     ///
     /// `handle_new_udp_client` bounds the FIRST exchange (a ≥1200 B floor plus an
@@ -741,6 +745,8 @@ async fn handle_udp_datagram(
             // the guard is dropped. Cheap: an unrestricted ACL is an empty Vec.
             let dst_acl = client.dst_acl.clone();
             let src_guard = client.src_guard.clone();
+            // Same reason as recv_ctr: taken with the lock, used after it drops.
+            let path_mtu = client.path_mtu.clone();
             drop(sessions_guard);
 
             if is_awaiting_auth {
@@ -780,6 +786,19 @@ async fn handle_udp_datagram(
                     .await;
                     auth_inflight.lock().await.remove(&addr);
                 });
+            } else if crate::protocol::ctrl::is_ctrl(&plaintext) {
+                // In-tunnel control frame, not a packet: authenticated by the AEAD above and
+                // bound to THIS session — which is why the MTU report rides here rather than
+                // as a bare datagram alongside the UDP path-MTU probes, whose only identity
+                // is a source address anyone could spoof. Handled before the packet path so
+                // it never reaches the ACLs or the TUN. (Audit 2026-07-30, #13.)
+                if let (Some(cell), Some(mtu)) = (
+                    path_mtu.as_ref(),
+                    crate::protocol::ctrl::parse_mtu_report(&plaintext),
+                ) {
+                    crate::server::handler::note_path_mtu(cell, format_args!("at {addr}"), mtu);
+                }
+                return;
             } else if !plaintext.is_empty() {
                 // Destination ACL — after AEAD/replay (authenticated traffic only),
                 // before the TUN. Unrestricted sessions short-circuit.
@@ -1355,6 +1374,9 @@ async fn handle_udp_auth(
         rate: crate::server::handler::RateBucket::new(),
         dst_acl: dst_acl.clone(),
         src_guard,
+        // 0 = not reported yet; the receive loop fills it in from the client's in-tunnel
+        // control frame, and the TUN forwarder reads it. (Audit 2026-07-30, #13.)
+        path_mtu: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
         revoked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     // The writer task outlives this function and needs the rate bucket + byte
@@ -1425,6 +1447,7 @@ async fn handle_udp_auth(
         let mut sessions_guard = sessions.write().await;
         if let Some(client) = sessions_guard.get_mut(&addr) {
             client.revoked = Some(writer_session.revoked.clone());
+            client.path_mtu = Some(writer_session.path_mtu.clone());
         }
     }
     // Program the kernel routes now the sessions lock is released.
@@ -1613,6 +1636,7 @@ async fn handle_new_udp_client(
             state: UdpSessionState::AwaitingAuth,
             src_guard: None,
             revoked: None,
+            path_mtu: None,
             // Seed the budget with the exchange that just happened, so the session
             // starts already accounted for rather than with a free allowance.
             amp_received: initial_packet.len() as u64,

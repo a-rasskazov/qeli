@@ -1011,6 +1011,9 @@ where
         eff_obf.traffic_shaping = po.traffic_shaping;
     }
 
+    // Bound once: the TUN is brought up with it, and it is reported to the server below so
+    // the server's downlink respects it too (#13).
+    let tun_mtu = effective_mtu(config.tun.mtu, pushed_mtu);
     let tunnel = setup_tunnel(
         config,
         &client_ip_str,
@@ -1018,7 +1021,7 @@ where
         &server_ip,
         &dns_ip,
         &dns_port,
-        effective_mtu(config.tun.mtu, pushed_mtu),
+        tun_mtu,
     )?;
     route::apply_local_networks(&config.routing, &routes_json, &tunnel.if_name, &server_ip);
     let reader_fd = tunnel.reader_fd;
@@ -1266,6 +1269,22 @@ where
         stream_tasks.clone(),
         pump.clone(),
     ));
+
+    // Report our tunnel MTU (#13). The stream writer takes plaintext and encrypts it, so the
+    // control frame goes out the same authenticated path as a packet — no special casing, and
+    // padding/normalization on top are harmless because the frame carries its own length.
+    // Matters on TCP too: the server sizes its downlink from the profile's `tun.mtu`, and a
+    // packet larger than our TUN's MTU is dropped when we write it, transport regardless.
+    if let Ok(mtu) = u16::try_from(tun_mtu.max(0)) {
+        let frame = crate::protocol::ctrl::mtu_report(mtu);
+        let sender = outs.lock().unwrap().first().cloned();
+        if let Some(s) = sender {
+            match s.try_send(frame) {
+                Ok(()) => log::debug!("reported tunnel MTU {mtu} to the server"),
+                Err(e) => log::debug!("could not report tunnel MTU: {e}"),
+            }
+        }
+    }
 
     // Stream-bonding plan. `max_streams` is the server's hard ceiling.
     let target = if max_streams > 1 {
@@ -3481,6 +3500,29 @@ async fn connect_and_run_udp(
     // on macOS/Windows) while the wall clock kept running ⇒ the session + NAT are gone.
     let mut last_tick_wall = std::time::SystemTime::now();
     let mut last_tick_inst = tokio::time::Instant::now();
+
+    // Tell the server the MTU we actually settled on (#13). It sized its own downlink from
+    // the profile's `tun.mtu`, which is the path up to ITS tun — it cannot see that our leg
+    // is narrower, so without this every large packet it forwards is dropped downstream with
+    // no signal to anyone. Sent as an in-tunnel control frame, so it is authenticated by the
+    // session AEAD rather than spoofable like a bare datagram. Fire-and-forget: the server
+    // ignores a value that is not narrower than its own, an older server discards the frame
+    // as a malformed packet, and nothing here waits for a reply.
+    if let Ok(mtu) = u16::try_from(tun_mtu.max(0)) {
+        let frame = crate::protocol::ctrl::mtu_report(mtu);
+        if let Ok(pkt) = client_tx.encrypt_packet(&frame, &[]) {
+            let send_data = if quic_enabled {
+                quic_pn += 1;
+                wrap_quic_short(&pkt, &connection_id, quic_pn - 1)
+            } else {
+                pkt
+            };
+            match socket.send(&send_data).await {
+                Ok(_) => log::debug!("reported tunnel MTU {mtu} to the server"),
+                Err(e) => log::debug!("could not report tunnel MTU: {e}"),
+            }
+        }
+    }
 
     loop {
         tokio::select! {
