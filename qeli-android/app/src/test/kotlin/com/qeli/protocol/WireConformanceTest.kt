@@ -3,6 +3,8 @@ package com.qeli.protocol
 import com.qeli.crypto.PacketCipher
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -132,6 +134,13 @@ class WireConformanceTest {
         requireListed(fx, "udp-frag.json")
 
         assertEquals("fixture MAX_CHUNK vs this build", UdpFrag.MAX_CHUNK, fx.getInt("max_chunk"))
+        // The receive bound is pinned separately and is LARGER: bounding receive by the send
+        // budget would reject every handshake from a pre-#14 peer.
+        assertEquals(
+            "fixture MAX_CHUNK_ACCEPT vs this build",
+            UdpFrag.MAX_CHUNK_ACCEPT,
+            fx.getInt("max_chunk_accept"),
+        )
         assertEquals("fixture MAX_FRAGS vs this build", UdpFrag.MAX_FRAGS, fx.getInt("max_frags"))
 
         // ── fragment ────────────────────────────────────────────────────────────
@@ -212,5 +221,71 @@ class WireConformanceTest {
             assertEquals("case $name: is_mtu_probe", e.getBoolean("is_mtu_probe"), UdpFrag.isMtuProbe(d))
             assertEquals("case $name: is_mtu_probe_ack", e.getBoolean("is_mtu_probe_ack"), UdpFrag.isMtuProbeAck(d))
         }
+    }
+
+    /**
+     * The path-MTU ladder's floor (#12). Rungs are INNER tunnel MTUs, 1280 is an OUTER path
+     * limit — so a floor of 1280 asked a 1280-byte path for 1280 + overhead bytes and every
+     * rung failed on exactly the narrow paths probing exists for.
+     */
+    @Test
+    fun `mtu ladder floor fits the ipv6 minimum path`() {
+        // Both extremes this codebase produces: bare IPv4 UDP, and obfs seal (13) + QUIC short
+        // header (9) + UDP (8) + IPv6 (40), each over a 48-byte record overhead.
+        for (overhead in intArrayOf(48 + 8 + 20, 48 + 13 + 9 + 8 + 40)) {
+            val ladder = MtuLadder.rungs(1400, overhead)
+            assertTrue("ladder must not be empty (overhead $overhead)", ladder.isNotEmpty())
+            assertTrue(
+                "lowest rung ${ladder.last()} + $overhead must fit a 1280-byte path",
+                ladder.last() + overhead <= 1280,
+            )
+            assertEquals("rungs must be strictly descending", ladder.sortedDescending(), ladder)
+            assertEquals("rungs must be deduped", ladder.distinct(), ladder)
+        }
+        // A ceiling already below the floor must still yield something to try, not an empty
+        // ladder (which reports "no result" and silently keeps the pushed MTU).
+        val tiny = MtuLadder.rungs(700, 48 + 13 + 9 + 8 + 40)
+        assertTrue("a low ceiling still produces a rung", tiny.isNotEmpty() && tiny.first() <= 700)
+    }
+
+    /**
+     * The exact bytes of the in-tunnel MTU report, pinned identically in the Rust, C# and Swift
+     * ports. A port that drifts on byte order or the magic makes the server read a nonsense MTU.
+     */
+    @Test
+    fun `ctrl mtu report matches the shared vector`() {
+        // 1280 = 0x0500, big-endian.
+        assertEquals("c19b01020500", hex(CtrlFrame.mtuReport(1280)))
+        assertEquals("clamped, not wrapped", "c19b0102ffff", hex(CtrlFrame.mtuReport(70_000)))
+        assertEquals("clamped, not wrapped", "c19b01020000", hex(CtrlFrame.mtuReport(-1)))
+
+        // The discriminator that keeps control frames and IP packets apart, in both directions.
+        assertTrue(CtrlFrame.isCtrl(CtrlFrame.mtuReport(1280)))
+        assertFalse("IPv4 is not a ctrl frame", CtrlFrame.isCtrl(byteArrayOf(0x45, 0, 0, 0x28)))
+        assertFalse("IPv6 is not a ctrl frame", CtrlFrame.isCtrl(byteArrayOf(0x60, 0, 0, 0)))
+        assertFalse("heartbeat is not a ctrl frame", CtrlFrame.isCtrl(ByteArray(0)))
+    }
+
+    /**
+     * A pre-#14 peer slices at 1200, which is ABOVE this build's send budget. The reassembler
+     * must bound by MAX_CHUNK_ACCEPT, not MAX_CHUNK, or every legacy handshake is rejected as
+     * "fragment chunk too large".
+     */
+    @Test
+    fun `legacy 1200-byte chunks still reassemble`() {
+        val legacy = 1200
+        assertTrue("the send and accept bounds must differ", legacy > UdpFrag.MAX_CHUNK)
+        assertTrue("accept bound must cover legacy", legacy <= UdpFrag.MAX_CHUNK_ACCEPT)
+
+        val re = UdpFrag.Reassembler()
+        var out: ByteArray? = null
+        for (idx in 0 until 2) {
+            val d = ByteArray(UdpFrag.HDR_LEN + legacy) { 'L'.code.toByte() }
+            UdpFrag.MAGIC.copyInto(d, 0)
+            d[3] = UdpFrag.MSG_SERVER_HELLO; d[4] = idx.toByte(); d[5] = 2
+            out = re.push(d)
+            if (idx == 0) assertNull("must not complete on the first fragment", out)
+        }
+        assertEquals("legacy message length", legacy * 2, out!!.size)
     }
 }

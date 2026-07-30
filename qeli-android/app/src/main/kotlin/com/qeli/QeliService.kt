@@ -20,6 +20,8 @@ import com.qeli.crypto.KeyDerivation
 import com.qeli.crypto.KeyExchange
 import com.qeli.crypto.PacketCipher
 import com.qeli.model.VpnConfig
+import com.qeli.protocol.CtrlFrame
+import com.qeli.protocol.MtuLadder
 import com.qeli.protocol.ObfsStream
 import com.qeli.protocol.PacketCodec
 import com.qeli.protocol.Quic
@@ -255,8 +257,12 @@ class VpnServiceImpl : VpnService() {
             // alternative to autostart, which made this the advertised path.
             // (Audit 2026-07-27, M1)
             VpnService.SERVICE_INTERFACE -> {
+                // validate() too, not just parse(): always-on is the path with NO UI to show a
+                // rejection, so an out-of-range saved profile would otherwise be carried all the
+                // way into the tunnel. A failure lands in the same "no usable profile" branch
+                // below, which does report itself. (Audit 2026-07-30, #11.)
                 val cfg = ProfileStore.activeProfileConfigText(this)
-                    ?.let { runCatching { VpnConfig.parse(it) }.getOrNull() }
+                    ?.let { runCatching { VpnConfig.parse(it).also { c -> c.validate() } }.getOrNull() }
                 if (cfg == null || cfg.serverAddress.isBlank() || cfg.serverAddress == "SERVER_IP_OR_HOST") {
                     // Nothing to connect. Say so loudly: with lockdown on, the user sees a
                     // dead network and no explanation anywhere.
@@ -1589,6 +1595,18 @@ class VpnServiceImpl : VpnService() {
         // Serialize concurrent datagram sends (upload + heartbeat coroutines).
         private val sendLock = Any()
 
+        /** Bytes the outer layers add on the WIRE beyond the tunnel MTU itself: the obfs
+         *  datagram seal, the QUIC short header, and the UDP + IP headers. Mirrors the Rust
+         *  client's `seal_overhead() + QUIC_SHORT_HEADER_MIN + 8 + (40|20)`.
+         *
+         *  The path-MTU ladder needs this because its rungs are INNER (tunnel) MTUs while the
+         *  path limit it must respect is an OUTER size — see [MtuLadder.rungs]. */
+        fun outerOverhead(): Int =
+            (if (obfsKey != null) ObfsStream.DATAGRAM_SEAL_OVERHEAD else 0) +
+                (if (quic) Quic.SHORT_HEADER_MIN else 0) +
+                8 +                                      // UDP header
+                (if (sock.inetAddress is java.net.Inet6Address) 40 else 20)
+
         override fun send(record: ByteArray, longHeader: Boolean) {
             // The handshake ClientHello (longHeader) is large (post-quantum) — fragment
             // it so no datagram needs IP fragmentation (mobile / CGNAT drop IP fragments
@@ -2001,23 +2019,29 @@ class VpnServiceImpl : VpnService() {
      *  the pushed/effective MTU) on any miss — purely additive. */
     private fun probeUdpMtu(t: UdpTransport, ceiling: Int): Int {
         val recOverhead = 48   // qeli UDP record + margin, so a probe certifies a real packet
-        val floor = 1280       // IPv6 minimum
         if (!t.setDontFragment(true)) return -1
         var found = -1
-        val ladder = intArrayOf(ceiling, 1360, 1320, floor)
-            .filter { it in floor..ceiling }.distinct().sortedDescending()
-        var id = 0x4D54    // "MT"
+        val ladder = MtuLadder.rungs(ceiling, recOverhead + t.outerOverhead())
+        // Randomize the probe-id sequence per connection. A fixed start ("MT") plus a
+        // predictable +1 per rung let an off-path attacker forge a probe-ACK and pin the client
+        // to a too-large MTU — a DoS on fake-tls-UDP-without-obfs, where the probe rides in the
+        // clear. A random 16-bit start means the attacker must guess the id too. Mirrors Rust.
+        var id = SecureRandom().nextInt(0x10000)
         loop@ for (m in ladder) {
             id = (id + 1) and 0xFFFF
-            val probe = UdpFrag.mtuProbeDatagram(id, m + recOverhead) ?: continue
+            val outerSize = m + recOverhead
+            val probe = UdpFrag.mtuProbeDatagram(id, outerSize) ?: continue
             var attempt = 0
             while (attempt < 2) {
                 attempt++
                 try { t.send(probe, longHeader = false) }
                 catch (e: Exception) { continue@loop }   // EMSGSIZE: link < probe → step down
                 val payload = t.recvRawPayload(220)
+                // Match BOTH echoed fields, like the Rust and iOS clients. The id alone left
+                // the ACK confirming only "some probe arrived", not "the probe of THIS size
+                // arrived" — the single fact the rung is being accepted on. (Audit 2026-07-30.)
                 if (payload != null && UdpFrag.isMtuProbeAck(payload)
-                    && UdpFrag.parseMtuProbe(payload)?.first == id) { found = m; break@loop }
+                    && UdpFrag.parseMtuProbe(payload) == Pair(id, outerSize)) { found = m; break@loop }
             }
         }
         // Keep DF on success (packets <= the MTU never fragment); clear it on a miss so a
@@ -2289,6 +2313,45 @@ class VpnServiceImpl : VpnService() {
         return CoroutineScope(ctx + SupervisorJob(ctx[Job]))
     }
 
+    /** Re-send delays for the unacknowledged MTU report on UDP, measured from the first send.
+     *  Spread so an isolated drop AND a short burst of loss are both survived. */
+    private val reportRetryDelaysMs = longArrayOf(2_000, 6_000)
+
+    /** Tell the server the MTU we settled on (#13). It sizes its downlink from the profile's
+     *  tun.mtu — the path up to ITS tun — so it cannot see that our leg is narrower (a probed
+     *  LTE/CGNAT path, or an explicit smaller mtu in our config). Without this, every large
+     *  packet it forwards is dropped with no signal to anyone: the connection establishes and
+     *  then stalls on the first big transfer.
+     *
+     *  The frame is unacknowledged by design (the server never answers a control frame), so on
+     *  UDP a single lost datagram would leave the server on `path_mtu = 0` for the WHOLE
+     *  session — on precisely the unreliable transport where the report matters most. The frame
+     *  is idempotent (the server keeps the narrowest value it has seen), so re-sending costs a
+     *  few bytes and removes that single point of loss. TCP retransmits for us, so it sends
+     *  once. (Audit 2026-07-30, #5.)
+     *
+     *  Never fatal: the tunnel works without the report, just without the downlink narrowing. */
+    private fun reportTunnelMtu(
+        transport: Transport, enc: PacketCodec, mtu: Int, isUdp: Boolean, scope: CoroutineScope
+    ) {
+        fun sendOnce(attempt: Int): Boolean = try {
+            transport.send(enc.encrypt(CtrlFrame.mtuReport(mtu)))
+            if (attempt == 0) broadcastLog("reported tunnel MTU $mtu to the server")
+            true
+        } catch (e: Exception) {
+            if (attempt == 0) broadcastLog("could not report tunnel MTU: ${e.message}")
+            false
+        }
+
+        if (!sendOnce(0) || !isUdp) return
+        scope.launch {
+            reportRetryDelaysMs.forEachIndexed { i, d ->
+                kotlinx.coroutines.delay(d)
+                if (!sendOnce(i + 1)) return@launch
+            }
+        }
+    }
+
     private suspend fun runTunnelLoop(
         config: VpnConfig, transport: Transport, tunFd: ParcelFileDescriptor,
         encCodec: PacketCodec, decCodec: PacketCodec, isUdp: Boolean
@@ -2316,6 +2379,14 @@ class VpnServiceImpl : VpnService() {
         val expectServerData = (config.heartbeatEnabled && config.heartbeatIntervalMs > 0) ||
             config.shapingEnabled
         val tunnelError = kotlinx.coroutines.channels.Channel<Throwable>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+        // Tell the server the MTU we settled on (#13). It sizes its downlink from the profile's
+        // tun.mtu — the path up to ITS tun — so it cannot see that our leg is narrower (a probed
+        // LTE/CGNAT path, or an explicit smaller mtu in our config). Without this, every large
+        // packet it forwards is dropped with no signal to anyone: the connection establishes and
+        // then stalls on the first big transfer. Sent once per attempt, fire-and-forget — the
+        // server ignores a value that is not narrower, and an older server discards the frame.
+        reportTunnelMtu(transport, encCodec, config.mtu, isUdp, scope)
 
         // Poll the UDP RX path every ~3s (not once per rxDead) so the dead-session / resume
         // checks below run promptly instead of up to rxDead late. TCP ignores the timeout;
@@ -2827,6 +2898,12 @@ class VpnServiceImpl : VpnService() {
         pushedObf: PushedObf?, tunFd: ParcelFileDescriptor, transports: Attempt
     ) {
         val scope = dataPlaneScope()
+        // Report the MTU here too, not only in the single-stream loop: this branch is taken
+        // whenever the server profile allows bonding, and it used to skip the report entirely —
+        // so the server stayed on path_mtu = 0 and the downlink narrowing never engaged for any
+        // bonded client. Sent on the PRIMARY stream, before the others are ramped up. Bonding is
+        // TCP-only, so no UDP re-sends are needed. (Audit 2026-07-30, #4.)
+        reportTunnelMtu(primary.transport, primary.enc, config.mtu, isUdp = false, scope = scope)
         // false on Android 9/10 (no Os.fcntlInt) → the reads below must tolerate EAGAIN.
         val tunBlocking = forceBlocking(tunFd)
         val tunInput = FileInputStream(tunFd.fileDescriptor)

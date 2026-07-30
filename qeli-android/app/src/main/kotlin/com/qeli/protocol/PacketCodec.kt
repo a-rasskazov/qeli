@@ -283,15 +283,19 @@ class PacketCodec(
                 ((plaintext[6].toLong() and 0xFF) shl 8) or
                 (plaintext[7].toLong() and 0xFF)
 
-        if (!acceptCounter(packetCounter)) {
-            throw PacketException("Replay detected: counter $packetCounter (window highest $replayHighest)")
-        }
-
+        // Validate the padding BEFORE recording the counter, like the Rust and iOS clients.
+        // A record that decrypts (so it is genuinely from the peer) but carries malformed
+        // padding is a peer bug, not an attack — recording it first needlessly burned that
+        // counter's slot in the replay window. (Audit 2026-07-30.)
         val paddingLen = ((plaintext[plaintext.size - 2].toInt() and 0xFF) shl 8) or
                 (plaintext[plaintext.size - 1].toInt() and 0xFF)
 
         if (COUNTER_SIZE + paddingLen + 2 > plaintext.size) {
             throw PacketException("Invalid padding: $paddingLen")
+        }
+
+        if (!acceptCounter(packetCounter)) {
+            throw PacketException("Replay detected: counter $packetCounter (window highest $replayHighest)")
         }
 
         val dataLen = plaintext.size - COUNTER_SIZE - 2 - paddingLen

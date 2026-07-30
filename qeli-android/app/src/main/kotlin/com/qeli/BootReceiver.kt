@@ -23,8 +23,10 @@ class BootReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(MainActivity.PREFS_STATE, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(MainActivity.PREF_AUTO_CONNECT_BOOT, false)) return
 
+        // validate() too — boot has no UI either, so a profile that fails the range checks must
+        // simply not auto-connect rather than reach the tunnel. (Audit 2026-07-30, #11.)
         val cfg = ProfileStore.activeProfileConfigText(context)
-            ?.let { runCatching { VpnConfig.parse(it) }.getOrNull() } ?: return
+            ?.let { runCatching { VpnConfig.parse(it).also { c -> c.validate() } }.getOrNull() } ?: return
         if (cfg.serverAddress.isBlank() || cfg.serverAddress == "SERVER_IP_OR_HOST") return
 
         // No UI on boot → consent must already exist (prepare == null). Otherwise skip.

@@ -18,7 +18,47 @@ package com.qeli.protocol
 object UdpFrag {
     val MAGIC = byteArrayOf(0xF0.toByte(), 0x9B.toByte(), 0x71.toByte())
     const val HDR_LEN = 6            // magic(3) + msgId(1) + idx(1) + count(1)
-    const val MAX_CHUNK = 1200       // payload bytes per fragment (safe < IPv6 min 1280 / LTE)
+
+    /** IPv6 minimum link MTU (RFC 8200 §5) — the narrowest path the handshake must survive. */
+    const val IPV6_MIN_MTU = 1280
+    // Worst-case outer headers around one fragment, inside out. Emitted sizes, not protocol
+    // minimums: an IPv6 + obfs + QUIC-masked fragment really carries all of them at once.
+    private const val OUTER_QUIC = 1 + 4 + 1 + 4 + 1 + 1 + 2 + 4  // QUIC long header (Quic.wrapLong)
+    private const val OUTER_OBFS_SEAL = 1 + 12                    // obfs flag byte + nonce
+    private const val OUTER_UDP = 8
+    private const val OUTER_IPV6 = 40
+    // Headroom so adding one more outer layer cannot silently push the handshake back over
+    // IPV6_MIN_MTU — the exact regression the old hard-coded 1200 was.
+    private const val OUTER_RESERVE = 32
+
+    /**
+     * Max payload bytes per fragment. **Derived**, not chosen: chunk + header + QUIC long
+     * header + obfs seal + UDP + IPv6 must fit [IPV6_MIN_MTU].
+     *
+     * This was 1200 — QUIC's initial-packet floor, which budgets a whole datagram, not the
+     * payload inside four more layers. The handshake wraps each fragment in a QUIC **long**
+     * header (18 B; the data plane's short header is only 9 B), so the real worst case was
+     * 1200 + 6 + 18 + 13 + 8 + 40 = 1285 — five bytes over the IPv6 minimum, i.e. the PQ
+     * handshake could not complete on a 1280-MTU IPv6 path with obfs + QUIC masking on.
+     *
+     * This bounds only what we **emit**; [MAX_CHUNK_ACCEPT] bounds what we accept. Keeping the
+     * two separate is what makes the change compatible in both directions — see there.
+     * (Audit 2026-07-30, #14.)
+     */
+    const val MAX_CHUNK =
+        IPV6_MIN_MTU - OUTER_IPV6 - OUTER_UDP - OUTER_OBFS_SEAL - OUTER_QUIC - OUTER_RESERVE - HDR_LEN
+
+    /**
+     * Largest chunk we **accept**, pinned to the historical 1200 that every build before the
+     * #14 fix emitted.
+     *
+     * Reassembly is size-agnostic — fragments are placed by idx, with no offset or per-fragment
+     * length field — so the only thing a receiver does with a chunk size is bound it from above
+     * for anti-DoS. Shrinking [MAX_CHUNK] keeps our fragments readable by any peer; but
+     * shrinking the accept bound with it would have rejected every fragment from a pre-fix
+     * peer, breaking the handshake in the other direction. Must never drop below 1200.
+     */
+    const val MAX_CHUNK_ACCEPT = 1200
     const val MAX_FRAGS = 24         // anti-DoS cap on the reassembly buffer
     const val MSG_CLIENT_HELLO: Byte = 1
     const val MSG_SERVER_HELLO: Byte = 2
@@ -133,10 +173,12 @@ object UdpFrag {
             val cnt = d[5].toInt() and 0xFF
             require(cnt in 1..MAX_FRAGS) { "bad fragment count" }
             require(idx < cnt) { "fragment index out of range" }
-            // Cap the per-fragment chunk (parity with the Rust reassembler): a legit
-            // fragment is <= MAX_CHUNK, so a larger one is malformed. Bounds a reassembly
-            // buffer at MAX_FRAGS*MAX_CHUNK instead of MAX_FRAGS*65535.
-            require(d.size - HDR_LEN <= MAX_CHUNK) { "fragment chunk too large" }
+            // Cap the per-fragment chunk (parity with the Rust reassembler), bounding a
+            // reassembly buffer at MAX_FRAGS*MAX_CHUNK_ACCEPT instead of MAX_FRAGS*65535.
+            // Deliberately the ACCEPT bound, not the send budget: a peer built before the
+            // #14 fix emits 1200-byte chunks, and bounding by our smaller MAX_CHUNK would
+            // reject every one of its handshakes.
+            require(d.size - HDR_LEN <= MAX_CHUNK_ACCEPT) { "fragment chunk too large" }
             if (count == 0) {
                 msgId = mId; count = cnt; parts = arrayOfNulls(cnt); have = 0
             } else require(mId == msgId && cnt == count) { "inconsistent fragment" }

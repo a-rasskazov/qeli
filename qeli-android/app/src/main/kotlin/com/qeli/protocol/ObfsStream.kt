@@ -197,6 +197,12 @@ class ObfsStream private constructor(
 
     companion object {
         private const val NONCE_LEN = 12
+
+        /**
+         * Bytes [datagramSeal] prepends: a QUIC-shaped flag byte + the nonce. Public because the
+         * path-MTU probe has to budget for the outer layers it rides under.
+         */
+        const val DATAGRAM_SEAL_OVERHEAD = 1 + NONCE_LEN
         // F3 caps: writer emits <=16384-byte payloads; reader accepts the larger
         // 8-byte form defensively but bounds it to 1 MiB to prevent OOM.
         private const val WS_MAX_PAYLOAD = 16384

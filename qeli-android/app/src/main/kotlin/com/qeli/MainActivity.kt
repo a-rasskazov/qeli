@@ -1240,7 +1240,11 @@ sni = www.microsoft.com
 
     private fun connect() {
         val p = current() ?: return
-        val cfg = try { VpnConfig.parse(p.text) } catch (e: Exception) {
+        // `parse` only PARSES — validate() is a separate step, and connecting without it let a
+        // profile saved before the range checks existed (or hand-edited since) reach the tunnel
+        // with an out-of-range port/transport/mode/timeout/MTU/padding. Import already
+        // validates; this is the other door into the same data. (Audit 2026-07-30, #11.)
+        val cfg = try { VpnConfig.parse(p.text).also { it.validate() } } catch (e: Exception) {
             Toast.makeText(this, getString(R.string.profile_config_invalid, e.message ?: ""), Toast.LENGTH_LONG).show(); return
         }
         if (cfg.serverAddress.isBlank() || cfg.serverAddress == "SERVER_IP_OR_HOST") {

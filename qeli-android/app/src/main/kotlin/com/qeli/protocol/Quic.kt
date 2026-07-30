@@ -13,6 +13,13 @@ object Quic {
     private const val LONG_HEADER_FLAG = 0xC0
     private const val SHORT_HEADER_FLAG = 0x40
 
+    /**
+     * Bytes [wrapShort] emits ahead of the payload: flags(1) + connection id(4) + packet
+     * number(4). This is the DATA-plane header; the handshake uses the longer [wrapLong] one.
+     * Public because the path-MTU probe budgets for it.
+     */
+    const val SHORT_HEADER_MIN = 1 + 4 + 4
+
     private val random = SecureRandom()
 
     fun generateConnectionId(): ByteArray = ByteArray(4).also { random.nextBytes(it) }
