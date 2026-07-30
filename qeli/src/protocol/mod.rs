@@ -1,4 +1,5 @@
 pub mod ctrl;
+pub mod icmp;
 pub mod obfs;
 pub mod obfuscate;
 pub mod packet;

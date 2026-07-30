@@ -834,6 +834,21 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // wire), `tun.device_type = "tapp"` quietly creates a TUN, and
         // `dns.upstream_protocol = "tls"` — a value the docs advertise — falls back to
         // plaintext UDP while looking like DoT. (Audit 2026-07-29, #23.)
+        // Extra `listen` specs. The runtime parses these too and logs an error for a malformed
+        // one, but only once the profile is already starting — so `check-config` passed on a
+        // config whose second listener could never bind, and the operator learned about it from
+        // a log line on a live server (or not at all). Validate here so the command and a real
+        // start agree. (Audit 2026-07-30, #6.)
+        for spec in &p.bind.listen {
+            if validate_listen_addr(spec).is_none() {
+                anyhow::bail!(
+                    "profile '{}': malformed listen '{}' — expected a bare `addr:port` \
+                     (IPv6 in brackets, e.g. `[::]:443`) with a non-zero port",
+                    p.name,
+                    spec
+                );
+            }
+        }
         if !matches!(p.obfuscation.fronting.as_str(), "websocket" | "none") {
             anyhow::bail!(
                 "profile '{}': unknown obf.fronting '{}' — expected 'websocket' or 'none'",
@@ -1403,8 +1418,9 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     // profiles re-install their own rules in run_profile right below.
     nat::cleanup_all();
 
-    // Start each profile
-    let mut profile_handles = Vec::new();
+    // Start each profile. A JoinSet, not a Vec of handles — see the join loop below for why
+    // awaiting them in order hid a profile that had stopped.
+    let mut profile_set = tokio::task::JoinSet::new();
     for pcfg in &state.config.profiles {
         if !pcfg.enabled {
             log::info!(
@@ -1415,14 +1431,15 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         }
         let state = state.clone();
         let pcfg = pcfg.clone();
-        let pname = pcfg.name.clone();
-        let handle = tokio::spawn(async move {
+        // The task returns its own name: with a JoinSet the completion order is not the spawn
+        // order, so the name has to travel WITH the task rather than sit beside its handle.
+        profile_set.spawn(async move {
             let pname = pcfg.name.clone();
             if let Err(e) = run_profile(state, pcfg).await {
                 log::error!("Profile '{}' error: {}", pname, e);
             }
+            pname
         });
-        profile_handles.push((pname, handle));
     }
 
     // Wait for all profiles. SIGINT (ctrl-c) and SIGTERM (how the supervisor and
@@ -1437,14 +1454,20 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())
         .map_err(|e| anyhow::anyhow!("failed to install SIGTERM handler: {}", e))?;
 
-    let profiles_done = async {
-        for (pname, h) in profile_handles {
-            // A profile task ending on its own is unexpected while the worker is
-            // still meant to be serving — surface it instead of swallowing it.
-            // Log only (no auto-restart): respawning here could loop forever.
-            match h.await {
-                Ok(()) => log::warn!("Profile '{}' task ended unexpectedly", pname),
-                Err(e) => log::warn!("Profile '{}' task ended unexpectedly: {}", pname, e),
+    let profiles_done = async move {
+        // A profile task ending on its own is unexpected while the worker is still meant to be
+        // serving — surface it instead of swallowing it. Log only (no auto-restart): respawning
+        // here could loop forever.
+        //
+        // Awaited CONCURRENTLY. These used to be awaited in spawn order, and a healthy profile
+        // never returns — so the first `await` parked forever and any LATER profile stopping
+        // went unreported for as long as the first kept serving. Same defect as the per-listener
+        // join inside `run_profile`, one level up. (Audit 2026-07-30, #6.)
+        while let Some(joined) = profile_set.join_next().await {
+            match joined {
+                Ok(pname) => log::warn!("Profile '{}' task ended unexpectedly", pname),
+                // A panic loses the name with the task — report it rather than drop it.
+                Err(e) => log::warn!("A profile task ended unexpectedly: {}", e),
             }
         }
     };
@@ -2042,6 +2065,41 @@ fn validate_listen_addr(spec: &str) -> Option<String> {
 mod listen_addr_tests {
     use super::validate_listen_addr;
 
+    /// The join strategy for the listener tasks, in miniature.
+    ///
+    /// Awaiting `JoinHandle`s in ORDER is what hid a failed extra listener: an accept loop
+    /// never returns, so the first `await` parked forever and no later task's error was ever
+    /// read. This models exactly that shape — one task that never finishes plus one that fails
+    /// immediately — and asserts the failure is observed. With the old sequential loop this
+    /// test hangs instead of failing, which is the point: the bug was silence, not a wrong
+    /// value. (Audit 2026-07-30, #6.)
+    #[tokio::test]
+    async fn a_failing_listener_is_observed_even_behind_an_endless_one() {
+        let mut set = tokio::task::JoinSet::new();
+        // Stands in for a healthy accept loop: runs until the process ends.
+        set.spawn(async {
+            std::future::pending::<()>().await;
+            Ok::<(), std::io::Error>(())
+        });
+        // Stands in for `TcpListener::bind` failing on a port already in use.
+        set.spawn(async {
+            Err::<(), std::io::Error>(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                "address already in use",
+            ))
+        });
+
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(5), set.join_next())
+            .await
+            .expect("the failure must surface without waiting on the endless listener")
+            .expect("the set is not empty");
+        let err = joined.expect("the task itself did not panic").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+
+        // The healthy one is still running — one bad listener must not take the others down.
+        assert_eq!(set.len(), 1);
+    }
+
     #[test]
     fn accepts_real_binds_and_rejects_what_cannot_bind() {
         for ok in [
@@ -2462,8 +2520,22 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                 log::info!("TUN reader q{} for profile '{}' stopped", qi, name_r);
             });
         }
+        // Created BEFORE the outbound forwarder so that forwarder can inject ICMP
+        // "Fragmentation Needed" back toward an origin whose packets are too big for a
+        // client's path (#13). The writer half is consumed by the TUN writer thread below.
+        let (tun_write_tx, tun_write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(256);
         {
             let fwd_profile = profile.clone();
+            let icmp_tx = tun_write_tx.clone();
+            // The address our ICMP errors come from: this profile's TUN address, i.e. the
+            // hop that could not forward. Parsed once — an unparseable address just disables
+            // the signal rather than failing the profile.
+            let icmp_router_ip = fwd_profile
+                .config
+                .tun
+                .address
+                .parse::<std::net::Ipv4Addr>()
+                .ok();
             tokio::spawn(async move {
                 while let Some(packet) = out_rx.recv().await {
                     if packet.len() < 20 || (packet[0] >> 4) != 4 {
@@ -2493,45 +2565,117 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                                 continue;
                             }
                         }
-                        // Flow-pin each packet to one of the session's bonded streams
-                        // (by inner 5-tuple) so a connection stays in order. Each stream
-                        // carries its own crypto, so encrypt with the picked codec.
-                        if let Some((codec_arc, writer)) =
-                            session.pick_stream(crate::protocol::flow_hash(&packet))
-                        {
-                            // Symmetric obfuscation: pad server→client traffic too. Clamp
-                            // under the path MTU so UDP sessions don't get fragmented.
-                            let pad_cfg = &fwd_profile.config.obfuscation.padding;
-                            let mut obf = crate::protocol::Obfuscator::new();
-                            let pad_cap = {
-                                // Cap against THIS profile's tun.mtu, not a hard-coded 1400.
-                                // The constant assumed one particular path MTU while
-                                // `tun.mtu` is configurable: on a profile at 1280 (common on
-                                // mobile / IPv6 paths) padding still inflated packets toward
-                                // 1400 and got them fragmented or dropped on UDP, and on a
-                                // profile at 1500 the cap clamped to 0 on almost every packet
-                                // so the obfuscation quietly did nothing at all.
-                                // (Audit 2026-07-27, E7.)
-                                let mtu = fwd_profile.config.tun.mtu.max(0) as usize;
-                                let base = packet.len().saturating_add(60);
-                                (pad_cfg.max_bytes as usize).min(mtu.saturating_sub(base)) as u16
-                            };
-                            let padding = obf.generate_padding_opts(
-                                pad_cfg.enabled,
-                                pad_cfg.min_bytes,
-                                pad_cap,
-                                pad_cfg.randomize,
-                                pad_cfg.probability,
-                            );
-                            let mut codec = lock_or_recover(&codec_arc, "fwd::encrypt");
-                            if let Ok(encrypted) = codec.encrypt_packet(&packet, &padding) {
-                                // A full writer channel = rate-limit / slow-client
-                                // backpressure. Count the drop so it's visible in
-                                // list-clients instead of silently vanishing.
-                                if writer.try_send(encrypted).is_err() {
+                        // Downlink path MTU (#13). The origin sized this packet against the
+                        // path up to OUR TUN; it knows nothing about the leg from here to the
+                        // client. When the client has told us its path is narrower, an
+                        // oversized packet handed to the transport is dropped somewhere
+                        // downstream and nobody is told — the black hole where a connection
+                        // establishes and then stalls on the first big transfer.
+                        //
+                        // So behave like the router we are: answer the origin with ICMP
+                        // Fragmentation Needed carrying the real next-hop MTU (RFC 1191) and
+                        // drop the packet. PMTUD then converges and the flow continues at a
+                        // size that fits. `downlink_mtu` returns None unless a client actually
+                        // reported something narrower, so a pre-#13 client changes nothing.
+                        // Set when an oversized non-DF packet was split instead of dropped;
+                        // the send below then emits the pieces in place of the original.
+                        let mut fragmented: Option<Vec<Vec<u8>>> = None;
+                        let session_mtu = session.downlink_mtu(fwd_profile.config.tun.mtu);
+                        if let Some(mtu) = session_mtu {
+                            if packet.len() > mtu as usize {
+                                // Only DF packets get the error: without DF the origin is
+                                // entitled to expect fragmentation instead, and answering
+                                // anyway would be a lie about why it was dropped. Those are
+                                // dropped as they already were — no regression, just visible.
+                                if crate::protocol::icmp::has_df(&packet) {
+                                    if let Some(err) = icmp_router_ip.and_then(|ip| {
+                                        crate::protocol::icmp::frag_needed(&packet, ip, mtu)
+                                    }) {
+                                        // Best-effort, like every other TUN write here: a full
+                                        // queue drops the notice rather than blocking the
+                                        // forwarder for every other session.
+                                        let _ = icmp_tx.try_send(err);
+                                    }
+                                } else if let Some(frags) =
+                                    crate::protocol::icmp::fragment_ipv4(&packet, mtu as usize)
+                                {
+                                    // No DF: the sender is entitled to fragmentation rather than
+                                    // an error, and qeli forwards in userspace so the kernel
+                                    // never gets to do it. These used to be dropped with a debug
+                                    // line — a black hole for exactly the traffic that said it
+                                    // did not want one. Forward the pieces instead; the client's
+                                    // stack reassembles them. (Audit 2026-07-30, #10.)
+                                    fragmented = Some(frags);
+                                } else {
+                                    log::debug!(
+                                        "downlink: dropped {} B non-DF packet for {} (path MTU {}) \
+                                         — cannot fragment (options, or MTU too small)",
+                                        packet.len(),
+                                        dest_ip,
+                                        mtu
+                                    );
+                                }
+                                if fragmented.is_none() {
                                     session
                                         .dropped
                                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    continue;
+                                }
+                            }
+                        }
+                        // Flow-pin each packet to one of the session's bonded streams
+                        // (by inner 5-tuple) so a connection stays in order. Each stream
+                        // carries its own crypto, so encrypt with the picked codec.
+                        //
+                        // The hash comes from the ORIGINAL datagram and is reused for each of
+                        // its fragments: only the first fragment carries the L4 ports, so
+                        // hashing the pieces separately would scatter one datagram across
+                        // different bonded streams and deliver it out of order.
+                        let flow = crate::protocol::flow_hash(&packet);
+                        for packet in fragmented.unwrap_or_else(|| vec![packet]) {
+                            if let Some((codec_arc, writer)) = session.pick_stream(flow) {
+                                // Symmetric obfuscation: pad server→client traffic too. Clamp
+                                // under the path MTU so UDP sessions don't get fragmented.
+                                let pad_cfg = &fwd_profile.config.obfuscation.padding;
+                                let mut obf = crate::protocol::Obfuscator::new();
+                                let pad_cap = {
+                                    // Cap against THIS profile's tun.mtu, not a hard-coded 1400.
+                                    // The constant assumed one particular path MTU while
+                                    // `tun.mtu` is configurable: on a profile at 1280 (common on
+                                    // mobile / IPv6 paths) padding still inflated packets toward
+                                    // 1400 and got them fragmented or dropped on UDP, and on a
+                                    // profile at 1500 the cap clamped to 0 on almost every packet
+                                    // so the obfuscation quietly did nothing at all.
+                                    // (Audit 2026-07-27, E7.)
+                                    // …and narrowed further by what THIS client reported, for the
+                                    // same reason the size check above exists: padding computed
+                                    // against the profile MTU re-inflates a packet past a narrow
+                                    // client's path and undoes the check two lines up. (#13)
+                                    let mtu = match session_mtu {
+                                        Some(m) => usize::from(m),
+                                        None => fwd_profile.config.tun.mtu.max(0) as usize,
+                                    };
+                                    let base = packet.len().saturating_add(60);
+                                    (pad_cfg.max_bytes as usize).min(mtu.saturating_sub(base))
+                                        as u16
+                                };
+                                let padding = obf.generate_padding_opts(
+                                    pad_cfg.enabled,
+                                    pad_cfg.min_bytes,
+                                    pad_cap,
+                                    pad_cfg.randomize,
+                                    pad_cfg.probability,
+                                );
+                                let mut codec = lock_or_recover(&codec_arc, "fwd::encrypt");
+                                if let Ok(encrypted) = codec.encrypt_packet(&packet, &padding) {
+                                    // A full writer channel = rate-limit / slow-client
+                                    // backpressure. Count the drop so it's visible in
+                                    // list-clients instead of silently vanishing.
+                                    if writer.try_send(encrypted).is_err() {
+                                        session
+                                            .dropped
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    }
                                 }
                             }
                         }
@@ -2541,7 +2685,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         }
 
         // Inbound: client -> in_rx -> TUN[qi] (dedicated blocking writer + async bridge).
-        let (tun_write_tx, tun_write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(256);
+        // The channel itself is created above, before the outbound forwarder.
         {
             let name_w = name.clone();
             let is_tap_writer = is_tap;
@@ -2747,7 +2891,9 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
             .saturating_mul(4),
     )));
     let decoy_refused = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let mut listener_handles = Vec::with_capacity(listeners.len());
+    // A JoinSet, not a Vec of handles: these are awaited CONCURRENTLY below. See the join
+    // loop for why awaiting them in order hid bind failures.
+    let mut listener_set = tokio::task::JoinSet::new();
     for (bind_addr, transport) in listeners {
         let state = state.clone();
         let profile = profile.clone();
@@ -2758,7 +2904,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         let in_txs = in_txs.clone();
         let pcfg = pcfg.clone();
         let name = name.clone();
-        listener_handles.push(tokio::spawn(async move {
+        listener_set.spawn(async move {
             match transport {
                 TransportProtocol::Tcp => {
                     let listener = TcpListener::bind(&bind_addr).await?;
@@ -2974,12 +3120,35 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                 }
             }
             Ok::<(), anyhow::Error>(())
-        }));
+        });
     }
-    for h in listener_handles {
-        if let Ok(Err(e)) = h.await {
-            log::error!("Profile '{}': a listener exited: {}", name, e);
+    // Await the listeners CONCURRENTLY.
+    //
+    // They used to be awaited IN ORDER, and an accept loop only returns when it breaks — so
+    // the first listener's `await` never completed and every later listener's bind error sat
+    // unread in its JoinHandle forever. A profile with `listen = 0.0.0.0:8443` whose extra
+    // port was already taken came up looking perfectly healthy, logged nothing, and simply
+    // did not answer on that port. `join_next` yields whichever task finishes FIRST, so the
+    // failure is logged the moment it happens, whichever listener it was.
+    // (Audit 2026-07-30, #6.)
+    let mut exited = 0usize;
+    while let Some(joined) = listener_set.join_next().await {
+        exited += 1;
+        match joined {
+            Ok(Err(e)) => log::error!("Profile '{}': a listener exited: {}", name, e),
+            Ok(Ok(())) => log::error!("Profile '{}': a listener stopped unexpectedly", name),
+            Err(e) => log::error!("Profile '{}': a listener task panicked: {}", name, e),
         }
+    }
+    // Reached only once EVERY listener is gone: the profile has a TUN, a pool and users but
+    // nothing accepting connections. Previously this returned Ok, so a profile whose binds all
+    // failed reported success and went quiet. The caller logs it per profile and keeps the
+    // other profiles serving.
+    if exited > 0 {
+        anyhow::bail!(
+            "profile '{}': every listener stopped — nothing is accepting connections",
+            name
+        );
     }
 
     Ok(())
@@ -3096,6 +3265,13 @@ mod tests {
         }
 
         for (label, extra) in [
+            // Extra listeners: the runtime already logged a malformed one, but only while
+            // starting — so `check-config` said the config was fine and the operator found out
+            // from a live server's log, or not at all. (Audit 2026-07-30, #6.)
+            ("listen without a port", "listen = 0.0.0.0\n"),
+            ("listen with port 0", "listen = 0.0.0.0:0\n"),
+            ("listen with a bare IPv6 (needs brackets)", "listen = ::1:443\n"),
+            ("listen with a non-numeric port", "listen = 0.0.0.0:https\n"),
             (
                 "padding min > max",
                 "obf.padding.enabled = true\nobf.padding.min_bytes = 200\nobf.padding.max_bytes = 100\n",
