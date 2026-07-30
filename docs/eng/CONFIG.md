@@ -1885,7 +1885,7 @@ and the server pushes no DNS. Per-profile.
 | `dns.listen` | `10.9.0.1` | listen address (usually the tun IP) |
 | `dns.port` | `53` | port |
 | `dns.upstream` | `1.1.1.1, 8.8.8.8` | upstream resolvers (comma-separated) |
-| `dns.upstream_protocol` | `udp` | `udp` \| `tcp` \| `tls` (DoT) — ⚠️ **not implemented**: the value is parsed and stored, but changes nothing |
+| `dns.upstream_protocol` | `udp` | `udp` \| `tcp`. `tcp` really does force TCP to the upstream, and a UDP answer that comes back TRUNCATED is retried over TCP either way. ⚠️ **`tls` (DoT) is REJECTED at config load** — the server refuses to start rather than silently sending plaintext UDP while the config says DoT |
 | `dns.cache_size` | `1000` | record cache size |
 | `dns.timeout_secs` | `5` | upstream timeout (seconds) |
 | `dns.blocklist` | `[]` | domains answered with `0.0.0.0` (ad/tracker blocking) |
