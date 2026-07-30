@@ -300,3 +300,73 @@ pub extern "system" fn Java_com_qeli_MlKem_nativeFree<'local>(
         MLKEM.remove(handle as u64);
     })
 }
+
+// --- X25519 bridge (`com.qeli.crypto.KeyExchange`) -------------------------
+//
+// Android's platform X25519 (JCA "XDH"/"X25519") only exists from API 33
+// (Android 13). Below that every provider lookup fails, so the classic half of
+// the hybrid handshake could not run at all and the client retried forever
+// (reported on Android 9 / API 28). The fix mirrors the ML-KEM bridge above:
+// drive it through the same Rust the server uses, so one implementation serves
+// every Android version and cannot drift from the peer.
+//
+// Deliberately STATELESS (no registry handle, unlike RealTls/MlKem): the secret
+// scalar crosses back to Kotlin as bytes and returns for each DH. That removes
+// the handle lifecycle entirely — no leak on the many mid-handshake error paths
+// (retransmit timeouts, auth failures), and no call-site changes to free it.
+// The trade-off is the scalar living in a JVM array for the length of a
+// handshake; acceptable because it never leaves the process and the alternative
+// costs a free() on every failure path. Kotlin wraps it in an opaque
+// `java.security.PrivateKey` whose getEncoded() is null — the same shape Android
+// Keystore uses for keys whose material is not in the JVM.
+
+/// `KeyExchange.nativeKeypair() -> byte[]` — a fresh X25519 keypair as
+/// `secret(32) || public(32)`, or null on error.
+#[no_mangle]
+pub extern "system" fn Java_com_qeli_crypto_KeyExchange_nativeKeypair<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jbyteArray {
+    guard(std::ptr::null_mut(), || {
+        use zeroize::Zeroize;
+        let kp = crate::crypto::Keypair::generate();
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&kp.secret_bytes());
+        out[32..].copy_from_slice(kp.public().as_bytes());
+        let arr = to_array(&mut env, &out);
+        out.zeroize(); // the JVM copy is the only one that outlives this call
+        arr
+    })
+}
+
+/// `KeyExchange.nativeDh(secret32, peer32) -> byte[]` — the 32-byte X25519 shared
+/// secret, or null on a malformed input OR a degenerate all-zero result (a peer
+/// low-order/identity key, RFC 7748 §6.1 — the same contributory-behaviour check
+/// the Rust client and server enforce, which the old managed path never did).
+#[no_mangle]
+pub extern "system" fn Java_com_qeli_crypto_KeyExchange_nativeDh<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    secret: JByteArray<'local>,
+    peer: JByteArray<'local>,
+) -> jbyteArray {
+    guard(std::ptr::null_mut(), || {
+        use zeroize::Zeroize;
+        let s = env.convert_byte_array(&secret).unwrap_or_default();
+        let p = env.convert_byte_array(&peer).unwrap_or_default();
+        if s.len() != 32 || p.len() != 32 {
+            return std::ptr::null_mut();
+        }
+        let mut sb = [0u8; 32];
+        sb.copy_from_slice(&s);
+        let mut pb = [0u8; 32];
+        pb.copy_from_slice(&p);
+        let kp = crate::crypto::Keypair::from_secret_bytes(&sb);
+        sb.zeroize();
+        let out = match kp.derive_shared_checked(&PublicKey::from_bytes(&pb)) {
+            Some(ss) => to_array(&mut env, ss.as_bytes()),
+            None => std::ptr::null_mut(),
+        };
+        out
+    })
+}

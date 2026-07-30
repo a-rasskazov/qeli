@@ -39,6 +39,30 @@ impl Keypair {
         SharedSecret(shared.to_bytes())
     }
 
+    /// Android JNI bridge ONLY: the raw secret scalar, so the Kotlin client can carry an
+    /// opaque key object while the arithmetic stays in this crate. Android has no X25519
+    /// before API 33 (the platform provider arrived in Android 13), so on older devices the
+    /// client cannot do this half of the handshake itself — the same reason ML-KEM is
+    /// already native there. `cfg`-gated to the Android build, so a secret-exposing accessor
+    /// does not even exist on the server / desktop targets.
+    #[cfg(target_os = "android")]
+    pub fn secret_bytes(&self) -> [u8; 32] {
+        self.secret.to_bytes()
+    }
+
+    /// Rebuild a keypair from [`Keypair::secret_bytes`] (Android JNI bridge only). The
+    /// scalar is clamped by `x25519-dalek` at use time, so a round-tripped secret behaves
+    /// identically to the original.
+    #[cfg(target_os = "android")]
+    pub fn from_secret_bytes(bytes: &[u8; 32]) -> Self {
+        let secret = StaticSecret::from(*bytes);
+        let public = XPublic::from(&secret);
+        Keypair {
+            public: PublicKey(public.to_bytes()),
+            secret,
+        }
+    }
+
     /// Like [`derive_shared`] but rejects a degenerate all-zero shared secret —
     /// the result of a peer sending a low-order/identity public key. Returns
     /// `None` so the caller aborts rather than proceeding with a key an active

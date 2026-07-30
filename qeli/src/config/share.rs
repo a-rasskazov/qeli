@@ -65,6 +65,74 @@ pub struct ClientLink {
 }
 
 impl ClientLink {
+    /// Derive every profile-dependent field of a share link from the profile itself,
+    /// leaving the caller only what the profile cannot know: where the server is reachable
+    /// from outside (`host`/`port`), who the link is for (`user`/`pass`), its pinned
+    /// identity (`server_key`, loaded by the caller — this module must not depend on the
+    /// server module, which does not exist in router/client-only builds) and the label.
+    ///
+    /// Single source of truth for the mapping. It previously existed as two hand-kept
+    /// copies — the panel's `POST /api/share` and the CLI's `add-client --link` — which is
+    /// exactly the kind of pair that silently diverges: a rule like "advertise awg only
+    /// where the handshake actually sends junk" has to be repeated correctly in every
+    /// copy, and a link that misstates the wire mode produces a client that cannot connect.
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_profile(
+        profile: &super::server::ProfileConfig,
+        host: String,
+        port: u16,
+        user: String,
+        pass: String,
+        server_key: String,
+        label: Option<String>,
+    ) -> ClientLink {
+        let obf = &profile.obfuscation;
+        // A real-TLS REALITY profile → client wire mode `reality-tls`; a fake-tls
+        // reality-proxy (peek-and-decide) profile keeps mode=fake-tls. In BOTH cases the
+        // client must seal the reality short_id into its ClientHello so the server
+        // recognises it instead of relaying to the real target — so carry `rsid` whenever
+        // the reality proxy is enabled with a short_id, not only for real_tls.
+        let rp = &obf.tls.reality_proxy;
+        let mode = if rp.real_tls && !rp.short_ids.is_empty() {
+            "reality-tls".to_string()
+        } else {
+            obf.mode.clone()
+        };
+        let reality_sid = if rp.enabled && !rp.short_ids.is_empty() {
+            Some(rp.short_ids[0].clone())
+        } else {
+            None
+        };
+        ClientLink {
+            host,
+            port,
+            user,
+            pass,
+            proto: profile.bind.transport.clone(),
+            mode,
+            server_key,
+            sni: Some(obf.tls.server_name.clone()).filter(|s| !s.is_empty()),
+            reality_sid,
+            obfs_key: Some(obf.obfs_key.clone()).filter(|s| !s.is_empty()),
+            fronting: Some(obf.fronting.clone()).filter(|s| !s.is_empty() && s != "websocket"),
+            quic: obf.quic.enabled,
+            // mtu=0 (auto): the client adopts the server-pushed TUN MTU. Omitted from the
+            // URI; set a non-zero value only to force a client-side override.
+            mtu: 0,
+            label,
+            // AmneziaWG-style junk masking. Junk is emitted only where the handshake
+            // actually sends it: on TCP the obfs wire mode (protocol::obfs), and on UDP
+            // every mode (jc junk datagrams before the ClientHello — sender-only). On TCP
+            // fake-tls/reality-tls junk before the real TLS ClientHello would break the
+            // mimicry, so the handshake never sends it — advertising awg there would be a
+            // no-op that gives a false sense of masking.
+            awg: obf.awg.enabled && (obf.mode == "obfs" || profile.bind.transport == "udp"),
+            jc: obf.awg.jc,
+            jmin: obf.awg.jmin,
+            jmax: obf.awg.jmax,
+        }
+    }
+
     /// Render to a `qeli://` URI suitable for a QR code.
     pub fn to_uri(&self) -> String {
         let mut uri = String::from("qeli://");

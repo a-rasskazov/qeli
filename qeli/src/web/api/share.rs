@@ -142,50 +142,18 @@ pub async fn share_link(
         Err(e) => return Json(super::err_json(format!("identity key unavailable: {}", e))),
     };
 
-    let obf = &profile.obfuscation;
-    // A real-TLS REALITY profile → client wire mode `reality-tls`; a fake-tls
-    // reality-proxy (peek-and-decide) profile keeps mode=fake-tls. In BOTH cases the
-    // client must seal the reality short_id into the ClientHello so the server
-    // recognises it instead of relaying to the real target — surface `rsid` whenever
-    // the reality proxy is enabled with a short_id, not only for real_tls. Plain
-    // (non-reality) profiles keep their wire mode and carry no short_id.
-    let rp = &obf.tls.reality_proxy;
-    let mode = if rp.real_tls && !rp.short_ids.is_empty() {
-        "reality-tls".to_string()
-    } else {
-        obf.mode.clone()
-    };
-    let reality_sid = if rp.enabled && !rp.short_ids.is_empty() {
-        Some(rp.short_ids[0].clone())
-    } else {
-        None
-    };
-    let link = crate::config::share::ClientLink {
+    // Every profile-dependent field (wire mode, rsid, sni, obfs key, fronting, quic, awg)
+    // comes from the shared builder, so this endpoint and `qeli share-link` / `add-client
+    // --link` can never disagree about what a profile's clients need.
+    let link = crate::config::share::ClientLink::for_profile(
+        profile,
         host,
-        port: profile.bind.port,
+        profile.bind.port,
         user,
         pass,
-        proto: profile.bind.transport.clone(),
-        mode,
         server_key,
-        sni: Some(obf.tls.server_name.clone()).filter(|s| !s.is_empty()),
-        reality_sid,
-        obfs_key: Some(obf.obfs_key.clone()).filter(|s| !s.is_empty()),
-        fronting: Some(obf.fronting.clone()).filter(|s| !s.is_empty() && s != "websocket"),
-        quic: obf.quic.enabled,
-        // mtu=0 (auto): client adopts the server-pushed TUN MTU.
-        mtu: 0,
-        label: params.get("label").cloned().filter(|s| !s.is_empty()),
-        // AmneziaWG-style junk masking: surface the profile's awg params so the
-        // client matches (jc must agree). Junk is emitted only where the handshake
-        // sends it: TCP obfs (protocol::obfs) and every UDP mode (jc junk datagrams
-        // before the ClientHello — sender-only). On TCP fake-tls/reality-tls junk
-        // would break the TLS mimicry, so don't advertise awg there (misleading no-op).
-        awg: obf.awg.enabled && (obf.mode == "obfs" || profile.bind.transport == "udp"),
-        jc: obf.awg.jc,
-        jmin: obf.awg.jmin,
-        jmax: obf.awg.jmax,
-    };
+        params.get("label").cloned().filter(|s| !s.is_empty()),
+    );
 
     let uri = link.to_uri();
     let qr_svg = render_qr_svg(&uri);

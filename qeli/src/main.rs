@@ -169,6 +169,35 @@ enum Commands {
         #[arg(short, long, default_value = "/etc/qeli/server.conf")]
         config: PathBuf,
     },
+    /// Print a `qeli://` share link for an EXISTING user — the CLI equivalent of the
+    /// panel's share/QR button, and the answer to "how do I re-send a client its config".
+    ///
+    /// The password is NOT retyped: it comes from the reversibly-encrypted copy stored
+    /// beside the Argon2 hash when the user was created (the hash itself is one-way and
+    /// can never be turned back into a link). A user created before that copy existed —
+    /// or after the panel key changed — has nothing to recover, so the link can only be
+    /// issued by RESETTING the password (`--reset`), which invalidates the config that
+    /// user is currently using.
+    ShareLink {
+        /// Existing username to issue the link for.
+        username: String,
+        /// Server's public reachable address for the link (host or host:port). Falls back
+        /// to `web.public_host` from the config.
+        #[arg(long)]
+        host: Option<String>,
+        /// Profile to build the link for (defaults to the first profile).
+        #[arg(long)]
+        profile: Option<String>,
+        /// Label shown in the client UI (defaults to `<profile>-<port>`).
+        #[arg(long)]
+        label: Option<String>,
+        /// Generate and store a NEW password when none can be recovered. The user's
+        /// current config STOPS WORKING; the new password is printed once.
+        #[arg(long)]
+        reset: bool,
+        #[arg(short, long, default_value = "/etc/qeli/server.conf")]
+        config: PathBuf,
+    },
     /// Set (or generate) the web admin-panel login in the server config — for a
     /// fresh install where you have no panel access yet. Writes web.username /
     /// web.password_hash (Argon2id, random salt) into the `[web]` section,
@@ -689,6 +718,19 @@ async fn main() -> anyhow::Result<()> {
                 )?;
             }
         }
+        Commands::ShareLink {
+            username,
+            host,
+            profile,
+            label,
+            reset,
+            config,
+        } => {
+            #[cfg(target_os = "linux")]
+            {
+                share_link(username, host, profile, label, reset, config)?;
+            }
+        }
         Commands::SetWebPassword {
             username,
             password,
@@ -1039,58 +1081,22 @@ fn add_client(
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect();
-        let obf = &profile.obfuscation;
-        // Real-TLS REALITY profile → client wire mode is `reality-tls`; a fake-tls
-        // reality-proxy (peek-and-decide) profile keeps mode=fake-tls. In BOTH cases
-        // the client must seal the reality short_id into the ClientHello so the server
-        // recognises us instead of relaying to the real target — so carry `rsid`
-        // whenever the reality proxy is enabled with a short_id, not only for real_tls.
-        let rp = &obf.tls.reality_proxy;
-        let mode = if rp.real_tls && !rp.short_ids.is_empty() {
-            "reality-tls".to_string()
-        } else {
-            obf.mode.clone()
-        };
-        let reality_sid = if rp.enabled && !rp.short_ids.is_empty() {
-            Some(rp.short_ids[0].clone())
-        } else {
-            None
-        };
-        let link = config::share::ClientLink {
+        let port = host_port.unwrap_or(profile.bind.port);
+        // Profile-dependent fields come from the shared builder (see
+        // `ClientLink::for_profile`) — the panel's /api/share and `share-link` use the
+        // same one, so the three cannot drift apart.
+        let link = config::share::ClientLink::for_profile(
+            profile,
             host,
-            port: host_port.unwrap_or(profile.bind.port),
-            user: username,
-            pass: plaintext,
-            proto: profile.bind.transport.clone(),
-            mode,
+            port,
+            username,
+            plaintext,
             server_key,
-            sni: Some(obf.tls.server_name.clone()).filter(|s| !s.is_empty()),
-            reality_sid,
-            obfs_key: Some(obf.obfs_key.clone()).filter(|s| !s.is_empty()),
-            fronting: Some(obf.fronting.clone()).filter(|s| !s.is_empty() && s != "websocket"),
-            quic: obf.quic.enabled,
-            // mtu=0 (auto): the client adopts the server-pushed TUN MTU. Omitted
-            // from the URI; set a non-zero value only to force a client override.
-            mtu: 0,
-            // URL-safe label (only RFC 3986 unreserved chars) so the qeli://
-            // fragment stays human-readable — e.g. `#reality-tls-443` instead of
-            // the percent-encoded `#reality-tls%20%28443%29`.
-            label: Some(format!(
-                "{}-{}",
-                profile.name,
-                host_port.unwrap_or(profile.bind.port)
-            )),
-            // AmneziaWG-style junk masking. Junk is emitted only where the handshake
-            // actually sends it: on TCP the obfs wire mode (protocol::obfs), and on
-            // UDP every mode (jc junk datagrams before the ClientHello — sender-only).
-            // On TCP fake-tls/reality-tls junk before the real TLS ClientHello would
-            // break the mimicry, so the handshake never sends it — don't advertise
-            // awg in the link there (a no-op that gives a false sense of masking).
-            awg: obf.awg.enabled && (obf.mode == "obfs" || profile.bind.transport == "udp"),
-            jc: obf.awg.jc,
-            jmin: obf.awg.jmin,
-            jmax: obf.awg.jmax,
-        };
+            // URL-safe label (only RFC 3986 unreserved chars) so the qeli:// fragment
+            // stays human-readable — e.g. `#reality-tls-443` rather than the
+            // percent-encoded `#reality-tls%20%28443%29`.
+            Some(format!("{}-{}", profile.name, port)),
+        );
         println!(
             "\nShare link (qeli://) — scan as QR or paste into the app:\n{}",
             link.to_uri()
@@ -1174,6 +1180,157 @@ fn set_web_password(
 
 /// Generate a random alphanumeric password of `len` characters.
 #[cfg(target_os = "linux")]
+/// Implement `qeli share-link`: re-issue an EXISTING user's `qeli://` config without
+/// retyping the password — the CLI counterpart of the panel's share/QR button, sharing its
+/// exact semantics (and, via [`ClientLink::for_profile`], its exact link contents).
+///
+/// The password comes from `password_enc`, the reversibly-encrypted copy written next to
+/// the Argon2 hash at creation. The hash alone is one-way, so a user without that copy
+/// (created before it existed, or after the panel key changed) cannot be re-issued at all —
+/// only reset, which is destructive and therefore opt-in via `--reset`.
+#[cfg(target_os = "linux")]
+fn share_link(
+    username: String,
+    host: Option<String>,
+    profile_name: Option<String>,
+    label: Option<String>,
+    reset: bool,
+    config: PathBuf,
+) -> anyhow::Result<()> {
+    let cfg_str = std::fs::read_to_string(&config)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {}", config.display(), e))?;
+    let server_cfg: config::server::ServerConfig = config::parse_server_config(&cfg_str)?;
+
+    let profile = match &profile_name {
+        Some(name) => server_cfg
+            .profiles
+            .iter()
+            .find(|p| &p.name == name)
+            .ok_or_else(|| {
+                let loaded: Vec<&str> = server_cfg
+                    .profiles
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
+                anyhow::anyhow!("profile '{}' not found (have: {})", name, loaded.join(", "))
+            })?,
+        None => server_cfg
+            .profiles
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no profiles defined in {}", config.display()))?,
+    };
+
+    // Host: --host wins, else web.public_host — the same fallback the panel uses, so an
+    // operator who set it once needn't repeat it per link.
+    let host = host
+        .filter(|h| !h.is_empty())
+        .or_else(|| Some(server_cfg.web.public_host.clone()).filter(|h| !h.is_empty()))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no host: pass --host <addr> or set web.public_host (the server's public address)"
+            )
+        })?;
+    let (host, host_port) = match host.rsplit_once(':') {
+        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => {
+            (h.to_string(), p.parse::<u16>().ok())
+        }
+        _ => (host, None),
+    };
+    let port = host_port.unwrap_or(profile.bind.port);
+
+    let users_file = server_cfg.auth.users_file.clone();
+    let db = config::users::UsersDb::load(&users_file)
+        .map_err(|e| anyhow::anyhow!("cannot read users file {}: {}", users_file, e))?;
+    let enc = db
+        .users
+        .iter()
+        .find(|u| u.username == username)
+        .ok_or_else(|| anyhow::anyhow!("user '{}' not found in {}", username, users_file))?
+        .password_enc
+        .clone();
+
+    let recovered = enc
+        .as_deref()
+        .and_then(|e| qeli::crypto::secret::decrypt_password(e).ok());
+    let (plaintext, was_reset) = match recovered {
+        Some(p) => (p, false),
+        None if !reset => anyhow::bail!(
+            "no recoverable password for '{}' (created before re-issue was supported, or the \
+             key changed). Re-run with --reset to issue a NEW password — the config this user \
+             is currently using will stop working.",
+            username
+        ),
+        None => {
+            let new_pw = generate_password(20);
+            let hash = {
+                use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+                let salt = SaltString::generate(&mut OsRng);
+                qeli::crypto::password_hasher()
+                    .hash_password(new_pw.as_bytes(), &salt)
+                    .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?
+                    .to_string()
+            };
+            let enc2 = qeli::crypto::secret::encrypt_password(&new_pw).ok();
+            // Re-read under the cross-process lock and edit THERE: a running worker holds
+            // its own copy and rewrites the file on any control-socket change, so writing
+            // back a copy loaded earlier could silently revert it — and the field at stake
+            // is a password, i.e. the two ends would disagree on the user's credentials.
+            let (_, found) =
+                config::users::UsersDb::update_locked(&users_file, |fresh| {
+                    match fresh.users.iter_mut().find(|u| u.username == username) {
+                        Some(u) => {
+                            u.password_hash = hash;
+                            u.password_enc = enc2;
+                            true
+                        }
+                        None => false,
+                    }
+                })
+                .map_err(|e| anyhow::anyhow!("cannot write users file {}: {}", users_file, e))?;
+            if !found {
+                anyhow::bail!(
+                    "user '{}' disappeared from {} while resetting",
+                    username,
+                    users_file
+                );
+            }
+            (new_pw, true)
+        }
+    };
+
+    let kp = server::load_or_generate_profile_key(profile)?;
+    let server_key: String = kp
+        .public
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    let link = config::share::ClientLink::for_profile(
+        profile,
+        host,
+        port,
+        username.clone(),
+        plaintext,
+        server_key,
+        label.or_else(|| Some(format!("{}-{}", profile.name, port))),
+    );
+
+    if was_reset {
+        println!(
+            "Password RESET for '{}' — the previous config no longer works.\nNew password: {}",
+            username, link.pass
+        );
+        // The running worker keeps users in memory; unlike the panel we have no control
+        // channel to it, so say plainly what makes the change live.
+        println!("Reload the running server to apply: systemctl reload qeli  (or restart it)");
+    }
+    println!(
+        "\nShare link (qeli://) — scan as QR or paste into the app:\n{}",
+        link.to_uri()
+    );
+    Ok(())
+}
+
 fn generate_password(len: usize) -> String {
     use rand::prelude::*;
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
