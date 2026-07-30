@@ -61,6 +61,19 @@ actor TunnelRecordSender {
         return true
     }
 
+    /// Tell the server the MTU we settled on (#13).
+    ///
+    /// The server sizes its downlink from the profile's `tun.mtu` — the path up to ITS tun — so
+    /// it cannot see that our leg is narrower (a probed LTE/CGNAT path, or an explicit smaller
+    /// `mtu` in our config). Without this, every large packet it forwards is dropped with no
+    /// signal to anyone: the connection establishes and then stalls on the first big transfer.
+    ///
+    /// Fire-and-forget: the server ignores a value that is not narrower than its own, and a
+    /// server predating this discards the frame. Sent unpadded and uncapped — it is 6 bytes.
+    func sendMTUReport() async throws {
+        try await records.sendRecord(try encoder.encrypt(CtrlFrame.mtuReport(mtu)))
+    }
+
     func sendHeartbeat(_ emission: HeartbeatEmission) async throws {
         let record: Data
         switch emission {

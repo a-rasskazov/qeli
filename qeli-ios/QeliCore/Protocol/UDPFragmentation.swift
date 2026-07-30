@@ -4,7 +4,43 @@ import Security
 enum UDPFragmentation {
     static let magic: [UInt8] = [0xf0, 0x9b, 0x71]
     static let headerLength = 6
-    static let maxChunk = 1_200
+
+    /// IPv6 minimum link MTU (RFC 8200 §5) — the narrowest path the handshake must survive.
+    static let ipv6MinMTU = 1_280
+    // Worst-case outer headers around one fragment, inside out. Emitted sizes, not protocol
+    // minimums: an IPv6 + obfs + QUIC-masked fragment really carries all of them at once.
+    private static let outerQUIC = 1 + 4 + 1 + 4 + 1 + 1 + 2 + 4  // QUIC long header (Quic.wrapLong)
+    private static let outerObfsSeal = 1 + 12                     // obfs flag byte + nonce
+    private static let outerUDP = 8
+    private static let outerIPv6 = 40
+    // Headroom so adding one more outer layer cannot silently push the handshake back over
+    // ipv6MinMTU — the exact regression the old hard-coded 1200 was.
+    private static let outerReserve = 32
+
+    /// Max payload bytes per fragment. **Derived**, not chosen: chunk + header + QUIC long
+    /// header + obfs seal + UDP + IPv6 must fit ``ipv6MinMTU``.
+    ///
+    /// This was 1200 — QUIC's initial-packet floor, which budgets a whole datagram, not the
+    /// payload inside four more layers. The handshake wraps each fragment in a QUIC **long**
+    /// header (18 B; the data plane's short header is only 9 B), so the real worst case was
+    /// 1200 + 6 + 18 + 13 + 8 + 40 = 1285 — five bytes over the IPv6 minimum, i.e. the PQ
+    /// handshake could not complete on a 1280-MTU IPv6 path with obfs + QUIC masking on.
+    ///
+    /// This bounds only what we **emit**; ``maxChunkAccept`` bounds what we accept. Keeping the
+    /// two separate is what makes the change compatible in both directions — see there.
+    /// (Audit 2026-07-30, #14.)
+    static let maxChunk =
+        ipv6MinMTU - outerIPv6 - outerUDP - outerObfsSeal - outerQUIC - outerReserve - headerLength
+
+    /// Largest chunk we **accept**, pinned to the historical 1200 that every build before the
+    /// #14 fix emitted.
+    ///
+    /// Reassembly is size-agnostic — fragments are placed by index, with no offset or
+    /// per-fragment length field — so the only thing a receiver does with a chunk size is bound
+    /// it from above for anti-DoS. Shrinking ``maxChunk`` keeps our fragments readable by any
+    /// peer; but shrinking the accept bound with it would have rejected every fragment from a
+    /// pre-fix peer, breaking the handshake in the other direction. Must never drop below 1200.
+    static let maxChunkAccept = 1_200
     static let maxFragments = 24
     static let clientHello: UInt8 = 1
     static let serverHello: UInt8 = 2
@@ -83,7 +119,10 @@ enum UDPFragmentation {
                 throw UDPFragmentationError.invalidCount
             }
             guard index < count else { throw UDPFragmentationError.invalidIndex }
-            guard data.count - UDPFragmentation.headerLength <= UDPFragmentation.maxChunk else {
+            // Deliberately the ACCEPT bound, not the send budget: a peer built before the
+            // #14 fix emits 1200-byte chunks, and bounding by our smaller maxChunk would
+            // reject every one of its handshakes.
+            guard data.count - UDPFragmentation.headerLength <= UDPFragmentation.maxChunkAccept else {
                 throw UDPFragmentationError.chunkTooLarge
             }
             if messageID == nil {

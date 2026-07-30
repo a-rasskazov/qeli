@@ -80,11 +80,34 @@ final class UDPDataPlaneTests: XCTestCase {
     }
 
     func testPathMTULadder() {
-        let policy = UDPPathMTUProbePolicy(ceiling: 1_400)
-        XCTAssertEqual(policy.candidates, [1_400, 1_360, 1_320, 1_280])
-        XCTAssertEqual(policy.outerProbeSize(for: 1_360), 1_408)
-        XCTAssertTrue(policy.accepts(.mtuProbeAck(id: 7, outerSize: 1_408), id: 7))
-        XCTAssertFalse(policy.accepts(.mtuProbeAck(id: 8, outerSize: 1_408), id: 7))
+        // Bare IPv4 UDP over a 48-byte record: floor = 1280 - (48+8+20) = 1204.
+        let plain = UDPPathMTUProbePolicy(ceiling: 1_400, outerOverhead: 48 + 8 + 20)
+        XCTAssertEqual(plain.candidates, [1_400, 1_360, 1_320, 1_280, 1_204])
+        XCTAssertEqual(plain.outerProbeSize(for: 1_360), 1_408)
+        XCTAssertTrue(plain.accepts(.mtuProbeAck(id: 7, outerSize: 1_408), id: 7))
+        XCTAssertFalse(plain.accepts(.mtuProbeAck(id: 8, outerSize: 1_408), id: 7))
+    }
+
+    /// The #12 defect: rungs are INNER tunnel MTUs, 1280 is an OUTER path limit. A floor pinned
+    /// to 1280 asked a 1280-byte path for 1280 + overhead bytes, so every rung failed on exactly
+    /// the narrow paths probing exists for and the caller silently kept the pushed MTU.
+    func testLadderFloorFitsTheIPv6MinimumPath() {
+        for overhead in [48 + 8 + 20, 48 + 13 + 9 + 8 + 40] {
+            let policy = UDPPathMTUProbePolicy(ceiling: 1_400, outerOverhead: overhead)
+            let rungs = policy.candidates
+            XCTAssertFalse(rungs.isEmpty, "ladder must not be empty (overhead \(overhead))")
+            guard let lowest = rungs.last else { continue }
+            XCTAssertLessThanOrEqual(lowest + overhead, 1_280,
+                                     "lowest rung's wire size must fit a 1280-byte path")
+            XCTAssertEqual(rungs, rungs.sorted(by: >), "rungs must be strictly descending")
+            XCTAssertEqual(rungs.count, Set(rungs).count, "rungs must be deduped")
+        }
+
+        // A ceiling already below the floor must still yield something to try, not an empty
+        // ladder (which reports "no result" and silently keeps the pushed MTU).
+        let tiny = UDPPathMTUProbePolicy(ceiling: 700, outerOverhead: 48 + 13 + 9 + 8 + 40)
+        XCTAssertFalse(tiny.candidates.isEmpty, "a low ceiling still produces a rung")
+        XCTAssertLessThanOrEqual(tiny.candidates.first ?? .max, 700)
     }
 
     private func tlsRecord(body: Data) -> Data {

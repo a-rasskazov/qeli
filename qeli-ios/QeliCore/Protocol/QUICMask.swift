@@ -2,6 +2,11 @@ import Foundation
 import Security
 
 enum QUICMask {
+    /// Bytes ``wrapShort(_:connectionID:packetNumber:)`` emits ahead of the payload: flags(1) +
+    /// connection id(4) + packet number(4). This is the DATA-plane header; the handshake uses
+    /// the longer long-header form. The path-MTU probe budgets for it.
+    static let shortHeaderMin = 1 + 4 + 4
+
     static func connectionID() throws -> Data {
         var value = Data(count: 4)
         let status = value.withUnsafeMutableBytes {

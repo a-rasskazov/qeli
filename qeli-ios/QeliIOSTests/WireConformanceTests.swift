@@ -122,6 +122,10 @@ final class WireConformanceTests: XCTestCase {
 
         XCTAssertEqual(fx["max_chunk"] as? Int, UDPFragmentation.maxChunk,
                        "fixture maxChunk vs this build")
+        // The receive bound is pinned separately and is LARGER: bounding receive by the send
+        // budget would reject every handshake from a pre-#14 peer.
+        XCTAssertEqual(fx["max_chunk_accept"] as? Int, UDPFragmentation.maxChunkAccept,
+                       "fixture maxChunkAccept vs this build")
         XCTAssertEqual(fx["max_frags"] as? Int, UDPFragmentation.maxFragments,
                        "fixture maxFragments vs this build")
 
@@ -192,5 +196,43 @@ final class WireConformanceTests: XCTestCase {
             XCTAssertEqual(UDPFragmentation.isMTUProbe(d), e["is_mtu_probe"]!, "case \(name): is_mtu_probe")
             XCTAssertEqual(UDPFragmentation.isMTUProbeAck(d), e["is_mtu_probe_ack"]!, "case \(name): is_mtu_probe_ack")
         }
+    }
+
+    /// The exact bytes of the in-tunnel MTU report, pinned identically in the Rust, C# and Kotlin
+    /// ports. A port that drifts on byte order or the magic makes the server read a nonsense MTU.
+    func testCtrlMTUReportMatchesTheSharedVector() {
+        // 1280 = 0x0500, big-endian.
+        XCTAssertEqual(CtrlFrame.mtuReport(1_280).map { String(format: "%02x", $0) }.joined(),
+                       "c19b01020500")
+        XCTAssertEqual(CtrlFrame.mtuReport(70_000).map { String(format: "%02x", $0) }.joined(),
+                       "c19b0102ffff", "clamped, not wrapped")
+        XCTAssertEqual(CtrlFrame.mtuReport(-1).map { String(format: "%02x", $0) }.joined(),
+                       "c19b01020000", "clamped, not wrapped")
+
+        // The discriminator that keeps control frames and IP packets apart, in both directions.
+        XCTAssertTrue(CtrlFrame.isCtrl(CtrlFrame.mtuReport(1_280)))
+        XCTAssertFalse(CtrlFrame.isCtrl(Data([0x45, 0x00, 0x00, 0x28])), "IPv4")
+        XCTAssertFalse(CtrlFrame.isCtrl(Data([0x60, 0x00, 0x00, 0x00])), "IPv6")
+        XCTAssertFalse(CtrlFrame.isCtrl(Data()), "heartbeat")
+    }
+
+    /// A pre-#14 peer slices at 1200, which is ABOVE this build's send budget. The reassembler
+    /// must bound by ``maxChunkAccept``, not ``maxChunk``, or every legacy handshake is rejected
+    /// as `chunkTooLarge`.
+    func testLegacyChunksStillReassemble() throws {
+        let legacy = 1_200
+        XCTAssertGreaterThan(legacy, UDPFragmentation.maxChunk, "the bounds must differ")
+        XCTAssertLessThanOrEqual(legacy, UDPFragmentation.maxChunkAccept, "accept must cover legacy")
+
+        let reassembler = UDPFragmentation.Reassembler()
+        var out: Data?
+        for index in 0..<2 {
+            var d = Data(UDPFragmentation.magic)
+            d.append(contentsOf: [UDPFragmentation.serverHello, UInt8(index), 2])
+            d.append(Data(repeating: 0x4C, count: legacy))
+            out = try reassembler.push(d)
+            if index == 0 { XCTAssertNil(out, "must not complete on the first fragment") }
+        }
+        XCTAssertEqual(out?.count, legacy * 2, "legacy message length")
     }
 }

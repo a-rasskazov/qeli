@@ -19,6 +19,21 @@ final class UDPDatagramCodec: @unchecked Sendable {
     let connectionID: Data
     let obfsKey: Data?
 
+    /// Bytes the outer layers add on the WIRE beyond the tunnel MTU itself: the obfs datagram
+    /// seal, the QUIC short header, and the UDP + IP headers. Mirrors the Rust client's
+    /// `seal_overhead() + QUIC_SHORT_HEADER_MIN + 8 + (40|20)`.
+    ///
+    /// The IP header is counted as IPv6 (40) unconditionally. NEVER under-count here: the whole
+    /// #12 defect was a probe that asked a narrow path for more bytes than it budgeted for.
+    /// Over-counting by the 20-byte IPv4/IPv6 difference only makes the ladder's floor slightly
+    /// more conservative, which costs a few bytes of MTU and cannot black-hole anything.
+    var outerOverhead: Int {
+        (obfsKey != nil ? ObfsDatagramCipher.sealOverhead : 0)
+            + (quicEnabled ? QUICMask.shortHeaderMin : 0)
+            + 8   // UDP header
+            + 40  // IPv6 header — the conservative choice, see above
+    }
+
     private let sendLock = NSLock()
     private let receiveLock = NSLock()
     private var packetNumber: UInt32
@@ -51,7 +66,7 @@ final class UDPDatagramCodec: @unchecked Sendable {
     }
 
     /// Encodes one Qeli record. A long-header ClientHello is fragmented before
-    /// masking so no fragment exceeds Qeli's mobile-safe 1200-byte chunk.
+    /// masking so no fragment exceeds ``UDPFragmentation/maxChunk``.
     func encode(record: Data, longHeader: Bool = false) throws -> [Data] {
         let pieces = longHeader
             ? try UDPFragmentation.fragment(messageID: UDPFragmentation.clientHello, message: record)

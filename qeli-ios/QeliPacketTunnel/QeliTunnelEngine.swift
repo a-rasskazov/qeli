@@ -486,6 +486,11 @@ final class QeliTunnelEngine: @unchecked Sendable {
                 established.session.mtu = discovered
                 await established.primary.sender.updateMTU(discovered)
             }
+            // Report the MTU we settled on, after any probe has narrowed it (#13). Deliberately
+            // swallowed: the tunnel works without the report, just without the server narrowing
+            // its downlink to match, so a failure here must not fail an otherwise good session.
+            // A transport that is really broken surfaces on the first user packet instead.
+            try? await established.primary.sender.sendMTUReport()
             return established
         } catch {
             raw.cancel()
@@ -592,7 +597,12 @@ final class QeliTunnelEngine: @unchecked Sendable {
         records: UDPRecordTransport,
         ceiling: Int
     ) async throws -> Int {
-        let policy = UDPPathMTUProbePolicy(ceiling: ceiling)
+        // Ask the codec what the outer layers actually cost on this connection, so the ladder's
+        // floor is derived from real framing instead of assuming the worst (#12).
+        let policy = UDPPathMTUProbePolicy(
+            ceiling: ceiling,
+            outerOverhead: UDPPathMTUProbePolicy.recordOverhead + records.datagramCodec.outerOverhead
+        )
         guard !policy.candidates.isEmpty else {
             throw UDPPathMTUProbeError.noResult(ceiling: ceiling)
         }

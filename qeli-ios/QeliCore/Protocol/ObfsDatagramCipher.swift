@@ -13,6 +13,10 @@ enum ObfsDatagramCipher {
     static let nonceLength = 12
     static let flagLength = 1
 
+    /// Bytes the seal prepends: the QUIC-shaped flag byte + the nonce. The path-MTU probe has
+    /// to budget for the outer layers it rides under.
+    static var sealOverhead: Int { flagLength + nonceLength }
+
     static func deriveKey(_ preSharedKey: String) -> Data {
         var material = Data("qeli-obfs-key-v1".utf8)
         material.append(Data(preSharedKey.utf8))

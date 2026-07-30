@@ -24,15 +24,41 @@ enum UDPDataPlane {
 }
 
 struct UDPPathMTUProbePolicy: Equatable, Sendable {
-    static let minimumTunnelMTU = 1_280
+    /// IPv6 minimum PATH MTU (RFC 8200 §5) — the narrowest path we must serve.
+    static let pathFloor = 1_280
     static let recordOverhead = 48
+    /// Smallest tunnel MTU worth probing at all, below which a tunnel is not useful.
+    static let absoluteFloor = 576
+    /// Worst case in this codebase: obfs seal (13) + QUIC short header (9) + UDP (8) + IPv6 (40).
+    /// Used when a caller has no codec to ask; see ``UDPDatagramCodec/outerOverhead``.
+    static let worstCaseOuterOverhead = 13 + 9 + 8 + 40
 
     let ceiling: Int
+    /// Everything a probe for a candidate tunnel MTU adds on the wire beyond the MTU itself:
+    /// our record overhead plus the obfs/QUIC/UDP/IP headers.
+    let outerOverhead: Int
 
+    init(ceiling: Int, outerOverhead: Int = Self.recordOverhead + Self.worstCaseOuterOverhead) {
+        self.ceiling = ceiling
+        self.outerOverhead = outerOverhead
+    }
+
+    /// The largest tunnel MTU whose probe datagram still fits a 1280-byte path.
+    var floor: Int {
+        min(max(Self.pathFloor - outerOverhead, Self.absoluteFloor), max(ceiling, Self.absoluteFloor))
+    }
+
+    /// Rungs in TUNNEL (inner) MTU units, highest first.
+    ///
+    /// The floor is DERIVED from the overhead, not hard-coded to 1280. That confusion was the
+    /// #12 defect: rungs are INNER MTUs while 1280 is an OUTER path MTU, so a lowest rung of
+    /// 1280 asked a 1280-byte path for 1280 + overhead bytes. Every rung then failed on exactly
+    /// the narrow paths probing exists for, the probe reported nothing, and the caller fell back
+    /// to the pushed MTU with fragmentation switched back on.
     var candidates: [Int] {
-        guard ceiling >= Self.minimumTunnelMTU else { return [] }
-        return [ceiling, 1_360, 1_320, Self.minimumTunnelMTU]
-            .filter { $0 >= Self.minimumTunnelMTU && $0 <= ceiling }
+        let low = floor
+        return [ceiling, 1_360, 1_320, 1_280, 1_200, low]
+            .filter { $0 >= low && $0 <= ceiling }
             .reduce(into: [Int]()) { values, candidate in
                 if !values.contains(candidate) { values.append(candidate) }
             }
