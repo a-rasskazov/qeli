@@ -13,6 +13,14 @@ use crate::protocol::{
 };
 use crate::trace;
 
+/// How many extra copies of the path-MTU report the UDP data plane emits after the first
+/// (#13/#5). The frame is never acknowledged — the server answers no control frame — so a
+/// single lost datagram would otherwise cost the whole session's downlink narrowing. Three
+/// copies, spread over the first ~10 s of idle ticks, survive both an isolated drop and a short
+/// burst; the server keeps the narrowest value it has seen, so the duplicates are a no-op.
+/// TCP needs none of this — it retransmits for us.
+const MTU_REPORT_RESENDS: u8 = 3;
+
 /// The address the data-plane socket is ACTUALLY connected to.
 ///
 /// The bypass route used to be installed for `config.server.address` — the hostname —
@@ -65,6 +73,11 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
     let config_content = std::fs::read_to_string(config_path)?;
     let config: crate::config::client::ClientConfig =
         crate::config::parse_client_config(&config_content)?;
+    // Reject unknown enum values before connecting, so `check-config --client` and a real
+    // start agree. Without this a typo does not error — it silently picks the other branch
+    // (`proto = UDP` connects over TCP, `dns = of` leaves the host resolver in place).
+    // (Audit 2026-07-30, #7.)
+    config.validate()?;
 
     let password = if let Some(ref pw) = config.auth.password {
         pw.clone()
@@ -3521,7 +3534,15 @@ async fn connect_and_run_udp(
     // session AEAD rather than spoofable like a bare datagram. Fire-and-forget: the server
     // ignores a value that is not narrower than its own, an older server discards the frame
     // as a malformed packet, and nothing here waits for a reply.
-    if let Ok(mtu) = u16::try_from(tun_mtu.max(0)) {
+    //
+    // Being unacknowledged is exactly the problem on UDP: one lost datagram would leave the
+    // server on `path_mtu = 0` for the WHOLE session, on the transport where the report matters
+    // most. The frame is idempotent — the server keeps the narrowest value it has seen — so it
+    // is simply re-sent on the next few idle ticks below, which costs a few bytes and removes
+    // the single point of loss. (Audit 2026-07-30, #5.)
+    let mtu_report_value = u16::try_from(tun_mtu.max(0)).ok();
+    let mut mtu_resends: u8 = 0;
+    if let Some(mtu) = mtu_report_value {
         let frame = crate::protocol::ctrl::mtu_report(mtu);
         if let Ok(pkt) = client_tx.encrypt_packet(&frame, &[]) {
             let send_data = if quic_enabled {
@@ -3531,7 +3552,10 @@ async fn connect_and_run_udp(
                 pkt
             };
             match socket.send(&send_data).await {
-                Ok(_) => log::debug!("reported tunnel MTU {mtu} to the server"),
+                Ok(_) => {
+                    log::debug!("reported tunnel MTU {mtu} to the server");
+                    mtu_resends = MTU_REPORT_RESENDS;
+                }
                 Err(e) => log::debug!("could not report tunnel MTU: {e}"),
             }
         }
@@ -3745,6 +3769,26 @@ async fn connect_and_run_udp(
             }
 
             _ = idle_check.tick() => {
+                // Re-send the unacknowledged MTU report (#5). `idle_check` fires immediately on
+                // its first tick, so the copies land at roughly 0 s, 5 s and 10 s: the first
+                // covers an isolated drop, the later ones a short burst of loss that would take
+                // out back-to-back datagrams. The server keeps the narrowest value it has seen,
+                // so duplicates are a no-op there.
+                if mtu_resends > 0 {
+                    mtu_resends -= 1;
+                    if let Some(mtu) = mtu_report_value {
+                        let frame = crate::protocol::ctrl::mtu_report(mtu);
+                        if let Ok(pkt) = client_tx.encrypt_packet(&frame, &[]) {
+                            let send_data = if quic_enabled {
+                                quic_pn += 1;
+                                wrap_quic_short(&pkt, &connection_id, quic_pn - 1)
+                            } else {
+                                pkt
+                            };
+                            let _ = socket.send(&send_data).await;
+                        }
+                    }
+                }
                 // Suspend/resume: wall clock advanced far more than the monotonic clock
                 // since the last tick ⇒ the host was asleep (Instant froze). The RX window
                 // can't see the pre-suspend silence and the session + NAT are gone — cycle now.
