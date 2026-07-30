@@ -102,7 +102,11 @@ pub fn setup_dns_for_interface(
                 // misconfiguration worth surfacing. Failing here leaves the host's
                 // existing resolver untouched. (Audit 2026-07-27, R5.)
                 anyhow::bail!(
-                    "dns.mode = tunnel but the server pushed no DNS address and no client                      resolver is configured — set dns.servers (or dns.fallback_servers) in                      the client config, or use dns.mode = off to keep the host's resolver"
+                    "dns = tunnel but the server pushed no DNS address and this client has no \
+                     resolver configured — set `dns_servers = <ip>[, <ip>…]` in the client \
+                     config (`dns.servers` in JSON), or `dns = off` to keep the host's \
+                     resolver. Until then the host's own resolvers stay in place, so in a \
+                     full-tunnel profile DNS may go to the physical network."
                 );
             }
         }
@@ -192,7 +196,7 @@ fn revert_resolvectl_marker(path: &std::path::Path) {
         let _ = std::fs::remove_file(path);
         return;
     }
-    let reverted = std::process::Command::new("resolvectl")
+    let reverted = resolvectl_cmd()
         .args(["revert", ifname])
         .output()
         .map(|o| o.status.success())
@@ -359,8 +363,21 @@ fn which_resolvectl() -> Option<&'static str> {
     .find(|p| std::path::Path::new(p).exists())
 }
 
+/// `resolvectl` as a runnable command, resolved to an ABSOLUTE path.
+///
+/// Every call site used `Command::new("resolvectl")`, which searches `PATH` — defeating the
+/// whole reason [`which_resolvectl`] looks the binary up by absolute path in the first place
+/// (its own doc says so: the client runs from a systemd unit whose environment may carry no
+/// useful `PATH`). Where that bit, the symptom was silent: `resolvectl dns` simply failed to
+/// spawn, the caller read that as "resolvectl did not work", and DNS quietly fell back to
+/// editing resolv.conf. Falls back to the bare name when the binary is somewhere unusual, so
+/// a working `PATH` still succeeds. (Audit 2026-07-30.)
+fn resolvectl_cmd() -> std::process::Command {
+    std::process::Command::new(which_resolvectl().unwrap_or("resolvectl"))
+}
+
 fn try_resolvectl(config: &ClientDnsConfig, ifname: &str, dns_addr: &str) -> bool {
-    let ok = std::process::Command::new("resolvectl")
+    let ok = resolvectl_cmd()
         .args(["dns", ifname, dns_addr])
         .output()
         .map(|o| o.status.success())
@@ -382,7 +399,7 @@ fn try_resolvectl(config: &ClientDnsConfig, ifname: &str, dns_addr: &str) -> boo
         // so a failure here meant queries kept going to the physical resolver while the
         // log said DNS was set: a silent leak in exactly the mode that exists to prevent
         // one. Report it, so the caller falls back to editing resolv.conf.
-        let ok = std::process::Command::new("resolvectl")
+        let ok = resolvectl_cmd()
             .args(["domain", ifname])
             .args(&domains)
             .output()
@@ -394,9 +411,7 @@ fn try_resolvectl(config: &ClientDnsConfig, ifname: &str, dns_addr: &str) -> boo
                 ifname,
                 domains.join(" ")
             );
-            let _ = std::process::Command::new("resolvectl")
-                .args(["revert", ifname])
-                .output();
+            let _ = resolvectl_cmd().args(["revert", ifname]).output();
             return false;
         }
     }
@@ -626,6 +641,32 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// An unconfigured client must NOT silently send its DNS to a third party.
+    ///
+    /// The refusal in `setup_dns_for_interface` consults `servers` then `fallback_servers`, so
+    /// a non-empty DEFAULT for either one makes it unreachable — which is exactly how a
+    /// `["1.1.1.1", "8.8.8.8"]` default cancelled the R5 fix and sent every query of every
+    /// default-configured client to Cloudflare. Deserialized from an EMPTY document on purpose:
+    /// `#[derive(Default)]` ignores `#[serde(default = "…")]`, so testing `::default()` would
+    /// pass no matter what the serde default said. (Audit 2026-07-30, #8.)
+    #[test]
+    fn an_unconfigured_client_has_no_third_party_resolver() {
+        let dns: crate::config::client::ClientDnsConfig =
+            serde_json::from_str("{}").expect("empty config deserializes");
+        assert_eq!(
+            dns.mode, "tunnel",
+            "guard: this test assumes tunnel is the default mode"
+        );
+        assert!(
+            dns.servers.is_empty(),
+            "dns.servers must not default to anything"
+        );
+        assert!(
+            dns.fallback_servers.is_empty(),
+            "dns.fallback_servers must not default to a third-party resolver — that silently              overrides the user's choice and makes the 'no resolver configured' refusal dead code"
+        );
+    }
 
     /// The refcount is what keeps two concurrent clients from clobbering each other's DNS
     /// restore. These pin the arithmetic: capture only on the first holder, restore only

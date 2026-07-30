@@ -326,8 +326,15 @@ fn default_route_metric() -> u32 {
 fn default_dns_mode() -> String {
     "tunnel".into()
 }
+/// EMPTY on purpose. This used to be `["1.1.1.1", "8.8.8.8"]`, which quietly cancelled the
+/// R5 fix next to it in `client/dns.rs`: that code refuses to hand a user's DNS to a third
+/// party when nothing is configured, but it consults `fallback_servers` first — so the default
+/// meant the refusal could never fire and every query went to Cloudflare unasked. For a
+/// censorship-circumvention tool that is a privacy decision the user did not make. With no
+/// default, an unconfigured client keeps the host's resolvers (a warning says so), which is
+/// also what GETTING-STARTED has always documented. (Audit 2026-07-30, #8.)
 fn default_fallback_dns() -> Vec<String> {
-    vec!["1.1.1.1".into(), "8.8.8.8".into()]
+    Vec::new()
 }
 fn default_cipher() -> String {
     "chacha20-poly1305".into()
@@ -519,6 +526,16 @@ impl ClientConfig {
         if let Some(d) = q.get("dns").filter(|s| !s.is_empty()) {
             cfg.dns.mode = d.to_string();
         }
+        // dns_servers = <ip>[, <ip>…] → resolver(s) to install when `dns = tunnel` and the
+        // server pushes none. Without this key the flat INI could set the MODE but never a
+        // SERVER, so the "configure a resolver" advice was impossible to follow from an INI.
+        if let Some(s) = q.get("dns_servers").filter(|s| !s.trim().is_empty()) {
+            cfg.dns.servers = s
+                .split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect();
+        }
 
         // Gateway/router NAT + hooks — file-only keys (NOT in the qeli:// link).
         //   gateway_nat = true → client programs ip_forward + MASQUERADE out the tun
@@ -654,6 +671,62 @@ impl ClientConfig {
 
     /// Render this config's `[qeli]` section back to INI text (the inverse of
     /// [`from_ini`], emitting only the minimal keys).
+    /// Reject unknown values for the string-enum fields, the same way `validate_profiles`
+    /// does on the server.
+    ///
+    /// Every one of these is compared verbatim against ONE literal at its use site, so an
+    /// unrecognised value does not error — it silently selects the other branch:
+    ///
+    ///   * `proto` — anything but exactly `udp` connects over TCP, so `proto = UDP` or a typo
+    ///     quietly uses a different transport than the config says.
+    ///   * `mode` — falls through the obfs / reality-tls / plain branches to fake-tls, so
+    ///     `mode = realty-tls` runs fake-tls and the peer disagrees about the wire.
+    ///   * `front` — compared against `websocket`, so `front = webscoket` drops the WebSocket
+    ///     framing the profile was configured for.
+    ///   * `dns` — DNS setup early-returns unless the mode is exactly `tunnel`, so `dns = of`
+    ///     leaves the host resolver in place: in a full tunnel that is a DNS leak.
+    ///   * `device_type` / routing `mode` — same shape, quieter consequences.
+    ///
+    /// The server got this treatment in #23; the client parser was left accepting anything.
+    /// (Audit 2026-07-30, #7.)
+    pub fn validate(&self) -> anyhow::Result<()> {
+        fn check(field: &str, got: &str, allowed: &[&str]) -> anyhow::Result<()> {
+            if allowed.contains(&got) {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "unknown {field} '{got}' — expected {}",
+                allowed
+                    .iter()
+                    .map(|a| format!("'{a}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            )
+        }
+
+        check("proto", &self.server.protocol, &["tcp", "udp"])?;
+        check(
+            "mode",
+            &self.obfuscation.mode,
+            &["fake-tls", "obfs", "plain", "reality-tls"],
+        )?;
+        check("front", &self.obfuscation.fronting, &["websocket", "none"])?;
+        check("dns", &self.dns.mode, &["tunnel", "off"])?;
+        // `is_tap_mode` compares case-insensitively, so accept either spelling here rather
+        // than rejecting a value the runtime would have honoured.
+        check(
+            "device_type",
+            &self.tun.device_type.to_ascii_lowercase(),
+            &["tun", "tap"],
+        )?;
+        check(
+            "routing mode",
+            &self.routing.mode,
+            &["split-tunnel", "full-tunnel", "all"],
+        )?;
+        Ok(())
+    }
+
     pub fn to_ini_string(&self) -> String {
         use crate::config::format::Section;
         let mut doc = IniDoc::new();
@@ -758,6 +831,9 @@ impl ClientConfig {
         }
         if self.dns.mode != "tunnel" {
             q.set("dns", &self.dns.mode);
+        }
+        if !self.dns.servers.is_empty() {
+            q.set("dns_servers", self.dns.servers.join(", "));
         }
         if self.tun.name != "vpn0" {
             q.set("dev", &self.tun.name);
@@ -925,6 +1001,83 @@ sni    = www.cloudflare.com
         // mtu defaults to 0 = auto (adopt the server-pushed MTU)
         assert_eq!(c.tun.mtu, 0);
         assert_eq!(c.routing.mode, "split-tunnel");
+    }
+
+    /// Every string-enum the client compares verbatim must be rejected when unknown, because
+    /// the failure mode is not an error but a SILENT branch change: `proto = UDP` connects over
+    /// TCP, `dns = of` skips DNS setup (a leak in a full tunnel), `front = webscoket` drops the
+    /// WebSocket framing. (Audit 2026-07-30, #7.)
+    #[test]
+    fn unknown_enum_values_are_rejected() {
+        let base = concat!(
+            "[qeli]\n",
+            "server = 1.2.3.4:443\n",
+            "user = u\n",
+            "pass = p\n",
+        );
+        let parse = |extra: &str| {
+            let src = format!("{base}{extra}");
+            ClientConfig::from_ini(&IniDoc::parse(&src).unwrap()).unwrap()
+        };
+
+        // The defaults must pass, or this test proves nothing about the negatives below.
+        parse("")
+            .validate()
+            .expect("a default client config must validate");
+
+        for (line, what) in [
+            ("proto = UDP\n", "proto"), // case matters: `== \"udp\"` is exact
+            ("proto = ucp\n", "proto"),
+            ("mode = realty-tls\n", "mode"),
+            ("front = webscoket\n", "front"),
+            ("dns = of\n", "dns"),
+        ] {
+            let err = parse(line)
+                .validate()
+                .expect_err(&format!("`{}` must be rejected", line.trim()));
+            assert!(
+                err.to_string().contains(what),
+                "the message must name the field: {err}"
+            );
+        }
+
+        // Valid non-default values must still be accepted.
+        for line in [
+            "proto = udp\n",
+            "mode = obfs\n",
+            "front = none\n",
+            "dns = off\n",
+        ] {
+            parse(line)
+                .validate()
+                .unwrap_or_else(|e| panic!("`{}` must be accepted: {e}", line.trim()));
+        }
+    }
+
+    /// `dns_servers` must survive a flat-INI round trip. Without the key an INI could set the
+    /// dns MODE but never a SERVER, so `dns = tunnel` against a server that pushes none had no
+    /// in-file remedy — and the error message advising one was impossible to follow.
+    /// (Audit 2026-07-30, #8.)
+    #[test]
+    fn dns_servers_round_trips_through_the_flat_ini() {
+        let src = concat!(
+            "[qeli]\n",
+            "server = 1.2.3.4:443\n",
+            "user = u\n",
+            "pass = p\n",
+            "dns = tunnel\n",
+            "dns_servers = 9.9.9.9, 149.112.112.112\n",
+        );
+        let c = ClientConfig::from_ini(&IniDoc::parse(src).unwrap()).unwrap();
+        assert_eq!(c.dns.servers, vec!["9.9.9.9", "149.112.112.112"]);
+
+        let out = c.to_ini_string();
+        assert!(
+            out.contains("dns_servers"),
+            "key must be written back: {out}"
+        );
+        let back = ClientConfig::from_ini(&IniDoc::parse(&out).unwrap()).unwrap();
+        assert_eq!(back.dns.servers, c.dns.servers);
     }
 
     #[test]

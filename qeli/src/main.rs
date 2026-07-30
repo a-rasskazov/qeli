@@ -467,7 +467,11 @@ async fn main() -> anyhow::Result<()> {
 
             let mut problems = 0usize;
             if client {
-                config::client::ClientConfig::from_ini(&doc)
+                let cfg = config::client::ClientConfig::from_ini(&doc)
+                    .map_err(|e| anyhow::anyhow!("{}: {}", path, e))?;
+                // The same enum checks `run_client` runs, so this command and a real start
+                // agree — mirroring what the server branch below already does.
+                cfg.validate()
                     .map_err(|e| anyhow::anyhow!("{}: {}", path, e))?;
             } else {
                 let cfg = config::server::ServerConfig::from_ini(&doc)
