@@ -307,12 +307,16 @@ public sealed class PacketCodec
             ((long)(plaintext[4] & 0xFF) << 24) | ((long)(plaintext[5] & 0xFF) << 16) |
             ((long)(plaintext[6] & 0xFF) << 8) | (long)(plaintext[7] & 0xFF);
 
-        if (!AcceptCounter(packetCounter))
-            throw new PacketException($"Replay detected: counter {packetCounter} (window highest {_replayHighest})");
-
+        // Validate the padding BEFORE recording the counter, like the Rust and iOS clients.
+        // A record that decrypts (so it is genuinely from the peer) but carries malformed
+        // padding is a peer bug, not an attack — recording it first needlessly burned that
+        // counter's slot in the replay window. (Audit 2026-07-30.)
         int paddingLen = ((plaintext[^2] & 0xFF) << 8) | (plaintext[^1] & 0xFF);
         if (CounterSize + paddingLen + 2 > plaintext.Length)
             throw new PacketException($"Invalid padding: {paddingLen}");
+
+        if (!AcceptCounter(packetCounter))
+            throw new PacketException($"Replay detected: counter {packetCounter} (window highest {_replayHighest})");
 
         int dataLen = plaintext.Length - CounterSize - 2 - paddingLen;
         return plaintext[CounterSize..(CounterSize + dataLen)];

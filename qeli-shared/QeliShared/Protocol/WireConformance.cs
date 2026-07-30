@@ -30,7 +30,104 @@ public static class WireConformance
         ok &= RunHkdf(check);
         ok &= RunQuic(check);
         ok &= RunUdpFrag(check);
+        ok &= RunCtrlFrame(check);
+        ok &= RunMtuLadder(check);
+        ok &= RunIniBounds(check);
         return ok;
+    }
+
+    /// <summary>Range checks on the hand-writable flat INI. Not fixture-driven — these are
+    /// policy, and the failure they guard is silent: an out-of-range value that parses.</summary>
+    private static bool RunIniBounds(Action<string, bool> check)
+    {
+        static Model.VpnConfig Ini(params string[] extra) =>
+            Model.VpnConfig.FromIni("[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\n"
+                                    + string.Join("\n", extra) + "\n");
+
+        // A timeout above ~2.1M seconds used to survive parsing, then overflow the int
+        // multiply in VpnTunnelBase (`(int)secs * 1000`) into a NEGATIVE timeout — an
+        // instantly-expired connect rather than a long one.
+        var huge = Ini("timeout = 999999999");
+        bool timeoutClamped = huge.ConnectionTimeoutSecs is >= 1 and <= 300;
+        bool noOverflow = (int)huge.ConnectionTimeoutSecs * 1000 > 0;
+        check("ini-bounds: an absurd timeout is clamped into range", timeoutClamped);
+        check("ini-bounds: the clamped timeout cannot overflow to a negative ms value", noOverflow);
+        bool zeroTimeout = Ini("timeout = 0").ConnectionTimeoutSecs == 30;
+        bool negTimeout = Ini("timeout = -5").ConnectionTimeoutSecs == 30;
+        check("ini-bounds: a zero/negative timeout falls back to the default", zeroTimeout && negTimeout);
+        bool sane = Ini("timeout = 45").ConnectionTimeoutSecs == 45;
+        check("ini-bounds: a valid timeout is left alone", sane);
+
+        // padding_min > padding_max is an inverted range; a five-digit padding is past the
+        // ceiling. Each field only checked `>= 0` on its own, so both parsed.
+        var inverted = Ini("padding_min = 900", "padding_max = 300");
+        bool ordered = inverted.PaddingMin <= inverted.PaddingMax;
+        var over = Ini("padding_min = 0", "padding_max = 60000");
+        bool capped = over.PaddingMax <= 1400;
+        check("ini-bounds: an inverted padding range is corrected", ordered);
+        check("ini-bounds: padding is capped at the ceiling", capped);
+        var keep = Ini("padding_min = 10", "padding_max = 200");
+        bool kept = keep.PaddingMin == 10 && keep.PaddingMax == 200;
+        check("ini-bounds: a valid padding range is left alone", kept);
+
+        return timeoutClamped && noOverflow && zeroTimeout && negTimeout && sane
+               && ordered && capped && kept;
+    }
+
+    /// <summary>The path-MTU ladder's floor. Not fixture-driven — it is a policy, not a wire
+    /// format. What this catches is the rung/path unit confusion (#12): rungs are INNER tunnel
+    /// MTUs, 1280 is an OUTER path limit, so a floor of 1280 asks a 1280-byte path for
+    /// 1280 + overhead and every rung fails on exactly the narrow paths probing exists for.</summary>
+    private static bool RunMtuLadder(Action<string, bool> check)
+    {
+        // Both extremes this codebase actually produces: bare IPv4 UDP, and the worst case of
+        // obfs seal (13) + QUIC short header (9) + UDP (8) + IPv6 (40), each over a 48-byte record.
+        bool floorFits = true, descending = true, nonEmpty = true;
+        foreach (int overhead in new[] { 48 + 8 + 20, 48 + 13 + 9 + 8 + 40 })
+        {
+            var ladder = Vpn.VpnTunnelBase.MtuProbeLadder(1400, overhead);
+            nonEmpty &= ladder.Length > 0;
+            if (ladder.Length == 0) continue;
+            // The narrowest rung's WIRE size must fit a 1280-byte path.
+            floorFits &= ladder[^1] + overhead <= 1280;
+            for (int i = 1; i < ladder.Length; i++) descending &= ladder[i] < ladder[i - 1];
+        }
+        check("mtu-ladder: ladder is never empty", nonEmpty);
+        check("mtu-ladder: lowest rung fits a 1280-byte path once framing is counted", floorFits);
+        check("mtu-ladder: rungs are strictly descending and deduped", descending);
+
+        // A ceiling already below the floor must still yield something to try, not an empty
+        // ladder (which would report "no result" and silently keep the pushed MTU).
+        var tiny = Vpn.VpnTunnelBase.MtuProbeLadder(700, 48 + 13 + 9 + 8 + 40);
+        check("mtu-ladder: a low ceiling still produces a rung", tiny.Length > 0 && tiny[0] <= 700);
+
+        return floorFits && descending && nonEmpty && tiny.Length > 0;
+    }
+
+    /// <summary>In-tunnel control frames. Not fixture-driven — the frame is six bytes, so the
+    /// bytes themselves are pinned here and in the Rust/Kotlin/Swift tests. What this catches is
+    /// a port drifting on byte order or on the magic, which would make the server read a
+    /// nonsense MTU (or route the frame as a packet).</summary>
+    private static bool RunCtrlFrame(Action<string, bool> check)
+    {
+        // 1280 = 0x0500, big-endian. Same vector in every implementation.
+        var expected = new byte[] { 0xC1, 0x9B, 0x01, 0x02, 0x05, 0x00 };
+        bool ok = Hex(CtrlFrame.MtuReport(1280)) == Hex(expected);
+        check("ctrl: MtuReport(1280) matches the shared vector", ok);
+
+        // The discriminator that keeps control frames and IP packets apart, in both directions.
+        bool disjoint = CtrlFrame.IsCtrl(expected)
+            && !CtrlFrame.IsCtrl(new byte[] { 0x45, 0x00, 0x00, 0x28 })   // IPv4
+            && !CtrlFrame.IsCtrl(new byte[] { 0x60, 0x00, 0x00, 0x00 })   // IPv6
+            && !CtrlFrame.IsCtrl(System.Array.Empty<byte>());             // heartbeat
+        check("ctrl: frames and IP packets cannot be confused", disjoint);
+
+        // Out-of-range values are clamped, never wrapped into a plausible small MTU.
+        bool clamped = Hex(CtrlFrame.MtuReport(70_000)) == "c19b0102ffff"
+            && Hex(CtrlFrame.MtuReport(-1)) == "c19b01020000";
+        check("ctrl: out-of-range MTU is clamped, not wrapped", clamped);
+
+        return ok && disjoint && clamped;
     }
 
     /// <summary>App-layer fragmentation of the big UDP handshake messages. The reassembler is
@@ -48,8 +145,13 @@ public static class WireConformance
 
             check("udp-frag: fixture MaxChunk matches this build",
                 r.GetProperty("max_chunk").GetInt32() == UdpFrag.MaxChunk);
+            // The receive bound is pinned separately and is LARGER: bounding receive by the
+            // send budget would reject every handshake from a pre-#14 peer.
+            check("udp-frag: fixture MaxChunkAccept matches this build",
+                r.GetProperty("max_chunk_accept").GetInt32() == UdpFrag.MaxChunkAccept);
             check("udp-frag: fixture MaxFrags matches this build",
                 r.GetProperty("max_frags").GetInt32() == UdpFrag.MaxFrags);
+            check("udp-frag: a legacy 1200-byte chunk still reassembles", LegacyChunkAccepted());
 
             int n = 0;
             foreach (var c in r.GetProperty("fragment").EnumerateArray())
@@ -310,6 +412,33 @@ public static class WireConformance
     }
 
     private static string Hex(byte[] b) => Convert.ToHexString(b).ToLowerInvariant();
+
+    /// <summary>A pre-#14 peer slices at 1200, which is ABOVE this build's send budget. The
+    /// reassembler must bound by MaxChunkAccept, not MaxChunk, or every legacy handshake is
+    /// rejected as "fragment chunk too large".</summary>
+    private static bool LegacyChunkAccepted()
+    {
+        // Not `const`: with both sides constant the compiler folds the guard below and warns
+        // the failure branch is unreachable (CS0162) — true today, but the guard is the point.
+        int legacy = 1200;
+        if (legacy <= UdpFrag.MaxChunk) return false;   // the bounds must actually differ
+        var re = new UdpFrag.Reassembler();
+        try
+        {
+            for (byte idx = 0; idx < 2; idx++)
+            {
+                var d = new byte[UdpFrag.HdrLen + legacy];
+                System.Array.Copy(UdpFrag.Magic, d, 3);
+                d[3] = UdpFrag.MsgServerHello; d[4] = idx; d[5] = 2;
+                for (int i = UdpFrag.HdrLen; i < d.Length; i++) d[i] = (byte)'L';
+                var done = re.Push(d);
+                if (idx == 0 && done != null) return false;
+                if (idx == 1) return done != null && done.Length == legacy * 2;
+            }
+        }
+        catch (System.Exception) { return false; }
+        return false;
+    }
 
     /// <summary>A platform on the fixture's `platforms` list MUST actually run it — otherwise
     /// a renamed primitive leaves this green having verified nothing.</summary>

@@ -465,7 +465,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             ServerAddress = Str(server, "address", Str(root, "address", "127.0.0.1")),
             Port = Int(server, "port", Int(root, "port", 443)),
             Protocol = Str(server, "protocol", "tcp"),
-            ConnectionTimeoutSecs = Long(server, "connection_timeout_secs", 30),
+            ConnectionTimeoutSecs = CheckedTimeout(Long(server, "connection_timeout_secs", 30)),
             ReconnectEnabled = Bool(reconnect, "enabled", true),
             ReconnectMaxRetries = Int(reconnect, "max_retries", -1),
             ReconnectBaseDelaySecs = Long(reconnect, "base_delay_secs", 1),
@@ -541,6 +541,9 @@ public sealed class VpnConfig : INotifyPropertyChanged
         string Get(string k, string def = "") => q.TryGetValue(k, out var v) ? v : def;
 
         var server = Get("server");
+        var iniPad = CheckedPadding(
+            int.TryParse(Get("padding_min"), out var pminRaw) ? pminRaw : 0,
+            int.TryParse(Get("padding_max"), out var pmaxRaw) ? pmaxRaw : 255);
         string host = "127.0.0.1";
         int port = 443;
         int colon = server.LastIndexOf(':');
@@ -626,10 +629,14 @@ public sealed class VpnConfig : INotifyPropertyChanged
             ReconnectMaxRetries = int.TryParse(Get("reconnect_retries"), out var rr) ? rr : -1,
             ReconnectBaseDelaySecs = long.TryParse(Get("reconnect_base_delay"), out var rb) && rb > 0 ? rb : 1,
             ReconnectMaxDelaySecs = long.TryParse(Get("reconnect_max_delay"), out var rm) && rm > 0 ? rm : 60,
-            ConnectionTimeoutSecs = long.TryParse(Get("timeout"), out var ct) && ct > 0 ? ct : 30,
+            ConnectionTimeoutSecs = CheckedTimeout(long.TryParse(Get("timeout"), out var ct) ? ct : 30),
             PaddingEnabled = Get("padding") is var pe && (pe.Length == 0 || IniBool(pe)),
-            PaddingMin = int.TryParse(Get("padding_min"), out var pmin) && pmin >= 0 ? pmin : 0,
-            PaddingMax = int.TryParse(Get("padding_max"), out var pmax) && pmax >= 0 ? pmax : 255,
+            // Through CheckedPadding, like FromJson: on its own each field only checked `>= 0`,
+            // so a hand-written INI could set padding_min > padding_max (an inverted range) or a
+            // five-digit padding far past PaddingCeiling — records the peer would reject.
+            // (Audit 2026-07-30, #11.)
+            PaddingMin = iniPad.Min,
+            PaddingMax = iniPad.Max,
             HeartbeatEnabled = Get("heartbeat") is var he && (he.Length == 0 || IniBool(he)),
             HeartbeatIntervalMs = long.TryParse(Get("heartbeat_interval"), out var hi) && hi > 0 ? hi : 15000,
             HeartbeatDataSize = int.TryParse(Get("heartbeat_size"), out var hs) && hs >= 0 ? hs : 16,
@@ -679,6 +686,17 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// rather than rejected: unlike mtu these are pure obfuscation knobs, so narrowing them
     /// costs the user nothing while an oversized max_bytes would make every data record
     /// exceed PacketCodec.MaxRecordSize. (Audit 2026-07-27, C6)</summary>
+    /// <summary>Clamp the connect timeout to the same 1..300 s the Android and iOS clients
+    /// enforce. Unbounded before: the INI accepted any positive long, and
+    /// <c>VpnTunnelBase</c> then computes <c>(int)ConnectionTimeoutSecs * 1000</c> — so a value
+    /// above ~2.1 M seconds overflowed the int multiply into a NEGATIVE timeout, which is not a
+    /// long wait but an immediately-expired one. (Audit 2026-07-30, #11.)</summary>
+    private const long TimeoutSecsMin = 1;
+    private const long TimeoutSecsMax = 300;
+
+    private static long CheckedTimeout(long secs) =>
+        secs <= 0 ? 30 : Math.Clamp(secs, TimeoutSecsMin, TimeoutSecsMax);
+
     private static (int Min, int Max) CheckedPadding(int min, int max)
     {
         min = Math.Clamp(min, 0, PaddingCeiling);

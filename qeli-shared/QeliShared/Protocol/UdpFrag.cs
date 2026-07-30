@@ -20,7 +20,49 @@ public static class UdpFrag
 {
     public static readonly byte[] Magic = { 0xF0, 0x9B, 0x71 };
     public const int HdrLen = 6;            // magic(3) + msgId(1) + idx(1) + count(1)
-    public const int MaxChunk = 1200;       // payload bytes per fragment (safe < IPv6 min 1280 / LTE)
+
+    // IPv6 minimum link MTU (RFC 8200 §5) — the narrowest path the handshake must survive.
+    public const int Ipv6MinMtu = 1280;
+    // Worst-case outer headers around one fragment, inside out. Emitted sizes, not protocol
+    // minimums: an IPv6 + obfs + QUIC-masked fragment really carries all of them at once.
+    private const int OuterQuic = 1 + 4 + 1 + 4 + 1 + 1 + 2 + 4;  // QUIC long header (Quic.WrapLong)
+    private const int OuterObfsSeal = 1 + 12;                     // obfs flag byte + nonce
+    private const int OuterUdp = 8;
+    private const int OuterIpv6 = 40;
+    // Headroom so adding one more outer layer cannot silently push the handshake back over
+    // Ipv6MinMtu — the exact regression the old hard-coded 1200 was.
+    private const int OuterReserve = 32;
+
+    /// <summary>
+    /// Max payload bytes per fragment. <b>Derived</b>, not chosen: chunk + header + QUIC long
+    /// header + obfs seal + UDP + IPv6 must fit <see cref="Ipv6MinMtu"/>.
+    ///
+    /// This was 1200 — QUIC's initial-packet floor, which budgets a whole datagram, not the
+    /// payload inside four more layers. The handshake wraps each fragment in a QUIC
+    /// <b>long</b> header (18 B; the data plane's short header is only 9 B), so the real
+    /// worst case was 1200 + 6 + 18 + 13 + 8 + 40 = 1285 — five bytes over the IPv6 minimum,
+    /// i.e. the PQ handshake could not complete on a 1280-MTU IPv6 path with obfs + QUIC
+    /// masking on.
+    ///
+    /// This bounds only what we <b>emit</b>; <see cref="MaxChunkAccept"/> bounds what we
+    /// accept. Keeping the two separate is what makes the change compatible in both
+    /// directions — see there. (Audit 2026-07-30, #14.)
+    /// </summary>
+    public const int MaxChunk =
+        Ipv6MinMtu - OuterIpv6 - OuterUdp - OuterObfsSeal - OuterQuic - OuterReserve - HdrLen;
+
+    /// <summary>
+    /// Largest chunk we <b>accept</b>, pinned to the historical 1200 that every build before
+    /// the #14 fix emitted.
+    ///
+    /// Reassembly is size-agnostic — fragments are placed by idx, with no offset or
+    /// per-fragment length field — so the only thing a receiver does with a chunk size is
+    /// bound it from above for anti-DoS. Shrinking <see cref="MaxChunk"/> keeps our fragments
+    /// readable by any peer; but shrinking the accept bound with it would have rejected every
+    /// fragment from a pre-fix peer, breaking the handshake in the other direction. This must
+    /// never drop below 1200.
+    /// </summary>
+    public const int MaxChunkAccept = 1200;
     public const int MaxFrags = 24;         // anti-DoS cap on the reassembly buffer
     public const byte MsgClientHello = 1;
     public const byte MsgServerHello = 2;
@@ -138,10 +180,12 @@ public static class UdpFrag
             byte msgId = d[3], idx = d[4], count = d[5];
             if (count == 0 || count > MaxFrags) throw new System.Exception("bad fragment count");
             if (idx >= count) throw new System.Exception("fragment index out of range");
-            // Cap the per-fragment chunk (parity with the Rust reassembler): a legit
-            // fragment is <= MaxChunk, so a larger one is malformed. Bounds a reassembly
-            // buffer at MaxFrags*MaxChunk instead of MaxFrags*65535.
-            if (d.Length - HdrLen > MaxChunk) throw new System.Exception("fragment chunk too large");
+            // Cap the per-fragment chunk (parity with the Rust reassembler), bounding a
+            // reassembly buffer at MaxFrags*MaxChunkAccept instead of MaxFrags*65535.
+            // Deliberately the ACCEPT bound, not the send budget: a peer built before the
+            // #14 fix emits 1200-byte chunks, and bounding by our smaller MaxChunk would
+            // reject every one of its handshakes.
+            if (d.Length - HdrLen > MaxChunkAccept) throw new System.Exception("fragment chunk too large");
             if (_count == 0) { _msgId = msgId; _count = count; _parts = new byte[count][]; _have = 0; }
             else if (msgId != _msgId || count != _count) throw new System.Exception("inconsistent fragment");
             if (_parts[idx] == null) { _parts[idx] = d[HdrLen..]; _have++; }

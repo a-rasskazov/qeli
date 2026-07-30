@@ -22,6 +22,10 @@ public sealed class ObfsStream
 {
     private const int NonceLen = 12;
 
+    /// <summary>Bytes <see cref="DatagramSeal"/> prepends: a QUIC-shaped flag byte + the nonce.
+    /// Public because the path-MTU probe has to budget for the outer layers it rides under.</summary>
+    public const int DatagramSealOverhead = 1 + NonceLen;
+
     // ── F2 AmneziaWG junk caps (bound memory) ─────────────────────────────────
     private const uint AwgJcCap = 128;
     private const ushort AwgLenCap = 1400;

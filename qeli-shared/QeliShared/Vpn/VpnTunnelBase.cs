@@ -708,6 +708,18 @@ public abstract class VpnTunnelBase
         public UdpTransport(VpnTunnelBase t, Socket sock, bool quic, byte[] cid, byte[]? obfsKey)
         { _t = t; _sock = sock; _quic = quic; _cid = cid; _obfsKey = obfsKey; }
 
+        /// <summary>Bytes the outer layers add on the WIRE beyond the tunnel MTU itself: the
+        /// obfs datagram seal, the QUIC short header, and the UDP + IP headers. Mirrors the
+        /// Rust client's <c>seal_overhead() + QUIC_SHORT_HEADER_MIN + 8 + (40|20)</c>.
+        ///
+        /// The path-MTU ladder needs this because its rungs are INNER (tunnel) MTUs while the
+        /// path limit it must respect is an OUTER size — see <c>MtuProbeLadder</c>.</summary>
+        public int OuterOverhead =>
+            (_obfsKey != null ? ObfsStream.DatagramSealOverhead : 0)
+            + (_quic ? Quic.ShortHeaderMin : 0)
+            + 8                                         // UDP header
+            + (_sock.AddressFamily == AddressFamily.InterNetworkV6 ? 40 : 20);
+
         public void Send(byte[] record, bool longHeader = false)
         {
             // The handshake ClientHello (longHeader) is large (post-quantum) — fragment
@@ -1294,19 +1306,43 @@ public abstract class VpnTunnelBase
     /// probe's wire size equals a full data packet of the candidate MTU, so the largest
     /// the server echoes is a size that traverses the path unfragmented. Returns that MTU
     /// or -1 (caller keeps the pushed/effective MTU) on any miss — purely additive.</summary>
+    /// <summary>Rungs of the path-MTU ladder, in TUNNEL (inner) MTU units, highest first.
+    /// Port of the Rust client's <c>mtu_probe_ladder</c>.
+    ///
+    /// <paramref name="outerOverhead"/> is everything a probe for tunnel-MTU <c>m</c> adds on
+    /// the wire: our record overhead, the obfs seal, the QUIC header and the UDP + IP headers.
+    /// The floor is the largest tunnel MTU whose datagram still fits the 1280-byte IPv6 minimum
+    /// path — which is the whole point: rungs are INNER MTUs, 1280 is an OUTER path MTU, and
+    /// using it directly as the lowest rung meant asking a 1280-byte path for 1280 + overhead
+    /// bytes. Every rung then failed on exactly the narrow paths probing exists for, the probe
+    /// reported nothing, and the caller fell back to the pushed MTU with fragmentation switched
+    /// back on. (Audit 2026-07-29, #12.)</summary>
+    internal static int[] MtuProbeLadder(int ceiling, int outerOverhead)
+    {
+        const int PathFloor = 1280;  // IPv6 minimum PATH MTU — the narrowest path we must serve
+        int floor = Math.Clamp(PathFloor - outerOverhead, 576, Math.Max(ceiling, 576));
+        return new[] { ceiling, 1360, 1320, 1280, 1200, floor }
+            .Where(m => m >= floor && m <= ceiling)
+            .Distinct().OrderByDescending(m => m).ToArray();
+    }
+
     private int ProbeUdpMtu(UdpTransport t, int ceiling)
     {
         const int RecOverhead = 48; // qeli UDP record + margin, so a probe certifies a real packet
-        const int Floor = 1280;     // IPv6 minimum
         if (!t.SetDontFragment(true)) return -1;
-        var ladder = new[] { ceiling, 1360, 1320, Floor }
-            .Where(m => m >= Floor && m <= ceiling).Distinct().OrderByDescending(m => m).ToArray();
-        ushort id = 0x4D54; // "MT"
+        var ladder = MtuProbeLadder(ceiling, RecOverhead + t.OuterOverhead);
+        // Randomize the probe-id sequence per connection. A fixed start ("MT") plus a
+        // predictable +1 per rung let an off-path attacker forge a probe-ACK and pin the client
+        // to a too-large MTU — a DoS on fake-tls-UDP-without-obfs, where the probe rides in the
+        // clear. A random 16-bit start means the attacker must guess the id too. Mirrors the
+        // Rust client.
+        ushort id = (ushort)RandomNumberGenerator.GetInt32(0, ushort.MaxValue + 1);
         int found = -1;
         foreach (int m in ladder)
         {
             id++;
-            var probe = UdpFrag.MtuProbeDatagram(id, m + RecOverhead);
+            int outerSize = m + RecOverhead;
+            var probe = UdpFrag.MtuProbeDatagram(id, outerSize);
             if (probe == null) continue;
             bool acked = false;
             for (int attempt = 0; attempt < 2 && !acked; attempt++)
@@ -1314,8 +1350,12 @@ public abstract class VpnTunnelBase
                 try { t.Send(probe, longHeader: false); }
                 catch { break; } // WSAEMSGSIZE: the local link is smaller than this probe → step down
                 var payload = t.RecvRawPayload(220);
+                // Match BOTH echoed fields, like the Rust and iOS clients. The id alone left
+                // the ACK confirming only "some probe arrived", not "the probe of THIS size
+                // arrived" — the single fact the rung is being accepted on. (Audit 2026-07-30.)
                 if (payload != null && UdpFrag.IsMtuProbeAck(payload)
-                    && UdpFrag.ParseMtuProbe(payload)?.id == id)
+                    && UdpFrag.ParseMtuProbe(payload) is (ushort ackId, ushort ackSize)
+                    && ackId == id && ackSize == outerSize)
                     acked = true;
             }
             if (acked) { found = m; break; }
@@ -1889,6 +1929,54 @@ public abstract class VpnTunnelBase
     private const int TxRxAsymmetryMs = 8000;
 
     // ── tunnel loop ──────────────────────────────────────────────────────────────
+    /// <summary>Re-send delays for the unacknowledged MTU report on UDP, from the first send.
+    /// Spread so an isolated drop AND a short burst of loss are both survived.</summary>
+    private static readonly int[] ReportRetryDelaysMs = { 2_000, 6_000 };
+
+    /// <summary>Tell the server the MTU we settled on (#13). It sizes its downlink from the
+    /// profile's tun.mtu — the path up to ITS tun — so it cannot see that our leg is narrower
+    /// (a probed LTE/CGNAT path, or an explicit smaller Mtu in our config). Without this, every
+    /// large packet it forwards is dropped with no signal to anyone: the connection establishes
+    /// and then stalls on the first big transfer.
+    ///
+    /// The frame is unacknowledged by design (the server never answers a control frame), so on
+    /// UDP a single lost datagram would leave the server on <c>path_mtu = 0</c> for the WHOLE
+    /// session — on precisely the unreliable transport where the report matters most. The frame
+    /// is idempotent (the server keeps the narrowest value it has seen), so re-sending costs a
+    /// few bytes and removes that single point of loss. TCP retransmits for us, so it sends
+    /// once. (Audit 2026-07-30, #5.)
+    ///
+    /// Never fatal: the tunnel works without the report, just without the downlink narrowing.</summary>
+    private void ReportTunnelMtu(ITransport transport, PacketCodec enc, int mtu, bool isUdp,
+        CancellationToken ct)
+    {
+        bool SendOnce(int attempt)
+        {
+            try
+            {
+                transport.Send(enc.Encrypt(CtrlFrame.MtuReport(mtu)));
+                if (attempt == 0) Log($"reported tunnel MTU {mtu} to the server");
+                return true;
+            }
+            catch (Exception e)
+            {
+                if (attempt == 0) Log($"could not report tunnel MTU: {e.Message}");
+                return false;
+            }
+        }
+
+        if (!SendOnce(0) || !isUdp) return;
+        _ = Task.Run(async () =>
+        {
+            for (int i = 0; i < ReportRetryDelaysMs.Length; i++)
+            {
+                try { await Task.Delay(ReportRetryDelaysMs[i], ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+                if (!SendOnce(i + 1)) return;
+            }
+        }, ct);
+    }
+
     private void RunTunnelLoop(VpnConfig config, ITransport transport,
         PacketCodec enc, PacketCodec dec, bool isUdp, int effectiveMtu, CancellationToken ct)
     {
@@ -1913,6 +2001,8 @@ public abstract class VpnTunnelBase
         bool expectServerData = (config.HeartbeatEnabled && config.HeartbeatIntervalMs > 0) || config.ShapingEnabled;
         var firstError = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         void Fail(Exception e) => firstError.TrySetResult(e);
+
+        ReportTunnelMtu(transport, enc, effectiveMtu, isUdp, ct);
 
         // Poll the UDP RX path every WatchdogPollMs (not once per rxDead) so suspend/resume
         // and dead-session detection run promptly — the read simply times out when idle.
@@ -2408,6 +2498,13 @@ public abstract class VpnTunnelBase
         // disposed — closes the same reconnect-time use-after-free window here (issue #69).
         using var loopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var lct = loopCts.Token;
+        // Report the MTU here too, not only in the single-stream loop: this branch is taken
+        // whenever the server profile allows bonding, and it used to skip the report entirely —
+        // so the server stayed on path_mtu = 0 and the downlink narrowing never engaged for any
+        // bonded client. Sent on the PRIMARY stream, before the others are ramped up. Bonding is
+        // TCP-only, so no UDP re-sends are needed. (Audit 2026-07-30, #4.)
+        ReportTunnelMtu(primary.Transport, primary.Enc,
+            EffectiveMtu(config.Mtu, session.PushedMtu), isUdp: false, lct);
         // Do NOT re-resolve config.ServerAddress here: in full-tunnel SetupTun has already
         // redirected the default route and DNS into the tunnel, so a hostname lookup fails
         // ("No such host is known") and tears the whole session down (issue #69). Bonded

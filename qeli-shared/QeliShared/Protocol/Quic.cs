@@ -13,6 +13,11 @@ public static class Quic
     private const int LongHeaderFlag = 0xC0;
     private const int ShortHeaderFlag = 0x40;
 
+    /// <summary>Bytes <see cref="WrapShort"/> emits ahead of the payload: flags(1) +
+    /// connection id(4) + packet number(4). This is the DATA-plane header; the handshake uses
+    /// the longer <c>WrapLong</c> one. Public because the path-MTU probe budgets for it.</summary>
+    public const int ShortHeaderMin = 1 + 4 + 4;
+
     public static byte[] GenerateConnectionId()
     {
         var id = new byte[4];
