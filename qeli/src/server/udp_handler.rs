@@ -105,6 +105,10 @@ struct UdpClient {
     /// probing its path, written here by the receive loop and read by the TUN forwarder.
     /// `None` until authenticated; 0 inside means "never reported". (Audit 2026-07-30, #13.)
     path_mtu: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
+    /// Shared with this client's `SessionShared.client_info` — the `(version, platform)` it
+    /// reported about itself, written here by the receive loop and read by `list-clients`
+    /// through the session. `None` until authenticated; `None` inside means "never said".
+    client_info: Option<crate::server::handler::ClientInfoCell>,
     /// Cumulative anti-amplification budget for this session, in wire bytes.
     ///
     /// `handle_new_udp_client` bounds the FIRST exchange (a ≥1200 B floor plus an
@@ -747,6 +751,7 @@ async fn handle_udp_datagram(
             let src_guard = client.src_guard.clone();
             // Same reason as recv_ctr: taken with the lock, used after it drops.
             let path_mtu = client.path_mtu.clone();
+            let client_info = client.client_info.clone();
             drop(sessions_guard);
 
             if is_awaiting_auth {
@@ -797,6 +802,16 @@ async fn handle_udp_datagram(
                     crate::protocol::ctrl::parse_mtu_report(&plaintext),
                 ) {
                     crate::server::handler::note_path_mtu(cell, format_args!("at {addr}"), mtu);
+                } else if let (Some(cell), Some((v, p))) = (
+                    client_info.as_ref(),
+                    crate::protocol::ctrl::parse_client_info(&plaintext),
+                ) {
+                    crate::server::handler::note_client_info(
+                        cell,
+                        format_args!("at {addr}"),
+                        &v,
+                        &p,
+                    );
                 }
                 return;
             } else if !plaintext.is_empty() {
@@ -1377,6 +1392,9 @@ async fn handle_udp_auth(
         // 0 = not reported yet; the receive loop fills it in from the client's in-tunnel
         // control frame, and the TUN forwarder reads it. (Audit 2026-07-30, #13.)
         path_mtu: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        // None = the client has not said what it is; filled in from the same control
+        // frame path as the MTU report above.
+        client_info: std::sync::Arc::new(std::sync::Mutex::new(None)),
         revoked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
     // The writer task outlives this function and needs the rate bucket + byte
@@ -1448,6 +1466,7 @@ async fn handle_udp_auth(
         if let Some(client) = sessions_guard.get_mut(&addr) {
             client.revoked = Some(writer_session.revoked.clone());
             client.path_mtu = Some(writer_session.path_mtu.clone());
+            client.client_info = Some(writer_session.client_info.clone());
         }
     }
     // Program the kernel routes now the sessions lock is released.
@@ -1637,6 +1656,7 @@ async fn handle_new_udp_client(
             src_guard: None,
             revoked: None,
             path_mtu: None,
+            client_info: None,
             // Seed the budget with the exchange that just happened, so the session
             // starts already accounted for rather than with a free allowance.
             amp_received: initial_packet.len() as u64,

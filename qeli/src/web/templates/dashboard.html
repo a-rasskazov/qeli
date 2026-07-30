@@ -172,6 +172,7 @@
           <th class="tbl-th">Username</th>
           <th class="tbl-th">IP Address</th>
           <th class="tbl-th">Peer</th>
+          <th class="tbl-th" title="Self-reported by the client, not verified by the server">Client</th>
           <th class="tbl-th">Uptime</th>
           <th class="tbl-th text-right">↑ Sent</th>
           <th class="tbl-th text-right">↓ Recv</th>
@@ -190,6 +191,11 @@
             <td class="tbl-td font-medium text-white" x-text="c.username"></td>
             <td class="tbl-td font-mono text-slate-300 text-xs" x-text="c.ip"></td>
             <td class="tbl-td font-mono text-slate-400 text-xs" x-text="c.peer || '—'"></td>
+            <td class="tbl-td text-xs" :title="c.client_version ? 'Self-reported by the client, not verified' : 'This client does not report its version'">
+              <span x-show="c.client_version" class="text-slate-300" x-text="c.client_version"></span>
+              <span x-show="c.client_version && c.client_platform" class="text-slate-500 ml-1" x-text="c.client_platform"></span>
+              <span x-show="!c.client_version" class="text-slate-600">—</span>
+            </td>
             <td class="tbl-td text-slate-300" x-text="dur(c.connected_secs)"></td>
             <td class="tbl-td text-right text-slate-300" x-text="fmt(c.bytes_sent)"></td>
             <td class="tbl-td text-right text-slate-300" x-text="fmt(c.bytes_recv)"></td>

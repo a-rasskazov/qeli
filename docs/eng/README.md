@@ -185,7 +185,7 @@ The full set of CLI subcommands (`qeli <command> --help` for all options).
 ### Live management (via the control socket, no server restart)
 | Command | What it does |
 |---|---|
-| `qeli list-clients` | who is currently connected |
+| `qeli list-clients` | who is currently connected — including a `CLIENT` column with the build each session reports (`0.7.14/android`), or `-` for a client that does not report one. **Self-reported, not verified** |
 | `qeli kick <user>` | disconnect a user |
 | `qeli disable-user <user>` | disable (kick + block reconnects) |
 | `qeli enable-user <user>` | allow login again |

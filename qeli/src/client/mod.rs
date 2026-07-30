@@ -1286,6 +1286,19 @@ where
         }
     }
 
+    // Tell the server which build we are, so the operator's `list-clients` and the panel can
+    // show it. Same authenticated path and the same fire-and-forget contract as the MTU
+    // report above: an older server discards the frame as a malformed packet, and nothing
+    // here waits for or depends on a reply.
+    if let Some(frame) = crate::protocol::ctrl::this_build() {
+        let sender = outs.lock().unwrap().first().cloned();
+        if let Some(s) = sender {
+            if let Err(e) = s.try_send(frame) {
+                log::debug!("could not report client version: {e}");
+            }
+        }
+    }
+
     // Stream-bonding plan. `max_streams` is the server's hard ceiling.
     let target = if max_streams > 1 {
         max_streams as usize
@@ -3520,6 +3533,24 @@ async fn connect_and_run_udp(
             match socket.send(&send_data).await {
                 Ok(_) => log::debug!("reported tunnel MTU {mtu} to the server"),
                 Err(e) => log::debug!("could not report tunnel MTU: {e}"),
+            }
+        }
+    }
+
+    // Tell the server which build we are, so the operator's `list-clients` and the panel can
+    // show it. Same authenticated path and the same fire-and-forget contract as the MTU
+    // report above: an older server discards the frame as a malformed packet, and nothing
+    // here waits for or depends on a reply.
+    if let Some(frame) = crate::protocol::ctrl::this_build() {
+        if let Ok(pkt) = client_tx.encrypt_packet(&frame, &[]) {
+            let send_data = if quic_enabled {
+                quic_pn += 1;
+                wrap_quic_short(&pkt, &connection_id, quic_pn - 1)
+            } else {
+                pkt
+            };
+            if let Err(e) = socket.send(&send_data).await {
+                log::debug!("could not report client version: {e}");
             }
         }
     }

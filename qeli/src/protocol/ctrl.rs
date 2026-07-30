@@ -40,6 +40,100 @@ pub const CTRL_HDR_LEN: usize = 4;
 /// Body: `[mtu(2 BE)]`.
 pub const CTRL_MTU_REPORT: u8 = 1;
 
+/// Client→server: what the client is, so `list-clients` and the panel can show which
+/// build each session runs — the operator's answer to "who still needs to update?".
+/// Body: `[ver_len(1)][version][platform]`.
+///
+/// SELF-REPORTED, NOT ATTESTED. Any authenticated peer can claim any string; this is
+/// diagnostics, never a policy input. Nothing may gate access on it.
+pub const CTRL_CLIENT_INFO: u8 = 2;
+
+/// Caps for the self-reported identity. Deliberately small: the value is peer-chosen and
+/// ends up in the CLI table, the JSON API, the panel and the log, so a long one is either
+/// a bug or an attempt to bloat per-session state. `version` fits semver plus a build
+/// suffix; `platform` fits a short identifier (`linux`, `android`, `windows`, …).
+pub const MAX_CLIENT_VERSION_LEN: usize = 32;
+pub const MAX_CLIENT_PLATFORM_LEN: usize = 16;
+
+/// Semver plus the punctuation real builds use. Anything else is refused outright rather
+/// than scrubbed: the strings reach a log (where a newline forges a line), a terminal
+/// table, and the panel's DOM, and "reject" is the only policy with no clever edge case.
+fn valid_version(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_CLIENT_VERSION_LEN
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+' | b'_'))
+}
+
+/// A short lowercase identifier — `linux`, `windows`, `macos`, `android`, `ios`, `router`.
+fn valid_platform(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= MAX_CLIENT_PLATFORM_LEN
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// Build the client-info frame. `None` when either field would violate the caps or the
+/// charset — the caller then simply sends nothing, and the peer shows "unknown", which is
+/// exactly the pre-feature behaviour.
+pub fn client_info(version: &str, platform: &str) -> Option<Vec<u8>> {
+    if !valid_version(version) || !valid_platform(platform) {
+        return None;
+    }
+    let body_len = 1 + version.len() + platform.len();
+    if body_len > u8::MAX as usize {
+        return None;
+    }
+    let mut f = Vec::with_capacity(CTRL_HDR_LEN + body_len);
+    f.extend_from_slice(&CTRL_MAGIC);
+    f.push(CTRL_CLIENT_INFO);
+    f.push(body_len as u8);
+    f.push(version.len() as u8);
+    f.extend_from_slice(version.as_bytes());
+    f.extend_from_slice(platform.as_bytes());
+    Some(f)
+}
+
+/// Read a client-info frame as `(version, platform)`. `None` when this is not one, or the
+/// body is malformed, or either field fails the charset/length rules — a peer that lies
+/// about itself gets nothing shown, not a mangled string in the operator's table.
+pub fn parse_client_info(p: &[u8]) -> Option<(String, String)> {
+    let (ty, body) = parse(p)?;
+    if ty != CTRL_CLIENT_INFO || body.is_empty() {
+        return None;
+    }
+    let vlen = body[0] as usize;
+    let version = std::str::from_utf8(body.get(1..1 + vlen)?).ok()?;
+    let platform = std::str::from_utf8(body.get(1 + vlen..)?).ok()?;
+    if !valid_version(version) || !valid_platform(platform) {
+        return None;
+    }
+    Some((version.to_string(), platform.to_string()))
+}
+
+/// The platform tag this build reports. Deliberately a closed set of short identifiers
+/// rather than `std::env::consts::OS` passed through: the panel groups by this value, and
+/// an unrecognised target should read as `other` instead of putting an arbitrary target
+/// triple in front of the operator.
+pub fn platform_tag() -> &'static str {
+    match std::env::consts::OS {
+        "linux" => "linux",
+        "windows" => "windows",
+        "macos" => "macos",
+        "android" => "android",
+        "ios" => "ios",
+        "freebsd" => "freebsd",
+        _ => "other",
+    }
+}
+
+/// This build's own client-info frame — the single project version and [`platform_tag`].
+/// `None` only if the crate version ever stops matching the charset, in which case the
+/// client sends nothing and the server shows it as unknown.
+pub fn this_build() -> Option<Vec<u8>> {
+    client_info(env!("CARGO_PKG_VERSION"), platform_tag())
+}
+
 /// Lowest MTU we will believe from a peer. Below the IPv6 minimum there is no plausible
 /// path, and accepting e.g. 68 would let one malformed report shrink a session to
 /// uselessness. Reports below this are clamped up, not honoured.
@@ -148,6 +242,112 @@ mod tests {
         let unknown = [0xC1, 0x9B, 0xEE, 1, 7];
         assert_eq!(parse(&unknown), Some((0xEE, &[7u8][..])));
         assert_eq!(parse_mtu_report(&unknown), None);
+    }
+
+    /// The exact bytes, to be pinned identically in the C#, Kotlin and Swift ports.
+    #[test]
+    fn client_info_matches_the_shared_vector() {
+        assert_eq!(
+            client_info("0.7.13", "linux").unwrap(),
+            vec![
+                0xC1, 0x9B, 0x02, 0x0C, // magic, type=2, len=12
+                0x06, // ver_len=6
+                b'0', b'.', b'7', b'.', b'1', b'3', //
+                b'l', b'i', b'n', b'u', b'x',
+            ]
+        );
+        assert_eq!(
+            parse_client_info(&client_info("0.7.13", "linux").unwrap()),
+            Some(("0.7.13".into(), "linux".into()))
+        );
+    }
+
+    /// This build must be able to describe itself: a crate version that stopped matching
+    /// the charset would silently disable the feature for every client at once.
+    #[test]
+    fn this_build_can_describe_itself() {
+        let f = this_build().expect("own version/platform must pass validation");
+        let (v, p) = parse_client_info(&f).unwrap();
+        assert_eq!(v, env!("CARGO_PKG_VERSION"));
+        assert_eq!(p, platform_tag());
+    }
+
+    #[test]
+    fn client_info_roundtrips_every_platform_we_ship() {
+        for p in ["linux", "windows", "macos", "android", "ios", "router"] {
+            let f = client_info("1.0.0-rc1+build.7", p).unwrap();
+            assert!(is_ctrl(&f));
+            assert_eq!(
+                parse_client_info(&f),
+                Some(("1.0.0-rc1+build.7".into(), p.to_string()))
+            );
+            // The MTU reader must not mistake it for its own frame, and vice versa.
+            assert_eq!(parse_mtu_report(&f), None);
+        }
+        assert_eq!(parse_client_info(&mtu_report(1400)), None);
+    }
+
+    /// The string is peer-chosen and lands in a log line, a terminal table and the panel's
+    /// DOM. Every one of these would be a real injection if it were merely scrubbed.
+    #[test]
+    fn hostile_client_info_is_refused_outright() {
+        // Log-line forgery, terminal escapes, HTML, and a NUL.
+        for bad in [
+            "1.0\nJul 30 12:00:00 qeli: root logged in",
+            "1.0\u{1b}[2J",
+            "<script>alert(1)</script>",
+            "1.0\0",
+            "1.0 beta",  // space
+            "1.0/../..", // path-ish
+            "",          // empty
+        ] {
+            assert!(client_info(bad, "linux").is_none(), "built: {bad:?}");
+            assert!(
+                parse_client_info(&forge(bad, "linux")).is_none(),
+                "parsed: {bad:?}"
+            );
+        }
+        // Platform is stricter still: no uppercase, no punctuation beyond '-'.
+        for bad in ["Linux", "linux_x86", "linux!", ""] {
+            assert!(client_info("1.0", bad).is_none(), "built: {bad:?}");
+            assert!(
+                parse_client_info(&forge("1.0", bad)).is_none(),
+                "parsed: {bad:?}"
+            );
+        }
+        // Over the caps.
+        let long_v = "1".repeat(MAX_CLIENT_VERSION_LEN + 1);
+        let long_p = "a".repeat(MAX_CLIENT_PLATFORM_LEN + 1);
+        assert!(client_info(&long_v, "linux").is_none());
+        assert!(client_info("1.0", &long_p).is_none());
+        assert!(parse_client_info(&forge(&long_v, "linux")).is_none());
+        assert!(parse_client_info(&forge("1.0", &long_p)).is_none());
+    }
+
+    /// Build a frame WITHOUT the builder's validation, to prove the parser stands on its
+    /// own — the bytes on the wire come from a peer, not from our builder.
+    fn forge(version: &str, platform: &str) -> Vec<u8> {
+        let body_len = 1 + version.len() + platform.len();
+        let mut f = vec![CTRL_MAGIC[0], CTRL_MAGIC[1], CTRL_CLIENT_INFO];
+        f.push(body_len.min(255) as u8);
+        f.push(version.len().min(255) as u8);
+        f.extend_from_slice(version.as_bytes());
+        f.extend_from_slice(platform.as_bytes());
+        f
+    }
+
+    /// A declared `ver_len` that runs past the body must not panic or read neighbouring
+    /// bytes — it is a peer-supplied index into a peer-supplied buffer.
+    #[test]
+    fn client_info_length_field_cannot_over_read() {
+        // ver_len declares 200 bytes of version inside a 9-byte body.
+        let mut f = vec![CTRL_MAGIC[0], CTRL_MAGIC[1], CTRL_CLIENT_INFO, 9, 200];
+        f.extend_from_slice(b"1.0linux");
+        assert_eq!(parse_client_info(&f), None);
+        // Empty body.
+        assert_eq!(parse_client_info(&[0xC1, 0x9B, CTRL_CLIENT_INFO, 0]), None);
+        // ver_len == body length leaves an empty platform.
+        assert_eq!(parse_client_info(&forge("1.0", "")), None);
     }
 
     #[test]

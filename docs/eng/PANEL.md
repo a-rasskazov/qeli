@@ -191,8 +191,14 @@ sits at the bottom of the sidebar (and in the corner of the login page).
   sub-1500 path MTU; on the server apply the OS tuning (outer-port MSS clamp + BBR /
   PMTU probing) — see [CONFIG.md](CONFIG.md) → "sysctl + iptables". The
   `install-qeli-server.sh` installer does this automatically.
-- **Live clients** — who's connected (profile, IP, uptime, traffic, limit), with
-  **Kick** and **Set bandwidth**. Per-profile filter, 10s auto-refresh.
+- **Live clients** — who's connected (profile, IP, peer, client build, uptime, traffic,
+  limit), with **Kick** and **Set bandwidth**. Per-profile filter, 10s auto-refresh.
+  The **Client** column shows the version and platform each session reports over the
+  tunnel (e.g. `0.7.14 android`) — the quick answer to "who still has to update". A dash
+  means the client does not report one: every build that predates the feature, and the
+  GUI clients until they ship the frame. The value is **self-reported and not verified** — any
+  authenticated peer can claim any string, so read it as a label, never as proof of what
+  is actually running.
 
 ### Host & tunnel metrics on the Dashboard
 The two cards at the top of the page refresh **every 2 s** (polling pauses while the

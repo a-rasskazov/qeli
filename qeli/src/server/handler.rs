@@ -142,6 +142,31 @@ pub fn note_path_mtu(cell: &AtomicU32, who: std::fmt::Arguments<'_>, mtu: u16) {
     }
 }
 
+/// Where a session's self-reported `(version, platform)` lives. Shared with the UDP data
+/// plane, which holds the cell without holding the session.
+pub type ClientInfoCell = Arc<std::sync::Mutex<Option<(String, String)>>>;
+
+/// Record what a client says it is (see [`SessionShared::client_info`]). Logged once per
+/// change — an operator watching a fleet upgrade wants that line, but a client that
+/// resends the frame every reconnect-in-place must not spam the log.
+///
+/// `version` and `platform` MUST have come from [`crate::protocol::ctrl::parse_client_info`],
+/// which is what guarantees they carry no control characters and cannot forge a log line.
+pub fn note_client_info(
+    cell: &std::sync::Mutex<Option<(String, String)>>,
+    who: std::fmt::Arguments<'_>,
+    version: &str,
+    platform: &str,
+) {
+    let mut slot = lock_or_recover(cell, "note_client_info");
+    let next = (version.to_string(), platform.to_string());
+    if slot.as_ref() == Some(&next) {
+        return;
+    }
+    log::info!("client {who} reports qeli {version} on {platform}");
+    *slot = Some(next);
+}
+
 pub struct SessionShared {
     pub session_id: u64,
     pub username: String,
@@ -201,6 +226,17 @@ pub struct SessionShared {
     /// receive loop drops (and forgets) the peer the moment it sees it.
     /// (Audit 2026-07-27, A1/A2/A3.)
     pub revoked: Arc<std::sync::atomic::AtomicBool>,
+    /// `(version, platform)` the client reported about itself over the tunnel, so
+    /// `list-clients` and the panel can answer "which build is this session running?".
+    /// `None` for every client that predates the report, and for anything that failed
+    /// validation.
+    ///
+    /// SELF-REPORTED. Validated for shape only (see [`crate::protocol::ctrl`]); it is a
+    /// label for the operator, never an input to any decision about the session.
+    ///
+    /// `Arc` for the same reason as [`Self::path_mtu`]: the UDP data plane holds the cell
+    /// directly on its per-worker `UdpClient` and never has the session in hand.
+    pub client_info: ClientInfoCell,
 }
 
 impl SessionShared {
@@ -221,6 +257,25 @@ impl SessionShared {
             format_args!("'{}' ({})", self.username, self.client_ip),
             mtu,
         );
+    }
+
+    /// Record what this client says it is (see [`note_client_info`]).
+    pub fn note_client_info(&self, version: &str, platform: &str) {
+        note_client_info(
+            &self.client_info,
+            format_args!(
+                "'{}' ({})",
+                crate::util::log_sanitize(&self.username),
+                self.client_ip
+            ),
+            version,
+            platform,
+        );
+    }
+
+    /// `(version, platform)` as reported, for the control socket. See [`note_client_info`].
+    pub fn reported_client(&self) -> Option<(String, String)> {
+        lock_or_recover(&self.client_info, "reported_client").clone()
     }
 
     /// Pick the (codec, writer) of the bonded stream this packet's flow is pinned
@@ -580,6 +635,9 @@ where
                 // here, and the downlink check stays switched off for them.
                 path_mtu: Arc::new(AtomicU32::new(0)),
                 revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                // None = the client has not said what it is. Every client that predates
+                // the report stays here, and both surfaces show it as unknown.
+                client_info: Arc::new(std::sync::Mutex::new(None)),
             });
             {
                 let mut sessions = profile.sessions.write().await;
@@ -976,6 +1034,10 @@ async fn run_stream<R, W>(
                                         crate::protocol::ctrl::parse_mtu_report(&plaintext)
                                     {
                                         session_r.note_path_mtu(mtu);
+                                    } else if let Some((v, p)) =
+                                        crate::protocol::ctrl::parse_client_info(&plaintext)
+                                    {
+                                        session_r.note_client_info(&v, &p);
                                     }
                                     continue;
                                 }

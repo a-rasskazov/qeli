@@ -84,6 +84,14 @@ pub struct ClientInfo {
     /// Active bonded (multipath) streams — 1 for a single-link session.
     #[serde(default)]
     pub streams: u32,
+    /// What the client SAYS it is — self-reported over the tunnel, never attested. `None`
+    /// for a client that predates the report, or one whose report failed validation.
+    /// `serde(default)` so a new CLI still parses an older server's reply, as with
+    /// `dropped`/`streams`.
+    #[serde(default)]
+    pub client_version: Option<String>,
+    #[serde(default)]
+    pub client_platform: Option<String>,
 }
 
 pub async fn run_control_server(state: Arc<ServerState>) -> anyhow::Result<()> {
@@ -250,6 +258,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
             for (pname, profile) in profiles.iter() {
                 let sessions = profile.sessions.read().await;
                 for s in sessions.by_ip.values() {
+                    let reported = s.reported_client();
                     clients.push(ClientInfo {
                         profile: pname.clone(),
                         username: s.username.clone(),
@@ -263,6 +272,8 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                             .bandwidth_limit_mbps
                             .load(std::sync::atomic::Ordering::Relaxed),
                         streams: s.stream_count() as u32,
+                        client_version: reported.as_ref().map(|(v, _)| v.clone()),
+                        client_platform: reported.map(|(_, p)| p),
                     });
                 }
             }
