@@ -31,6 +31,11 @@ use tokio::net::TcpStream;
 
 const NONCE_LEN: usize = 12;
 
+/// Bytes `obfs_datagram_seal` prepends to a datagram: a 1-byte tag + the nonce. Public
+/// because the handshake fragmenter budgets for it (obfs seals the *outer* datagram,
+/// on top of the QUIC mask) — see [`crate::protocol::udp_frag::MAX_CHUNK`].
+pub const OBFS_SEAL_OVERHEAD: usize = 1 + NONCE_LEN;
+
 /// Hard caps for the AmneziaWG-style junk feature (F2), to bound memory.
 const AWG_JC_CAP: u32 = 128;
 const AWG_LEN_CAP: u16 = 1400;
@@ -825,7 +830,7 @@ impl ObfsUdp {
     /// The path-MTU probe needs it to know how much of the path its own framing eats.
     pub fn seal_overhead(&self) -> usize {
         if self.key.is_some() {
-            1 + NONCE_LEN
+            OBFS_SEAL_OVERHEAD
         } else {
             0
         }

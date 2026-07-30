@@ -24,7 +24,11 @@ pub const QUIC_SHORT_HEADER_MIN: usize = 1 + 4 + 4;
 /// `with_capacity` hint while being computed from an older layout without the Token
 /// Length and Length fields — so every masked datagram under-reserved by 6 bytes and
 /// reallocated on the hot path. (Audit 2026-07-27, X3.)
-const QUIC_LONG_HEADER_EMITTED: usize = 1 + 4 + 1 + 4 + 1 + 1 + 2 + 4;
+/// Bytes `wrap_quic_long` actually emits ahead of the payload: flags(1) + version(4) +
+/// DCID len(1) + DCID(4) + SCID len(1) + Token Length(1) + Length varint(2) + packet
+/// number(4). Public because the handshake fragmenter has to budget for it — see
+/// [`crate::protocol::udp_frag::MAX_CHUNK`].
+pub const QUIC_LONG_HEADER_EMITTED: usize = 1 + 4 + 1 + 4 + 1 + 1 + 2 + 4;
 
 /// Append `v` as a QUIC variable-length integer (RFC 9000 §16), choosing the shortest
 /// encoding that fits. Returns false when the value exceeds the 4-byte (30-bit) form —

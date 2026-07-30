@@ -835,8 +835,8 @@ fn build_quic() -> String {
 /// only on LTE.
 fn build_udp_frag() -> String {
     use qeli::protocol::udp_frag::{
-        fragment, mtu_probe_ack_datagram, Reassembler, FRAG_MAGIC, MAX_CHUNK, MAX_FRAGS,
-        MSG_CLIENT_HELLO, MSG_JUNK, MSG_MTU_PROBE, MSG_SERVER_HELLO,
+        fragment, mtu_probe_ack_datagram, Reassembler, FRAG_MAGIC, MAX_CHUNK, MAX_CHUNK_ACCEPT,
+        MAX_FRAGS, MSG_CLIENT_HELLO, MSG_JUNK, MSG_MTU_PROBE, MSG_SERVER_HELLO,
     };
 
     /// Deterministic message body: byte i = (i * 31 + 7) mod 256 — non-repeating enough that
@@ -889,8 +889,15 @@ fn build_udp_frag() -> String {
     "  `classify`   — the cheap predicates every receive path runs before anything else.",
     "",
     "NOTE ON CHUNK SIZES: the `reassemble` cases use deliberately tiny chunks. The reassembler",
-    "does not police chunk size (only idx/count consistency), so small chunks exercise exactly",
-    "the same logic while keeping this file readable instead of kilobytes of hex.",
+    "bounds a chunk only from ABOVE (`max_chunk_accept`) and otherwise places fragments by idx",
+    "with no offset or length field, so an UNDERSIZED chunk exercises exactly the same logic",
+    "while keeping this file readable instead of kilobytes of hex.",
+    "",
+    "TWO CHUNK BOUNDS, AND THEY DIFFER: `max_chunk` is what an implementation may EMIT (derived",
+    "from the IPv6-minimum-MTU budget); `max_chunk_accept` is the largest chunk it must still",
+    "ACCEPT, pinned at the historical 1200. An implementation that bounds RECEIVE by max_chunk",
+    "rejects every handshake from a pre-#14 peer, so both values are pinned here and a port must",
+    "match both.",
     "",
     "NOT PINNED HERE: junk decoys and MTU probes carry RANDOM bodies by design, so their bytes",
     "cannot be fixed. Their framing is covered by `classify`, and the deterministic probe ACK",
@@ -904,7 +911,9 @@ fn build_udp_frag() -> String {
   "generator": "qeli/src/gen_conformance_main.rs",
   "max_chunk": "#,
     );
-    s.push_str(&format!("{MAX_CHUNK},\n  \"max_frags\": {MAX_FRAGS},\n"));
+    s.push_str(&format!(
+        "{MAX_CHUNK},\n  \"max_chunk_accept\": {MAX_CHUNK_ACCEPT},\n  \"max_frags\": {MAX_FRAGS},\n"
+    ));
     s.push_str(
         "  \"platforms\": [\"rust\", \"csharp\", \"kotlin\", \"swift\"],\n  \"fragment\": [\n",
     );

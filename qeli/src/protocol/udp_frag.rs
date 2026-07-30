@@ -25,12 +25,58 @@ use std::time::{Duration, Instant};
 pub const FRAG_MAGIC: [u8; 3] = [0xF0, 0x9B, 0x71];
 /// Header length: magic(3) + msg_id(1) + idx(1) + count(1).
 pub const FRAG_HDR_LEN: usize = FRAG_MAGIC.len() + 3;
-/// Max payload bytes per fragment. Keeps the outer datagram (chunk + header + QUIC
-/// wrap + UDP/IP) under the IPv6 minimum MTU (1280) and every LTE/CGNAT path, so no
-/// IP fragmentation occurs. Same conservative floor QUIC uses for initial packets.
-pub const MAX_CHUNK: usize = 1200;
-/// Hard cap on fragments per message (anti-DoS on the reassembly buffer). 24*1200 ≈
-/// 28 KB, far above any real handshake (~2 KB / 2 fragments).
+/// IPv6 minimum link MTU (RFC 8200 §5): every path must carry this without
+/// fragmenting, so it is the narrowest path we design the handshake to survive.
+pub const IPV6_MIN_MTU: usize = 1280;
+/// Worst-case outer headers wrapped around one fragment, from the inside out. These
+/// are the *emitted* sizes, not protocol minimums — a fragment datagram really does
+/// carry all of them at once on an IPv6 + `obfs` + QUIC-mask path.
+const OUTER_QUIC: usize = crate::protocol::quic::QUIC_LONG_HEADER_EMITTED;
+const OUTER_OBFS_SEAL: usize = crate::protocol::obfs::OBFS_SEAL_OVERHEAD;
+const OUTER_UDP: usize = 8;
+const OUTER_IPV6: usize = 40;
+/// Headroom kept free so that adding one more outer layer (or growing an existing
+/// header) does not silently push the handshake back over [`IPV6_MIN_MTU`] — the
+/// exact regression [`MAX_CHUNK`] was hard-coded into. `max_chunk_fits_ipv6_min_mtu`
+/// fails the build's tests if the budget is ever overspent again.
+const OUTER_RESERVE: usize = 32;
+
+/// Max payload bytes per fragment. **Derived**, not chosen: the whole outer datagram
+/// (chunk + fragment header + QUIC long-header mask + obfs seal + UDP + IPv6) must fit
+/// [`IPV6_MIN_MTU`], so no fragment is ever IP-fragmented on an LTE/CGNAT path.
+///
+/// This was 1200 — a number borrowed from QUIC's initial-packet floor, which budgets a
+/// whole *datagram*, not the payload inside four more layers. The handshake wraps each
+/// fragment in a QUIC **long** header (`wrap_quic_long`, 18 B — the data plane's short
+/// header is only 9 B), so the real worst case was 1200 + 6 + 18 + 13 + 8 + 40 = 1285:
+/// five bytes over the IPv6 minimum, i.e. the PQ handshake could not complete on a
+/// 1280-MTU IPv6 path with `obfs` + QUIC masking on.
+///
+/// This bounds only what we **emit**; [`MAX_CHUNK_ACCEPT`] bounds what we accept. Keeping
+/// the two separate is what makes the change compatible in both directions — see there.
+/// (Audit 2026-07-30, #14.)
+pub const MAX_CHUNK: usize = IPV6_MIN_MTU
+    - OUTER_IPV6
+    - OUTER_UDP
+    - OUTER_OBFS_SEAL
+    - OUTER_QUIC
+    - OUTER_RESERVE
+    - FRAG_HDR_LEN;
+
+/// Largest chunk we **accept**, pinned to the historical 1200 that every build before the
+/// #14 fix emitted.
+///
+/// Reassembly is size-agnostic — fragments are placed by `idx`, with no offset or
+/// per-fragment length field — so the only thing a receiver does with a chunk size is bound
+/// it from above for anti-DoS. Shrinking [`MAX_CHUNK`] therefore keeps *our* fragments
+/// readable by any peer; but had we shrunk the accept bound with it, we would have rejected
+/// every fragment from a pre-fix peer and broken the handshake in the other direction. Both
+/// bounds must exist for the change to be compatible both ways, and this one must never drop
+/// below 1200. It still caps a reassembled message at `MAX_FRAGS * MAX_CHUNK_ACCEPT` ≈ 28 KB,
+/// exactly the pre-fix bound.
+pub const MAX_CHUNK_ACCEPT: usize = 1200;
+/// Hard cap on fragments per message (anti-DoS on the reassembly buffer).
+/// `MAX_FRAGS * MAX_CHUNK_ACCEPT` ≈ 28 KB, far above any real handshake (~2 KB / 2 fragments).
 pub const MAX_FRAGS: u8 = 24;
 /// A partially-reassembled message older than this is dropped (anti-DoS).
 pub const REASSEMBLY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -51,7 +97,7 @@ pub const MSG_JUNK: u8 = 3;
 /// the path MTU it is dropped (not IP-fragmented) → no ACK → that size fails. The body
 /// is `[id(2 LE)][outer_size(2 LE)]` then random padding. Rides the same obfs-XOR /
 /// QUIC wrap as data, so it measures the REAL data-plane path. Recognized and handled
-/// (echoed) before the reassembler, so its oversized "chunk" never hits [`MAX_CHUNK`].
+/// (echoed) before the reassembler, so its oversized "chunk" never hits [`MAX_CHUNK_ACCEPT`].
 pub const MSG_MTU_PROBE: u8 = 4;
 /// Path-MTU probe **ACK** (server→client): a tiny datagram echoing the probe's
 /// `[id(2 LE)][outer_size(2 LE)]`, confirming the big probe arrived intact.
@@ -221,9 +267,10 @@ impl Reassembler {
             return Err("fragment index out of range");
         }
         // Bound per-fragment chunk size (anti-DoS: caps a reassembled message at
-        // MAX_FRAGS*MAX_CHUNK). Legit senders never exceed MAX_CHUNK — fragment()
-        // slices in MAX_CHUNK-sized chunks.
-        if chunk.len() > MAX_CHUNK {
+        // MAX_FRAGS*MAX_CHUNK_ACCEPT). Deliberately the ACCEPT bound, not the send
+        // budget: a peer built before the #14 budget fix emits 1200-byte chunks, and
+        // bounding by our smaller MAX_CHUNK would reject every one of its handshakes.
+        if chunk.len() > MAX_CHUNK_ACCEPT {
             return Err("fragment chunk too large");
         }
         if self.count == 0 {
@@ -297,6 +344,12 @@ mod tests {
             fx["max_chunk"].as_u64(),
             Some(MAX_CHUNK as u64),
             "the fixture was generated for a different MAX_CHUNK than this build uses"
+        );
+        assert_eq!(
+            fx["max_chunk_accept"].as_u64(),
+            Some(MAX_CHUNK_ACCEPT as u64),
+            "the fixture pins a different MAX_CHUNK_ACCEPT than this build uses — a port that \
+             bounds RECEIVE by the send budget rejects every pre-#14 peer"
         );
         assert_eq!(
             fx["max_frags"].as_u64(),
@@ -479,6 +532,75 @@ mod tests {
         assert!(fragment(MSG_CLIENT_HELLO, &too_big).is_err());
     }
 
+    /// The budget that [`MAX_CHUNK`] is derived from, asserted end to end against the
+    /// real emitted header sizes — so growing any outer layer fails here rather than
+    /// silently black-holing the PQ handshake on a 1280-MTU IPv6 path.
+    #[test]
+    fn max_chunk_fits_ipv6_min_mtu() {
+        // Worst case, inside out: chunk -> fragment header -> QUIC long header (the
+        // handshake path uses wrap_quic_long, NOT the 9-byte short header) -> obfs
+        // datagram seal -> UDP -> IPv6.
+        let outer =
+            MAX_CHUNK + FRAG_HDR_LEN + OUTER_QUIC + OUTER_OBFS_SEAL + OUTER_UDP + OUTER_IPV6;
+        assert!(
+            outer <= IPV6_MIN_MTU,
+            "fragment datagram is {outer} B, over the {IPV6_MIN_MTU} B IPv6 minimum MTU"
+        );
+        assert_eq!(outer + OUTER_RESERVE, IPV6_MIN_MTU, "reserve fully spent");
+
+        // The regression this replaced: 1200 was over budget by 5 bytes. Kept as a
+        // literal so re-introducing that value cannot pass silently.
+        let old = 1200 + FRAG_HDR_LEN + OUTER_QUIC + OUTER_OBFS_SEAL + OUTER_UDP + OUTER_IPV6;
+        assert_eq!(old, 1285);
+        assert!(old > IPV6_MIN_MTU);
+        // Compile-time, not run-time: raising MAX_CHUNK back above the legacy 1200 would make
+        // every pre-#14 peer reject our fragments, so it must fail the BUILD.
+        const { assert!(MAX_CHUNK < 1200, "MAX_CHUNK must shrink, never grow") };
+    }
+
+    /// Both directions of the #14 rollout must interoperate, because the send budget and
+    /// the accept bound are now different numbers.
+    #[test]
+    fn smaller_chunks_stay_wire_compatible() {
+        // Us -> pre-fix peer: every chunk we emit fits the 1200-byte bound it enforced.
+        let msg: Vec<u8> = (0..2100u32).map(|i| (i * 11) as u8).collect();
+        let frags = fragment(MSG_SERVER_HELLO, &msg).unwrap();
+        assert!(frags.len() >= 2);
+        for f in &frags {
+            assert!(f.len() - FRAG_HDR_LEN <= MAX_CHUNK_ACCEPT);
+        }
+        assert_eq!(reassemble_all(&frags), msg);
+
+        // Pre-fix peer -> us: it slices at 1200, which is ABOVE our send budget. Bounding
+        // by MAX_CHUNK here would reject it and break every legacy handshake.
+        const { assert!(MAX_CHUNK_ACCEPT > MAX_CHUNK) };
+        let legacy: Vec<Vec<u8>> = (0..2u8)
+            .map(|idx| {
+                let mut d = Vec::with_capacity(FRAG_HDR_LEN + 1200);
+                d.extend_from_slice(&FRAG_MAGIC);
+                d.extend_from_slice(&[MSG_SERVER_HELLO, idx, 2]);
+                d.extend(std::iter::repeat_n(b'L', 1200));
+                d
+            })
+            .collect();
+        let mut re = Reassembler::new();
+        assert!(
+            re.push(&legacy[0]).is_ok(),
+            "legacy 1200-byte chunk rejected"
+        );
+        let done = re
+            .push(&legacy[1])
+            .expect("legacy second fragment rejected");
+        assert_eq!(done.expect("message must complete").len(), 2400);
+
+        // The anti-DoS bound still bites one byte above the legacy size.
+        let mut over = Vec::new();
+        over.extend_from_slice(&FRAG_MAGIC);
+        over.extend_from_slice(&[MSG_SERVER_HELLO, 0, 1]);
+        over.extend(std::iter::repeat_n(0u8, MAX_CHUNK_ACCEPT + 1));
+        assert!(Reassembler::new().push(&over).is_err());
+    }
+
     #[test]
     fn single_fragment_small_message() {
         let msg = b"hello".to_vec();
@@ -515,15 +637,24 @@ mod tests {
 
     #[test]
     fn rejects_oversize_chunk() {
-        // Hand-build a single fragment whose chunk exceeds MAX_CHUNK.
-        let mut frag = Vec::new();
-        frag.extend_from_slice(&FRAG_MAGIC);
-        frag.push(MSG_CLIENT_HELLO);
-        frag.push(0); // idx
-        frag.push(1); // count
-        frag.extend_from_slice(&vec![0u8; MAX_CHUNK + 1]);
-        let mut re = Reassembler::new();
-        assert!(re.push(&frag).is_err());
+        // Hand-build a single fragment whose chunk exceeds the ACCEPT bound. Deliberately
+        // MAX_CHUNK_ACCEPT, not MAX_CHUNK: a chunk between the two is what a pre-#14 peer
+        // legitimately sends, so rejecting there would break every legacy handshake — the
+        // case `smaller_chunks_stay_wire_compatible` pins from the other side.
+        let build = |chunk_len: usize| {
+            let mut frag = Vec::with_capacity(FRAG_HDR_LEN + chunk_len);
+            frag.extend_from_slice(&FRAG_MAGIC);
+            frag.push(MSG_CLIENT_HELLO);
+            frag.push(0); // idx
+            frag.push(1); // count
+            frag.extend(std::iter::repeat_n(0u8, chunk_len));
+            frag
+        };
+        assert!(Reassembler::new()
+            .push(&build(MAX_CHUNK_ACCEPT + 1))
+            .is_err());
+        // Exactly at the bound is still accepted (and completes, count = 1).
+        assert!(Reassembler::new().push(&build(MAX_CHUNK_ACCEPT)).is_ok());
     }
 
     #[test]
