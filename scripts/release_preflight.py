@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Release preflight — run this BEFORE cutting a release, from the release branch.
 
-Two gates that a 64-bit-only lab build misses (this is exactly how the 0.7.12
+Gates that a 64-bit-only lab build misses (this is exactly how the 0.7.12
 mipsel/armv7 router regression reached asset-packaging: CI was red on dev for four
 commits, but the local jemalloc gate stayed green and nobody looked at CI):
 
@@ -14,6 +14,10 @@ commits, but the local jemalloc gate stayed green and nobody looked at CI):
                  QELI_LAB_PASS is set; host from QELI_LAB_SERVER (default .10).
                  The lab checkout must be AT the commit being released — the gate
                  prints the SHA it actually built and fails on any divergence.
+  3. OpenWrt   — the feed Makefile's PKG_SOURCE_VERSION must pin the commit being
+                 released and PKG_MIRROR_HASH must be a real sha256, not the
+                 unmatchable placeholder (which makes the router package unbuildable).
+                 Local-only; no network or lab needed.
 
 Exit non-zero if any gate fails, so it can front a release script.
 
@@ -215,6 +219,76 @@ else:
                     failures.append(f"32-bit {arch} build failed")
                     print("\n".join(l for l in out.splitlines() if l.startswith("error"))[:600])
         c.close()
+
+# ── Gate 3: OpenWrt package pin ──────────────────────────────────────────────
+# The feed Makefile pins the source by SHA and verifies the generated tarball by
+# PKG_MIRROR_HASH. Both are release-time facts: the SHA is the commit being tagged, and
+# the hash only exists once that tarball has been produced. Left stale, the package
+# either builds a DIFFERENT tree than the release or refuses to build at all — and the
+# all-zero placeholder is deliberately unmatchable, so nothing catches it until someone
+# tries to build for a router. Checked here because this is the one script that runs
+# with the release commit in hand. (Audit 2026-07-30, #2.)
+print("\n=== Gate 3: OpenWrt package pin ===")
+OWRT_MK = os.path.join(ROOT, "qeli-openwrt", "Makefile")
+PLACEHOLDER_HASH = "0" * 64
+try:
+    with open(OWRT_MK, encoding="utf-8") as fh:
+        mk = fh.read()
+
+    def mk_var(name):
+        for line in mk.splitlines():
+            if line.startswith(f"{name}:="):
+                return line.split(":=", 1)[1].strip()
+        return None
+
+    pkg_hash = mk_var("PKG_MIRROR_HASH")
+    pkg_sha = mk_var("PKG_SOURCE_VERSION")
+    pkg_ver = mk_var("PKG_VERSION")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT
+    ).stdout.strip()
+
+    print(f"  PKG_VERSION={pkg_ver}  PKG_SOURCE_VERSION={(pkg_sha or '')[:8]}  "
+          f"PKG_MIRROR_HASH={'<placeholder>' if pkg_hash == PLACEHOLDER_HASH else (pkg_hash or '')[:16]}")
+
+    if pkg_hash is None or pkg_sha is None or pkg_ver is None:
+        failures.append("qeli-openwrt/Makefile: could not read PKG_VERSION/PKG_SOURCE_VERSION/PKG_MIRROR_HASH")
+    else:
+        if pkg_hash == PLACEHOLDER_HASH:
+            failures.append(
+                "qeli-openwrt/Makefile: PKG_MIRROR_HASH is still the placeholder — the router "
+                "package cannot build. Produce it from an OpenWrt buildroot with "
+                "`make package/qeli/download V=s && sha256sum dl/qeli-<ver>.tar.xz` "
+                "(or `make package/qeli/check FIXUP=1`). Never set it to `skip`."
+            )
+        elif pkg_hash.lower() == "skip":
+            failures.append("qeli-openwrt/Makefile: PKG_MIRROR_HASH=skip disables tarball verification")
+        elif len(pkg_hash) != 64 or not all(ch in "0123456789abcdef" for ch in pkg_hash.lower()):
+            failures.append(f"qeli-openwrt/Makefile: PKG_MIRROR_HASH is not a sha256 ({pkg_hash!r})")
+
+        if head and pkg_sha != head:
+            failures.append(
+                f"qeli-openwrt/Makefile: PKG_SOURCE_VERSION pins {pkg_sha[:8]}, but the commit "
+                f"being released is {head[:8]} — the router package would build a different tree"
+            )
+
+        # The version in the feed Makefile has to name the release it ships.
+        crate_ver = None
+        try:
+            with open(os.path.join(ROOT, "qeli", "Cargo.toml"), encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("version"):
+                        crate_ver = line.split("=", 1)[1].strip().strip('"')
+                        break
+        except OSError:
+            pass
+        if crate_ver and pkg_ver != crate_ver:
+            failures.append(
+                f"qeli-openwrt/Makefile: PKG_VERSION={pkg_ver} but the crate is {crate_ver}"
+            )
+except OSError as e:
+    failures.append(f"qeli-openwrt/Makefile unreadable: {e}")
+    print(f"  ! {e}")
 
 # ── verdict ──────────────────────────────────────────────────────────────────
 print("\n===== PREFLIGHT =====")

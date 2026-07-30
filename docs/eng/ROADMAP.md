@@ -440,6 +440,35 @@ otherwise        → control: [type][u16 len][payload]
 **Do this before roaming:** roaming needs a server-notification mechanism, or it will have
 to be reworked afterwards.
 
+### IPv6 server endpoint (→ 0.8.0)
+
+Deferred deliberately: an IPv6 address is accepted at every EDGE and unusable in every CORE,
+so it currently fails in a way that looks like a bug rather than an unimplemented feature.
+Either finish it or reject the address at parse time — the present half-state is the worst of
+the three.
+
+What already works: the Rust config parses `[2001:db8::1]:443`, and the C# client emits a
+correctly bracketed `qeli://` link ([VpnConfig.cs](../../qeli-shared/QeliShared/Model/VpnConfig.cs)).
+
+What does not:
+- **Rust serialises the address unbracketed** — `format!("{}:{}", address, port)`
+  ([client.rs](../../qeli/src/config/client.rs)) — so a parsed IPv6 endpoint is written back
+  as `2001:db8::1:443`, which no longer round-trips.
+- **Rust builds every runtime address the same way**, at four call sites in
+  [client/mod.rs](../../qeli/src/client/mod.rs). `join_host_port` exists (it was added for the
+  server's listeners in 0.7.14) and is the ready-made fix.
+- **Rust's UDP data plane binds `0.0.0.0:0`** — IPv4 only, whatever the endpoint says.
+- **C# creates `AddressFamily.InterNetwork` sockets** for both TCP and UDP
+  ([VpnTunnelBase.cs](../../qeli-shared/QeliShared/Vpn/VpnTunnelBase.cs)), and its DNS
+  resolver discards every AAAA answer.
+
+Scope: address parsing, serialisation, socket creation and name resolution, across four
+clients — plus a lab with real IPv6, which the current two-VM lab does not have. That last
+point is the practical reason it waits for 0.8.0: without an IPv6 path to test on, the work
+could only be verified by reading it. Note this is about reaching a server OVER IPv6; carrying
+IPv6 INSIDE the tunnel is a separate question (`allow_ipv6_leak`, kill-switch v6 rules) and is
+not covered here. (Audit 2026-07-30, #9.)
+
 ### Roaming — seamless network change (→ 0.8.0)
 
 **Plan: [ROAMING.md](ROAMING.md).** A client surviving a Wi-Fi↔LTE / IP change without
@@ -726,24 +755,25 @@ profiles, no `gmt_unix_time`, no arbitrary extension composition.
 Everything Medium-and-above from the three audits is fixed on the 0.7.12 branch (**not released yet**) (see CHANGELOG). What
 follows was deliberately deferred.
 
-- 🔵 **Reverse PMTU channel (client reports its discovered path MTU to the server).** The
-  client measures its PMTU and applies it to its own TUN/socket, but the **server never
-  learns it** → downlink padding is capped by a fixed constant rather than that client's MTU
-  ([udp_handler.rs](../../qeli/src/server/udp_handler.rs), [server/mod.rs](../../qeli/src/server/mod.rs)).
-  **The benefit is narrow — MEASURE FIRST, then build:** inbound TCP is already covered by the
-  MSS clamp (`mss=mtu-40`, both directions) plus the client's own MSS derived from its reduced
-  TUN MTU; the server does **not** set DF on downlink, so an oversized packet fragments rather
-  than black-holes; and QUIC/HTTP3 runs its own DPLPMTUD with black-hole detection and
-  **self-heals** by falling back to ~1200-byte datagrams. What actually suffers is large
-  non-TCP flows **without their own PMTUD** (some VoIP / game / raw media UDP) on clients with
-  a narrow path (LTE/CGNAT), and only where fragments are dropped — plus a slow QUIC start.
-  **Order of work:** (1) **diagnose** — a server-side counter for "this downlink packet would
-  exceed a narrow MTU", or `tcpdump` fragments toward a live LTE client (half an hour → a fact
-  instead of a guess); (2) no fragments → the question is closed; (3) fragments → the **cheap
-  variant**: carry the discovered MTU as a field in the EXISTING control message (heartbeat)
-  plus a server-side `min(own, client-reported)` cap; older clients omit the field → fall back
-  to today's behaviour. The full variant (a dedicated wire message, re-announce on path change,
-  ICMP integration) belongs with 0.8.0 roaming, where the wire format changes anyway.
+- ✅ **Reverse PMTU channel (client reports its discovered path MTU to the server).**
+  DONE in 0.7.14. The client now sends its settled MTU as an authenticated in-tunnel control
+  frame right after AuthOK, and the server keeps `min(profile tun.mtu, reported)` per session
+  ([ctrl.rs](../../qeli/src/protocol/ctrl.rs), [server/mod.rs](../../qeli/src/server/mod.rs)).
+  Oversized downlink packets are then handled the way a router handles them: with DF set, ICMP
+  Fragmentation Needed carrying the real next-hop MTU (RFC 1191); without DF, the datagram is
+  fragmented (RFC 791) instead of dropped ([icmp.rs](../../qeli/src/protocol/icmp.rs)).
+
+  **One claim in the deferral above was simply wrong** and is worth keeping visible: "the
+  server does not set DF on downlink, so an oversized packet fragments rather than
+  black-holes". It does not set DF, but qeli forwards in USERSPACE — the kernel never sees the
+  packet and so never fragments it. Oversized non-DF packets were dropped outright. That error
+  is what made the whole feature look narrower than it was, which is a good argument for
+  measuring rather than reasoning about the data path. Additive in both directions: a client
+  that sends no report leaves the server on the profile MTU exactly as before.
+
+  Still open: fragmentation refuses IPv4 headers carrying OPTIONS (copy-on-fragment is
+  per-option; those fall back to a drop), and IPv6 needs an ICMPv6 Packet Too Big sibling when
+  IPv6 forwarding lands.
 - 🔵 **`nonce_seed` under resume/roaming** — see the ⚠️ constraint in "Roaming — seamless
   network change" above: settle it IN THE RESUME DESIGN (re-derive the key per resume, or an
   epoch in the nonce), not afterwards.

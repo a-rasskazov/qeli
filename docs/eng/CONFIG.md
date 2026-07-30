@@ -308,18 +308,31 @@ the transport:
 
   The probe has three limits worth knowing before you treat MTU as a solved problem:
   - **It only measures client → server.** The probe datagram is full size but the
-    acknowledgement is tiny. An asymmetric path (wide up, narrow down) passes the probe,
-    and a download-direction black hole goes undetected.
-  - **It never probes below 1280** (the bottom rung of the ladder). With qeli's record
-    overhead plus IP/UDP headers, that rung is about **1356 bytes of real path MTU** — a
-    path narrower than that fails **every** rung and the probe returns "no result".
+    acknowledgement is tiny, so a genuinely **asymmetric** path (wide up, narrow down)
+    passes the probe and that download-direction black hole goes undetected.
+
+    On a **symmetrically narrow** path — the ordinary LTE/CGNAT/PPPoE case — the download
+    direction is covered: the client **reports** the MTU it settled on to the server (as an
+    in-tunnel control frame, since 0.7.14) and the server narrows its downlink to match. An
+    oversized packet with DF set gets an ICMP "Fragmentation Needed" back to the origin
+    carrying the real next-hop MTU, so path-MTU discovery converges on its own. A server
+    predating this ignores the report and keeps using the profile's `tun.mtu`, as before.
+  - **The bottom rung reaches exactly 1280 bytes of real path MTU** (the IPv6 minimum). The
+    rungs are **tunnel** MTUs while 1280 is a **path** limit, so the floor is computed as
+    `1280 − outer overhead` (qeli record + obfs seal + QUIC header + UDP/IP) and the narrowest
+    probe occupies exactly 1280 bytes on the wire. Before 0.7.14 the bottom rung was the
+    number 1280 used as a tunnel MTU — i.e. a 1280-byte path was asked for 1280 + overhead,
+    every rung failed, and the probe returned "no result" on precisely the networks it exists
+    for. It does not probe below 1280 of path: that is the guaranteed IPv6 minimum, and a path
+    narrower than it is a broken network, not a supported mode.
   - **"No result" means the pushed MTU is adopted**, which on such a path is certainly
     too large. Connectivity does not break (DF is cleared and packets fragment), but at
     that point you are back to guessing rather than measuring.
 
-  Practically: auto-probing handles **most** LTE/CGNAT/PPPoE cases, not all. If downloads
-  stall while small packets flow, set `mtu` by hand (1200–1280) and retest; §12 of
-  GETTING-STARTED and TROUBLESHOOTING §6 cover the diagnosis.
+  Practically: auto-probing handles **effectively all** LTE/CGNAT/PPPoE cases — a path
+  narrower than 1280 violates the IPv6 minimum. If downloads still stall while small packets
+  flow, set `mtu` by hand (1200–1280) and retest; §12 of GETTING-STARTED and
+  TROUBLESHOOTING §6 cover the diagnosis.
 - **TCP transports** (reality-tls / fake-tls / obfs / plain): auto = adopt the pushed MTU;
   the **kernel** discovers the path MTU there (`tcp_mtu_probing` + MSS clamping), so no
   app-level probe is needed.
@@ -1113,6 +1126,7 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 | `exclude` | — | ✓ | ✓ | ✓ | ✓\* | ✓ | CIDR list carved **out** of the tunnel (Android — API 33+ only) |
 | `route_file` | — | — | ✓ | ✓ | — | — | split routes from a file (on the CLI use `include`/`exclude`) |
 | `dns` | `tunnel` | ✓ | ✓ | ✓ | ✓ | ✓ | DNS mode: `tunnel` / `off` (desktop/Android also accept a resolver list) |
+| `dns_servers` | — | ✓ | — | — | — | — | comma-separated resolver(s) to install under `dns = tunnel` **when the server pushes none**. Empty and nothing pushed → the host's resolvers are left untouched (with a warning), **not** silently replaced by a third party's |
 | `kill_switch` | `false` | ✓ | ✓ | ✓ | — | —\* | fail-closed firewall (iptables / WFP / pf; Android — system always-on VPN) |
 | `allow_ipv6_leak` | `false` | ✓ | ✓ | ✓ | ✓ | ✓ | don't block IPv6 in a full tunnel / under the kill-switch |
 | `gateway_nat` | `false` | ✓ | — | — | — | — | router NAT (`MASQUERADE`) out the tun (Linux) |

@@ -859,16 +859,54 @@ sudo qeli show-identity                     # each profile's pubkey (clients pin
 sudo qeli rotate-identity reality           # regenerate a profile key → clients update key=, restart to apply
 ```
 
-> **How `share-link` knows the password.** The users file stores a reversibly-encrypted copy
-> of the password next to the one-way Argon2 hash when the user is created; the link is built
-> from that copy, so a client's config can be re-sent at any time. Same mechanism as the
-> panel's share/QR button, and the link contents come from the same code.
->
-> With no such copy (user created before this existed, or the key changed) the command
-> **refuses** and points at `--reset`: that generates a new password, stores it and prints it
-> once — and the config that user is currently on **stops working**. After `--reset` a running
-> server needs `systemctl reload qeli`, otherwise it keeps checking the old password (the
-> panel reloads the worker itself; the CLI has no such channel).
+#### 10.2.1. `share-link` — re-send an existing user their config
+
+Answers "the client lost their settings / got a new phone — how do I hand out the config
+again". `add-client` cannot: it **creates** a user and errors out on an existing name.
+
+```
+qeli share-link <username> [--host <addr[:port]>] [--profile <name>]
+                           [--label <text>] [--reset] [-c <config>]
+```
+
+| Flag | Default | What it does |
+|---|---|---|
+| `<username>` | — | **required**: an existing user from the users file |
+| `--host` | `web.public_host` from the config | the server's public address for the link; `host:port` overrides the profile's port |
+| `--profile` | first profile in the config | which profile to build for (each has its own port, mode, key) |
+| `--label` | `<profile>-<port>` | profile caption shown in the client app |
+| `--reset` | off | generate a NEW password when the old one cannot be recovered (**destructive**, see below) |
+| `-c`, `--config` | `/etc/qeli/server.conf` | path to the server config |
+
+**How it works.** No password to type — and none can be recovered from the hash, which is
+one-way. So when a user is created, a reversibly-encrypted copy of the password is stored
+next to the Argon2 hash; `share-link` decrypts that copy and puts it in the link. Everything
+else comes from the profile automatically: port, transport, wire mode, SNI, obfs key, reality
+short_id, awg parameters and the pinned server public key (`show-identity`). Same mechanism
+and same code as the panel's share/QR button — links from the CLI and the panel match.
+
+```bash
+# typical case: the address is already set in web.public_host
+sudo qeli share-link alice
+
+# explicit address and a specific profile
+sudo qeli share-link alice --host vpn.example.com:443 --profile reality --label 'My VPN'
+```
+
+The output is a `qeli://…` line: send it to the client, show it as a QR, or paste it into
+the app.
+
+**When there is no stored copy** (user created before this existed, or the encryption key
+changed) the command **refuses** and points at `--reset`:
+
+```bash
+sudo qeli share-link alice --reset      # prints the NEW password once
+sudo systemctl reload qeli              # required: otherwise the server checks the old one
+```
+
+> ⚠️ `--reset` is **destructive**: the config that user is on right now stops working and
+> they need the new link. And unlike the panel, the CLI has no channel to the running
+> worker, so users must be re-read manually (`reload`) — the command says so in its output.
 
 ### 10.3. Live management (control socket, NO restart)
 
