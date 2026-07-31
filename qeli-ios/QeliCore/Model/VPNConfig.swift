@@ -335,8 +335,25 @@ struct VPNConfig: Codable, Equatable, Sendable {
         func int(_ key: String, in parent: [String: Any], default fallback: Int) -> Int {
             (parent[key] as? NSNumber)?.intValue ?? fallback
         }
+        // `(as? NSNumber)?.boolValue` accepted ANY number — `2` read as true — and silently
+        // returned the default for a string or anything else: the same fail-open the INI path
+        // had, through a different door. A key PRESENT but unreadable is recorded; an absent one
+        // is not, which is what the default is for. (Audit 2026-08-01, §8.)
+        var badJSONBools: [String] = []
         func bool(_ key: String, in parent: [String: Any], default fallback: Bool) -> Bool {
-            (parent[key] as? NSNumber)?.boolValue ?? fallback
+            guard let raw = parent[key], !(raw is NSNull) else { return fallback }
+            if let n = raw as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() {
+                return n.boolValue
+            }
+            if let s = raw as? String {
+                switch s.trimmingCharacters(in: .whitespaces).lowercased() {
+                case "true", "1", "yes", "on": return true
+                case "false", "0", "no", "off": return false
+                default: break
+                }
+            }
+            badJSONBools.append(key)
+            return fallback
         }
         func strings(_ key: String, in parent: [String: Any]) -> [String] {
             parent[key] as? [String] ?? []
@@ -414,6 +431,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.shapingMaxSize = int("max_size", in: shaping, default: 1_024)
         config.shapingStealth = bool("stealth", in: shaping, default: false)
         config.shapingStealthRateMbps = int("stealth_rate_mbps", in: shaping, default: 2)
+        config.unparsedBooleanKeys = badJSONBools
         return config
     }
 

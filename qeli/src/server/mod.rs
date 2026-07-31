@@ -1242,6 +1242,16 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                         continue;
                     }
                 }
+                if let Ok(ip) = up.trim().parse::<std::net::IpAddr>() {
+                    if ip.is_unspecified() || ip.is_multicast() {
+                        log::warn!(
+                            "profile '{}': dns.upstream '{}' is not a reachable resolver                              address — it will be skipped at query time",
+                            p.name,
+                            up
+                        );
+                        continue;
+                    }
+                }
                 if up.trim().parse::<std::net::IpAddr>().is_err() {
                     log::warn!(
                         "profile '{}': dns.upstream '{}' is not a valid IP address — this \
@@ -1261,6 +1271,38 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // proxy then abandons every query — clients are handed a resolver that answers
             // nothing. Empty is not "use the defaults"; it is "I configured none".
             // (Audit 2026-07-31, §8.)
+            // Bounds the proxy actually needs. `dns.port = 0` binds an EPHEMERAL port the
+            // operator never chose and cannot redirect to (`--to-ports 0` is meaningless), and
+            // `dns.timeout_secs = 0` makes every upstream wait expire instantly — both parsed
+            // cleanly and failed later, or not visibly at all. (Audit 2026-08-01, §3.)
+            if p.dns.port == 0 {
+                anyhow::bail!(
+                    "profile '{}': dns.port = 0 would bind an ephemeral port nothing can be                      pointed at — set 53, or a fixed port",
+                    p.name
+                );
+            }
+            if p.dns.timeout_secs == 0 {
+                anyhow::bail!(
+                    "profile '{}': dns.timeout_secs = 0 gives every upstream query a zero                      deadline, so the proxy can never answer",
+                    p.name
+                );
+            }
+            // `dns.listen` is handed to clients as their resolver AND bound locally, so an
+            // address that is neither routable-to-the-client nor bindable here fails in one of
+            // two confusing ways instead of one clear one.
+            match p.dns.listen.trim().parse::<std::net::IpAddr>() {
+                Ok(ip) if ip.is_unspecified() || ip.is_multicast() => anyhow::bail!(
+                    "profile '{}': dns.listen = {} is not an address a client can query — use                      the profile's tun address",
+                    p.name,
+                    p.dns.listen
+                ),
+                Ok(_) => {}
+                Err(_) => anyhow::bail!(
+                    "profile '{}': dns.listen = '{}' is not an IP address",
+                    p.name,
+                    p.dns.listen
+                ),
+            }
             // A non-default dns.port is only usable because the tunnel bridges 53 to it with
             // an iptables REDIRECT — clients cannot address any other port. Without iptables
             // there is nothing to bridge with, and every client would be handed a resolver it

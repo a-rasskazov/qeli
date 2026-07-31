@@ -254,6 +254,14 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// kill-switch, AWG, reconnect, shaping, Id, …). The editor rebuilds a config on Save;
     /// without this, any field with no form control — e.g. set via the manual INI editor or
     /// import — was silently dropped (issue #69).</summary>
+    /// The INI keys whose booleans the editor FORM supplies directly. A value the user picks in
+    /// the form replaces whatever unparseable text was there, so its typo marker must be
+    /// cleared; every other key keeps its marker because nothing in the form touched it.
+    private static readonly string[] EditorControlledBooleanKeys =
+    {
+        "quic", "gateway", "route_local", "padding", "heartbeat",
+    };
+
     public VpnConfig WithEditorFields(
         string? name, string serverAddress, int port, string protocol, string wireMode,
         string obfsKey, string obfsFronting, string? realityShortId, string? sni, bool quicEnabled,
@@ -288,10 +296,17 @@ public sealed class VpnConfig : INotifyPropertyChanged
         ShapingGapMaxMs = ShapingGapMaxMs, ShapingBudgetBytesPerSec = ShapingBudgetBytesPerSec,
         ShapingMinSize = ShapingMinSize, ShapingMaxSize = ShapingMaxSize,
         ShapingStealth = ShapingStealth, ShapingStealthRateMbps = ShapingStealthRateMbps,
-        // Carried, or the manual editor LAUNDERS a typo: it parses a bad INI, the user hits
-        // Save, this rebuild drops the marker, and Validate() then sees a clean config with
-        // `kill_switch` silently off. (Audit 2026-07-31, §4.)
-        UnparsedBooleanKeys = UnparsedBooleanKeys,
+        // Carried, MINUS whatever this form just rewrote.
+        //
+        // Carrying it wholesale was wrong in the other direction: the user fixes the offending
+        // checkbox, saves, and the profile stays rejected forever with no way out of the UI.
+        // Dropping it wholesale is the original bug — the manual editor would LAUNDER a typo,
+        // since Save rebuilds the config and Validate() then sees a clean one with the setting
+        // silently off. The form supplies real values for the booleans below, so those keys are
+        // genuinely resolved and only the rest must survive. (Audit 2026-08-01, §10.)
+        UnparsedBooleanKeys = UnparsedBooleanKeys
+            .Where(k => !EditorControlledBooleanKeys.Contains(k))
+            .ToArray(),
     };
 
     // REMOVED: ToConfigJson(). It had no call sites anywhere in the tree, and what it
@@ -774,6 +789,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
         }
 
         if (Port is < 1 or > 65535) throw new ArgumentException($"'server' port out of range: {Port}");
+        // An IPv6 endpoint parses and round-trips, but no core can USE it: the sockets below are
+        // created AddressFamily.InterNetwork and the resolver discards AAAA. Accepting it meant
+        // a confusing "address family not supported" at connect time instead of a clear refusal
+        // here — the same reason the Rust client refuses it. Real support is tracked for 0.8.0.
+        // (Audit 2026-08-01, §9.)
+        if (System.Net.IPAddress.TryParse(ServerAddress.Trim('[', ']'), out var parsed)
+            && parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            throw new ArgumentException(
+                $"'server' is an IPv6 address ('{ServerAddress}') — not supported yet: the data "
+                + "plane binds IPv4 only. Use an IPv4 address or a hostname that resolves to one.");
+        }
         Enum_("proto", Protocol, "tcp", "udp");
         Enum_("mode", WireMode, "fake-tls", "obfs", "plain", "reality-tls");
         Enum_("front", ObfsFronting, "websocket", "none");

@@ -588,6 +588,23 @@ data class VpnConfig(
          */
         fun fromJson(text: String): VpnConfig {
             val root = JSONObject(text)
+            // `optBoolean` swallows anything that is not a real JSON boolean and returns the
+            // default — the same fail-open the INI path had, reached through a different door.
+            // A key that is PRESENT but unreadable is recorded; an absent one is not (that is
+            // what the default is for). (Audit 2026-08-01, §8.)
+            val badJsonBools = mutableListOf<String>()
+            fun jbool(o: JSONObject, key: String, default: Boolean): Boolean {
+                if (!o.has(key) || o.isNull(key)) return default
+                when (val v = o.get(key)) {
+                    is Boolean -> return v
+                    is String -> when (v.trim().lowercase()) {
+                        "true", "1", "yes", "on" -> return true
+                        "false", "0", "no", "off" -> return false
+                    }
+                }
+                badJsonBools.add(key)
+                return default
+            }
             val server = root.optJSONObject("server") ?: JSONObject()
             val reconnect = server.optJSONObject("reconnect") ?: JSONObject()
             val auth = root.optJSONObject("auth") ?: JSONObject()
@@ -619,14 +636,14 @@ data class VpnConfig(
                 port = server.optInt("port", root.optInt("port", 443)),
                 protocol = server.optString("protocol", "tcp"),
                 connectionTimeoutSecs = server.optLong("connection_timeout_secs", 30),
-                reconnectEnabled = reconnect.optBoolean("enabled", true),
+                reconnectEnabled = jbool(reconnect, "enabled", true),
                 reconnectMaxRetries = reconnect.optInt("max_retries", -1),
                 reconnectBaseDelaySecs = reconnect.optLong("base_delay_secs", 1),
                 reconnectMaxDelaySecs = reconnect.optLong("max_delay_secs", 60),
                 username = auth.optString("username", root.optString("username", "client")),
                 password = password,
                 serverPublicKeyHex = auth.optStringOrNull("server_public_key"),
-                bindStaticToSession = auth.optBoolean("bind_static_to_session", true),
+                bindStaticToSession = jbool(auth, "bind_static_to_session", true),
                 // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
                 mtu = checkedMtu(tun.optInt("mtu", 0)),
                 // Default to full-tunnel (a VPN should carry ALL traffic) so a config
@@ -634,45 +651,46 @@ data class VpnConfig(
                 // Explicit "split-tunnel" is still honoured: isFullTunnel only becomes
                 // true via add_default_gateway or mode=="full-tunnel".
                 routingMode = routing.optString("mode", "full-tunnel"),
-                addDefaultGateway = routing.optBoolean("add_default_gateway", false),
+                addDefaultGateway = jbool(routing, "add_default_gateway", false),
                 includeRoutes = routing.optStringList("include"),
                 excludeRoutes = routing.optStringList("exclude"),
-                routeLocalNetworks = routing.optBoolean("route_local_networks", false),
-                allowIpv6Leak = routing.optBoolean("allow_ipv6_leak", false),
+                routeLocalNetworks = jbool(routing, "route_local_networks", false),
+                allowIpv6Leak = jbool(routing, "allow_ipv6_leak", false),
                 // Was missing: a JSON config carrying routing.allow_lan imported with LAN
                 // bypass silently off, while the iOS client honoured it.
-                allowLan = routing.optBoolean("allow_lan", false),
+                allowLan = jbool(routing, "allow_lan", false),
                 dnsServers = dns.optStringList("servers"),
                 wireMode = obf.optString("mode", "fake-tls"),
                 obfsKey = obf.optString("obfs_key", ""),
                 obfsFronting = obf.optString("fronting", "websocket"),
-                awgEnabled = awg.optBoolean("enabled", false),
+                awgEnabled = jbool(awg, "enabled", false),
                 awgJc = awg.optInt("jc", 0),
                 awgJmin = awg.optInt("jmin", 40),
                 awgJmax = awg.optInt("jmax", 300),
-                quicEnabled = quic.optBoolean("enabled", false),
+                quicEnabled = jbool(quic, "enabled", false),
                 sni = obf.optStringOrNull("sni"),
                 realityShortId = obf.optStringOrNull("reality_short_id"),
-                paddingEnabled = padding.optBoolean("enabled", true),
+                paddingEnabled = jbool(padding, "enabled", true),
                 paddingMin = pad.first,
                 paddingMax = pad.second,
-                heartbeatEnabled = heartbeat.optBoolean("enabled", true),
+                heartbeatEnabled = jbool(heartbeat, "enabled", true),
                 heartbeatIntervalMs = heartbeat.optLong("interval_ms", 15000),
                 heartbeatDataSize = heartbeat.optInt("data_size_bytes", 16),
                 heartbeatJitterMs = heartbeat.optLong("jitter_ms", 2000),
-                mtuProbe = tun.optBoolean("mtu_probe", true),
-                shapingEnabled = shaping.optBoolean("enabled", false),
+                mtuProbe = jbool(tun, "mtu_probe", true),
+                shapingEnabled = jbool(shaping, "enabled", false),
                 shapingGapMeanMs = shaping.optLong("idle_gap_mean_ms", 700),
                 shapingGapMinMs = shaping.optLong("idle_gap_min_ms", 40),
                 shapingGapMaxMs = shaping.optLong("idle_gap_max_ms", 6000),
                 shapingBudgetBytesPerSec = shaping.optInt("budget_bytes_per_sec", 16384),
                 shapingMinSize = shaping.optInt("min_size", 64),
                 shapingMaxSize = shaping.optInt("max_size", 1024),
-                shapingStealth = shaping.optBoolean("stealth", false),
+                shapingStealth = jbool(shaping, "stealth", false),
                 shapingStealthRateMbps = shaping.optInt("stealth_rate_mbps", 2),
                 loggingLevel = logging.optString("level", "").takeIf { it.isNotEmpty() },
                 loggingFile = logging.optString("file", "").takeIf { it.isNotEmpty() },
-                loggingTimeFormat = logging.optString("time_format", "").takeIf { it.isNotEmpty() }
+                loggingTimeFormat = logging.optString("time_format", "").takeIf { it.isNotEmpty() },
+                unparsedBooleanKeys = badJsonBools.toList()
             )
         }
 

@@ -247,6 +247,45 @@ fn ini_from_fields(b: &Value) -> String {
     if flag("autostart") {
         s.push_str("autostart = true\n");
     }
+
+    // Everything the FORM does not model, carried through verbatim.
+    //
+    // The frontend already collects these — unknown `[qeli]` keys into `_extraQeli`, whole
+    // trailing sections into `_extraSections` — precisely so that a form save round-trips
+    // losslessly. Nothing at this end read them, so saving an existing profile through the form
+    // DELETED `mtu`, `mtu_probe`, `dns`, `password_file`, `dev_attach`, include/exclude routes,
+    // `[logging]` — and, worst of the set, `kill_switch`. The comment upstream promised a
+    // lossless save while this end silently dropped it. (Audit 2026-08-01, §1.)
+    let lines = |k: &str| -> Vec<String> {
+        b.get(k)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    // Same control-char strip as every scalar: a carried line must not be able
+                    // to forge extra INI structure either.
+                    .map(|l| {
+                        l.chars()
+                            .filter(|&c| !c.is_control() || c == '\t')
+                            .collect()
+                    })
+                    .filter(|l: &String| !l.trim().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for l in lines("_extraQeli") {
+        s.push_str(&l);
+        s.push('\n');
+    }
+    let extra_sections = lines("_extraSections");
+    if !extra_sections.is_empty() {
+        s.push('\n');
+        for l in extra_sections {
+            s.push_str(&l);
+            s.push('\n');
+        }
+    }
     s
 }
 

@@ -447,8 +447,10 @@ so it currently fails in a way that looks like a bug rather than an unimplemente
 Either finish it or reject the address at parse time — the present half-state is the worst of
 the three.
 
-What already works: the Rust config parses `[2001:db8::1]:443`, and the C# client emits a
-correctly bracketed `qeli://` link ([VpnConfig.cs](../../qeli-shared/QeliShared/Model/VpnConfig.cs)).
+What already works: the flat-INI and `qeli://` parsers understand `[2001:db8::1]:443`, and the
+C# client emits a correctly bracketed link ([VpnConfig.cs](../../qeli-shared/QeliShared/Model/VpnConfig.cs)).
+Since 0.7.14 BOTH clients then REFUSE such an endpoint at validation rather than failing later
+at connect — so the address is understood, not accepted.
 
 What does not:
 - **Rust serialises the address unbracketed** — `format!("{}:{}", address, port)`

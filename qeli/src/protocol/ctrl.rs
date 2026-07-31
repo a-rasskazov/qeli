@@ -134,9 +134,12 @@ pub fn this_build() -> Option<Vec<u8>> {
     client_info(env!("CARGO_PKG_VERSION"), platform_tag())
 }
 
-/// Lowest MTU we will believe from a peer. Below the IPv6 minimum there is no plausible
-/// path, and accepting e.g. 68 would let one malformed report shrink a session to
-/// uselessness. Reports below this are clamped up, not honoured.
+/// Lowest MTU we will believe from a peer.
+///
+/// 576 is the IPv4 minimum reassembly buffer (RFC 791) — NOT the IPv6 minimum, which is 1280;
+/// the comment here used to say the latter. Below this there is no plausible path, and taking
+/// e.g. 68 on faith would let one malformed report shrink a session to uselessness. Reports
+/// below it are clamped up, not honoured.
 pub const MIN_REPORTED_MTU: u16 = 576;
 /// Highest MTU we will believe. Anything larger than a jumbo-less Ethernet path is
 /// either a bug or an attempt to push the server into emitting oversized packets.
