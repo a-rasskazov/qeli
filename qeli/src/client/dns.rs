@@ -353,7 +353,20 @@ fn resolved_is_active() -> bool {
 /// path is made by [`resolved_is_active`], which asks a different and more important
 /// question. Looked up by absolute path rather than via `PATH`: the client runs from a
 /// systemd unit whose environment may not carry a useful `PATH`.
-fn which_resolvectl() -> Option<&'static str> {
+fn which_resolvectl() -> Option<String> {
+    // An explicit override wins. It exists because the absolute-path lookup below is, by
+    // design, immune to `PATH` — which also makes it immune to being pointed at a stand-in.
+    // The fault-injection tests substitute a script and can only do so through the
+    // environment; without this they passed on a host with no systemd-resolved (lookup
+    // fails, the bare-name fallback finds the stand-in on `PATH`) and failed on one that
+    // has it, where the REAL resolvectl ran and refused to configure a link named `qtest`.
+    // A test that only passes where the tool is absent is worse than no test. It is also
+    // the escape hatch for a distribution that keeps the binary somewhere unusual.
+    if let Ok(p) = std::env::var("QELI_RESOLVECTL") {
+        if !p.is_empty() {
+            return Some(p);
+        }
+    }
     [
         "/usr/bin/resolvectl",
         "/bin/resolvectl",
@@ -361,6 +374,7 @@ fn which_resolvectl() -> Option<&'static str> {
     ]
     .into_iter()
     .find(|p| std::path::Path::new(p).exists())
+    .map(str::to_string)
 }
 
 /// `resolvectl` as a runnable command, resolved to an ABSOLUTE path.
@@ -373,7 +387,7 @@ fn which_resolvectl() -> Option<&'static str> {
 /// editing resolv.conf. Falls back to the bare name when the binary is somewhere unusual, so
 /// a working `PATH` still succeeds. (Audit 2026-07-30.)
 fn resolvectl_cmd() -> std::process::Command {
-    std::process::Command::new(which_resolvectl().unwrap_or("resolvectl"))
+    std::process::Command::new(which_resolvectl().unwrap_or_else(|| "resolvectl".to_string()))
 }
 
 fn try_resolvectl(config: &ClientDnsConfig, ifname: &str, dns_addr: &str) -> bool {
@@ -859,7 +873,7 @@ mod tests {
 // "all DNS goes through the tunnel" and "almost none does" — so a failure of the second
 // call while the first succeeded is a silent DNS leak, reported as a working tunnel.
 //
-// Only reproducible by making the command fail on demand, hence the stub on PATH.
+// Only reproducible by making the command fail on demand, hence the stub behind QELI_RESOLVECTL.
 #[cfg(all(test, target_os = "linux"))]
 mod fault_injection {
     use super::*;
@@ -897,8 +911,11 @@ mod fault_injection {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-            let old_path = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var("PATH", format!("{}:{}", dir.display(), old_path));
+            // Point the code at the stand-in explicitly. Prepending to PATH is not enough:
+            // the lookup is deliberately immune to PATH, so on a host that HAS a real
+            // resolvectl the tests used to drive the real one against a link named `qtest`.
+            let old_path = std::env::var("QELI_RESOLVECTL").unwrap_or_default();
+            std::env::set_var("QELI_RESOLVECTL", bin.as_os_str());
             Resolvectl {
                 dir,
                 _guard: guard,
@@ -913,7 +930,11 @@ mod fault_injection {
 
     impl Drop for Resolvectl {
         fn drop(&mut self) {
-            std::env::set_var("PATH", &self.old_path);
+            if self.old_path.is_empty() {
+                std::env::remove_var("QELI_RESOLVECTL");
+            } else {
+                std::env::set_var("QELI_RESOLVECTL", &self.old_path);
+            }
             let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
