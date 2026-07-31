@@ -71,10 +71,14 @@ actor TunnelRecordSender {
     /// Fire-and-forget: the server ignores a value that is not narrower than its own, and a
     /// server predating this discards the frame. Sent unpadded and uncapped — it is 6 bytes.
     func sendMTUReport() async throws {
-        try await records.sendRecord(try encoder.encrypt(CtrlFrame.mtuReport(mtu)))
+        // NO padding, like the Rust client. A plain encrypt() applies the configured padding, so
+        // with padding_min near the MTU a six-byte control frame became a datagram larger than
+        // the path MTU just discovered — and under DF it failed with EMSGSIZE, every re-send
+        // identically, leaving the server without an MTU at all. (Audit 2026-07-31, §6.)
+        try await records.sendRecord(try encoder.encrypt(CtrlFrame.mtuReport(mtu), explicitPadding: 0))
     }
 
-    /// Re-send delays for the unacknowledged MTU report on UDP, from the first send. Spread so an
+    /// Re-send delays for the unacknowledged MTU report on UDP, measured as successive GAPS, so the copies land ~2 s and ~8 s after the first. Spread so an
     /// isolated drop AND a short burst of loss are both survived.
     private static let reportRetryDelaysNanos: [UInt64] = [2_000_000_000, 6_000_000_000]
 
@@ -106,7 +110,8 @@ actor TunnelRecordSender {
     /// server accepts — the label is diagnostics, never a reason to fail a connect.
     func sendClientInfo() async throws {
         guard let frame = CtrlFrame.thisBuild() else { return }
-        try await records.sendRecord(try encoder.encrypt(frame))
+        // No padding, for the same reason as the MTU report above.
+        try await records.sendRecord(try encoder.encrypt(frame, explicitPadding: 0))
     }
 
     func sendHeartbeat(_ emission: HeartbeatEmission) async throws {

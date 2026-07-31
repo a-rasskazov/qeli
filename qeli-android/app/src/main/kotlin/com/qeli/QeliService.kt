@@ -2328,14 +2328,15 @@ class VpnServiceImpl : VpnService() {
         } ?: return
         val frame = CtrlFrame.clientInfo(version) ?: return
         try {
-            transport.send(enc.encrypt(frame))
+            // No padding, for the same reason as the MTU report above.
+            transport.send(enc.encryptPadded(frame, 0))
         } catch (e: Exception) {
             // Never fatal: this is diagnostics. A real transport failure surfaces in the loop.
             broadcastLog("could not report client version: ${e.message}")
         }
     }
 
-    /** Re-send delays for the unacknowledged MTU report on UDP, measured from the first send.
+    /** Re-send delays for the unacknowledged MTU report on UDP, measured as successive GAPS, so the copies land ~2 s and ~8 s after the first.
      *  Spread so an isolated drop AND a short burst of loss are both survived. */
     private val reportRetryDelaysMs = longArrayOf(2_000, 6_000)
 
@@ -2357,7 +2358,11 @@ class VpnServiceImpl : VpnService() {
         transport: Transport, enc: PacketCodec, mtu: Int, isUdp: Boolean, scope: CoroutineScope
     ) {
         fun sendOnce(attempt: Int): Boolean = try {
-            transport.send(enc.encrypt(CtrlFrame.mtuReport(mtu)))
+            // NO padding, like the Rust client. A plain encrypt() applies the configured padding, so
+            // with padding_min near the MTU a six-byte control frame became a datagram larger than
+            // the path MTU just discovered — and under DF it failed with EMSGSIZE, every re-send
+            // identically, leaving the server without an MTU at all. (Audit 2026-07-31, §6.)
+            transport.send(enc.encryptPadded(CtrlFrame.mtuReport(mtu), 0))
             if (attempt == 0) broadcastLog("reported tunnel MTU $mtu to the server")
             true
         } catch (e: Exception) {

@@ -209,8 +209,14 @@ public sealed class VpnConfig : INotifyPropertyChanged
     public bool IsUdp => Protocol.Equals("udp", StringComparison.OrdinalIgnoreCase);
 
     [JsonIgnore]
+    /// <summary>`all` counts too. Validate() accepts `split-tunnel | full-tunnel | all` (the
+    /// Rust client's set, see client/route.rs), but this only compared against `full-tunnel` —
+    /// so a perfectly valid `routing.mode = "all"` profile validated and then ran as a SPLIT
+    /// tunnel, quietly sending everything outside the VPN past it. (Audit 2026-07-31, §2.)</summary>
     public bool IsFullTunnel =>
-        AddDefaultGateway || RoutingMode.Equals("full-tunnel", StringComparison.OrdinalIgnoreCase);
+        AddDefaultGateway
+        || RoutingMode.Equals("full-tunnel", StringComparison.OrdinalIgnoreCase)
+        || RoutingMode.Equals("all", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Clone applying server-pushed heartbeat + flow-shaping params after auth.</summary>
     public VpnConfig WithPushedObf(bool hbEnabled, long hbIntervalMs, long hbJitterMs, int hbDataSize,
@@ -282,6 +288,10 @@ public sealed class VpnConfig : INotifyPropertyChanged
         ShapingGapMaxMs = ShapingGapMaxMs, ShapingBudgetBytesPerSec = ShapingBudgetBytesPerSec,
         ShapingMinSize = ShapingMinSize, ShapingMaxSize = ShapingMaxSize,
         ShapingStealth = ShapingStealth, ShapingStealthRateMbps = ShapingStealthRateMbps,
+        // Carried, or the manual editor LAUNDERS a typo: it parses a bad INI, the user hits
+        // Save, this rebuild drops the marker, and Validate() then sees a clean config with
+        // `kill_switch` silently off. (Audit 2026-07-31, §4.)
+        UnparsedBooleanKeys = UnparsedBooleanKeys,
     };
 
     // REMOVED: ToConfigJson(). It had no call sites anywhere in the tree, and what it
@@ -469,6 +479,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         var awg = Obj(obf, "awg");
 
         string password = StrOrNull(auth, "password") ?? StrOrNull(root, "password") ?? "";
+        var badJsonBools = new List<string>();
         var pad = CheckedPadding(Int(padding, "min_bytes", 0), Int(padding, "max_bytes", 255));
 
         return new VpnConfig
@@ -478,37 +489,38 @@ public sealed class VpnConfig : INotifyPropertyChanged
             Port = Int(server, "port", Int(root, "port", 443)),
             Protocol = Str(server, "protocol", "tcp"),
             ConnectionTimeoutSecs = CheckedTimeout(Long(server, "connection_timeout_secs", 30)),
-            ReconnectEnabled = Bool(reconnect, "enabled", true),
+            ReconnectEnabled = Bool(reconnect, "enabled", true, badJsonBools),
             ReconnectMaxRetries = Int(reconnect, "max_retries", -1),
             ReconnectBaseDelaySecs = Long(reconnect, "base_delay_secs", 1),
             ReconnectMaxDelaySecs = Long(reconnect, "max_delay_secs", 60),
             Username = Str(auth, "username", Str(root, "username", "client")),
             Password = password,
             ServerPublicKeyHex = StrOrNull(auth, "server_public_key"),
-            BindStaticToSession = Bool(auth, "bind_static_to_session", true),
+            BindStaticToSession = Bool(auth, "bind_static_to_session", true, badJsonBools),
             Mtu = CheckedMtu(Int(tun, "mtu", 0)),  // 0 = auto (use server-pushed MTU)
             RoutingMode = Str(routing, "mode", "full-tunnel"),
-            AddDefaultGateway = Bool(routing, "add_default_gateway", false),
+            AddDefaultGateway = Bool(routing, "add_default_gateway", false, badJsonBools),
             IncludeRoutes = StrList(routing, "include"),
             ExcludeRoutes = StrList(routing, "exclude"),
-            RouteLocalNetworks = Bool(routing, "route_local_networks", false),
-            KillSwitch = Bool(routing, "kill_switch", false),
-            AllowIpv6Leak = Bool(routing, "allow_ipv6_leak", false),
+            RouteLocalNetworks = Bool(routing, "route_local_networks", false, badJsonBools),
+            KillSwitch = Bool(routing, "kill_switch", false, badJsonBools),
+            AllowIpv6Leak = Bool(routing, "allow_ipv6_leak", false, badJsonBools),
             DnsServers = StrList(dns, "servers"),
             WireMode = Str(obf, "mode", "fake-tls"),
             ObfsKey = Str(obf, "obfs_key", ""),
             ObfsFronting = Str(obf, "fronting", "websocket"),
-            AwgEnabled = Bool(awg, "enabled", false),
+            AwgEnabled = Bool(awg, "enabled", false, badJsonBools),
             AwgJc = (uint)Math.Clamp(Int(awg, "jc", 0), 0, 128),
             AwgJmin = (ushort)Math.Clamp(Int(awg, "jmin", 40), 0, 1400),
             AwgJmax = (ushort)Math.Clamp(Int(awg, "jmax", 300), 0, 1400),
-            QuicEnabled = Bool(quic, "enabled", false),
+            QuicEnabled = Bool(quic, "enabled", false, badJsonBools),
             Sni = StrOrNull(obf, "sni"),
             RealityShortId = StrOrNull(obf, "reality_short_id"),
-            PaddingEnabled = Bool(padding, "enabled", true),
+            PaddingEnabled = Bool(padding, "enabled", true, badJsonBools),
+            UnparsedBooleanKeys = badJsonBools,
             PaddingMin = pad.Min,
             PaddingMax = pad.Max,
-            HeartbeatEnabled = Bool(heartbeat, "enabled", true),
+            HeartbeatEnabled = Bool(heartbeat, "enabled", true, badJsonBools),
             HeartbeatIntervalMs = Long(heartbeat, "interval_ms", 15000),
             HeartbeatDataSize = Int(heartbeat, "data_size_bytes", 16),
             HeartbeatJitterMs = Long(heartbeat, "jitter_ms", 2000),
@@ -517,15 +529,15 @@ public sealed class VpnConfig : INotifyPropertyChanged
             // probed a path the profile had deliberately told it not to. Section and field
             // names are the canonical Rust ones (`traffic_shaping`, `idle_gap_*`), not the
             // INI shorthand. (Audit 2026-07-29, #7.)
-            MtuProbe = Bool(tun, "mtu_probe", true),
-            ShapingEnabled = Bool(shaping, "enabled", false),
+            MtuProbe = Bool(tun, "mtu_probe", true, badJsonBools),
+            ShapingEnabled = Bool(shaping, "enabled", false, badJsonBools),
             ShapingGapMeanMs = Long(shaping, "idle_gap_mean_ms", 700),
             ShapingGapMinMs = Long(shaping, "idle_gap_min_ms", 40),
             ShapingGapMaxMs = Long(shaping, "idle_gap_max_ms", 6000),
             ShapingBudgetBytesPerSec = Int(shaping, "budget_bytes_per_sec", 16384),
             ShapingMinSize = Int(shaping, "min_size", 64),
             ShapingMaxSize = Int(shaping, "max_size", 1024),
-            ShapingStealth = Bool(shaping, "stealth", false),
+            ShapingStealth = Bool(shaping, "stealth", false, badJsonBools),
             ShapingStealthRateMbps = Int(shaping, "stealth_rate_mbps", 2),
         };
     }
@@ -927,8 +939,30 @@ public sealed class VpnConfig : INotifyPropertyChanged
     private static long Long(JsonObject o, string key, long def) =>
         o[key] is JsonValue v && v.TryGetValue(out long l) ? l : def;
 
-    private static bool Bool(JsonObject o, string key, bool def) =>
-        o[key] is JsonValue v && v.TryGetValue(out bool b) ? b : def;
+    /// <summary>A JSON boolean, recording anything that is PRESENT but not a real bool.
+    ///
+    /// `"kill_switch": "ture"` is a JSON string, so `TryGetValue&lt;bool&gt;` fails and the
+    /// default was returned silently — the same fail-open the INI path had, reached through a
+    /// different door. A missing key is not an error (that is what the default is for); a key
+    /// that is there but unreadable is. (Audit 2026-07-31, §4.)</summary>
+    private static bool Bool(JsonObject o, string key, bool def, List<string>? bad = null)
+    {
+        if (o[key] is not JsonValue v) return def;                 // absent → default
+        if (v.TryGetValue(out bool b)) return b;
+        // A JSON string still spelling a boolean is accepted, like the INI path.
+        if (v.TryGetValue(out string? s) && s != null)
+        {
+            var t = s.Trim();
+            if (t.Equals("true", StringComparison.OrdinalIgnoreCase) || t == "1"
+                || t.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("on", StringComparison.OrdinalIgnoreCase)) return true;
+            if (t.Equals("false", StringComparison.OrdinalIgnoreCase) || t == "0"
+                || t.Equals("no", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("off", StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        bad?.Add(key);
+        return def;
+    }
 
     private static List<string> StrList(JsonObject o, string key)
     {

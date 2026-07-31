@@ -138,8 +138,16 @@ data class VpnConfig(
     /** True when the protocol is UDP (DatagramChannel transport, QUIC masking). */
     val isUdp: Boolean get() = protocol.equals("udp", ignoreCase = true)
 
+    /**
+     * `all` counts too. The validator accepts `split-tunnel | full-tunnel | all` (the Rust
+     * client's set, see `client/route.rs`), but this only compared against `full-tunnel` — so a
+     * perfectly valid `routing.mode = "all"` profile validated and then ran as a SPLIT tunnel,
+     * quietly sending everything outside the VPN past it. (Audit 2026-07-31, §2.)
+     */
     val isFullTunnel: Boolean
-        get() = addDefaultGateway || routingMode.equals("full-tunnel", ignoreCase = true)
+        get() = addDefaultGateway ||
+            routingMode.equals("full-tunnel", ignoreCase = true) ||
+            routingMode.equals("all", ignoreCase = true)
 
     /**
      * Reject configs that cannot be represented as flat-INI, and range-check the numeric
@@ -516,7 +524,10 @@ data class VpnConfig(
                 // Same false-set as the Rust `bool_or` and the iOS client. The old test
                 // (`!= "false" && != "0"`) read `mtu_probe = off` / `no` as ON — the exact
                 // opposite of what the user wrote, and of what the desktop client does.
-                mtuProbe = q["mtu_probe"]?.let { it.trim().lowercase() !in MTU_PROBE_OFF } ?: true,
+                // Through boolAt like every other boolean: the old "anything not in the
+                // off-set is ON" reading meant `mtu_probe = ture` silently enabled probing
+                // and was never recorded as a typo. (Audit 2026-07-31.)
+                mtuProbe = boolAt("mtu_probe", true),
                 // Per-app split tunnel (Android extra). Only "include"/"exclude" are honoured;
                 // anything else (or a missing key) falls back to "all" = every app tunnelled.
                 appsMode = q["apps_mode"]?.trim()?.lowercase()?.takeIf { it == "include" || it == "exclude" } ?: "all",

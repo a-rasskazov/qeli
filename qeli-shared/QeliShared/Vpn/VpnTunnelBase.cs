@@ -102,26 +102,28 @@ public abstract class VpnTunnelBase
 
     public void Start(VpnConfig config)
     {
-        // Refuse a config the runtime would silently reinterpret — an unknown proto becomes TCP,
-        // an unknown wire mode becomes fake-TLS, an unparseable boolean disables the kill switch.
-        // Reported like any other connect failure rather than thrown at the caller, so the GUI
-        // shows the reason instead of crashing. (Audit 2026-07-31.)
-        try
-        {
-            config.Validate();
-        }
-        catch (Exception e)
-        {
-            Log($"config rejected: {e.Message}");
-            Status(VpnStatus.Error, e.Message);
-            return;
-        }
+
         // Serialize Start/Stop (and thus a concurrent profile switch) on one lock: Stop()
         // fully quiesces the previous attempt before we reuse the SHARED transport/TUN/route
         // fields, so the old task's teardown can't clobber the newly-established tunnel.
         lock (_lifecycleLock)
         {
             Stop();
+            // Validate AFTER Stop(), inside the lock. Returning before it left the PREVIOUS
+            // tunnel running while the GUI had already switched to the new profile and shown
+            // an error — routes and traffic still belonged to a session the user thought was
+            // gone. Refusing a profile must never mean "keep the old one silently".
+            // (Audit 2026-07-31, §7.)
+            try
+            {
+                config.Validate();
+            }
+            catch (Exception e)
+            {
+                Log($"config rejected: {e.Message}");
+                Status(VpnStatus.Error, e.Message);
+                return;
+            }
             _userRequestedDisconnect = false;
             // TestHandshake latches this and used to never clear it, so a GUI object that had
             // run the headless handshake test once connected forever after WITHOUT a TUN —
@@ -1943,7 +1945,7 @@ public abstract class VpnTunnelBase
     private const int TxRxAsymmetryMs = 8000;
 
     // ── tunnel loop ──────────────────────────────────────────────────────────────
-    /// <summary>Re-send delays for the unacknowledged MTU report on UDP, from the first send.
+    /// <summary>Re-send delays for the unacknowledged MTU report on UDP, measured as successive GAPS, so the copies land ~2 s and ~8 s after the first.
     /// Spread so an isolated drop AND a short burst of loss are both survived.</summary>
     private static readonly int[] ReportRetryDelaysMs = { 2_000, 6_000 };
 
@@ -1974,7 +1976,8 @@ public abstract class VpnTunnelBase
         if (frame == null) return;
         try
         {
-            transport.Send(enc.Encrypt(frame));
+            // No padding, for the same reason as the MTU report above.
+            transport.Send(enc.EncryptPadded(frame, 0));
         }
         catch (Exception e)
         {
@@ -1990,7 +1993,12 @@ public abstract class VpnTunnelBase
         {
             try
             {
-                transport.Send(enc.Encrypt(CtrlFrame.MtuReport(mtu)));
+                // EncryptPadded(…, 0): NO padding, like the Rust client. Plain Encrypt applies
+                // the configured padding, so with padding_min near the MTU a six-byte control
+                // frame became a datagram larger than the path MTU we just discovered — and
+                // under DF it failed with EMSGSIZE, every re-send identically. The server then
+                // never learned the MTU at all. (Audit 2026-07-31, §6.)
+                transport.Send(enc.EncryptPadded(CtrlFrame.MtuReport(mtu), 0));
                 if (attempt == 0) Log($"reported tunnel MTU {mtu} to the server");
                 return true;
             }

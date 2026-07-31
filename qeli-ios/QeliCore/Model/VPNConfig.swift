@@ -82,7 +82,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
     var loggingTimeFormat: String?
 
     var isUDP: Bool { protocolName.caseInsensitiveCompare("udp") == .orderedSame }
-    var isFullTunnel: Bool { addDefaultGateway || routingMode == "full-tunnel" }
+    /// `all` counts too. The validator accepts `split-tunnel | full-tunnel | all` (the Rust
+    /// client's set, see `client/route.rs`), but this only compared against `full-tunnel` — so a
+    /// perfectly valid `routing.mode = "all"` profile validated and then ran as a SPLIT tunnel,
+    /// quietly sending everything outside the VPN past it. (Audit 2026-07-31, §2.)
+    var isFullTunnel: Bool {
+        addDefaultGateway || routingMode == "full-tunnel" || routingMode == "all"
+    }
 
     init(serverAddress: String, port: Int) {
         self.serverAddress = serverAddress
@@ -255,7 +261,10 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.serverPublicKeyHex = qeli["key"].nonEmpty
         config.bindStaticToSession = boolAt("bind_static", default: true)
         config.mtu = qeli["mtu"].flatMap(Int.init) ?? 0
-        config.mtuProbe = qeli["mtu_probe"].map { !["false", "0", "no", "off"].contains($0.lowercased()) } ?? true
+        // Through boolAt like every other boolean: the old "anything not in the off-set is ON"
+        // reading meant `mtu_probe = ture` silently enabled probing and was never recorded as a
+        // typo. (Audit 2026-07-31.)
+        config.mtuProbe = boolAt("mtu_probe", default: true)
 
         let fullTunnel = boolAt("gateway", default: true)
         config.routingMode = fullTunnel ? "full-tunnel" : "split-tunnel"
