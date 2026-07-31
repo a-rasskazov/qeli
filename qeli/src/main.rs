@@ -530,40 +530,14 @@ async fn main() -> anyhow::Result<()> {
             // their own parser and implement a few keys this binary does not. Those
             // are perfectly valid here — reporting them as typos would be a lie —
             // so they are listed separately and do not fail the check.
-            const GUI_ONLY_CLIENT_KEYS: &[&str] = &[
-                "dev_node",
-                "local",
-                "lport",
-                "metric",
-                "persist_tun",
-                "route_file",
-            ];
+            use config::GUI_ONLY_CLIENT_KEYS;
 
             // Keys removed in 0.7.12 because they never had any effect. An existing
             // config may still carry them, and calling those a "typo" would send the
             // operator hunting for a spelling mistake that isn't there. Name them for
             // what they are, and don't fail the check — deleting the line is optional
             // tidying, not a fix.
-            const RETIRED_KEYS: &[&str] = &[
-                "password_hash", // [auth] only — web/user password_hash are real
-                "token_ttl_secs",
-                "obf.cipher",
-                "obf.tls.server_names",
-                "obf.tls.session_id",
-                "obf.tls.supported_groups",
-                "obf.tls.key_share_entropy_bytes",
-                "obf.http2_masking.enabled",
-                "obf.http2_masking.ratio",
-                "obf.traffic_normalization.randomize_sequence",
-                "obf.anti_fingerprinting.rotate_ciphers_every",
-                "obf.quic.cid_length",
-                "obf.quic.version",
-                "pool.lease_time_secs",
-                "perf.tun.write_buffer_size",
-                "perf.tun.read_timeout_ms",
-                "perf.tun.max_pending_packets",
-                "perf.connection.rate_limit_packets_per_sec",
-            ];
+            use config::RETIRED_KEYS;
             // NB: `[logging] format` is deliberately absent. It is still parsed into
             // the config (it just isn't applied), so it never lands in unread_keys and
             // could never be reported here — listing it would promise a message that

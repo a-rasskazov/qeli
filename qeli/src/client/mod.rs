@@ -71,28 +71,16 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
     tokio::spawn(trace::watch());
 
     let config_content = std::fs::read_to_string(config_path)?;
+    // STRICT: a misspelled key name and an unreadable value both used to fail open here —
+    // only `check-config` reported them, while the real start substituted defaults in silence.
+    // See `config::parse_client_config_strict`. (Audit 2026-08-01, §4/§5.)
     let config: crate::config::client::ClientConfig =
-        crate::config::parse_client_config(&config_content)?;
+        crate::config::parse_client_config_strict(&config_content)?;
     // Reject unknown enum values before connecting, so `check-config --client` and a real
     // start agree. Without this a typo does not error — it silently picks the other branch
     // (`proto = UDP` connects over TCP, `dns = of` leaves the host resolver in place).
     // (Audit 2026-07-30, #7.)
     config.validate()?;
-    // A value that PARSED but was not understood — `kill_switch = ture` — never reaches
-    // `validate()`: `bool_or` records it and returns the default, so the config object looks
-    // clean. `check-config` reported these; the real start did not, which is the half that
-    // matters: the client came up with the kill switch silently off. Refuse instead, so both
-    // paths agree. (Audit 2026-07-31, §3.)
-    let bad_values = crate::config::format::take_bad_values();
-    if !bad_values.is_empty() {
-        anyhow::bail!(
-            "{} config value(s) present but not understood — refusing to start with the              defaults silently substituted:
-  {}",
-            bad_values.len(),
-            bad_values.join("
-  ")
-        );
-    }
 
     let password = if let Some(ref pw) = config.auth.password {
         pw.clone()

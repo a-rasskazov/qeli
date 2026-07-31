@@ -2809,7 +2809,21 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
     if pcfg.dns.enabled {
         // Bridge 53 -> dns.port inside the tunnel when the proxy listens somewhere else, so
         // clients can keep using the only port their platform can express. No-op on 53.
-        nat::enable_dns_redirect(&name, &pcfg.tun.name, &pcfg.dns.listen, pcfg.dns.port);
+        //
+        // The result is CHECKED. Ignoring it defeated the point of returning it: without the
+        // rule, clients reach 53 and nothing is there, yet the profile came up and kept
+        // handing them that address as their resolver — the exact silent black hole the
+        // redirect exists to prevent. Validation already demands iptables for a non-default
+        // port, so a failure here means the rule was genuinely refused; fail the profile
+        // rather than serve DNS that cannot work. (Audit 2026-08-01, §2.)
+        if !nat::enable_dns_redirect(&name, &pcfg.tun.name, &pcfg.dns.listen, pcfg.dns.port) {
+            anyhow::bail!(
+                "profile '{}': dns.port = {} but the 53 -> {} redirect could not be installed,                  so every client would be pushed a resolver it cannot reach. Fix iptables, or                  set dns.port = 53.",
+                name,
+                pcfg.dns.port,
+                pcfg.dns.port
+            );
+        }
 
         let dns_state = state.clone();
         let dns_cfg = pcfg.dns.clone();

@@ -19,6 +19,96 @@ pub fn parse_server_config(s: &str) -> anyhow::Result<server::ServerConfig> {
     server::ServerConfig::from_ini(&doc)
 }
 
+/// Keys the GUI clients write into a shared profile but the Rust runtime never reads. Not
+/// typos — reporting them as unknown would train operators to ignore the report.
+pub const GUI_ONLY_CLIENT_KEYS: &[&str] = &[
+    "dev_node",
+    "local",
+    "lport",
+    "metric",
+    "persist_tun",
+    "route_file",
+];
+
+/// Keys that USED to exist. A config carrying one is stale rather than misspelled, and the
+/// distinction matters in the message the operator sees.
+pub const RETIRED_KEYS: &[&str] = &[
+    "password_hash", // [auth] only — web/user password_hash are real
+    "token_ttl_secs",
+    "obf.cipher",
+    "obf.tls.server_names",
+    "obf.tls.session_id",
+    "obf.tls.supported_groups",
+    "obf.tls.key_share_entropy_bytes",
+    "obf.http2_masking.enabled",
+    "obf.http2_masking.ratio",
+    "obf.traffic_normalization.randomize_sequence",
+    "obf.anti_fingerprinting.rotate_ciphers_every",
+    "obf.quic.cid_length",
+    "obf.quic.version",
+    "pool.lease_time_secs",
+    "perf.tun.write_buffer_size",
+    "perf.tun.read_timeout_ms",
+    "perf.tun.max_pending_packets",
+    "perf.connection.rate_limit_packets_per_sec",
+];
+
+/// Key NAMES nobody read — i.e. typos — with the two known-benign classes filtered out.
+///
+/// `unread_keys` is the only thing that can catch a misspelled key name: a wrong name is not a
+/// parse error, it simply never reaches an accessor, and the field keeps its default. For
+/// `kill_swtich = true` that means the kill switch is OFF and nothing says so.
+pub fn unknown_keys(doc: &format::IniDoc, client: bool) -> Vec<String> {
+    doc.unread_keys()
+        .into_iter()
+        .filter(|(_, k)| !(client && GUI_ONLY_CLIENT_KEYS.contains(k)))
+        .filter(|(_, k)| !RETIRED_KEYS.contains(k))
+        .map(|(section, k)| {
+            if section.is_empty() {
+                k.to_string()
+            } else {
+                format!("[{section}] {k}")
+            }
+        })
+        .collect()
+}
+
+/// Parse a client config and REFUSE anything the runtime would silently reinterpret.
+///
+/// Two independent ways a config can lie about itself, and both used to fail OPEN on the real
+/// start while only `check-config` reported them:
+///   * a misspelled key NAME (`kill_swtich`) — never read, so the field keeps its default;
+///   * a value PRESENT but not understood (`kill_switch = ture`) — `bool_or` records it and
+///     substitutes the default.
+///
+/// Either one silently disables a security setting, so the process about to ACT on the config
+/// is exactly where they must be fatal. `check-config` keeps its own flow: it reports every
+/// problem at once rather than stopping at the first. (Audit 2026-08-01, §4/§5.)
+pub fn parse_client_config_strict(s: &str) -> anyhow::Result<client::ClientConfig> {
+    let doc = format::IniDoc::parse(s)?;
+    let cfg = client::ClientConfig::from_ini(&doc)?;
+    let unknown = unknown_keys(&doc, true);
+    let bad = format::take_bad_values();
+    if unknown.is_empty() && bad.is_empty() {
+        return Ok(cfg);
+    }
+    let mut why: Vec<String> = Vec::new();
+    if !unknown.is_empty() {
+        why.push(format!(
+            "unknown key(s), likely misspelled: {}",
+            unknown.join(", ")
+        ));
+    }
+    why.extend(bad.iter().cloned());
+    anyhow::bail!(
+        "refusing to start: {} config problem(s) whose defaults would otherwise be substituted silently
+  {}",
+        unknown.len() + bad.len(),
+        why.join("
+  ")
+    )
+}
+
 /// Parse a client config. The one and only format is flat INI with a `[qeli]`
 /// section; see [`client::ClientConfig::from_ini`].
 pub fn parse_client_config(s: &str) -> anyhow::Result<client::ClientConfig> {

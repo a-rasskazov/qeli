@@ -325,6 +325,21 @@ fn ensure_unique_dev(name: &str, ini: &str) -> String {
 fn persist(name: &str, ini: &str) -> anyhow::Result<()> {
     let doc = IniDoc::parse(ini).map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
     let cfg = ClientConfig::from_ini(&doc)?;
+    // A misspelled key NAME and a value present-but-unreadable both fail open at parse: the
+    // field silently keeps its default. The runtime now refuses to start on either, so saving
+    // one here would hand the operator a green "Saved" and a client that will not run.
+    // (Audit 2026-08-01, §4/§5.)
+    let unknown = crate::config::unknown_keys(&doc, true);
+    let bad = crate::config::format::take_bad_values();
+    if !unknown.is_empty() {
+        anyhow::bail!(
+            "unknown key(s), likely misspelled: {} — the client would start with the defaults              for them",
+            unknown.join(", ")
+        );
+    }
+    if !bad.is_empty() {
+        anyhow::bail!("{}", bad.join("; "));
+    }
     if cfg.server.address.is_empty() {
         anyhow::bail!("server address is required");
     }
