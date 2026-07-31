@@ -54,39 +54,17 @@ pub struct Section {
     /// costs nothing here. Deliberately **not** part of the value: two sections
     /// with the same content are equal regardless of what has been read.
     read: std::cell::RefCell<std::collections::HashSet<String>>,
-}
-
-/// Values that were PRESENT but not understood, collected across the whole parse.
-///
-/// `unread_keys` catches a misspelled key NAME; it cannot catch a key whose name is right
-/// and whose VALUE is junk — that key was read, so it is not "unread". Those cases only
-/// produced a `log::warn!`, which `check-config` never saw: it reported OK / rc=0 for a
-/// config where `kill_switch = ture` had quietly left the kill-switch off. Recorded here
-/// so `check-config` can report them and fail. (S-15)
-///
-/// A process-global because parsing runs through free functions on short-lived `IniDoc`s
-/// with no shared context to thread through; `check-config` drains it after the parse.
-static BAD_VALUES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-
-/// pub(crate) so other parsers can record their own bad values (e.g. `opt_parse` in
-/// server_ini.rs, which reads `expire_at` — a fail-open on a bad value there means an
-/// account with no expiry, and `check-config` must catch it). (S-15 / M5)
-pub(crate) fn record_bad_value(msg: String) {
-    if let Ok(mut g) = BAD_VALUES.lock() {
-        // Bound it: a pathological config must not grow this without limit.
-        if g.len() < 256 {
-            g.push(msg);
-        }
-    }
-}
-
-/// Take (and clear) the present-but-unparsable values seen since the last call.
-/// Empty = every value in the config was understood.
-pub fn take_bad_values() -> Vec<String> {
-    BAD_VALUES
-        .lock()
-        .map(|mut g| std::mem::take(&mut *g))
-        .unwrap_or_default()
+    /// Values that were PRESENT but not understood, e.g. `kill_switch = ture`.
+    ///
+    /// Per-SECTION, alongside `read`, for the same reason and with the same cost. This used to
+    /// be a process-global `Mutex<Vec<String>>`, which was survivable while only `check-config`
+    /// drained it — a single-threaded CLI. Once the strict parse and the panel's save began
+    /// REJECTING configs on the strength of it, the global became a race: the panel is a
+    /// multi-threaded Axum server, so two concurrent saves could swap each other's findings —
+    /// one accepting a config with a bad security value because the other had already drained
+    /// the marker. State that decides an accept/reject belongs to the parse that produced it.
+    /// (Audit 2026-08-01, §2.)
+    bad: std::cell::RefCell<Vec<String>>,
 }
 
 impl PartialEq for Section {
@@ -104,6 +82,7 @@ impl Section {
             instance,
             entries: Vec::new(),
             read: Default::default(),
+            bad: Default::default(),
         }
     }
 
@@ -115,6 +94,22 @@ impl Section {
     /// Keys present in the file that **no** accessor ever asked for. Almost
     /// always a typo or a key from a different section. Only meaningful once the
     /// config has been fully built from this document.
+    /// Record a value that was PRESENT but not understood, so the strict parse and
+    /// `check-config` can refuse it. `pub(crate)` so the other parsers (`opt_parse` in
+    /// server_ini.rs, the `mtu` reader in client.rs) can record their own.
+    pub(crate) fn record_bad_value(&self, msg: String) {
+        let mut g = self.bad.borrow_mut();
+        // Bound it: a pathological config must not grow this without limit.
+        if g.len() < 256 {
+            g.push(msg);
+        }
+    }
+
+    /// The present-but-unparsable values seen in THIS section.
+    pub fn bad_values(&self) -> Vec<String> {
+        self.bad.borrow().clone()
+    }
+
     pub fn unread_keys(&self) -> Vec<&str> {
         let read = self.read.borrow();
         let mut seen = std::collections::HashSet::new();
@@ -217,7 +212,7 @@ impl Section {
                         key,
                         v
                     );
-                    record_bad_value(format!(
+                    self.record_bad_value(format!(
                         "key '{key}' has an unparsable value '{v}' — the default was used instead"
                     ));
                     default
@@ -250,7 +245,7 @@ impl Section {
                         v,
                         default
                     );
-                    record_bad_value(format!(
+                    self.record_bad_value(format!(
                         "key '{key}' has an unrecognised boolean '{v}' — the default ({default}) \
                          was used. Several of these are security switches whose default is OFF. \
                          Accepted: true/false, yes/no, on/off, 1/0"
@@ -305,6 +300,14 @@ impl IniDoc {
             .iter()
             .flat_map(|s| s.unread_keys().into_iter().map(move |k| (s.header(), k)))
             .collect()
+    }
+
+    /// Every present-but-unparsable value across the whole document.
+    ///
+    /// Tied to THIS document, not to a global: the parse that produced the finding is the one
+    /// that must act on it. See `Section::bad`. (Audit 2026-08-01, §2.)
+    pub fn bad_values(&self) -> Vec<String> {
+        self.sections.iter().flat_map(|s| s.bad_values()).collect()
     }
 
     /// Parse INI text. Returns an error with a 1-based line number on malformed
@@ -656,6 +659,48 @@ mode = obfs
         let src = "[profile:tcp]\nbind = 0.0.0.0:443\n[profile:tcp.nat]\nenabled = true\n[profile:tcp]\nmtu = 1400\n";
         let doc = IniDoc::parse(src).unwrap();
         assert_eq!(doc.sections_of("profile").count(), 3);
+    }
+
+    /// Findings belong to the document that produced them.
+    ///
+    /// They used to live in a process-global `Mutex<Vec<String>>`, drained by whoever called
+    /// `take_bad_values()` first. That was survivable while only the single-threaded
+    /// `check-config` read it; once the strict parse and the panel's save started REJECTING on
+    /// the strength of it, two concurrent parses could swap findings — one accepting a config
+    /// with a bad security value because the other had already drained the marker. This pins
+    /// the isolation: parsing a bad document must not affect a good one, in either order, and
+    /// re-reading must not consume. (Audit 2026-08-01, §2.)
+    #[test]
+    fn bad_values_belong_to_their_own_document() {
+        let bad = IniDoc::parse(
+            "[qeli]
+kill_switch = ture
+",
+        )
+        .unwrap();
+        let good = IniDoc::parse(
+            "[qeli]
+kill_switch = true
+",
+        )
+        .unwrap();
+        // Read the key on both, so both parsers have actually looked at it.
+        assert!(!bad.section("qeli").unwrap().bool_or("kill_switch", false));
+        assert!(good.section("qeli").unwrap().bool_or("kill_switch", false));
+
+        assert_eq!(
+            bad.bad_values().len(),
+            1,
+            "the typo is recorded on its own doc"
+        );
+        assert!(
+            good.bad_values().is_empty(),
+            "a clean document must not inherit another's finding"
+        );
+        // Not a drain: asking twice gives the same answer, so a second consumer cannot be
+        // starved by the first.
+        assert_eq!(bad.bad_values().len(), 1);
+        assert!(good.bad_values().is_empty());
     }
 
     #[test]

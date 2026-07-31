@@ -490,7 +490,7 @@ impl ClientConfig {
         // unreadable value so `validate()` refuses. (Audit 2026-07-31, §9.)
         if let Some(raw) = q.get("mtu").map(str::trim).filter(|s| !s.is_empty()) {
             if raw.parse::<i32>().is_err() {
-                crate::config::format::record_bad_value(format!(
+                q.record_bad_value(format!(
                     "key 'mtu' has an unrecognised value '{raw}'; using auto"
                 ));
             }

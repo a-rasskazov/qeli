@@ -1180,7 +1180,7 @@ fn opt_parse<T: std::str::FromStr>(s: &Section, key: &str) -> Option<T> {
             // fail-open ("never expires" / "unlimited"), and without this it went unseen
             // by check-config, defeating the S-15 mechanism for exactly the fields where
             // fail-open matters most. (M5)
-            crate::config::format::record_bad_value(format!(
+            s.record_bad_value(format!(
                 "key '{key}' has an unparsable value {v:?} — the default was used (this may be \
                  fail-open, e.g. no expiry / no limit)"
             ));

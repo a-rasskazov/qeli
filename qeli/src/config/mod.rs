@@ -84,11 +84,28 @@ pub fn unknown_keys(doc: &format::IniDoc, client: bool) -> Vec<String> {
 /// Either one silently disables a security setting, so the process about to ACT on the config
 /// is exactly where they must be fatal. `check-config` keeps its own flow: it reports every
 /// problem at once rather than stopping at the first. (Audit 2026-08-01, §4/§5.)
+/// Parse a SERVER config, returning it together with the values that were present but not
+/// understood.
+///
+/// The server deliberately WARNS rather than refuses on these — aborting a start over a
+/// long-standing typo would take a working server down on upgrade, and the operator sees the
+/// line in the journal at boot. What changed is only where the findings come from: they belong
+/// to this parse rather than to a process-global that any other thread could drain.
+/// (Audit 2026-08-01, §2.)
+pub fn parse_server_config_reporting(
+    s: &str,
+) -> anyhow::Result<(server::ServerConfig, Vec<String>)> {
+    let doc = format::IniDoc::parse(s)?;
+    let cfg = server::ServerConfig::from_ini(&doc)?;
+    let bad = doc.bad_values();
+    Ok((cfg, bad))
+}
+
 pub fn parse_client_config_strict(s: &str) -> anyhow::Result<client::ClientConfig> {
     let doc = format::IniDoc::parse(s)?;
     let cfg = client::ClientConfig::from_ini(&doc)?;
     let unknown = unknown_keys(&doc, true);
-    let bad = format::take_bad_values();
+    let bad = doc.bad_values();
     if unknown.is_empty() && bad.is_empty() {
         return Ok(cfg);
     }

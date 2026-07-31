@@ -596,7 +596,7 @@ async fn main() -> anyhow::Result<()> {
             // runtime, which `check-config` never saw. That is how a config containing
             // `kill_switch = ture` passed with "OK" and rc=0 while the kill-switch was
             // silently off. Reported and counted as a problem now. (S-15)
-            let bad_values = config::format::take_bad_values();
+            let bad_values = doc.bad_values();
             if !bad_values.is_empty() {
                 problems += bad_values.len();
                 eprintln!(

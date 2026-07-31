@@ -801,6 +801,9 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         .validate("[web]")
         .map_err(|e| anyhow::anyhow!(e))?;
     let mut seen = std::collections::HashSet::new();
+    // (address, port, transport) -> profile that claimed it first.
+    let mut endpoints: std::collections::HashMap<(String, u16, String), String> =
+        std::collections::HashMap::new();
     for p in &config.profiles {
         // Disabled profiles are not bound/served, so their config is not validated
         // here — this lets an operator turn off a profile that would otherwise fail
@@ -810,6 +813,26 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         }
         if p.name.is_empty() {
             anyhow::bail!("profile has an empty name");
+        }
+        // Two profiles on the SAME endpoint is not a harmless duplicate. On UDP the sockets are
+        // opened with SO_REUSEPORT, so the bind SUCCEEDS and the kernel then flow-hashes
+        // datagrams across profiles with different keys, users and pools — handshakes fail at
+        // random and a client can land in the wrong profile entirely. On TCP the second bind
+        // simply loses. Neither is discoverable from the logs. (Audit 2026-08-01, §5.)
+        let endpoint = (
+            p.bind.address.trim().to_ascii_lowercase(),
+            p.bind.port,
+            p.bind.transport.clone(),
+        );
+        if let Some(other) = endpoints.insert(endpoint, p.name.clone()) {
+            anyhow::bail!(
+                "profiles '{}' and '{}' both bind {}:{}/{} — on UDP SO_REUSEPORT lets both                  succeed and the kernel then splits clients between them at random",
+                other,
+                p.name,
+                p.bind.address,
+                p.bind.port,
+                p.bind.transport
+            );
         }
         if !seen.insert(&p.name) {
             anyhow::bail!("duplicate profile name: '{}'", p.name);
@@ -834,6 +857,24 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // wire), `tun.device_type = "tapp"` quietly creates a TUN, and
         // `dns.upstream_protocol = "tls"` — a value the docs advertise — falls back to
         // plaintext UDP while looking like DoT. (Audit 2026-07-29, #23.)
+        // The PRIMARY bind, which the extra-listener check below never covered. `bind.port = 0`
+        // was accepted and produced an ephemeral port while clients are handed the configured
+        // zero; a hostname passed this early check and was then rejected far later, because
+        // SO_REUSEPORT needs a numeric SocketAddr. (Audit 2026-08-01, §5.)
+        if p.bind.port == 0 {
+            anyhow::bail!(
+                "profile '{}': bind.port = 0 would listen on an ephemeral port that no client                  can be told about — set the port you publish",
+                p.name
+            );
+        }
+        if p.bind.transport == "udp" && p.bind.address.trim().parse::<std::net::IpAddr>().is_err() {
+            anyhow::bail!(
+                "profile '{}': bind.address = '{}' is a hostname, but a UDP profile binds with                  SO_REUSEPORT and needs a numeric address — use an IP (0.0.0.0 or :: for all)",
+                p.name,
+                p.bind.address
+            );
+        }
+
         // Extra `listen` specs. The runtime parses these too and logs an error for a malformed
         // one, but only once the profile is already starting — so `check-config` passed on a
         // config whose second listener could never bind, and the operator learned about it from
@@ -1275,6 +1316,14 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // operator never chose and cannot redirect to (`--to-ports 0` is meaningless), and
             // `dns.timeout_secs = 0` makes every upstream wait expire instantly — both parsed
             // cleanly and failed later, or not visibly at all. (Audit 2026-08-01, §3.)
+            // The panel binds `web.port`, and 0 gives an ephemeral port while the log still prints
+            // the configured zero — the operator is told an address that was never listened on.
+            // (Audit 2026-08-01.)
+            if config.web.enabled && config.web.port == 0 {
+                anyhow::bail!(
+                "web.port = 0 would bind an ephemeral port while the log reports 0 — set the                  port you actually reach the panel on"
+            );
+            }
             if p.dns.port == 0 {
                 anyhow::bail!(
                     "profile '{}': dns.port = 0 would bind an ephemeral port nothing can be                      pointed at — set 53, or a fixed port",
@@ -1413,8 +1462,8 @@ pub fn load_users_db(config: &ServerConfig) -> anyhow::Result<UsersDb> {
 /// the kill-switch on a live server, exactly the case the check exists for. We warn rather
 /// than refuse: aborting a start over a long-standing typo would take a working server down
 /// on upgrade. The operator sees it in the journal at boot. (S-15 / unsafe defaults)
-fn warn_bad_config_values() {
-    for msg in crate::config::format::take_bad_values() {
+fn warn_bad_config_values(bad: &[String]) {
+    for msg in bad {
         log::warn!(
             "config: {} — a security default may not be what you intended; run \
              `qeli check-config` to review",
@@ -1425,8 +1474,9 @@ fn warn_bad_config_values() {
 
 pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let config_content = std::fs::read_to_string(cfg_path)?;
-    let config: ServerConfig = crate::config::parse_server_config(&config_content)?;
-    warn_bad_config_values();
+    let (config, bad_values): (ServerConfig, Vec<String>) =
+        crate::config::parse_server_config_reporting(&config_content)?;
+    warn_bad_config_values(&bad_values);
 
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
@@ -1757,8 +1807,9 @@ async fn usage_sweep(state: Arc<ServerState>) {
 pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // Validate the config parses and has at least one profile before starting.
     let config_content = std::fs::read_to_string(cfg_path)?;
-    let config: ServerConfig = crate::config::parse_server_config(&config_content)?;
-    warn_bad_config_values();
+    let (config, bad_values): (ServerConfig, Vec<String>) =
+        crate::config::parse_server_config_reporting(&config_content)?;
+    warn_bad_config_values(&bad_values);
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
     }
@@ -2299,8 +2350,13 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                 pcfg.pool.cidr,
                 wan
             ),
-            Err(e) => log::error!(
-                "Profile '{}': routing.nat.enabled is set but NAT was NOT applied — {e}",
+            // Explicitly enabled and not applied is a REFUSAL, not a log line. Clients connect
+            // happily and then find that full-tunnel traffic never reaches the internet, which
+            // reads as a broken VPN rather than a missing iptables rule. The operator asked for
+            // NAT; silently serving without it is answering a different question.
+            // (Audit 2026-08-01.)
+            Err(e) => anyhow::bail!(
+                "profile '{}': routing.nat.enabled is set but NAT was NOT applied — {e}.                  Clients would connect and get no internet through the tunnel.",
                 name
             ),
         }
@@ -2871,8 +2927,23 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         let dns_cfg = pcfg.dns.clone();
         let name_dns = name.clone();
         let dns_listen = crate::util::join_host_port(&pcfg.dns.listen, pcfg.dns.port);
+        // BIND FIRST, before the profile is allowed to advertise this resolver. The bind used
+        // to live inside the detached task below, so a taken port surfaced as a log line while
+        // the tunnel came up and pushed clients an address nothing was listening on — the
+        // commonest trigger being a host resolver on `0.0.0.0:53`, which covers the TUN address
+        // too. Failing the profile here is the difference between "DNS is misconfigured, and it
+        // says so" and "the internet is broken for every client, silently".
+        // (Audit 2026-08-01, §4.)
+        let dns_socket = match dns::bind_dns_proxy(&pcfg.dns).await {
+            Ok(s) => s,
+            Err(e) => anyhow::bail!(
+                "profile '{}': {e}. Clients of this profile would be pushed {} as their                  resolver and get NO name resolution. Free the port (`ss -lunp | grep ':53 '`)                  or set a different dns.port — the tunnel bridges 53 to it automatically.",
+                name,
+                dns_listen
+            ),
+        };
         tokio::spawn(async move {
-            if let Err(e) = dns::run_dns_proxy(dns_state, dns_cfg).await {
+            if let Err(e) = dns::run_dns_proxy(dns_state, dns_cfg, dns_socket).await {
                 // LOUD, and it says what it costs. This used to be one ERROR line while the
                 // tunnel came up and kept handing every client the address of a resolver that
                 // does not exist — names simply stopped resolving, with nothing pointing at
@@ -3346,6 +3417,61 @@ mod tests {
     fn valid_address_fields_still_pass() {
         // The guard above must not start rejecting ordinary configs.
         assert!(validate_profiles(&cfg_addr("10.1.0.1", "255.255.255.0", "10.1.0.0/24")).is_ok());
+    }
+
+    /// The PRIMARY bind, which the extra-listener checks never covered (§5).
+    ///
+    /// Built as a WHOLE config rather than appended to the shared fixture: the INI parser takes
+    /// the FIRST value of a duplicate key, so appending `bind.port = 0` to a fixture that
+    /// already sets 4443 changes nothing — which is how the first version of this test passed
+    /// against a check that had not run at all. (Audit 2026-08-01, §5.)
+    #[test]
+    fn primary_bind_and_endpoint_collisions_are_rejected() {
+        fn cfg(text: &str) -> ServerConfig {
+            crate::config::parse_server_config(text).expect("fixture INI must parse")
+        }
+        fn profile(name: &str, addr: &str, port: &str, transport: &str) -> String {
+            format!(
+                "[profile:{name}]
+bind.address = {addr}
+bind.port = {port}
+                 bind.transport = {transport}
+tun.name = vpn{name}
+tun.address = 10.1.0.1
+                 tun.netmask = 255.255.255.0
+tun.mtu = 1400
+pool.cidr = 10.1.0.0/24
+                 obf.mode = fake-tls
+"
+            )
+        }
+
+        // The control: without a passing case, a check that rejected everything would look
+        // exactly like one that works.
+        validate_profiles(&cfg(&profile("a", "0.0.0.0", "4443", "tcp")))
+            .expect("a sane profile must validate");
+
+        for (label, text) in [
+            ("bind.port = 0", profile("a", "0.0.0.0", "0", "tcp")),
+            (
+                "udp bind.address is a hostname",
+                profile("a", "vpn.example.com", "4443", "udp"),
+            ),
+            (
+                "two profiles on one endpoint",
+                profile("a", "0.0.0.0", "4443", "udp") + &profile("b", "0.0.0.0", "4443", "udp"),
+            ),
+        ] {
+            assert!(
+                validate_profiles(&cfg(&text)).is_err(),
+                "{label}: must be rejected at load"
+            );
+        }
+
+        // Same port on DIFFERENT transports is a legitimate pairing and must still pass.
+        let mixed =
+            profile("a", "0.0.0.0", "4443", "tcp") + &profile("b", "0.0.0.0", "4443", "udp");
+        validate_profiles(&cfg(&mixed)).expect("tcp and udp may share a port");
     }
 
     /// Nonsensical obfuscation values must be refused at load, not accepted and then

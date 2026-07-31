@@ -79,10 +79,29 @@ fn answer_min_ttl(msg: &[u8]) -> Option<u32> {
 /// start work rather than by parking an unbounded number of started tasks.
 const MAX_INFLIGHT: usize = 512;
 
-pub async fn run_dns_proxy(_state: Arc<ServerState>, dns_cfg: DnsConfig) -> anyhow::Result<()> {
+/// Bind the proxy's listen socket, SEPARATELY from serving on it.
+///
+/// The bind used to happen inside the detached serve task, so a port already taken — the
+/// common case, a host resolver on `0.0.0.0:53` covering the TUN address — surfaced as one
+/// ERROR line while the profile came up regardless and handed every client the address of a
+/// resolver that does not exist. Names then simply stopped resolving with nothing pointing at
+/// the cause. Binding here lets the caller fail the profile BEFORE it advertises a resolver it
+/// cannot provide. (Audit 2026-08-01, §4.)
+pub async fn bind_dns_proxy(dns_cfg: &DnsConfig) -> anyhow::Result<UdpSocket> {
+    let bind_addr = crate::util::join_host_port(&dns_cfg.listen, dns_cfg.port);
+    UdpSocket::bind(&bind_addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("DNS proxy cannot bind {bind_addr}: {e}"))
+}
+
+pub async fn run_dns_proxy(
+    _state: Arc<ServerState>,
+    dns_cfg: DnsConfig,
+    bound: UdpSocket,
+) -> anyhow::Result<()> {
     let bind_addr = crate::util::join_host_port(&dns_cfg.listen, dns_cfg.port);
     // Shared listen socket: query tasks send their answers back through it.
-    let socket = Arc::new(UdpSocket::bind(&bind_addr).await?);
+    let socket = Arc::new(bound);
     log::info!("DNS proxy listening on {}", bind_addr);
 
     let cache: DnsCache = Arc::new(RwLock::new(HashMap::new()));
