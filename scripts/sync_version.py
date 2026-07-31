@@ -45,6 +45,15 @@ DEV_TARGETS: list[tuple[str, str, str]] = [
     ("qeli-shared/QeliShared/QeliShared.csproj", r"<Version>([^<]+)</Version>", "shared csproj"),
     # iOS keeps both numbers in project.yml; the plists only reference the variables.
     ("qeli-ios/project.yml", r"MARKETING_VERSION:\s*(\S+)", "iOS MARKETING_VERSION"),
+    # …and AppConstants carries a FALLBACK used when the bundle has no version (unit tests, a
+    # stripped host). It is a literal, so it drifts silently: it read 0.7.13 while project.yml
+    # said 0.7.14, and this script reported everything in sync because it never looked here.
+    # (Audit 2026-07-31, §12.)
+    (
+        "qeli-ios/QeliCore/AppConstants.swift",
+        r'fallbackVersion = "([^"]+)"',
+        "iOS fallback version",
+    ),
     ("qeli-openwrt/Makefile", r"PKG_VERSION:=(\S+)", "OpenWrt package"),
     ("qeli-openwrt/luci-app-qeli/Makefile", r"PKG_VERSION:=(\S+)", "LuCI package"),
     ("qeli/debian/control", r"^Version: (\S+)", "deb control"),

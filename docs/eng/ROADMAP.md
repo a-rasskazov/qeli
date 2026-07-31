@@ -723,10 +723,12 @@ profiles, no `gmt_unix_time`, no arbitrary extension composition.
 
 - 🔵 **Two settings exist but do nothing** — deliberately kept and marked "not
   implemented" in CONFIG.md; the other 15 dead keys were removed in 0.7.12.
-  - `dns.upstream_protocol = tcp | tls` — the resolver always speaks UDP. `tcp` is a
-    small change; `tls` (DoT) is the valuable one: upstream queries stop being visible
-    to the operator's ISP. Until then, **the resolver offers no privacy against
-    whoever can see your link to the upstream**.
+  - `dns.upstream_protocol = tls` (DoT) — **`tcp` now works** (0.7.14: it forces TCP to
+    the upstream, and a truncated UDP answer is retried over TCP either way), and `tls` is
+    REJECTED at config load rather than silently downgraded. What remains is implementing
+    DoT itself: upstream queries would stop being visible to the operator's ISP. Until
+    then, **the resolver offers no privacy against whoever can see your link to the
+    upstream**.
   - `logging.format` — the field is parsed (default `plain`) but `init_logging` **never
     reads it**: the log is always the hard-coded `{ts} {LEVEL:<5} {target}: {msg}`, and
     that custom formatter sits behind `#[cfg(target_os = "linux")]`, so other platforms
