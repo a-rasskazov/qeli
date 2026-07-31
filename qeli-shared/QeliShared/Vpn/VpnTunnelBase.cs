@@ -1947,6 +1947,28 @@ public abstract class VpnTunnelBase
     /// once. (Audit 2026-07-30, #5.)
     ///
     /// Never fatal: the tunnel works without the report, just without the downlink narrowing.</summary>
+    /// <summary>Tell the server what this build is, so `list-clients` and the panel can answer
+    /// "who still needs to update?". Sent once per attempt on the same authenticated in-tunnel
+    /// path as the MTU report, and nothing waits for a reply — a server that predates the frame
+    /// discards it and shows the session as unknown, exactly as before.
+    ///
+    /// No re-send on UDP, unlike the MTU report: losing this costs a label in an operator's
+    /// table, not the session's downlink sizing.</summary>
+    private void ReportClientInfo(ITransport transport, PacketCodec enc)
+    {
+        var frame = CtrlFrame.ThisBuild();
+        if (frame == null) return;
+        try
+        {
+            transport.Send(enc.Encrypt(frame));
+        }
+        catch (Exception e)
+        {
+            // Never fatal: this is diagnostics. A real transport failure surfaces in the loop.
+            Log($"could not report client version: {e.Message}");
+        }
+    }
+
     private void ReportTunnelMtu(ITransport transport, PacketCodec enc, int mtu, bool isUdp,
         CancellationToken ct)
     {
@@ -2003,6 +2025,7 @@ public abstract class VpnTunnelBase
         void Fail(Exception e) => firstError.TrySetResult(e);
 
         ReportTunnelMtu(transport, enc, effectiveMtu, isUdp, ct);
+        ReportClientInfo(transport, enc);
 
         // Poll the UDP RX path every WatchdogPollMs (not once per rxDead) so suspend/resume
         // and dead-session detection run promptly — the read simply times out when idle.
@@ -2505,6 +2528,7 @@ public abstract class VpnTunnelBase
         // TCP-only, so no UDP re-sends are needed. (Audit 2026-07-30, #4.)
         ReportTunnelMtu(primary.Transport, primary.Enc,
             EffectiveMtu(config.Mtu, session.PushedMtu), isUdp: false, lct);
+        ReportClientInfo(primary.Transport, primary.Enc);
         // Do NOT re-resolve config.ServerAddress here: in full-tunnel SetupTun has already
         // redirected the default route and DNS into the tunnel, so a hostname lookup fails
         // ("No such host is known") and tears the whole session down (issue #69). Bonded

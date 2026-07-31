@@ -491,6 +491,8 @@ final class QeliTunnelEngine: @unchecked Sendable {
             // its downlink to match, so a failure here must not fail an otherwise good session.
             // A transport that is really broken surfaces on the first user packet instead.
             try? await established.primary.sender.sendMTUReport()
+            // Same contract for the build label: diagnostics, swallowed on failure.
+            try? await established.primary.sender.sendClientInfo()
             return established
         } catch {
             raw.cancel()

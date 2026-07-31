@@ -216,6 +216,41 @@ final class WireConformanceTests: XCTestCase {
         XCTAssertFalse(CtrlFrame.isCtrl(Data()), "heartbeat")
     }
 
+    /// Client info (type 2), pinned to the SAME bytes as the Rust, C# and Kotlin tests so the
+    /// four implementations cannot drift:
+    /// `[magic][type=2][len=12][verLen=6]["0.7.13"]["linux"]`.
+    func testCtrlClientInfoMatchesTheSharedVector() throws {
+        let frame = try XCTUnwrap(CtrlFrame.clientInfo(version: "0.7.13", platform: "linux"))
+        XCTAssertEqual(frame.map { String(format: "%02x", $0) }.joined(),
+                       "c19b020c06302e372e31336c696e7578")
+
+        // The server REJECTS a bad version or platform outright rather than scrubbing it, so a
+        // frame it would refuse must not be built here either. These are the shapes that reach a
+        // log line, a terminal table and the panel's DOM.
+        XCTAssertNil(CtrlFrame.clientInfo(version: "0.7.13\nX", platform: "linux"),
+                     "a newline forges a log line")
+        XCTAssertNil(CtrlFrame.clientInfo(version: "<b>1.0</b>", platform: "linux"),
+                     "markup reaches the panel DOM")
+        XCTAssertNil(CtrlFrame.clientInfo(version: "", platform: "linux"))
+        XCTAssertNil(CtrlFrame.clientInfo(version: String(repeating: "9", count: 33),
+                                          platform: "linux"), "over the 32-byte cap")
+        XCTAssertNil(CtrlFrame.clientInfo(version: "0.7.13", platform: "Linux"),
+                     "platform must be lowercase")
+        XCTAssertNil(CtrlFrame.clientInfo(version: "0.7.13", platform: ""))
+        XCTAssertNil(CtrlFrame.clientInfo(version: "0.7.13",
+                                          platform: String(repeating: "a", count: 17)),
+                     "over the 16-byte cap")
+
+        // Valid non-trivial values must still build.
+        XCTAssertNotNil(CtrlFrame.clientInfo(version: "1.0.0-rc1+build.7", platform: "linux"))
+        for tag in ["linux", "windows", "macos", "android", "ios", "freebsd", "other"] {
+            XCTAssertNotNil(CtrlFrame.clientInfo(version: "0.7.13", platform: tag),
+                            "platform \(tag) must be accepted")
+        }
+        // This build's own tag must be one the server accepts.
+        XCTAssertNotNil(CtrlFrame.clientInfo(version: "0.7.13", platform: CtrlFrame.platform))
+    }
+
     /// A pre-#14 peer slices at 1200, which is ABOVE this build's send budget. The reassembler
     /// must bound by ``maxChunkAccept``, not ``maxChunk``, or every legacy handshake is rejected
     /// as `chunkTooLarge`.

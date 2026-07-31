@@ -74,6 +74,18 @@ actor TunnelRecordSender {
         try await records.sendRecord(try encoder.encrypt(CtrlFrame.mtuReport(mtu)))
     }
 
+    /// Tell the server what this build is, so `list-clients` and the panel can answer "who still
+    /// needs to update?".
+    ///
+    /// Same authenticated in-tunnel path and the same fire-and-forget contract as the MTU report
+    /// above: a server predating the frame discards it and shows the session as unknown, exactly
+    /// as before. Silently does nothing if the bundle version ever stops matching the charset the
+    /// server accepts — the label is diagnostics, never a reason to fail a connect.
+    func sendClientInfo() async throws {
+        guard let frame = CtrlFrame.thisBuild() else { return }
+        try await records.sendRecord(try encoder.encrypt(frame))
+    }
+
     func sendHeartbeat(_ emission: HeartbeatEmission) async throws {
         let record: Data
         switch emission {

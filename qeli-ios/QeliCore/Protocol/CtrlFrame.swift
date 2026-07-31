@@ -23,6 +23,64 @@ enum CtrlFrame {
     /// Client→server MTU report. Body: `[mtu(2 BE)]`.
     static let typeMTUReport: UInt8 = 1
 
+    /// Client→server: what this build is, so `list-clients` and the panel can answer "who still
+    /// needs to update?". Body: `[verLen(1)][version][platform]`.
+    ///
+    /// SELF-REPORTED, NOT ATTESTED. Any authenticated peer can claim any string, so this is
+    /// diagnostics only and must never gate anything.
+    static let typeClientInfo: UInt8 = 2
+
+    // Caps mirror ctrl.rs. Deliberately small: the value is peer-chosen and ends up in a CLI
+    // table, the JSON API, the panel's DOM and the log.
+    static let maxVersionLength = 32
+    static let maxPlatformLength = 16
+
+    /// The platform tag this build reports. A closed set, like ctrl.rs.
+    static let platform = "ios"
+
+    /// Semver plus the punctuation real builds use. The server refuses anything else OUTRIGHT
+    /// rather than scrubbing it, so a frame it would reject must not be built here either.
+    private static func validVersion(_ s: String) -> Bool {
+        !s.isEmpty && s.count <= maxVersionLength && s.utf8.allSatisfy { b in
+            (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A)
+                || b == 0x2E || b == 0x2D || b == 0x2B || b == 0x5F   // . - + _
+        }
+    }
+
+    /// A short lowercase identifier: linux, windows, macos, android, ios, …
+    private static func validPlatform(_ s: String) -> Bool {
+        !s.isEmpty && s.count <= maxPlatformLength && s.utf8.allSatisfy { b in
+            (b >= 0x61 && b <= 0x7A) || (b >= 0x30 && b <= 0x39) || b == 0x2D
+        }
+    }
+
+    /// Build the client-info frame, or nil when either field breaks the caps or the charset —
+    /// the caller then sends nothing and the server shows the session as unknown, which is
+    /// exactly the pre-feature behaviour.
+    // The default must be QUALIFIED: an unqualified `platform` here would resolve to the
+    // parameter being declared, not the static property.
+    static func clientInfo(version: String, platform: String = CtrlFrame.platform) -> Data? {
+        guard validVersion(version), validPlatform(platform) else { return nil }
+        let v = Array(version.utf8)
+        let p = Array(platform.utf8)
+        let bodyLength = 1 + v.count + p.count
+        guard bodyLength <= Int(UInt8.max) else { return nil }
+
+        var frame = Data(magic)
+        frame.append(typeClientInfo)
+        frame.append(UInt8(bodyLength))
+        frame.append(UInt8(v.count))
+        frame.append(contentsOf: v)
+        frame.append(contentsOf: p)
+        return frame
+    }
+
+    /// This build's own client-info frame: the bundle version (the one source that cannot drift
+    /// from `project.yml` — see ``AppConstants/version``) plus ``platform``.
+    static func thisBuild() -> Data? {
+        clientInfo(version: AppConstants.version)
+    }
+
     /// Build the MTU report frame for `mtu`.
     static func mtuReport(_ mtu: Int) -> Data {
         let clamped = UInt16(min(max(mtu, 0), Int(UInt16.max)))

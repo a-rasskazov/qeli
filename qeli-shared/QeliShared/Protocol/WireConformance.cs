@@ -127,7 +127,38 @@ public static class WireConformance
             && Hex(CtrlFrame.MtuReport(-1)) == "c19b01020000";
         check("ctrl: out-of-range MTU is clamped, not wrapped", clamped);
 
-        return ok && disjoint && clamped;
+        // Client info (#2). The SAME vector the Rust test pins, so the four implementations
+        // cannot drift: `[magic][type=2][len=12][ver_len=6]["0.7.13"]["linux"]`.
+        bool info = Hex(CtrlFrame.ClientInfo("0.7.13", "linux")!) == "c19b020c06302e372e31336c696e7578";
+        check("ctrl: ClientInfo(0.7.13, linux) matches the shared vector", info);
+
+        // The server REJECTS a bad version or platform outright rather than scrubbing it, so a
+        // frame it would refuse must not be built here either — otherwise the client reports
+        // nothing and has no way to know why. These are the shapes that reach a log line, a
+        // terminal table and the panel's DOM.
+        bool refused =
+            CtrlFrame.ClientInfo("0.7.13\nX", "linux") == null      // newline forges a log line
+            && CtrlFrame.ClientInfo("<b>1.0</b>", "linux") == null   // markup reaches the panel DOM
+            && CtrlFrame.ClientInfo("", "linux") == null             // empty
+            && CtrlFrame.ClientInfo(new string('9', 33), "linux") == null   // over the 32-byte cap
+            && CtrlFrame.ClientInfo("0.7.13", "Linux") == null       // platform must be lowercase
+            && CtrlFrame.ClientInfo("0.7.13", "") == null
+            && CtrlFrame.ClientInfo("0.7.13", new string('a', 17)) == null; // over the 16-byte cap
+        check("ctrl: an unrepresentable version/platform yields no frame", refused);
+
+        // Valid non-trivial values must still build: a real pre-release version, every platform
+        // tag the closed set allows.
+        bool accepted = CtrlFrame.ClientInfo("1.0.0-rc1+build.7", "linux") != null
+            && new[] { "linux", "windows", "macos", "android", "ios", "freebsd", "other" }
+                .All(pl => CtrlFrame.ClientInfo("0.7.13", pl) != null);
+        check("ctrl: real versions and every platform tag are accepted", accepted);
+
+        // This build must actually produce a frame — a null here means every session shows as
+        // unknown, which is the failure the feature exists to remove.
+        bool self = CtrlFrame.ThisBuild() != null && CtrlFrame.ClientInfo("0.7.13", CtrlFrame.PlatformTag()) != null;
+        check("ctrl: this build reports a usable version and platform", self);
+
+        return ok && disjoint && clamped && info && refused && accepted && self;
     }
 
     /// <summary>App-layer fragmentation of the big UDP handshake messages. The reassembler is

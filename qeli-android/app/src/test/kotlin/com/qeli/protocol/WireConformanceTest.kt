@@ -4,6 +4,7 @@ import com.qeli.crypto.PacketCipher
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -264,6 +265,38 @@ class WireConformanceTest {
         assertFalse("IPv4 is not a ctrl frame", CtrlFrame.isCtrl(byteArrayOf(0x45, 0, 0, 0x28)))
         assertFalse("IPv6 is not a ctrl frame", CtrlFrame.isCtrl(byteArrayOf(0x60, 0, 0, 0)))
         assertFalse("heartbeat is not a ctrl frame", CtrlFrame.isCtrl(ByteArray(0)))
+    }
+
+    /**
+     * Client info (type 2), pinned to the SAME bytes as the Rust, C# and Swift tests so the four
+     * implementations cannot drift: `[magic][type=2][len=12][verLen=6]["0.7.13"]["linux"]`.
+     */
+    @Test
+    fun `ctrl client info matches the shared vector`() {
+        assertEquals(
+            "c19b020c06302e372e31336c696e7578",
+            hex(CtrlFrame.clientInfo("0.7.13", "linux")!!),
+        )
+
+        // The server REJECTS a bad version or platform outright rather than scrubbing it, so a
+        // frame it would refuse must not be built here either. These are the shapes that reach a
+        // log line, a terminal table and the panel's DOM.
+        val newline = "0.7.13" + 10.toChar() + "X"
+        assertNull("a newline forges a log line", CtrlFrame.clientInfo(newline, "linux"))
+        assertNull("markup reaches the panel DOM", CtrlFrame.clientInfo("<b>1.0</b>", "linux"))
+        assertNull("empty version", CtrlFrame.clientInfo("", "linux"))
+        assertNull("over the 32-byte cap", CtrlFrame.clientInfo("9".repeat(33), "linux"))
+        assertNull("platform must be lowercase", CtrlFrame.clientInfo("0.7.13", "Linux"))
+        assertNull("empty platform", CtrlFrame.clientInfo("0.7.13", ""))
+        assertNull("over the 16-byte cap", CtrlFrame.clientInfo("0.7.13", "a".repeat(17)))
+
+        // Valid non-trivial values must still build.
+        assertNotNull(CtrlFrame.clientInfo("1.0.0-rc1+build.7", "linux"))
+        for (pl in listOf("linux", "windows", "macos", "android", "ios", "freebsd", "other")) {
+            assertNotNull("platform $pl must be accepted", CtrlFrame.clientInfo("0.7.13", pl))
+        }
+        // This build's own tag must be one the server accepts.
+        assertNotNull(CtrlFrame.clientInfo("0.7.13", CtrlFrame.PLATFORM))
     }
 
     /**

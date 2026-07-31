@@ -2313,6 +2313,28 @@ class VpnServiceImpl : VpnService() {
         return CoroutineScope(ctx + SupervisorJob(ctx[Job]))
     }
 
+    /** Tell the server what this build is, so `list-clients` and the panel can answer "who still
+     *  needs to update?". Sent once per attempt on the same authenticated in-tunnel path as the
+     *  MTU report, and nothing waits for a reply — a server that predates the frame discards it
+     *  and shows the session as unknown, exactly as before.
+     *
+     *  No re-send on UDP, unlike the MTU report: losing this costs a label in an operator's
+     *  table, not the session's downlink sizing. */
+    private fun reportClientInfo(transport: Transport, enc: PacketCodec) {
+        val version = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (_: Exception) {
+            null
+        } ?: return
+        val frame = CtrlFrame.clientInfo(version) ?: return
+        try {
+            transport.send(enc.encrypt(frame))
+        } catch (e: Exception) {
+            // Never fatal: this is diagnostics. A real transport failure surfaces in the loop.
+            broadcastLog("could not report client version: ${e.message}")
+        }
+    }
+
     /** Re-send delays for the unacknowledged MTU report on UDP, measured from the first send.
      *  Spread so an isolated drop AND a short burst of loss are both survived. */
     private val reportRetryDelaysMs = longArrayOf(2_000, 6_000)
@@ -2387,6 +2409,7 @@ class VpnServiceImpl : VpnService() {
         // then stalls on the first big transfer. Sent once per attempt, fire-and-forget — the
         // server ignores a value that is not narrower, and an older server discards the frame.
         reportTunnelMtu(transport, encCodec, config.mtu, isUdp, scope)
+        reportClientInfo(transport, encCodec)
 
         // Poll the UDP RX path every ~3s (not once per rxDead) so the dead-session / resume
         // checks below run promptly instead of up to rxDead late. TCP ignores the timeout;
@@ -2904,6 +2927,7 @@ class VpnServiceImpl : VpnService() {
         // bonded client. Sent on the PRIMARY stream, before the others are ramped up. Bonding is
         // TCP-only, so no UDP re-sends are needed. (Audit 2026-07-30, #4.)
         reportTunnelMtu(primary.transport, primary.enc, config.mtu, isUdp = false, scope = scope)
+        reportClientInfo(primary.transport, primary.enc)
         // false on Android 9/10 (no Os.fcntlInt) → the reads below must tolerate EAGAIN.
         val tunBlocking = forceBlocking(tunFd)
         val tunInput = FileInputStream(tunFd.fileDescriptor)
