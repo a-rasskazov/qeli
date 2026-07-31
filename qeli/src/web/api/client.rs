@@ -305,6 +305,16 @@ fn persist(name: &str, ini: &str) -> anyhow::Result<()> {
     if cfg.server.address.is_empty() {
         anyhow::bail!("server address is required");
     }
+    // The same enum/bool checks `run_client` runs. Without this the panel happily SAVED a
+    // config the client then refused at startup — `proto = ucp`, `mode = realty-tls`,
+    // `front = webscoket` — so the operator got a green "saved" and a connect that failed
+    // later, somewhere else. Saving is the moment to say no. (Audit 2026-07-31, §7.)
+    cfg.validate()?;
+    // `from_ini` parses the port as u16, which happily accepts 0 — a port that can never be
+    // connected to. Caught here rather than at connect time for the same reason.
+    if cfg.server.port == 0 {
+        anyhow::bail!("server port must be 1..65535, got 0");
+    }
     // SECURITY: the panel/API must NEVER persist a client config that can run a shell
     // command as root — `post_up`/`post_down` (hooks.rs) and `password_command`
     // (client/mod.rs) are executed via `sh -c`, so a compromised/XSS/CSRF'd panel

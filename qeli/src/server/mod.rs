@@ -1226,6 +1226,22 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         if p.dns.enabled {
             let mut usable = 0usize;
             for up in &p.dns.upstream {
+                // IPv6 parses as a valid IpAddr and so passed this check, but the resolver
+                // binds an IPv4 socket and builds its target with `format!("{}:53", ip)` —
+                // which produces `2001:db8::1:53`, fails to parse as a SocketAddr, and is
+                // skipped in silence. An IPv6-only `dns.upstream` therefore validated cleanly
+                // and then answered nothing. Say so at load instead of at query time.
+                // (Audit 2026-07-31, §6.)
+                if let Ok(ip) = up.trim().parse::<std::net::IpAddr>() {
+                    if ip.is_ipv6() {
+                        log::warn!(
+                            "profile '{}': dns.upstream '{}' is IPv6 — the in-tunnel resolver                              speaks IPv4 only, so this entry will be skipped. Use an IPv4                              resolver (IPv6 upstreams are tracked for 0.8.0).",
+                            p.name,
+                            up
+                        );
+                        continue;
+                    }
+                }
                 if up.trim().parse::<std::net::IpAddr>().is_err() {
                     log::warn!(
                         "profile '{}': dns.upstream '{}' is not a valid IP address — this \
@@ -1243,8 +1259,9 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // start anyway and fail each query in silence. (Audit 2026-07-29, #22.)
             if usable == 0 && !p.dns.upstream.is_empty() {
                 anyhow::bail!(
-                    "profile '{}': none of the {} dns.upstream entries is a valid IP address — \
-                     the DNS proxy would answer nothing while clients are pushed to use it",
+                    "profile '{}': none of the {} dns.upstream entries is a USABLE IPv4 address \
+                     (invalid, or IPv6 — which this resolver cannot reach) — the DNS proxy \
+                     would answer nothing while clients are pushed to use it",
                     p.name,
                     p.dns.upstream.len()
                 );

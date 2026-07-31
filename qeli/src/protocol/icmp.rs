@@ -113,6 +113,14 @@ pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
     if pkt.len() <= mtu {
         return None;
     }
+    // A header whose declared total_len is <= its own IHL leaves no payload, and the loop below
+    // would then produce ZERO fragments. `Some(vec![])` reads to the caller as "fragmented
+    // successfully", so it forwarded nothing, counted no drop, and the packet vanished with no
+    // trace anywhere. Refuse instead, and let the caller drop and count it.
+    // (Audit 2026-07-31, §9.)
+    if payload.is_empty() {
+        return None;
+    }
     // Every fragment but the last must carry a multiple of 8 bytes (the offset field counts
     // 8-byte units), so round the per-fragment payload DOWN.
     let per_frag = (mtu.saturating_sub(ihl)) & !7usize;
@@ -336,6 +344,12 @@ mod tests {
         let mut opts = tcp_packet(1400, false);
         opts[0] = 0x46; // IHL 6
         assert!(fragment_ipv4(&opts, router_mtu).is_none());
+
+        // A malformed header claiming no payload must refuse, not report success with zero
+        // fragments — the caller would then forward nothing AND count no drop.
+        let mut empty = tcp_packet(1400, false);
+        empty[2..4].copy_from_slice(&(IPV4_HDR_LEN as u16).to_be_bytes());
+        assert!(fragment_ipv4(&empty, router_mtu).is_none());
     }
 
     /// A datagram that is ALREADY a fragment keeps its place: offsets continue from where it

@@ -17,7 +17,7 @@ use crate::trace;
 /// (#13/#5). The frame is never acknowledged — the server answers no control frame — so a
 /// single lost datagram would otherwise cost the whole session's downlink narrowing. Three
 /// copies, spread over the first ~10 s of idle ticks, survive both an isolated drop and a short
-/// burst; the server keeps the narrowest value it has seen, so the duplicates are a no-op.
+/// burst; the server simply stores the latest value, and the copies all carry the same one, so the duplicates are a no-op.
 /// TCP needs none of this — it retransmits for us.
 const MTU_REPORT_RESENDS: u8 = 3;
 
@@ -3537,7 +3537,7 @@ async fn connect_and_run_udp(
     //
     // Being unacknowledged is exactly the problem on UDP: one lost datagram would leave the
     // server on `path_mtu = 0` for the WHOLE session, on the transport where the report matters
-    // most. The frame is idempotent — the server keeps the narrowest value it has seen — so it
+    // most. The frame is idempotent — the server simply stores the latest value, and the copies all carry the same one — so it
     // is simply re-sent on the next few idle ticks below, which costs a few bytes and removes
     // the single point of loss. (Audit 2026-07-30, #5.)
     let mtu_report_value = u16::try_from(tun_mtu.max(0)).ok();
