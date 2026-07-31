@@ -2852,7 +2852,8 @@ public abstract class VpnTunnelBase
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(address, @"^\d{1,3}(\.\d{1,3}){3}$"))
             return address;
-        var pool = new[] { "www.cloudflare.com", "www.microsoft.com", "www.apple.com", "www.google.com" };
+        // ONE list, shared with the WebSocket Host pool — see TlsHandshake.DefaultSniPool.
+        var pool = Protocol.TlsHandshake.DefaultSniPool;
         return pool[RandomNumberGenerator.GetInt32(pool.Length)];
     }
 }

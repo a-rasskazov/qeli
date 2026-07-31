@@ -2634,7 +2634,8 @@ class VpnServiceImpl : VpnService() {
         // Use the server address as SNI when it's a hostname; random realistic SNI for raw IPs.
         val isIp = address.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}$"))
         if (!isIp) return address
-        val pool = listOf("www.cloudflare.com", "www.microsoft.com", "www.apple.com", "www.google.com")
+        // ONE list, shared with the WebSocket Host pool — see TlsHandshake.DEFAULT_SNI_POOL.
+        val pool = TlsHandshake.DEFAULT_SNI_POOL
         return pool[SecureRandom().nextInt(pool.size)]
     }
 

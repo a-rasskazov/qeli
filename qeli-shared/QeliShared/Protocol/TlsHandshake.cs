@@ -11,6 +11,20 @@ namespace Qeli.Shared.Protocol;
 /// </summary>
 public static class TlsHandshake
 {
+    /// <summary>The decoy hosts a bare-IP endpoint borrows, so a fake-TLS ClientHello and a WebSocket-fronted request both look like traffic to a large, unremarkable site.
+    ///
+    /// ONE list, mirroring the Rust canon (<c>protocol/tls.rs DEFAULT_SNI_POOL</c>). The SNI
+    /// picker and the WebSocket Host pool used to carry DIFFERENT sets — four names here, five
+    /// there — so a client could front a request as amazon.com while never offering it as an
+    /// SNI. Both are observable, and disagreeing between them is a fingerprint of its own.
+    /// (Audit 2026-07-31.)</summary>
+    public static readonly string[] DefaultSniPool =
+    {
+        "www.cloudflare.com", "www.google.com", "www.microsoft.com",
+        "www.apple.com", "www.amazon.com",
+    };
+
+
     private const byte ClientHelloType = 0x01;
     private const byte ServerHelloType = 0x02;
 

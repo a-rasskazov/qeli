@@ -279,11 +279,17 @@ tun.queues = 0
 The server sets the MTU of its TUN via `tun.mtu` (per-profile, default 1400) **and
 pushes this value to the client** at auth.
 
-> **The accepted range is `576..=9000`, and it is hard (since 0.7.13).** 576 is the IPv4
-> minimum reassembly buffer (RFC 791), 9000 the conventional jumbo. A value outside it is no
+> **The accepted range is `576..=16638`, and it is hard (since 0.7.13).** 576 is the IPv4
+> minimum reassembly buffer (RFC 791). The ceiling is **derived from the record format**, not
+> chosen: a record carries nonce + counter + payload + padding + tag and must fit
+> `MAX_RECORD_SIZE`, and anything past it the peer rejects. It used to be a flat 9000
+> ("conventional jumbo") — an Ethernet convention that turned away workable setups, since a
+> 10G NIC doing 16348-byte frames can carry a far larger tunnel. Mind the units: this is the
+> INNER MTU, and the link still adds ~76 bytes of IP/UDP/record framing on top. A value
+> outside the range is no
 > longer **silently discarded with a fallback to the default**: the server refuses to start
-> the profile (`profile '<name>': tun.mtu <N> is out of range — expected 576..=9000`) and the
-> client rejects the link/config (`invalid mtu <N> — expected 0 (auto) or 576..=9000`). The
+> the profile (`profile '<name>': tun.mtu <N> is out of range — expected 576..=16638`) and the
+> client rejects the link/config (`invalid mtu <N> — expected 0 (auto) or 576..=16638`). The
 > reason for the strictness: the UDP data plane has no application-layer fragmentation, so an
 > oversized MTU emits one over-large datagram and a tiny one breaks the tunnel — and both used
 > to present simply as "it doesn't work". On the client `0` still means "auto" and need not

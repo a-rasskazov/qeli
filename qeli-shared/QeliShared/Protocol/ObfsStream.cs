@@ -446,11 +446,9 @@ public sealed class ObfsStream
 
     private const int MaxHttpHead = 4096;
 
-    private static readonly string[] WsHosts =
-    {
-        "www.cloudflare.com", "www.google.com", "www.microsoft.com",
-        "www.apple.com", "www.amazon.com",
-    };
+    /// The WebSocket `Host:` pool IS the SNI pool — see TlsHandshake.DefaultSniPool for why
+    /// they must not drift apart.
+    private static readonly string[] WsHosts = TlsHandshake.DefaultSniPool;
 
     private static readonly string[] WsUserAgents =
     {

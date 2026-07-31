@@ -434,10 +434,8 @@ class ObfsStream private constructor(
         // ── WebSocket-Upgrade fronting (client side) ─────────────────────────
 
         private const val MAX_HTTP_HEAD = 4096
-        private val WS_HOSTS = arrayOf(
-            "www.cloudflare.com", "www.google.com", "www.microsoft.com",
-            "www.apple.com", "www.amazon.com"
-        )
+        /** The WebSocket `Host:` pool IS the SNI pool — see [TlsHandshake.DEFAULT_SNI_POOL]. */
+        private val WS_HOSTS = TlsHandshake.DEFAULT_SNI_POOL
         private val WS_USER_AGENTS = arrayOf(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",

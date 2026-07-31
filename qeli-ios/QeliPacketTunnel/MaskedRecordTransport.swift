@@ -1,5 +1,18 @@
 import Foundation
 
+/// The decoy hosts a bare-IP endpoint borrows, so a fake-TLS ClientHello and a
+/// WebSocket-fronted request both look like traffic to a large, unremarkable site.
+///
+/// ONE list, mirroring the Rust canon (`protocol/tls.rs DEFAULT_SNI_POOL`). The SNI picker and
+/// the WebSocket Host pool used to carry DIFFERENT sets — four names in one, five in the other
+/// — so a client could front a request as amazon.com while never offering it as an SNI. Both
+/// are observable, and disagreeing between them is a fingerprint of its own.
+/// (Audit 2026-07-31.)
+let defaultSNIPool = [
+    "www.cloudflare.com", "www.google.com", "www.microsoft.com",
+    "www.apple.com", "www.amazon.com"
+]
+
 /// Whole-record I/O used by the hybrid Qeli handshake and data plane.
 /// Implementations accept concurrent TX and RX; all TX calls are serialized.
 protocol QeliRecordTransport: AnyObject {
@@ -401,7 +414,8 @@ enum MaskedWireValueParser {
             (1...3).contains($0.count) && $0.allSatisfy(\.isNumber)
         }
         guard isIPv4 else { return address }
-        let pool = ["www.cloudflare.com", "www.microsoft.com", "www.apple.com", "www.google.com"]
+        // ONE list, shared with the WebSocket Host pool — see `defaultSNIPool`.
+        let pool = defaultSNIPool
         return pool[try secureUniform(in: 0...(pool.count - 1))]
     }
 
@@ -438,7 +452,7 @@ private func secureUniform(in range: ClosedRange<Int>) throws -> Int {
 }
 
 private func makeWebSocketRequest() throws -> Data {
-    let hosts = ["www.cloudflare.com", "www.google.com", "www.microsoft.com", "www.apple.com", "www.amazon.com"]
+    let hosts = defaultSNIPool
     let agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",

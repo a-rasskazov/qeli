@@ -232,10 +232,26 @@ impl Default for BruteForceConfig {
 /// `MTU_AUTO_FALLBACK`. So `tun.mtu = 300` passed `check-config`, passed startup, brought
 /// the server's TUN up at 300, and left every client on 1400: a one-way MTU mismatch that
 /// dropped anything larger than 300 bytes, with nothing in the logs on either side.
-/// 576 is the IPv4 minimum reassembly buffer (RFC 791); 9000 is conventional jumbo.
-/// (Audit 2026-07-27, C4.)
+/// 576 is the IPv4 minimum reassembly buffer (RFC 791).
+///
+/// The ceiling is DERIVED from the record format, not chosen. It used to be a flat 9000 —
+/// "conventional jumbo", an Ethernet convention with nothing to do with qeli — which turned
+/// away perfectly workable configurations: a 10G NIC doing 16348-byte jumbo frames has room
+/// for a far larger tunnel MTU, and the codec can carry it. What actually bounds a packet is
+/// [`MAX_RECORD_SIZE`]: a record holds nonce + counter + payload + padding-length + tag, and
+/// anything past that the PEER REJECTS. So the largest inner packet is that budget minus the
+/// per-record overhead, and going higher is a wire error rather than a matter of taste.
+///
+/// Note the units: this is the TUNNEL (inner) MTU. The link still adds IP + UDP/TCP + the
+/// record and any obfs/QUIC framing on top — about 76 bytes worst case — so on a 16348-byte
+/// link the largest inner MTU that avoids outer fragmentation is nearer 16270.
+/// (Audit 2026-07-27, C4; ceiling derived 2026-07-31.)
 pub const MTU_MIN: u32 = 576;
-pub const MTU_MAX: u32 = 9000;
+pub const MTU_MAX: u32 = (crate::protocol::packet::MAX_RECORD_SIZE
+    - crate::protocol::packet::NONCE_SIZE
+    - crate::protocol::packet::COUNTER_SIZE
+    - crate::protocol::packet::TAG_SIZE
+    - 2) as u32;
 
 /// Resolve the DHCP pool bounds for a profile, defaulting them from the tunnel subnet
 /// and refusing a pool that lies outside it.

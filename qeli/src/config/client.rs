@@ -499,7 +499,7 @@ impl ClientConfig {
             // A positive override must be a plausible tunnel MTU. Reject negative / tiny /
             // jumbo values rather than silently accepting them: the UDP data plane has no
             // application-layer fragmentation, so an oversized mtu emits one over-large
-            // datagram, and a tiny one breaks the tunnel. Same 576..=9000 range the
+            // datagram, and a tiny one breaks the tunnel. Same MTU_MIN..=MTU_MAX range the
             // server-PUSHED mtu is already validated against (0 stays "auto").
             if m != 0 && !crate::config::server::mtu_in_range(m as i64) {
                 anyhow::bail!(
@@ -663,14 +663,16 @@ impl ClientConfig {
         cfg.obfuscation.awg.jmax = link.jmax;
         cfg.obfuscation.awg.sanitize("client link");
         // 0 = auto (adopt server-pushed MTU); a positive value overrides. Validate the
-        // same 576..=9000 range `from_ini` enforces — a scanned/pasted `qeli://…?mtu=999999`
+        // same MTU_MIN..=MTU_MAX range `from_ini` enforces — a scanned/pasted `qeli://…?mtu=999999`
         // (or a negative) would otherwise become an out-of-range TUN MTU the file path
         // rejects. This entry point is infallible (returns ClientConfig, not Result), so an
         // out-of-range value falls back to auto rather than failing the import. (M6)
         cfg.tun.mtu = if link.mtu != 0 && !crate::config::server::mtu_in_range(link.mtu as i64) {
             log::warn!(
-                "qeli:// link mtu {} is out of range (expected 0 or 576..=9000) — using auto",
-                link.mtu
+                "qeli:// link mtu {} is out of range (expected 0 or {}..={}) — using auto",
+                link.mtu,
+                crate::config::server::MTU_MIN,
+                crate::config::server::MTU_MAX
             );
             0
         } else {
