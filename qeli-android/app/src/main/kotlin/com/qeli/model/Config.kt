@@ -118,7 +118,21 @@ data class VpnConfig(
     // of silently losing it. Mirrors qeli/src/config/client.rs, which parses AND re-emits it.
     val loggingLevel: String? = null,
     val loggingFile: String? = null,
-    val loggingTimeFormat: String? = null
+    val loggingTimeFormat: String? = null,
+    /**
+     * Keys whose boolean value was neither true-ish nor false-ish — `gateway = ture`.
+     *
+     * Carried instead of being resolved at parse time because the ORIGINAL STRING IS LOST once
+     * a bool is produced, so nothing downstream could ever tell a typo from a deliberate
+     * `false`. That mattered: every unknown value used to read as `false`, so `kill_switch =
+     * ture` silently disabled the kill switch and `bind_static = ture` silently dropped the
+     * static-key binding — a security downgrade with no message anywhere.
+     *
+     * Parsing still SUCCEEDS (the editor must be able to open a bad profile in order to fix
+     * it); [validate] is what refuses to connect. Same split as the enum checks.
+     * (Audit 2026-07-31.)
+     */
+    val unparsedBooleanKeys: List<String> = emptyList()
 ) : Serializable {
 
     /** True when the protocol is UDP (DatagramChannel transport, QUIC masking). */
@@ -147,6 +161,14 @@ data class VpnConfig(
      * [checkedPadding]. (Audit 2026-07-27, C6)
      */
     fun validate() {
+        // A boolean nobody could parse is a typo, and every one of them used to read as
+        // `false` — so `kill_switch = ture` disabled the kill switch and `bind_static = ture`
+        // dropped the static-key binding, silently. Refuse to connect rather than run with a
+        // setting the user plainly did not choose. (Audit 2026-07-31.)
+        require(unparsedBooleanKeys.isEmpty()) {
+            "unrecognised boolean value for ${unparsedBooleanKeys.joinToString(", ")} — " +
+                "expected true/false, yes/no, on/off or 1/0"
+        }
         fun scalar(name: String, v: String?) {
             val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
             throw IllegalArgumentException(
@@ -170,6 +192,17 @@ data class VpnConfig(
         require(protocol == "tcp" || protocol == "udp") { "'proto' must be tcp or udp, got '$protocol'" }
         require(connectionTimeoutSecs in 1..300) { "'timeout' must be 1..300, got $connectionTimeoutSecs" }
         require(wireMode in WIRE_MODES) { "'mode' must be one of $WIRE_MODES, got '$wireMode'" }
+        // Same class as `mode`, and left unchecked: both are compared against ONE literal at
+        // the use site, so an unknown value does not error — it silently takes the other
+        // branch. `front = webscoket` drops the WebSocket framing the profile asked for and the
+        // peer then disagrees about the wire; `routing_mode = full-tunel` with
+        // add_default_gateway = false quietly becomes a split tunnel. (Audit 2026-07-31, §3.)
+        require(obfsFronting in FRONTING_MODES) {
+            "'front' must be one of $FRONTING_MODES, got '$obfsFronting'"
+        }
+        require(routingMode in ROUTING_MODES) {
+            "'routing_mode' must be one of $ROUTING_MODES, got '$routingMode'"
+        }
         // 0 = auto. Matches the Rust client, which rejects anything outside MTU_MIN..MTU_MAX.
         // Same predicate the import paths use, so emit and import can never disagree. (C6)
         require(mtuInRange(mtu)) { "'mtu' must be 0 (auto) or $MTU_MIN..$MTU_MAX, got $mtu" }
@@ -318,6 +351,8 @@ data class VpnConfig(
 
         /** Wire modes the client can actually dial; same set as the iOS validator. */
         private val WIRE_MODES = setOf("plain", "fake-tls", "obfs", "reality-tls")
+        private val FRONTING_MODES = setOf("websocket", "none")
+        private val ROUTING_MODES = setOf("split-tunnel", "full-tunnel", "all")
 
         /**
          * Values of `mtu_probe` that turn probing OFF. Anything else — including an
@@ -411,12 +446,23 @@ data class VpnConfig(
             require(host.isNotEmpty()) { "'server' has empty host" }
             val port = server.substring(ci + 1).toIntOrNull()
                 ?: throw IllegalArgumentException("'server' has invalid port: '$server'")
-            fun bool(v: String?) = v?.trim()?.lowercase() in setOf("true", "1", "yes", "on")
+            // Accepts the same spellings as the Rust client's `bool_or`. An unrecognised value
+            // is RECORDED (see `unparsedBooleanKeys`) and falls back to the caller's default,
+            // rather than silently reading as `false`.
+            val badBools = mutableListOf<String>()
+            fun boolAt(key: String, default: Boolean): Boolean {
+                val raw = q[key]?.trim()?.lowercase() ?: return default
+                return when (raw) {
+                    "true", "1", "yes", "on" -> true
+                    "false", "0", "no", "off" -> false
+                    else -> { badBools.add(key); default }
+                }
+            }
             // Routing: full-tunnel by default on phones (a VPN should carry ALL traffic);
             // `gateway = false` opts into split-tunnel (only the tunnel subnet + pushed
             // routes). Mirrors the Rust client's `gateway` key — the only way to pick
             // split-tunnel via INI (there is no UI toggle).
-            val fullTunnel = q["gateway"]?.let { bool(it) } ?: true
+            val fullTunnel = boolAt("gateway", true)
             // DNS: `dns = <ip,ip>` is the Android resolver list. Tolerate the Rust/router
             // MODE values (`off`/`tunnel`/`system`) by falling back to the defaults
             // instead of adding a literal "off" as a resolver (which throws at establish).
@@ -435,7 +481,7 @@ data class VpnConfig(
                 port = port,
                 protocol = q["proto"]?.ifBlank { null } ?: "tcp",
                 connectionTimeoutSecs = q["timeout"]?.toLongOrNull() ?: 30L,
-                reconnectEnabled = q["reconnect"]?.let { bool(it) } ?: true,
+                reconnectEnabled = boolAt("reconnect", true),
                 reconnectMaxRetries = q["reconnect_retries"]?.toIntOrNull() ?: -1,
                 reconnectBaseDelaySecs = q["reconnect_base_delay"]?.toLongOrNull() ?: 1L,
                 reconnectMaxDelaySecs = q["reconnect_max_delay"]?.toLongOrNull() ?: 60L,
@@ -443,7 +489,7 @@ data class VpnConfig(
                 password = q["pass"] ?: "",
                 serverPublicKeyHex = q["key"]?.takeIf { it.isNotEmpty() },
                 // H-1: on by default; needs a pinned key. `bind_static = false` for TOFU.
-                bindStaticToSession = q["bind_static"]?.let { bool(it) } ?: true,
+                bindStaticToSession = boolAt("bind_static", true),
                 routingMode = if (fullTunnel) "full-tunnel" else "split-tunnel",
                 addDefaultGateway = fullTunnel,
                 wireMode = q["mode"]?.ifBlank { null } ?: "fake-tls",
@@ -452,14 +498,14 @@ data class VpnConfig(
                 obfsKey = q["obfs_key"] ?: "",
                 obfsFronting = q["front"]?.ifBlank { null } ?: "websocket",
                 // F2: AmneziaWG junk. `awg = true` + jc/jmin/jmax (caps applied at use).
-                awgEnabled = bool(q["awg"]),
+                awgEnabled = boolAt("awg", false),
                 awgJc = q["jc"]?.toIntOrNull() ?: 0,
                 awgJmin = q["jmin"]?.toIntOrNull() ?: 40,
                 awgJmax = q["jmax"]?.toIntOrNull() ?: 300,
-                quicEnabled = bool(q["quic"]),
-                routeLocalNetworks = bool(q["route_local"]),
-                allowIpv6Leak = bool(q["allow_ipv6_leak"]),
-                allowLan = bool(q["allow_lan"]),
+                quicEnabled = boolAt("quic", false),
+                routeLocalNetworks = boolAt("route_local", false),
+                allowIpv6Leak = boolAt("allow_ipv6_leak", false),
+                allowLan = boolAt("allow_lan", false),
                 // Explicit per-CIDR routing (comma-separated). exclude carves subnets OUT of
                 // the tunnel (VpnService.excludeRoute, API 33+); include forces subnets IN.
                 includeRoutes = q["include"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
@@ -476,26 +522,27 @@ data class VpnConfig(
                 appsMode = q["apps_mode"]?.trim()?.lowercase()?.takeIf { it == "include" || it == "exclude" } ?: "all",
                 apps = q["apps"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 // Local overrides for the normally server-pushed knobs. Key names match iOS.
-                paddingEnabled = q["padding"]?.let { bool(it) } ?: true,
+                paddingEnabled = boolAt("padding", true),
                 paddingMin = pad.first,
                 paddingMax = pad.second,
-                heartbeatEnabled = q["heartbeat"]?.let { bool(it) } ?: true,
+                heartbeatEnabled = boolAt("heartbeat", true),
                 heartbeatIntervalMs = q["heartbeat_interval"]?.toLongOrNull() ?: 15000L,
                 heartbeatDataSize = q["heartbeat_size"]?.toIntOrNull() ?: 16,
                 heartbeatJitterMs = q["heartbeat_jitter"]?.toLongOrNull() ?: 2000L,
-                shapingEnabled = bool(q["shaping"]),
+                shapingEnabled = boolAt("shaping", false),
                 shapingGapMeanMs = q["shaping_gap_mean"]?.toLongOrNull() ?: 700L,
                 shapingGapMinMs = q["shaping_gap_min"]?.toLongOrNull() ?: 40L,
                 shapingGapMaxMs = q["shaping_gap_max"]?.toLongOrNull() ?: 6000L,
                 shapingBudgetBytesPerSec = q["shaping_budget"]?.toIntOrNull() ?: 16384,
                 shapingMinSize = q["shaping_min_size"]?.toIntOrNull() ?: 64,
                 shapingMaxSize = q["shaping_max_size"]?.toIntOrNull() ?: 1024,
-                shapingStealth = bool(q["shaping_stealth"]),
+                shapingStealth = boolAt("shaping_stealth", false),
                 shapingStealthRateMbps = q["shaping_stealth_mbps"]?.toIntOrNull() ?: 2,
                 // Carried through untouched so re-saving a desktop config keeps its logging.
                 loggingLevel = log?.get("level")?.takeIf { it.isNotEmpty() },
                 loggingFile = log?.get("file")?.takeIf { it.isNotEmpty() },
-                loggingTimeFormat = log?.get("time_format")?.takeIf { it.isNotEmpty() }
+                loggingTimeFormat = log?.get("time_format")?.takeIf { it.isNotEmpty() },
+                unparsedBooleanKeys = badBools.toList()
             )
         }
 

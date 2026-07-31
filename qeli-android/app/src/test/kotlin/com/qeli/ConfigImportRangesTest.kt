@@ -2,6 +2,9 @@ package com.qeli
 
 import com.qeli.model.VpnConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -32,6 +35,69 @@ class ConfigImportRangesTest {
     }
 
     private fun link(query: String) = "qeli://alice:secret@vpn.example.com:443?proto=tcp&$query"
+
+    /**
+     * `front` and `routing_mode` are compared against ONE literal at the use site, so an
+     * unknown value silently takes the other branch instead of erroring. (Audit 2026-07-31, §3.)
+     */
+    @Test
+    fun `unknown front and routing mode are refused`() {
+        assertNotNull("front = webscoket must be refused",
+            runCatching { VpnConfig.fromIni(ini("front = webscoket")).validate() }.exceptionOrNull())
+        for (f in listOf("websocket", "none")) {
+            VpnConfig.fromIni(ini("front = $f")).validate()
+        }
+
+        // routingMode has NO ini key — the flat INI derives it from `gateway`, so only the JSON
+        // and qeli:// paths can carry a bad one. Exercise it where it can actually arrive.
+        fun json(mode: String) = """{"server":{"address":"1.2.3.4","port":443},
+            "auth":{"username":"u","password":"p"},"routing":{"mode":"$mode"}}"""
+        assertNotNull("routing mode full-tunel must be refused",
+            runCatching { VpnConfig.fromJson(json("full-tunel")).validate() }.exceptionOrNull())
+        for (r in listOf("split-tunnel", "full-tunnel", "all")) {
+            VpnConfig.fromJson(json(r)).validate()
+        }
+    }
+
+    /**
+     * A boolean nobody could parse must not read as `false`.
+     *
+     * Every unknown value used to be falsey, so `kill_switch = ture` silently disabled the kill
+     * switch and `bind_static = ture` silently dropped the static-key binding — a security
+     * downgrade with no message anywhere, and unrecoverable after parse because the original
+     * string is gone. Parsing still succeeds (the editor must be able to open a bad profile to
+     * fix it); validate() is what refuses. (Audit 2026-07-31.)
+     */
+    @Test
+    fun `a typo in a boolean is refused, not read as false`() {
+        for (key in listOf("gateway", "bind_static", "reconnect", "padding", "heartbeat", "quic")) {
+            val cfg = VpnConfig.fromIni(ini("$key = ture"))
+            assertTrue("$key: the typo must be recorded", cfg.unparsedBooleanKeys.contains(key))
+            val e = runCatching { cfg.validate() }.exceptionOrNull()
+            assertNotNull("$key: validate() must refuse the config", e)
+            assertTrue("the message must name the key: ${e?.message}",
+                e!!.message!!.contains(key))
+        }
+
+        // A typo must NOT be resolved to the falsey reading it used to get.
+        assertTrue("gateway = ture must not silently become split-tunnel",
+            VpnConfig.fromIni(ini("gateway = ture")).isFullTunnel)
+        assertTrue("bind_static = ture must not silently disable key binding",
+            VpnConfig.fromIni(ini("bind_static = ture")).bindStaticToSession)
+
+        // Every spelling the Rust client accepts must still work, both ways, and leave the
+        // config valid.
+        for (yes in listOf("true", "1", "yes", "on", "TRUE", "On")) {
+            val c = VpnConfig.fromIni(ini("quic = $yes"))
+            assertTrue("$yes must be true", c.quicEnabled)
+            assertTrue(c.unparsedBooleanKeys.isEmpty())
+        }
+        for (no in listOf("false", "0", "no", "off", "FALSE", "Off")) {
+            val c = VpnConfig.fromIni(ini("quic = $no"))
+            assertFalse("$no must be false", c.quicEnabled)
+            assertTrue(c.unparsedBooleanKeys.isEmpty())
+        }
+    }
 
     @Test
     fun `an INI file with an out-of-range mtu is rejected`() {

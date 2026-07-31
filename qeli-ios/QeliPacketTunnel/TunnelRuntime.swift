@@ -74,6 +74,29 @@ actor TunnelRecordSender {
         try await records.sendRecord(try encoder.encrypt(CtrlFrame.mtuReport(mtu)))
     }
 
+    /// Re-send delays for the unacknowledged MTU report on UDP, from the first send. Spread so an
+    /// isolated drop AND a short burst of loss are both survived.
+    private static let reportRetryDelaysNanos: [UInt64] = [2_000_000_000, 6_000_000_000]
+
+    /// Re-send the MTU report a couple of times on UDP (#5).
+    ///
+    /// The frame is unacknowledged by design — the server answers no control frame — so one lost
+    /// datagram would leave the server on `path_mtu = 0` for the WHOLE session, on precisely the
+    /// transport where the report matters most. The frame is idempotent, so re-sending costs a
+    /// few bytes and removes that single point of loss. TCP retransmits for us and does nothing
+    /// here. Detached so the connect path is not delayed; every failure is swallowed, exactly
+    /// like the first send.
+    func scheduleMTUReportRetries() {
+        guard isUDP else { return }
+        Task { [weak self] in
+            for delay in Self.reportRetryDelaysNanos {
+                try? await Task.sleep(nanoseconds: delay)
+                guard let self, !Task.isCancelled else { return }
+                try? await self.sendMTUReport()
+            }
+        }
+    }
+
     /// Tell the server what this build is, so `list-clients` and the panel can answer "who still
     /// needs to update?".
     ///

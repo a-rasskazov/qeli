@@ -2348,7 +2348,7 @@ class VpnServiceImpl : VpnService() {
      *  The frame is unacknowledged by design (the server never answers a control frame), so on
      *  UDP a single lost datagram would leave the server on `path_mtu = 0` for the WHOLE
      *  session — on precisely the unreliable transport where the report matters most. The frame
-     *  is idempotent (the server keeps the narrowest value it has seen), so re-sending costs a
+     *  is idempotent (the server simply stores the latest value, and the copies all carry the same one), so re-sending costs a
      *  few bytes and removes that single point of loss. TCP retransmits for us, so it sends
      *  once. (Audit 2026-07-30, #5.)
      *

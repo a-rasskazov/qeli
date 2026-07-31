@@ -1,6 +1,18 @@
 import Foundation
 
 struct VPNConfig: Codable, Equatable, Sendable {
+    /// Keys whose boolean value was neither true-ish nor false-ish — `gateway = ture`.
+    ///
+    /// Carried instead of being resolved at parse time because the ORIGINAL STRING IS LOST once
+    /// a `Bool` is produced, so nothing downstream could tell a typo from a deliberate `false`.
+    /// That mattered: every unknown value read as `false`, so `bind_static = ture` silently
+    /// dropped the static-key binding and `gateway = ture` silently turned a full tunnel into a
+    /// split one — with no message anywhere.
+    ///
+    /// Parsing still SUCCEEDS (an editor must be able to open a bad profile to fix it);
+    /// ``validate()`` is what refuses. (Audit 2026-07-31.)
+    var unparsedBooleanKeys: [String] = []
+
     var serverAddress: String
     var port: Int
     var protocolName: String = "tcp"
@@ -127,6 +139,31 @@ struct VPNConfig: Codable, Equatable, Sendable {
     }
 
     func validate() throws {
+        // A boolean nobody could parse is a typo, and every one of them used to read as `false`
+        // — so `bind_static = ture` dropped the static-key binding and `gateway = ture` turned a
+        // full tunnel into a split one, silently. Refuse to connect rather than run with a
+        // setting the user plainly did not choose. (Audit 2026-07-31.)
+        if !unparsedBooleanKeys.isEmpty {
+            throw VPNConfigError.invalid(
+                "unrecognised boolean value for \(unparsedBooleanKeys.joined(separator: ", ")) — "
+                + "expected true/false, yes/no, on/off or 1/0")
+        }
+
+        // String enums the runtime compares against ONE literal, so an unknown value does not
+        // error — it silently selects the other branch. `front = webscoket` drops the WebSocket
+        // framing and the peer then disagrees about the wire; `routing_mode = full-tunel` with
+        // `add_default_gateway = false` quietly becomes a split tunnel. `proto` and `mode` were
+        // already checked below. (Audit 2026-07-31, §3.)
+        let enums: [(String, String, [String])] = [
+            ("front", obfsFronting, ["websocket", "none"]),
+            ("routing_mode", routingMode, ["split-tunnel", "full-tunnel", "all"])
+        ]
+        for (field, value, allowed) in enums where !allowed.contains(value) {
+            throw VPNConfigError.invalid(
+                "unknown \(field) '\(value)' — expected "
+                + allowed.map { "'\($0)'" }.joined(separator: " or "))
+        }
+
         let scalarFields: [(String, String)] = [
             ("server", serverAddress),
             ("proto", protocolName),
@@ -185,9 +222,21 @@ struct VPNConfig: Codable, Equatable, Sendable {
             throw VPNConfigError.invalid("[qeli] is missing server = host:port")
         }
         let (host, port) = try parseEndpoint(endpoint)
-        let bool: (String?) -> Bool = { value in
-            guard let value else { return false }
-            return ["true", "1", "yes", "on"].contains(value.lowercased())
+        // Accepts the same spellings as the Rust client's `bool_or`. An unrecognised value is
+        // RECORDED (see `unparsedBooleanKeys`) and falls back to the caller's default, instead
+        // of silently reading as `false`.
+        var badBools: [String] = []
+        func boolAt(_ key: String, default fallback: Bool) -> Bool {
+            guard let raw = qeli[key]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
+                return fallback
+            }
+            switch raw.lowercased() {
+            case "true", "1", "yes", "on": return true
+            case "false", "0", "no", "off": return false
+            default:
+                badBools.append(key)
+                return fallback
+            }
         }
         let list: (String?) -> [String] = { value in
             value?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -197,25 +246,25 @@ struct VPNConfig: Codable, Equatable, Sendable {
         var config = VPNConfig(serverAddress: host, port: port)
         config.protocolName = qeli["proto"].nonEmpty ?? "tcp"
         config.connectionTimeoutSeconds = qeli["timeout"].flatMap(Int.init) ?? 30
-        config.reconnectEnabled = qeli["reconnect"].map { bool($0) } ?? true
+        config.reconnectEnabled = boolAt("reconnect", default: true)
         config.reconnectMaxRetries = qeli["reconnect_retries"].flatMap(Int.init) ?? -1
         config.reconnectBaseDelaySeconds = qeli["reconnect_base_delay"].flatMap(Int.init) ?? 1
         config.reconnectMaxDelaySeconds = qeli["reconnect_max_delay"].flatMap(Int.init) ?? 60
         config.username = qeli["user"].nonEmpty ?? "client"
         config.password = qeli["pass"] ?? ""
         config.serverPublicKeyHex = qeli["key"].nonEmpty
-        config.bindStaticToSession = qeli["bind_static"].map { bool($0) } ?? true
+        config.bindStaticToSession = boolAt("bind_static", default: true)
         config.mtu = qeli["mtu"].flatMap(Int.init) ?? 0
         config.mtuProbe = qeli["mtu_probe"].map { !["false", "0", "no", "off"].contains($0.lowercased()) } ?? true
 
-        let fullTunnel = qeli["gateway"].map { bool($0) } ?? true
+        let fullTunnel = boolAt("gateway", default: true)
         config.routingMode = fullTunnel ? "full-tunnel" : "split-tunnel"
         config.addDefaultGateway = fullTunnel
         config.includeRoutes = list(qeli["include"])
         config.excludeRoutes = list(qeli["exclude"])
-        config.routeLocalNetworks = bool(qeli["route_local"])
-        config.allowIPv6Leak = bool(qeli["allow_ipv6_leak"])
-        config.allowLAN = bool(qeli["allow_lan"])
+        config.routeLocalNetworks = boolAt("route_local", default: false)
+        config.allowIPv6Leak = boolAt("allow_ipv6_leak", default: false)
+        config.allowLAN = boolAt("allow_lan", default: false)
         if let dns = qeli["dns"], !["off", "system", "tunnel"].contains(dns.lowercased()) {
             config.dnsServers = list(dns)
         }
@@ -232,33 +281,34 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.realityShortID = qeli["reality_sid"].nonEmpty
         config.obfsKey = qeli["obfs_key"] ?? ""
         config.obfsFronting = qeli["front"].nonEmpty ?? "websocket"
-        config.awgEnabled = bool(qeli["awg"])
+        config.awgEnabled = boolAt("awg", default: false)
         config.awgJunkCount = qeli["jc"].flatMap(Int.init) ?? 0
         config.awgJunkMin = qeli["jmin"].flatMap(Int.init) ?? 40
         config.awgJunkMax = qeli["jmax"].flatMap(Int.init) ?? 300
-        config.quicEnabled = bool(qeli["quic"])
+        config.quicEnabled = boolAt("quic", default: false)
 
-        config.paddingEnabled = qeli["padding"].map { bool($0) } ?? true
+        config.paddingEnabled = boolAt("padding", default: true)
         config.paddingMin = qeli["padding_min"].flatMap(Int.init) ?? 0
         config.paddingMax = qeli["padding_max"].flatMap(Int.init) ?? 255
-        config.heartbeatEnabled = qeli["heartbeat"].map { bool($0) } ?? true
+        config.heartbeatEnabled = boolAt("heartbeat", default: true)
         config.heartbeatIntervalMilliseconds = qeli["heartbeat_interval"].flatMap(Int.init) ?? 15_000
         config.heartbeatDataSize = qeli["heartbeat_size"].flatMap(Int.init) ?? 16
         config.heartbeatJitterMilliseconds = qeli["heartbeat_jitter"].flatMap(Int.init) ?? 2_000
 
-        config.shapingEnabled = bool(qeli["shaping"])
+        config.shapingEnabled = boolAt("shaping", default: false)
         config.shapingGapMeanMilliseconds = qeli["shaping_gap_mean"].flatMap(Int.init) ?? 700
         config.shapingGapMinMilliseconds = qeli["shaping_gap_min"].flatMap(Int.init) ?? 40
         config.shapingGapMaxMilliseconds = qeli["shaping_gap_max"].flatMap(Int.init) ?? 6_000
         config.shapingBudgetBytesPerSecond = qeli["shaping_budget"].flatMap(Int.init) ?? 16_384
         config.shapingMinSize = qeli["shaping_min_size"].flatMap(Int.init) ?? 64
         config.shapingMaxSize = qeli["shaping_max_size"].flatMap(Int.init) ?? 1_024
-        config.shapingStealth = bool(qeli["shaping_stealth"])
+        config.shapingStealth = boolAt("shaping_stealth", default: false)
         config.shapingStealthRateMbps = qeli["shaping_stealth_mbps"].flatMap(Int.init) ?? 2
 
         let mode = qeli["apps_mode"]?.lowercased() ?? "all"
         config.appsMode = ["include", "exclude"].contains(mode) ? mode : "all"
         config.apps = list(qeli["apps"])
+        config.unparsedBooleanKeys = badBools
         return config
     }
 

@@ -150,6 +150,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
     public string? RealityShortId { get; init; }
     // padding
     public bool PaddingEnabled { get; init; } = true;
+    /// <summary>Keys whose boolean value was neither true-ish nor false-ish — `gateway = ture`.
+    ///
+    /// Carried instead of being resolved at parse time because the ORIGINAL STRING IS LOST once
+    /// a bool is produced, so nothing downstream could tell a typo from a deliberate `false`.
+    /// That mattered: every unknown value read as `false`, so <c>kill_switch = ture</c> silently
+    /// disabled the kill switch and <c>bind_static = ture</c> silently dropped the static-key
+    /// binding — a security downgrade with no message anywhere.
+    ///
+    /// Parsing still SUCCEEDS (an editor must be able to open a bad profile to fix it);
+    /// <see cref="Validate"/> is what refuses. (Audit 2026-07-31.)</summary>
+    public IReadOnlyList<string> UnparsedBooleanKeys { get; init; } = Array.Empty<string>();
+
     public int PaddingMin { get; init; }
     public int PaddingMax { get; init; } = 255;
     // heartbeat
@@ -541,6 +553,24 @@ public sealed class VpnConfig : INotifyPropertyChanged
         string Get(string k, string def = "") => q.TryGetValue(k, out var v) ? v : def;
 
         var server = Get("server");
+        // Accepts the same spellings as the Rust client's `bool_or`. An unrecognised value is
+        // RECORDED (see UnparsedBooleanKeys) and falls back to the caller's default, instead of
+        // silently reading as false.
+        var badBools = new List<string>();
+        bool BoolAt(string key, bool dflt)
+        {
+            if (!q.TryGetValue(key, out var raw)) return dflt;
+            var v = raw.Trim();
+            if (v.Length == 0) return dflt;
+            if (v.Equals("true", StringComparison.OrdinalIgnoreCase) || v == "1"
+                || v.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || v.Equals("on", StringComparison.OrdinalIgnoreCase)) return true;
+            if (v.Equals("false", StringComparison.OrdinalIgnoreCase) || v == "0"
+                || v.Equals("no", StringComparison.OrdinalIgnoreCase)
+                || v.Equals("off", StringComparison.OrdinalIgnoreCase)) return false;
+            badBools.Add(key);
+            return dflt;
+        }
         var iniPad = CheckedPadding(
             int.TryParse(Get("padding_min"), out var pminRaw) ? pminRaw : 0,
             int.TryParse(Get("padding_max"), out var pmaxRaw) ? pmaxRaw : 255);
@@ -562,7 +592,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // Routing: full-tunnel by default; `gateway = false` opts into split-tunnel.
         // Mirrors the Rust/Android `gateway` key — the only way to pick split-tunnel
         // via an imported INI / qeli:// link (the GUI routing dropdown is a separate path).
-        bool fullTunnel = q.TryGetValue("gateway", out var gwv) ? IniBool(gwv) : true;
+        bool fullTunnel = BoolAt("gateway", true);
         // DNS: `dns = <ip,ip>` is the resolver list; tolerate the Rust/router MODE words
         // (off/tunnel/system) by keeping the defaults instead of treating "off" as a resolver.
         var dnsRaw = Get("dns");
@@ -574,7 +604,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             : dnsRaw.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
 
         // Alias: `mode=udp-quic` / `udp-obfs` fold transport+QUIC into the wire mode.
-        var (proto, mode, quic) = NormalizeMode(Get("proto", "tcp"), Get("mode", "fake-tls"), IniBool(Get("quic")));
+        var (proto, mode, quic) = NormalizeMode(Get("proto", "tcp"), Get("mode", "fake-tls"), BoolAt("quic", false));
 
         return new VpnConfig
         {
@@ -586,32 +616,32 @@ public sealed class VpnConfig : INotifyPropertyChanged
             Password = Get("pass"),
             ServerPublicKeyHex = keyValid ? key : null,
             // H-1: on by default; needs a pinned key. `bind_static = false` for TOFU.
-            BindStaticToSession = q.TryGetValue("bind_static", out var bs) ? IniBool(bs) : true,
+            BindStaticToSession = BoolAt("bind_static", true),
             WireMode = mode,
             ObfsKey = Get("obfs_key"),
             ObfsFronting = Get("front", "websocket"),
             // F2 AmneziaWG junk (off by default). `awg = true` enables; jc/jmin/jmax
             // bound the junk. Clamped to the wire caps (jc<=128, len<=1400).
-            AwgEnabled = IniBool(Get("awg")),
+            AwgEnabled = BoolAt("awg", false),
             AwgJc = (uint)(uint.TryParse(Get("jc"), out var jcv) ? Math.Min(jcv, 128u) : 0u),
             AwgJmin = (ushort)(ushort.TryParse(Get("jmin"), out var jminv) ? Math.Min(jminv, (ushort)1400) : (ushort)40),
             AwgJmax = (ushort)(ushort.TryParse(Get("jmax"), out var jmaxv) ? Math.Min(jmaxv, (ushort)1400) : (ushort)300),
             QuicEnabled = quic,
             Sni = sni.Length > 0 ? sni : null,
             RealityShortId = Get("reality_sid").Length > 0 ? Get("reality_sid") : null,
-            RouteLocalNetworks = IniBool(Get("route_local")),
+            RouteLocalNetworks = BoolAt("route_local", false),
             // Explicit per-CIDR routing (comma-separated). `exclude` carves subnets OUT of
             // the tunnel (routed via the physical gateway, so it works in full-tunnel too);
             // `include` forces subnets IN (split-tunnel). Mirrors the Rust/Android keys.
             IncludeRoutes = SplitCidrs(Get("include")),
             ExcludeRoutes = SplitCidrs(Get("exclude")),
-            PersistTun = IniBool(Get("persist_tun")),
-            Forward = IniBool(Get("forward")),
+            PersistTun = BoolAt("persist_tun", false),
+            Forward = BoolAt("forward", false),
             // Was neither parsed nor emitted here, so an imported/exported flat-INI silently
             // dropped the kill-switch flag — the leak protection the user asked for failed
             // OPEN. Rust reads it (client.rs) and FromJson already did; mirror them.
-            KillSwitch = IniBool(Get("kill_switch")),
-            AllowIpv6Leak = IniBool(Get("allow_ipv6_leak")),
+            KillSwitch = BoolAt("kill_switch", false),
+            AllowIpv6Leak = BoolAt("allow_ipv6_leak", false),
             LocalAddress = Get("local").Length > 0 ? Get("local") : null,
             LocalPort = int.TryParse(Get("lport"), out var lpv) && lpv is > 0 and <= 65535 ? lpv : 0,
             RouteFile = Get("route_file").Length > 0 ? Get("route_file") : null,
@@ -621,35 +651,36 @@ public sealed class VpnConfig : INotifyPropertyChanged
             DevNode = Get("dev_node").Length > 0 ? Get("dev_node")
                     : Get("dev").Length > 0 ? Get("dev") : null,
             Mtu = CheckedMtu(int.TryParse(Get("mtu"), out var miv) ? miv : 0),  // 0 = auto
-            MtuProbe = Get("mtu_probe") is var mp && (mp.Length == 0 || IniBool(mp)),  // default true
+            MtuProbe = BoolAt("mtu_probe", true),
             // The counterpart of the block ToIni now emits. Every one of these defaults to
             // the value the property already carries, so an absent key leaves it untouched
             // and a profile without them behaves exactly as before. (Audit 2026-07-29, #7.)
-            ReconnectEnabled = Get("reconnect") is var rc && (rc.Length == 0 || IniBool(rc)),
+            ReconnectEnabled = BoolAt("reconnect", true),
             ReconnectMaxRetries = int.TryParse(Get("reconnect_retries"), out var rr) ? rr : -1,
             ReconnectBaseDelaySecs = long.TryParse(Get("reconnect_base_delay"), out var rb) && rb > 0 ? rb : 1,
             ReconnectMaxDelaySecs = long.TryParse(Get("reconnect_max_delay"), out var rm) && rm > 0 ? rm : 60,
             ConnectionTimeoutSecs = CheckedTimeout(long.TryParse(Get("timeout"), out var ct) ? ct : 30),
-            PaddingEnabled = Get("padding") is var pe && (pe.Length == 0 || IniBool(pe)),
+            PaddingEnabled = BoolAt("padding", true),
             // Through CheckedPadding, like FromJson: on its own each field only checked `>= 0`,
             // so a hand-written INI could set padding_min > padding_max (an inverted range) or a
             // five-digit padding far past PaddingCeiling — records the peer would reject.
             // (Audit 2026-07-30, #11.)
             PaddingMin = iniPad.Min,
             PaddingMax = iniPad.Max,
-            HeartbeatEnabled = Get("heartbeat") is var he && (he.Length == 0 || IniBool(he)),
+            HeartbeatEnabled = BoolAt("heartbeat", true),
             HeartbeatIntervalMs = long.TryParse(Get("heartbeat_interval"), out var hi) && hi > 0 ? hi : 15000,
             HeartbeatDataSize = int.TryParse(Get("heartbeat_size"), out var hs) && hs >= 0 ? hs : 16,
             HeartbeatJitterMs = long.TryParse(Get("heartbeat_jitter"), out var hj) && hj >= 0 ? hj : 2000,
-            ShapingEnabled = IniBool(Get("shaping")),
+            ShapingEnabled = BoolAt("shaping", false),
             ShapingGapMeanMs = long.TryParse(Get("shaping_gap_mean"), out var sgm) && sgm > 0 ? sgm : 700,
             ShapingGapMinMs = long.TryParse(Get("shaping_gap_min"), out var sgn) && sgn > 0 ? sgn : 40,
             ShapingGapMaxMs = long.TryParse(Get("shaping_gap_max"), out var sgx) && sgx > 0 ? sgx : 6000,
             ShapingBudgetBytesPerSec = int.TryParse(Get("shaping_budget"), out var sb2) && sb2 > 0 ? sb2 : 16384,
             ShapingMinSize = int.TryParse(Get("shaping_min_size"), out var sms) && sms > 0 ? sms : 64,
             ShapingMaxSize = int.TryParse(Get("shaping_max_size"), out var sxs) && sxs > 0 ? sxs : 1024,
-            ShapingStealth = IniBool(Get("shaping_stealth")),
+            ShapingStealth = BoolAt("shaping_stealth", false),
             ShapingStealthRateMbps = int.TryParse(Get("shaping_stealth_mbps"), out var ssr) && ssr > 0 ? ssr : 2,
+            UnparsedBooleanKeys = badBools,
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
@@ -701,6 +732,42 @@ public sealed class VpnConfig : INotifyPropertyChanged
     {
         min = Math.Clamp(min, 0, PaddingCeiling);
         return (min, Math.Clamp(max, min, PaddingCeiling));
+    }
+
+    /// <summary>Reject a config the runtime would then silently reinterpret. The desktop client
+    /// had no equivalent of the Rust client's <c>ClientConfig::validate()</c>, so every string
+    /// enum fell through to another branch on a typo: an unknown protocol became TCP, an unknown
+    /// wire mode became fake-TLS, an unknown <c>front</c> meant raw obfs — and an unparseable
+    /// boolean read as false, which disabled the kill switch and the static-key binding.
+    ///
+    /// Called at CONNECT, not at load: an editor must still be able to open a bad profile in
+    /// order to fix it. Same split as the Rust client. (Audit 2026-07-31.)</summary>
+    public void Validate()
+    {
+        if (UnparsedBooleanKeys.Count > 0)
+        {
+            throw new ArgumentException(
+                $"unrecognised boolean value for {string.Join(", ", UnparsedBooleanKeys)} — "
+                + "expected true/false, yes/no, on/off or 1/0");
+        }
+
+        static void Enum_(string field, string got, params string[] allowed)
+        {
+            foreach (var a in allowed)
+            {
+                if (string.Equals(got, a, StringComparison.Ordinal)) return;
+            }
+            throw new ArgumentException(
+                $"unknown {field} '{got}' — expected {string.Join(" or ", allowed.Select(x => $"'{x}'"))}");
+        }
+
+        if (Port is < 1 or > 65535) throw new ArgumentException($"'server' port out of range: {Port}");
+        Enum_("proto", Protocol, "tcp", "udp");
+        Enum_("mode", WireMode, "fake-tls", "obfs", "plain", "reality-tls");
+        Enum_("front", ObfsFronting, "websocket", "none");
+        Enum_("routing mode", RoutingMode, "split-tunnel", "full-tunnel", "all");
+        if (ConnectionTimeoutSecs is < 1 or > 300)
+            throw new ArgumentException($"'timeout' must be 1..300, got {ConnectionTimeoutSecs}");
     }
 
     private static bool IniBool(string v) =>

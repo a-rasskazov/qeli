@@ -70,8 +70,47 @@ public static class WireConformance
         bool kept = keep.PaddingMin == 10 && keep.PaddingMax == 200;
         check("ini-bounds: a valid padding range is left alone", kept);
 
+        // A boolean nobody could parse must NOT read as false. Every unknown value used to be
+        // falsey, so `kill_switch = ture` silently disabled the kill switch and
+        // `bind_static = ture` silently dropped the static-key binding. Parsing still succeeds
+        // (an editor must be able to open a bad profile to fix it); Validate() refuses.
+        bool recorded = true, notFalsey = true, refuses = true;
+        foreach (var key in new[] { "gateway", "bind_static", "kill_switch", "reconnect", "quic" })
+        {
+            var c = Ini($"{key} = ture");
+            recorded &= c.UnparsedBooleanKeys.Contains(key);
+            try { c.Validate(); refuses = false; } catch (ArgumentException) { }
+        }
+        // The two settings whose default is ON: a typo must leave them ON (and be refused by
+        // Validate), never flip them off. `kill_switch` defaults to OFF, so it has nothing to
+        // assert here beyond the refusal above — an assertion that it "stayed false" would pass
+        // whether or not the fix exists.
+        notFalsey &= Ini("bind_static = ture").BindStaticToSession;   // not silently off
+        notFalsey &= Ini("gateway = ture").AddDefaultGateway;         // not silently split-tunnel
+        check("ini-bools: a typo is recorded, not resolved", recorded);
+        check("ini-bools: a typo does not silently disable a security setting", notFalsey);
+        check("ini-bools: Validate() refuses a config with an unparseable boolean", refuses);
+
+        // Every spelling the Rust client accepts must still work, both ways.
+        bool spellings = true;
+        foreach (var yes in new[] { "true", "1", "yes", "on", "TRUE", "On" })
+            spellings &= Ini($"quic = {yes}").QuicEnabled;
+        foreach (var no in new[] { "false", "0", "no", "off", "FALSE", "Off" })
+            spellings &= !Ini($"quic = {no}").QuicEnabled;
+        check("ini-bools: every accepted spelling still parses, both ways", spellings);
+
+        // The enum checks the desktop client had no equivalent of at all.
+        bool enums = true;
+        foreach (var (line, _) in new[] { ("proto = ucp", 0), ("mode = realty-tls", 0), ("front = webscoket", 0) })
+        {
+            try { Ini(line).Validate(); enums = false; } catch (ArgumentException) { }
+        }
+        try { Ini("proto = udp").Validate(); } catch (ArgumentException) { enums = false; }
+        check("ini-bools: unknown proto/mode/front are refused, valid ones accepted", enums);
+
         return timeoutClamped && noOverflow && zeroTimeout && negTimeout && sane
-               && ordered && capped && kept;
+               && ordered && capped && kept
+               && recorded && notFalsey && refuses && spellings && enums;
     }
 
     /// <summary>The path-MTU ladder's floor. Not fixture-driven — it is a policy, not a wire
