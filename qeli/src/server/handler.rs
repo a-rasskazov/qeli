@@ -1887,7 +1887,14 @@ pub fn build_auth_ok(
         // Additive: older clients ignore the field and use their own default.
         "mtu": pcfg.tun.mtu,
         "dns": pushed_dns,
-        "dns_port": pcfg.dns.port,
+        // ALWAYS 53, never pcfg.dns.port. No client platform can express a different one —
+        // VpnService.Builder and NEDNSSettings take an address and nothing else, Windows and
+        // macOS configure resolvers by IP, and the Rust client only manages it via resolvectl's
+        // `IP#port` form, which is lost the moment it falls back to writing resolv.conf. Pushing
+        // the real port therefore black-holed DNS on every client but one. The proxy keeps its
+        // own port; `nat::enable_dns_redirect` bridges 53 to it inside the tunnel.
+        // (Audit 2026-07-31.)
+        "dns_port": 53,
         "routes": routes,
         "obfuscation": obf,
         // Stream bonding: the per-session join token + how many parallel

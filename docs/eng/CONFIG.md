@@ -374,7 +374,7 @@ be changed on the server **without re-issuing links** (see "What is NOT pushed" 
 | `prefix` | the prefix length of `pool.cidr` | the on-link netmask (otherwise the client would assume `/24`) |
 | `mtu` | the profile's `tun.mtu` | a client on `mtu = 0` (default, auto) **adopts** it; a client with its own `mtu > 0` keeps it |
 | `dns` | `dns.push_servers[0]` → else `dns.listen` (only if `dns.enabled = true`) → else empty | sets the resolver — **only if the client is on `dns = tunnel`** (default); ignored on `dns = off` |
-| `dns_port` | `dns.port` | the resolver port |
+| `dns_port` | always **53** | no client platform can express another port (neither `VpnService.Builder` nor `NEDNSSettings` takes one), so 53 is pushed unconditionally; when the proxy listens elsewhere the tunnel redirects 53 → `dns.port` with an iptables rule |
 | `routes` | the user's **personal** routes, otherwise the profile's `route =` | installs the routes (since 0.7.12 — **always**) |
 | `obfuscation` | `obf.padding.*`, `obf.heartbeat.*`, `obf.traffic_normalization.*`, `obf.traffic_shaping.*` | applies the obfuscation parameters live |
 | `session_token` | generated per session | the bonding join token |
@@ -1883,7 +1883,7 @@ and the server pushes no DNS. Per-profile.
 |---|---|---|
 | `dns.enabled` | `false` | enable the in-tunnel DNS proxy |
 | `dns.listen` | `10.9.0.1` | listen address (usually the tun IP) |
-| `dns.port` | `53` | port |
+| `dns.port` | `53` | the port the **server-side proxy** listens on. Change it when 53 is taken on the host (`ss -lunp \| grep ':53 '`). Clients are still told 53, and the tunnel installs an `iptables -t nat PREROUTING … REDIRECT` from 53 to this port — so `dns.port != 53` **requires iptables**, or the server refuses to start |
 | `dns.upstream` | `1.1.1.1, 8.8.8.8` | upstream resolvers (comma-separated) |
 | `dns.upstream_protocol` | `udp` | `udp` \| `tcp`. `tcp` really does force TCP to the upstream, and a UDP answer that comes back TRUNCATED is retried over TCP either way. ⚠️ **`tls` (DoT) is REJECTED at config load** — the server refuses to start rather than silently sending plaintext UDP while the config says DoT |
 | `dns.cache_size` | `1000` | record cache size |

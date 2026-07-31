@@ -1261,6 +1261,19 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // proxy then abandons every query — clients are handed a resolver that answers
             // nothing. Empty is not "use the defaults"; it is "I configured none".
             // (Audit 2026-07-31, §8.)
+            // A non-default dns.port is only usable because the tunnel bridges 53 to it with
+            // an iptables REDIRECT — clients cannot address any other port. Without iptables
+            // there is nothing to bridge with, and every client would be handed a resolver it
+            // cannot reach. Say so at load instead of at the first DNS lookup.
+            // (Audit 2026-07-31.)
+            if p.dns.port != 53 && !nat::available() {
+                anyhow::bail!(
+                    "profile '{}': dns.port = {} needs iptables, because clients can only ever                      use port 53 and the tunnel bridges 53 -> {} for them. iptables is not                      installed here. Set dns.port = 53, or install iptables.",
+                    p.name,
+                    p.dns.port,
+                    p.dns.port
+                );
+            }
             if p.dns.upstream.is_empty() {
                 anyhow::bail!(
                     "profile '{}': dns.enabled = true but dns.upstream is empty — the DNS proxy                      would abandon every query while clients are pushed to use it. Set at least                      one IPv4 upstream, or dns.enabled = false.",
@@ -2794,12 +2807,24 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
 
     // DNS proxy (per-profile)
     if pcfg.dns.enabled {
+        // Bridge 53 -> dns.port inside the tunnel when the proxy listens somewhere else, so
+        // clients can keep using the only port their platform can express. No-op on 53.
+        nat::enable_dns_redirect(&name, &pcfg.tun.name, &pcfg.dns.listen, pcfg.dns.port);
+
         let dns_state = state.clone();
         let dns_cfg = pcfg.dns.clone();
         let name_dns = name.clone();
+        let dns_listen = crate::util::join_host_port(&pcfg.dns.listen, pcfg.dns.port);
         tokio::spawn(async move {
             if let Err(e) = dns::run_dns_proxy(dns_state, dns_cfg).await {
-                log::error!("DNS proxy error on profile '{}': {}", name_dns, e);
+                // LOUD, and it says what it costs. This used to be one ERROR line while the
+                // tunnel came up and kept handing every client the address of a resolver that
+                // does not exist — names simply stopped resolving, with nothing pointing at
+                // the cause. The commonest trigger is a host service already holding
+                // `0.0.0.0:53`, which covers the TUN address too. (Audit 2026-07-31.)
+                log::error!(
+                    "Profile '{name_dns}': the DNS proxy on {dns_listen} STOPPED: {e}. Clients                      of this profile are being pushed this address as their resolver and will                      get NO name resolution. If the port is already taken (`ss -lunp | grep                      ':53 '`), free it or set a different dns.port — the tunnel now bridges 53                      to it automatically."
+                );
             }
         });
     }
