@@ -348,9 +348,17 @@ function clientPage() {
     },
     async save() {
       // Raw mode → send the INI verbatim (full config); else send form fields.
-      const body = this.form.rawMode
-        ? { name: this.form.name, raw: this.form.raw }
-        : this.form;
+      // Form mode must NOT carry `raw`. openEdit() stashes the stored INI there so the Raw
+      // view can show it verbatim, and the backend prefers `raw` whenever it is present — so
+      // sending the whole form re-wrote the ORIGINAL config and silently discarded every edit
+      // the user had just made. (Audit 2026-07-31, §1.)
+      let body;
+      if (this.form.rawMode) {
+        body = { name: this.form.name, raw: this.form.raw };
+      } else {
+        body = Object.assign({}, this.form);
+        delete body.raw;
+      }
       const r = await apiFetch('api/client/profiles', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(body)});
       if (r.ok) { this.formOpen=false; this.notify(`Saved "${r.name}"`); await this.refresh(); }

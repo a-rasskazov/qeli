@@ -169,6 +169,14 @@ fn ini_from_fields(b: &Value) -> String {
             .collect()
     };
     let flag = |k: &str| b.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    // The AWG inputs use Alpine's `x-model.number`, so they arrive as JSON NUMBERS — `g()`
+    // reads strings and would return "" for every one of them.
+    let num = |k: &str| -> Option<i64> {
+        b.get(k).and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        })
+    };
     let mut s = String::from("[qeli]\n");
     s.push_str(&format!("server = {}\n", g("server")));
     if !g("proto").is_empty() {
@@ -194,6 +202,21 @@ fn ini_from_fields(b: &Value) -> String {
     }
     if !g("obfs_key").is_empty() {
         s.push_str(&format!("obfs_key = {}\n", g("obfs_key")));
+    }
+    // The form offers these; nothing read them, so an obfs profile saved from the panel lost
+    // its fronting and AWG settings — the panel reported success and the client then failed to
+    // handshake because the two ends disagreed about the wire. (Audit 2026-07-31, §1.)
+    // `front` only when it differs from the default, mirroring the panel's own INI preview.
+    if g("mode") == "obfs" && !g("front").is_empty() && g("front") != "websocket" {
+        s.push_str(&format!("front = {}\n", g("front")));
+    }
+    if flag("awg") {
+        s.push_str("awg = true\n");
+        for key in ["jc", "jmin", "jmax"] {
+            if let Some(v) = num(key) {
+                s.push_str(&format!("{key} = {v}\n"));
+            }
+        }
     }
     if flag("quic") {
         s.push_str("quic = true\n");
