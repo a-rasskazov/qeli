@@ -1,7 +1,7 @@
-ad676364c4c20e5739532cb588412daf2baedd670c9bd0cd0f62916bd9c1e0dd *native-libs/android/arm64-v8a/libqeli.so
-ad676364c4c20e5739532cb588412daf2baedd670c9bd0cd0f62916bd9c1e0dd *qeli-android/app/src/main/jniLibs/arm64-v8a/libqeli.so
-025081a7a3bb1860309aa089518ff139f6ff08fedf4fc746177520458a1f9be1 *native-libs/android/x86_64/libqeli.so
-025081a7a3bb1860309aa089518ff139f6ff08fedf4fc746177520458a1f9be1 *qeli-android/app/src/main/jniLibs/x86_64/libqeli.so
+d644c229f2ff2196920ff5a236de3a026ebf6952c821806c1ad0fdec03ff2407 *native-libs/android/arm64-v8a/libqeli.so
+d644c229f2ff2196920ff5a236de3a026ebf6952c821806c1ad0fdec03ff2407 *qeli-android/app/src/main/jniLibs/arm64-v8a/libqeli.so
+710d2346c481db916842e987665d65de3fa46e9236ddace0d4fba14548f41ac3 *native-libs/android/x86_64/libqeli.so
+710d2346c481db916842e987665d65de3fa46e9236ddace0d4fba14548f41ac3 *qeli-android/app/src/main/jniLibs/x86_64/libqeli.so
 be6884e7eeb227ebbb58fe977c18b17c87f4c00c7a9fb692f5cbc4401217d49d *native-libs/windows-x64/qeli.dll
 be6884e7eeb227ebbb58fe977c18b17c87f4c00c7a9fb692f5cbc4401217d49d *qeli-win/QeliWin/native/qeli.dll
 03fc32657f761984e74759adef4e7d3e5dd8d1a66a95d78d3aa19477ced60d6d *native-libs/macos-universal/libqeli.dylib
