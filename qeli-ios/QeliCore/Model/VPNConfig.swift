@@ -13,6 +13,15 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// ``validate()`` is what refuses. (Audit 2026-07-31.)
     var unparsedBooleanKeys: [String] = []
 
+    /// Accepted tunnel-MTU range. The ceiling is derived, in Rust, from the record format
+    /// (`protocol/packet.rs MAX_TUNNEL_MTU`): a record holds nonce + counter + payload +
+    /// padding-length + tag and must fit `MAX_RECORD_SIZE`, so anything larger the PEER
+    /// REJECTS. Mirrored here as a literal — the four ports and the two UIs must all carry the
+    /// same number, because raising it in one place only is worse than not raising it.
+    /// (Audit 2026-08-01, §1.)
+    static let mtuMin = 576
+    static let mtuMax = 16638
+
     var serverAddress: String
     var port: Int
     var protocolName: String = "tcp"
@@ -211,8 +220,8 @@ struct VPNConfig: Codable, Equatable, Sendable {
         guard ["plain", "fake-tls", "obfs", "reality-tls"].contains(wireMode.lowercased()) else {
             throw VPNConfigError.invalid("unsupported mode: \(wireMode)")
         }
-        if mtu != 0 && !(576...9_000).contains(mtu) {
-            throw VPNConfigError.invalid("mtu must be 0 or between 576 and 9000")
+        if mtu != 0 && !(Self.mtuMin...Self.mtuMax).contains(mtu) {
+            throw VPNConfigError.invalid("mtu must be 0 or between \(Self.mtuMin) and \(Self.mtuMax)")
         }
         guard paddingMin >= 0, paddingMax >= paddingMin else {
             throw VPNConfigError.invalid("padding range is invalid")
@@ -484,7 +493,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
             // below. Matches the Rust `from_link` clamp; the Android client now does the
             // same, so one shared link no longer imports on one platform and fails on
             // another over a value the client would have ignored anyway.
-            case "mtu": config.mtu = Int(value).flatMap { $0 == 0 || (576...9000).contains($0) ? $0 : 0 } ?? 0
+            case "mtu": config.mtu = Int(value).flatMap { $0 == 0 || (Self.mtuMin...Self.mtuMax).contains($0) ? $0 : 0 } ?? 0
             default: break
             }
         }

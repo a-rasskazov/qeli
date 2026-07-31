@@ -203,7 +203,7 @@ return view.extend({
 		o.datatype = 'maxlength(15)';
 
 		o = s.option(form.Value, 'mtu', _('MTU'), _('0 = auto (server-pushed).'));
-		o.datatype = 'range(0,9000)';
+		o.datatype = 'range(0,16638)';   // see config/server.rs MTU_MAX (derived from the record size)
 
 		o = s.option(form.Flag, 'kill_switch', _('Kill-switch'),
 			_('Client-side firewall lock: block all egress except the tunnel while connected.'));

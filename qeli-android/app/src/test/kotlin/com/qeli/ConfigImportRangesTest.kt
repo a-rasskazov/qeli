@@ -101,7 +101,7 @@ class ConfigImportRangesTest {
 
     @Test
     fun `an INI file with an out-of-range mtu is rejected`() {
-        for (bad in listOf("99999", "40", "-1", "575", "9001")) {
+        for (bad in listOf("99999", "40", "-1", "575", "16639")) {
             try {
                 VpnConfig.fromIni(ini("mtu = $bad"))
                 fail("mtu = $bad must be rejected, not imported")
@@ -116,6 +116,13 @@ class ConfigImportRangesTest {
         assertEquals(1380, VpnConfig.fromIni(ini("mtu = 1380")).mtu)
         assertEquals(576, VpnConfig.fromIni(ini("mtu = 576")).mtu)
         assertEquals(9000, VpnConfig.fromIni(ini("mtu = 9000")).mtu)
+        // The real ceiling, derived in Rust from the record format. Pinned so this port cannot
+        // silently keep an older, lower bound than the server accepts. (Audit 2026-08-01, §1.)
+        assertEquals(16638, VpnConfig.MTU_MAX)
+        assertEquals(16638, VpnConfig.fromIni(ini("mtu = 16638")).mtu)
+        // 9001 used to be refused; it is inside the range now. Kept as a case so the old
+        // ceiling cannot creep back in unnoticed.
+        assertEquals(9001, VpnConfig.fromIni(ini("mtu = 9001")).mtu)
         assertEquals(0, VpnConfig.fromIni(ini("mtu = 0")).mtu)
         assertEquals(0, VpnConfig.fromIni(ini()).mtu)   // absent = auto
     }

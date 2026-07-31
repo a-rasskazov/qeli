@@ -247,11 +247,7 @@ impl Default for BruteForceConfig {
 /// link the largest inner MTU that avoids outer fragmentation is nearer 16270.
 /// (Audit 2026-07-27, C4; ceiling derived 2026-07-31.)
 pub const MTU_MIN: u32 = 576;
-pub const MTU_MAX: u32 = (crate::protocol::packet::MAX_RECORD_SIZE
-    - crate::protocol::packet::NONCE_SIZE
-    - crate::protocol::packet::COUNTER_SIZE
-    - crate::protocol::packet::TAG_SIZE
-    - 2) as u32;
+pub const MTU_MAX: u32 = crate::protocol::packet::MAX_TUNNEL_MTU as u32;
 
 /// Resolve the DHCP pool bounds for a profile, defaulting them from the tunnel subnet
 /// and refusing a pool that lies outside it.

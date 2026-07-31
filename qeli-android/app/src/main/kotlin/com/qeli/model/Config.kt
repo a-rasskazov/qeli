@@ -372,14 +372,15 @@ data class VpnConfig(
 
         // ── imported-value ranges (Audit 2026-07-27, C6) ─────────────────────────
         // The SERVER-pushed mtu was already range-checked (QeliService.parseOk clamps to
-        // 576..9000), the locally imported one was not: `qeli://…?mtu=99999`, or a
+        // 576..16638), the locally imported one was not: `qeli://…?mtu=99999`, or a
         // hand-written `mtu = 40`, went straight through to VpnService.Builder.setMtu, where
         // establish() fails and the retry loop reconnects forever with an opaque error. An
         // out-of-range padding_max is the same class of bug one layer down — every data
         // record then exceeds PacketCodec.MAX_RECORD_SIZE and the peer drops it. Same ranges
         // as the Rust client (qeli/src/config/client.rs) and the C# port.
         const val MTU_MIN = 576
-        const val MTU_MAX = 9000
+        /** Derived, in Rust, from the record format (protocol/packet.rs MAX_TUNNEL_MTU): a record holds nonce + counter + payload + padding-length + tag and must fit MAX_RECORD_SIZE, so anything larger the PEER REJECTS. Mirrored here as a literal; the four ports and the two UIs must all carry the same number, because raising it in one place only is worse than not raising it — see Audit 2026-08-01 §1. */
+        const val MTU_MAX = 16638
         private const val PADDING_CEILING = 1400   // the per-packet pad_cap wire ceiling
 
         /** 0 (auto) or a plausible tunnel MTU. */

@@ -171,7 +171,7 @@ enum PlainHandshake {
             (root[key] as? NSNumber)?.intValue ?? fallback
         }
         let prefix = (1...32).contains(number("prefix", 24)) ? number("prefix", 24) : 24
-        let pushedMTU = (576...9_000).contains(number("mtu", 0)) ? number("mtu", 0) : 0
+        let pushedMTU = (VPNConfig.mtuMin...VPNConfig.mtuMax).contains(number("mtu", 0)) ? number("mtu", 0) : 0
         let dns = (root["dns"] as? String).flatMap { $0.isEmpty ? nil : $0 }.map { [$0] } ?? []
         let routes = (root["routes"] as? [[String: Any]])?.compactMap { $0["cidr"] as? String } ?? []
 

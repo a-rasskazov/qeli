@@ -141,9 +141,15 @@ pub fn this_build() -> Option<Vec<u8>> {
 /// e.g. 68 on faith would let one malformed report shrink a session to uselessness. Reports
 /// below it are clamped up, not honoured.
 pub const MIN_REPORTED_MTU: u16 = 576;
-/// Highest MTU we will believe. Anything larger than a jumbo-less Ethernet path is
-/// either a bug or an attempt to push the server into emitting oversized packets.
-pub const MAX_REPORTED_MTU: u16 = 9000;
+/// Highest MTU we will believe from a peer — the largest the record format can carry.
+///
+/// This was a flat 9000 while `config::server::MTU_MAX` had already been raised, which was
+/// actively harmful rather than merely inconsistent: a client legitimately running at 16 K
+/// reported it, the clamp cut the report to 9000, and the server then narrowed its downlink to
+/// 9000 — the MTU feature shrinking a working jumbo tunnel. Both bounds now come from
+/// [`crate::protocol::packet::MAX_TUNNEL_MTU`] so they cannot drift again.
+/// (Audit 2026-08-01, §1.)
+pub const MAX_REPORTED_MTU: u16 = crate::protocol::packet::MAX_TUNNEL_MTU as u16;
 
 /// True if `p` (a decrypted tunnel plaintext) is a control frame rather than an IP packet.
 #[inline]
@@ -248,6 +254,27 @@ mod tests {
     }
 
     /// The exact bytes, to be pinned identically in the C#, Kotlin and Swift ports.
+    /// The two MTU ceilings must be the SAME number.
+    ///
+    /// They drifted once and the result was worse than either value alone: `MTU_MAX` was raised
+    /// to the record-format limit while this clamp stayed at 9000, so a client legitimately
+    /// running at 16 K reported it, the report was cut to 9000, and the server narrowed its
+    /// downlink to match — the path-MTU feature shrinking a working jumbo tunnel. Pin them
+    /// together so raising one alone fails here. (Audit 2026-08-01, §1.)
+    #[test]
+    fn the_configurable_and_reportable_mtu_ceilings_agree() {
+        assert_eq!(
+            u32::from(MAX_REPORTED_MTU),
+            crate::config::server::MTU_MAX,
+            "a peer may report exactly what an operator may configure"
+        );
+        // Both come from the record format, so a packet at the ceiling must still fit a record.
+        assert_eq!(
+            usize::from(MAX_REPORTED_MTU),
+            crate::protocol::packet::MAX_TUNNEL_MTU
+        );
+    }
+
     #[test]
     fn client_info_matches_the_shared_vector() {
         assert_eq!(

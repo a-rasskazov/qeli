@@ -421,7 +421,7 @@ private enum FakeTLSHandshake {
         let requestedPrefix = integer("prefix", 24)
         let prefix = (1...32).contains(requestedPrefix) ? requestedPrefix : 24
         let requestedMTU = integer("mtu", 0)
-        let pushedMTU = (576...9_000).contains(requestedMTU) ? requestedMTU : 0
+        let pushedMTU = (VPNConfig.mtuMin...VPNConfig.mtuMax).contains(requestedMTU) ? requestedMTU : 0
         let dns = (root["dns"] as? String).flatMap { $0.isEmpty ? nil : $0 }.map { [$0] } ?? []
         let routes = (root["routes"] as? [[String: Any]])?.compactMap { $0["cidr"] as? String } ?? []
 

@@ -11,6 +11,20 @@ pub const NONCE_SIZE: usize = 12;
 pub const TAG_SIZE: usize = 16;
 pub const COUNTER_SIZE: usize = 8;
 pub const MAX_RECORD_SIZE: usize = 16384 + NONCE_SIZE + TAG_SIZE + COUNTER_SIZE + 256;
+
+/// The largest INNER (tunnel) packet the record format can carry.
+///
+/// One source of truth for every MTU ceiling in the project. A record holds
+/// nonce + counter + payload + padding-length + tag and must fit [`MAX_RECORD_SIZE`], so this
+/// is that budget minus the per-record overhead — a packet larger than this the PEER REJECTS.
+///
+/// It lives here rather than in the config layer because BOTH need it and they must not drift:
+/// `config::server::MTU_MAX` bounds what an operator may configure, and
+/// `protocol::ctrl::MAX_REPORTED_MTU` bounds what a peer may claim. Raising one without the
+/// other is worse than raising neither — a client allowed to run at 16 K would have its report
+/// clamped to the old ceiling and the server would narrow its downlink to match.
+/// (Audit 2026-08-01, §1.)
+pub const MAX_TUNNEL_MTU: usize = MAX_RECORD_SIZE - NONCE_SIZE - COUNTER_SIZE - TAG_SIZE - 2;
 /// Anti-replay window in packets. Sized like WireGuard (~2000) so heavily
 /// reordered UDP flows don't trip false `ReplayDetected` (a 64-bit window was
 /// easily out-run by reordering). Receiver-side only — no wire/compat impact.

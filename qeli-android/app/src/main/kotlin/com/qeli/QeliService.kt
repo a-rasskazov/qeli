@@ -805,7 +805,7 @@ class VpnServiceImpl : VpnService() {
             dnsIp = json.optString("dns", ""),
             routesJson = json.optJSONArray("routes")?.toString() ?: "[]",
             // Server-pushed MTU; out-of-range/absent => 0 (not pushed).
-            pushedMtu = json.optInt("mtu", 0).let { if (it in 576..9000) it else 0 },
+            pushedMtu = json.optInt("mtu", 0).let { if (it in VpnConfig.MTU_MIN..VpnConfig.MTU_MAX) it else 0 },
             // Stream-bonding push (handler.rs::build_auth_ok). Absent on older
             // servers → token "", maxStreams 1, adaptive false → single stream.
             sessionToken = json.optString("session_token", ""),

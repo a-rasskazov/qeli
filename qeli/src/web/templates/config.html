@@ -574,7 +574,7 @@
             <div>
               <label class="field-label">MTU</label>
               <p class="field-desc">Max packet size. 1400–1480 avoids fragmentation with encapsulation overhead.</p>
-              <input class="inp" type="number" min="576" max="9000" x-model.number="cfg.profiles[activeTab].tun.mtu" @input="markDirty()">
+              <input class="inp" type="number" min="576" max="16638" x-model.number="cfg.profiles[activeTab].tun.mtu" @input="markDirty()">
             </div>
             <div>
               <label class="field-label">Gateway IP (server address)</label>

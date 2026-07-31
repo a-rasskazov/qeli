@@ -1192,7 +1192,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         //
         // The bound is now the shared MTU_MIN..=MTU_MAX rather than the kernel's raw
         // 68..=65535, because the kernel accepting a value is not the same as the tunnel
-        // working with it: clients discard a pushed MTU outside 576..=9000 and fall back
+        // working with it: clients discard a pushed MTU outside MTU_MIN..=MTU_MAX and fall back
         // to 1400, so a server configured at, say, 300 came up fine and then black-holed
         // every packet over 300 bytes with nothing logged at either end. Reject it here
         // instead, where the operator can still read the message. (Audit 2026-07-27, C4.)

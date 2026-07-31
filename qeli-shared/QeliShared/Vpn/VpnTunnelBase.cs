@@ -1638,7 +1638,7 @@ public abstract class VpnTunnelBase
         string routes = json["routes"] is JsonArray arr ? arr.ToJsonString() : "[]";
         // Server-pushed MTU; out-of-range/absent => 0 (not pushed).
         int mtu = (json["mtu"] as JsonValue)?.GetValue<int>() ?? 0;
-        if (mtu is < 576 or > 9000) mtu = 0;
+        if (mtu is < 576 or > 16638) mtu = 0;   // see VpnConfig.MtuMax
         // Stream-bonding push (handler.rs::build_auth_ok). Absent on older servers =>
         // token "", maxStreams 1, adaptive false => single stream.
         string token = (json["session_token"] as JsonValue)?.GetValue<string>() ?? "";
