@@ -240,8 +240,26 @@ class VpnServiceImpl : VpnService() {
                     @Suppress("DEPRECATION")
                     intent.getSerializableExtra(EXTRA_CONFIG) as? VpnConfig
                 }
-                if (config != null) startVpn(config)
-                else Log.e("VpnSvc", "Config is null in intent")
+                // The LAST gate, and the only one that cannot be bypassed. Every way to connect
+                // — the main screen, the widget, the Quick Settings tile, boot autostart —
+                // funnels into this one action, and each of them validates on its own. That
+                // left correctness resting on four separate callers remembering to; the
+                // original defect was exactly that (validate() ran on IMPORT, and connect /
+                // always-on / boot each skipped it). Checking here means a fifth entry point
+                // added later cannot silently reintroduce it.
+                //
+                // Not a security boundary: the service is `exported="false"` and gated behind
+                // BIND_VPN_SERVICE, so no other app can send this. This is about the next
+                // caller, not an attacker. (Audit 2026-07-31.)
+                val rejected = config?.let { runCatching { it.validate() }.exceptionOrNull() }
+                when {
+                    config == null -> Log.e("VpnSvc", "Config is null in intent")
+                    rejected != null -> {
+                        Log.e("VpnSvc", "Refusing to connect: ${rejected.message}")
+                        broadcastStatus(STATUS_ERROR, "Invalid profile: ${rejected.message}")
+                    }
+                    else -> startVpn(config)
+                }
             }
             ACTION_DISCONNECT -> {
                 userRequestedDisconnect = true
