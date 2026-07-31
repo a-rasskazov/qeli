@@ -1257,6 +1257,16 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // can never answer anything. Since clients are handed this proxy as their DNS,
             // that is a black hole for every name they look up — and the old behaviour was to
             // start anyway and fail each query in silence. (Audit 2026-07-29, #22.)
+            // An EXPLICIT `dns.upstream =` replaces the defaults with an empty list, and the
+            // proxy then abandons every query — clients are handed a resolver that answers
+            // nothing. Empty is not "use the defaults"; it is "I configured none".
+            // (Audit 2026-07-31, §8.)
+            if p.dns.upstream.is_empty() {
+                anyhow::bail!(
+                    "profile '{}': dns.enabled = true but dns.upstream is empty — the DNS proxy                      would abandon every query while clients are pushed to use it. Set at least                      one IPv4 upstream, or dns.enabled = false.",
+                    p.name
+                );
+            }
             if usable == 0 && !p.dns.upstream.is_empty() {
                 anyhow::bail!(
                     "profile '{}': none of the {} dns.upstream entries is a USABLE IPv4 address \

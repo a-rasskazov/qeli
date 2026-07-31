@@ -485,6 +485,16 @@ impl ClientConfig {
 
         // TUN MTU. Omitted or 0 = auto (adopt the server-pushed MTU); a positive
         // value is an explicit override.
+        // A present-but-unparseable `mtu = abc` used to fall through this `if` and leave the
+        // MTU at auto — indistinguishable from having written nothing. Record it like any other
+        // unreadable value so `validate()` refuses. (Audit 2026-07-31, §9.)
+        if let Some(raw) = q.get("mtu").map(str::trim).filter(|s| !s.is_empty()) {
+            if raw.parse::<i32>().is_err() {
+                crate::config::format::record_bad_value(format!(
+                    "key 'mtu' has an unrecognised value '{raw}'; using auto"
+                ));
+            }
+        }
         if let Some(m) = q.get("mtu").and_then(|s| s.trim().parse::<i32>().ok()) {
             // A positive override must be a plausible tunnel MTU. Reject negative / tiny /
             // jumbo values rather than silently accepting them: the UDP data plane has no
@@ -571,10 +581,10 @@ impl ClientConfig {
         // Auto-connect this profile when the supervisor/panel starts. File-level key
         // (also toggled by the panel's Client tab) — the `qeli client` runtime ignores
         // it; the client manager reads it at boot.
-        cfg.autostart = matches!(
-            q.get("autostart"),
-            Some("true") | Some("1") | Some("yes") | Some("on")
-        );
+        // Through the shared parser, not a hand-rolled `matches!`: that one was
+        // case-SENSITIVE and knew no false-spellings, so `autostart = TRUE` read as false and
+        // `autostart = ture` was never recorded as unparseable. (Audit 2026-07-31, §9.)
+        cfg.autostart = q.bool_or("autostart", false);
 
         if let Some(log) = doc.section("logging") {
             cfg.logging.level = log.get_or("level", "info").to_string();
@@ -704,6 +714,24 @@ impl ClientConfig {
             )
         }
 
+        // Parsed as u16, so 0 slipped through: a port nothing can ever connect to. The panel
+        // rejected it; a file-based start did not. (Audit 2026-07-31, §9.)
+        if self.server.port == 0 {
+            anyhow::bail!("'server' port must be 1..65535, got 0");
+        }
+        // An IPv6 endpoint parses and round-trips, but no core can USE it: the Rust client
+        // builds `host:port` unbracketed and binds an IPv4 UDP socket, and the desktop creates
+        // InterNetwork sockets and discards AAAA. Accepting it produced a confusing failure at
+        // connect time instead of a clear one here. Real support is tracked for 0.8.0 —
+        // see ROADMAP, "IPv6 server endpoint". (Audit 2026-07-31, §11.)
+        if self.server.address.parse::<std::net::Ipv6Addr>().is_ok()
+            || (self.server.address.contains(':') && self.server.address.starts_with('['))
+        {
+            anyhow::bail!(
+                "'server' is an IPv6 address ('{}') — not supported yet: the data plane binds                  IPv4 only. Use an IPv4 address or a hostname that resolves to one.",
+                self.server.address
+            );
+        }
         check("proto", &self.server.protocol, &["tcp", "udp"])?;
         check(
             "mode",

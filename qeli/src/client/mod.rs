@@ -78,6 +78,21 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
     // (`proto = UDP` connects over TCP, `dns = of` leaves the host resolver in place).
     // (Audit 2026-07-30, #7.)
     config.validate()?;
+    // A value that PARSED but was not understood — `kill_switch = ture` — never reaches
+    // `validate()`: `bool_or` records it and returns the default, so the config object looks
+    // clean. `check-config` reported these; the real start did not, which is the half that
+    // matters: the client came up with the kill switch silently off. Refuse instead, so both
+    // paths agree. (Audit 2026-07-31, §3.)
+    let bad_values = crate::config::format::take_bad_values();
+    if !bad_values.is_empty() {
+        anyhow::bail!(
+            "{} config value(s) present but not understood — refusing to start with the              defaults silently substituted:
+  {}",
+            bad_values.len(),
+            bad_values.join("
+  ")
+        );
+    }
 
     let password = if let Some(ref pw) = config.auth.password {
         pw.clone()

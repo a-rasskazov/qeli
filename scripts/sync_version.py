@@ -167,7 +167,16 @@ def main() -> int:
         vc = re.search(r"versionCode\s*=\s*(\d+)", gradle.read_text(encoding="utf-8"))
         if vc:
             apply(
-                [("qeli-ios/project.yml", r"CURRENT_PROJECT_VERSION:\s*(\S+)", "iOS build number")],
+                [
+                    ("qeli-ios/project.yml", r"CURRENT_PROJECT_VERSION:\s*(\S+)", "iOS build number"),
+                    # The literal fallback next to fallbackVersion, for the same reason: it is
+                    # used when the bundle has none and drifts silently otherwise.
+                    (
+                        "qeli-ios/QeliCore/AppConstants.swift",
+                        r'fallbackBuild = "([^"]+)"',
+                        "iOS fallback build",
+                    ),
+                ],
                 vc.group(1),
                 args.write,
             )
