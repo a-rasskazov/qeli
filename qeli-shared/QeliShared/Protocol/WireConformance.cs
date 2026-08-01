@@ -122,6 +122,26 @@ public static class WireConformance
         check("ini-dups: recorded once, last value still wins", dupOnce);
         check("ini-dups: a clean config records nothing", cleanQuiet);
 
+        // A number nobody could parse must not become a default in silence. `server =
+        // host:notnum` became `host:443` — a DIFFERENT server — with nothing reported, the same
+        // failure mode the boolean handling already fixed. (Audit 2026-08-01, §P2.)
+        var badPort = Model.VpnConfig.FromIni("[qeli]\nserver = 1.2.3.4:notnum\nuser = u\npass = p\n");
+        bool portRecorded = badPort.UnparsedNumericKeys.Count > 0;
+        bool portRefused = false;
+        try { badPort.Validate(); } catch (ArgumentException) { portRefused = true; }
+        // Out of range is as wrong as unparseable — `:0` and `:99999` are not ports.
+        bool rangeRecorded =
+            Model.VpnConfig.FromIni("[qeli]\nserver = 1.2.3.4:0\nuser = u\npass = p\n")
+                .UnparsedNumericKeys.Count > 0
+            && Model.VpnConfig.FromIni("[qeli]\nserver = 1.2.3.4:99999\nuser = u\npass = p\n")
+                .UnparsedNumericKeys.Count > 0;
+        // ...and a good config must record nothing, or the checks above pass vacuously.
+        bool numQuiet = Ini("padding_min = 10", "padding_max = 200").UnparsedNumericKeys.Count == 0;
+        check("ini-nums: an unparseable port is recorded", portRecorded);
+        check("ini-nums: Validate() refuses it", portRefused);
+        check("ini-nums: an out-of-range port is recorded too", rangeRecorded);
+        check("ini-nums: a valid config records nothing", numQuiet);
+
         // The enum checks the desktop client had no equivalent of at all.
         bool enums = true;
         foreach (var (line, _) in new[] { ("proto = ucp", 0), ("mode = realty-tls", 0), ("front = webscoket", 0) })

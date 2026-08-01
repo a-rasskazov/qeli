@@ -16,6 +16,31 @@ final class ConfigHardeningTests: XCTestCase {
         return out
     }
 
+    /// A number that is present but unreadable must be refused, not replaced by the default.
+    ///
+    /// `server`'s port has always thrown here, which is why the worst case never bit this port —
+    /// but every other numeric key fell back in silence, so `padding_min = abc` quietly became
+    /// 0. The C# port had it worse (`server = host:notnum` became `host:443`, a different
+    /// server), and all four must now agree. (Audit 2026-08-01, §P2.)
+    func testAnUnreadableNumberIsRefusedNotReplacedByTheDefault() throws {
+        let cfg = try VPNConfig.fromINI(ini("padding_min = abc"))
+        XCTAssertTrue(cfg.unparsedNumericKeys.contains("padding_min"),
+                      "the bad number must be recorded, got \(cfg.unparsedNumericKeys)")
+        XCTAssertThrowsError(try cfg.validate()) { error in
+            XCTAssertTrue("\(error)".contains("padding_min"), "message must name the key: \(error)")
+        }
+
+        // An ABSENT key keeps its default silently — that is what a default is for.
+        XCTAssertTrue(try VPNConfig.fromINI(ini()).unparsedNumericKeys.isEmpty)
+        // ...and a readable one records nothing, so the check above cannot pass vacuously.
+        let good = try VPNConfig.fromINI(ini("padding_min = 10", "padding_max = 200"))
+        XCTAssertTrue(good.unparsedNumericKeys.isEmpty)
+        XCTAssertNoThrow(try good.validate())
+
+        // The port was already strict and must stay that way — an outright throw, not a record.
+        XCTAssertThrowsError(try VPNConfig.fromINI("[qeli]\nserver = 1.2.3.4:notnum\n"))
+    }
+
     /// A key written twice must be refused, not silently resolved.
     ///
     /// The ports disagreed on which line wins: this parser folds entries into a dictionary and

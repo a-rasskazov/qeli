@@ -146,7 +146,15 @@ data class VpnConfig(
      * disagreeing, and only the author knows which line was meant. Parsing still SUCCEEDS, as
      * with [unparsedBooleanKeys]; [validate] is what refuses. (Audit 2026-08-01, §7.)
      */
-    val duplicateKeys: List<String> = emptyList()
+    val duplicateKeys: List<String> = emptyList(),
+
+    /**
+     * Numeric fields whose value was present but unreadable, which used to fall back to the
+     * default in silence. `server`'s port has always thrown; this covers the rest, and keeps
+     * this port as strict as the C# one. Parsing still SUCCEEDS; [validate] refuses.
+     * (Audit 2026-08-01, §P2.)
+     */
+    val unparsedNumericKeys: List<String> = emptyList()
 ) : Serializable {
 
     /** True when the protocol is UDP (DatagramChannel transport, QUIC masking). */
@@ -197,6 +205,12 @@ data class VpnConfig(
         require(duplicateKeys.isEmpty()) {
             "key(s) ${duplicateKeys.joinToString(", ")} appear more than once and are read as a " +
                 "single value; implementations disagree on which wins — keep one"
+        }
+
+        // A number nobody could parse must not become a default in silence. (Audit 2026-08-01.)
+        require(unparsedNumericKeys.isEmpty()) {
+            "unparseable number for ${unparsedNumericKeys.joinToString(", ")} — the default " +
+                "would have been used instead"
         }
         fun scalar(name: String, v: String?) {
             val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
@@ -480,6 +494,7 @@ data class VpnConfig(
             // Accepts the same spellings as the Rust client's `bool_or`. An unrecognised value
             // is RECORDED (see `unparsedBooleanKeys`) and falls back to the caller's default,
             // rather than silently reading as `false`.
+            val badNums = mutableListOf<String>()
             val badBools = mutableListOf<String>()
             fun boolAt(key: String, default: Boolean): Boolean {
                 val raw = q[key]?.trim()?.lowercase() ?: return default
@@ -502,10 +517,14 @@ data class VpnConfig(
                 null
             else
                 dnsRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-            // Padding bounds are clamped, not rejected — see [checkedPadding]. (C6)
+            // Padding bounds are CLAMPED, not rejected — see [checkedPadding]. (C6) That is
+            // about a number out of range; a value that is not a number at all is a typo, and
+            // falling back to the default in silence is the same failure the boolean handling
+            // already fixed. `server`'s port has always thrown here, so this closes the rest.
+            // (Audit 2026-08-01, §P2.)
             val pad = checkedPadding(
-                q["padding_min"]?.toIntOrNull() ?: 0,
-                q["padding_max"]?.toIntOrNull() ?: 255
+                numAt("padding_min", 0, badNums, q),
+                numAt("padding_max", 255, badNums, q)
             )
             return VpnConfig(
                 serverAddress = host,
@@ -577,13 +596,32 @@ data class VpnConfig(
                 loggingFile = log?.get("file")?.takeIf { it.isNotEmpty() },
                 loggingTimeFormat = log?.get("time_format")?.takeIf { it.isNotEmpty() },
                 unparsedBooleanKeys = badBools.toList(),
-                duplicateKeys = dupKeys.toList()
+                duplicateKeys = dupKeys.toList(),
+                unparsedNumericKeys = badNums.toList()
             )
         }
 
         /** Minimal line-oriented INI parser (mirrors qeli/src/config/format.rs):
          *  `[section]` / `[kind:instance]`, `key = value`, full-line `;`/`#`
          *  comments, surrounding double-quotes stripped. */
+        /**
+         * An INI integer, recording the key when the value is present but not a number.
+         *
+         * Absent keeps the default silently — that is what a default is for. A value that is
+         * THERE and unreadable is a typo, and substituting the default without a word is the
+         * same failure mode `boolAt` exists to prevent. (Audit 2026-08-01, §P2.)
+         */
+        private fun numAt(
+            key: String,
+            default: Int,
+            bad: MutableList<String>,
+            q: Map<String, String>
+        ): Int {
+            val raw = q[key]?.trim() ?: return default
+            if (raw.isEmpty()) return default
+            return raw.toIntOrNull() ?: run { bad.add(key); default }
+        }
+
         private fun parseIni(
             text: String,
             duplicates: MutableList<String>? = null

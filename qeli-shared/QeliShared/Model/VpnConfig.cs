@@ -165,6 +165,13 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// <summary>A key that appears twice and is read as a SINGLE value makes the config ambiguous, and the implementations resolved it differently: this parser folds entries into a map and keeps the LAST, while the Rust client takes the FIRST. Two `server` lines therefore sent the Rust client to one host and every GUI client to another, from one file, with nothing reported. Recorded rather than resolved — picking a winner still leaves the others disagreeing. (Audit 2026-08-01, §7.)</summary>
     public IReadOnlyList<string> DuplicateKeys { get; init; } = Array.Empty<string>();
 
+    /// <summary>Numeric fields whose value could not be parsed (or was out of range), which
+    /// used to fall back to a default in silence — the same failure mode the boolean handling
+    /// already fixed. `server = host:notnum` became `host:443`, i.e. a different server, with
+    /// nothing said anywhere. Parsing still succeeds so an editor can open the profile;
+    /// Validate() is what refuses. (Audit 2026-08-01, §P2.)</summary>
+    public IReadOnlyList<string> UnparsedNumericKeys { get; init; } = Array.Empty<string>();
+
     public int PaddingMin { get; init; }
     public int PaddingMax { get; init; } = 255;
     // heartbeat
@@ -617,19 +624,39 @@ public sealed class VpnConfig : INotifyPropertyChanged
             badBools.Add(key);
             return dflt;
         }
-        var iniPad = CheckedPadding(
-            int.TryParse(Get("padding_min"), out var pminRaw) ? pminRaw : 0,
-            int.TryParse(Get("padding_max"), out var pmaxRaw) ? pmaxRaw : 255);
+        // A number nobody could parse is a typo, and substituting the default silently is the
+        // same failure mode the boolean handling already fixed: the profile connects, just not
+        // where the file says. `server = host:notnum` became `host:443` — a different server
+        // entirely, with nothing reported. Recorded here and refused by Validate(), while
+        // parsing still SUCCEEDS so an editor can open the profile to fix it.
+        // (Audit 2026-08-01, §P2.)
+        var badNums = new List<string>();
+        int NumAt(string key, int dflt)
+        {
+            var v = Get(key);
+            if (v.Length == 0) return dflt;
+            if (int.TryParse(v, out var parsed)) return parsed;
+            badNums.Add(key);
+            return dflt;
+        }
+        var iniPad = CheckedPadding(NumAt("padding_min", 0), NumAt("padding_max", 255));
         string host = "127.0.0.1";
         int port = 443;
         int colon = server.LastIndexOf(':');
         if (colon > 0)
         {
             host = server[..colon];
-            int.TryParse(server[(colon + 1)..], out port);
+            if (!int.TryParse(server[(colon + 1)..], out port)) badNums.Add("server (port)");
         }
         else if (server.Length > 0) host = server;
-        if (port is < 1 or > 65535) port = 443;
+        if (port is < 1 or > 65535)
+        {
+            // Out of range is as wrong as unparseable: `:0` and `:99999` are not ports, and
+            // quietly becoming 443 sends the client somewhere it was never told to go.
+            if (server.Length > 0 && colon > 0 && !badNums.Contains("server (port)"))
+                badNums.Add("server (port)");
+            port = 443;
+        }
 
         string key = new string(Get("key").Where(Uri.IsHexDigit).ToArray()).ToLowerInvariant();
         bool keyValid = key.Length == 64 && key.Any(ch => ch != '0'); // all-zero = TOFU
@@ -728,6 +755,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             ShapingStealthRateMbps = int.TryParse(Get("shaping_stealth_mbps"), out var ssr) && ssr > 0 ? ssr : 2,
             UnparsedBooleanKeys = badBools,
             DuplicateKeys = dupKeys,
+            UnparsedNumericKeys = badNums,
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
@@ -797,6 +825,13 @@ public sealed class VpnConfig : INotifyPropertyChanged
             throw new ArgumentException(
                 $"key(s) {string.Join(", ", DuplicateKeys)} appear more than once and are read "
                 + "as a single value; implementations disagree on which wins — keep one");
+        }
+        if (UnparsedNumericKeys.Count > 0)
+        {
+            throw new ArgumentException(
+                $"unparseable or out-of-range number for {string.Join(", ", UnparsedNumericKeys)} "
+                + "— the default would have been used instead, which for a port means "
+                + "connecting somewhere the config never named");
         }
         if (UnparsedBooleanKeys.Count > 0)
         {

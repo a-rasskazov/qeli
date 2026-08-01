@@ -25,6 +25,12 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// with ``unparsedBooleanKeys``; ``validate()`` is what refuses. (Audit 2026-08-01, §7.)
     var duplicateKeys: [String] = []
 
+    /// Numeric fields whose value was present but unreadable, which used to fall back to the
+    /// default in silence. `server`'s port has always thrown; this covers the rest and keeps
+    /// this port as strict as the C# one. Parsing still SUCCEEDS; ``validate()`` refuses.
+    /// (Audit 2026-08-01, §P2.)
+    var unparsedNumericKeys: [String] = []
+
     /// Accepted tunnel-MTU range. The ceiling is derived, in Rust, from the record format
     /// (`protocol/packet.rs MAX_TUNNEL_MTU`): a record holds nonce + counter + payload +
     /// padding-length + tag and must fit `MAX_RECORD_SIZE`, so anything larger the PEER
@@ -176,6 +182,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
                 + "expected true/false, yes/no, on/off or 1/0")
         }
 
+        // A number nobody could parse must not become a default in silence. (Audit 2026-08-01.)
+        if !unparsedNumericKeys.isEmpty {
+            throw VPNConfigError.invalid(
+                "unparseable number for \(unparsedNumericKeys.joined(separator: ", ")) — the "
+                + "default would have been used instead")
+        }
+
         // A key written twice is ambiguous, and the ports disagreed on which line wins — the
         // same file reached two different servers depending on the client. (Audit 2026-08-01.)
         if !duplicateKeys.isEmpty {
@@ -261,6 +274,22 @@ struct VPNConfig: Codable, Equatable, Sendable {
         // Accepts the same spellings as the Rust client's `bool_or`. An unrecognised value is
         // RECORDED (see `unparsedBooleanKeys`) and falls back to the caller's default, instead
         // of silently reading as `false`.
+        // An INI integer, recording the key when the value is present but not a number.
+        //
+        // Absent keeps the default silently — that is what a default is for. A value that is
+        // THERE and unreadable is a typo, and substituting the default without a word is the
+        // same failure `boolAt` exists to prevent. (Audit 2026-08-01, §P2.)
+        var badNums: [String] = []
+        func numAt(_ key: String, default fallback: Int) -> Int {
+            guard let raw = qeli[key]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
+                return fallback
+            }
+            guard let parsed = Int(raw) else {
+                badNums.append(key)
+                return fallback
+            }
+            return parsed
+        }
         var badBools: [String] = []
         func boolAt(_ key: String, default fallback: Bool) -> Bool {
             guard let raw = qeli[key]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
@@ -327,8 +356,8 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.quicEnabled = boolAt("quic", default: false)
 
         config.paddingEnabled = boolAt("padding", default: true)
-        config.paddingMin = qeli["padding_min"].flatMap(Int.init) ?? 0
-        config.paddingMax = qeli["padding_max"].flatMap(Int.init) ?? 255
+        config.paddingMin = numAt("padding_min", default: 0)
+        config.paddingMax = numAt("padding_max", default: 255)
         config.heartbeatEnabled = boolAt("heartbeat", default: true)
         config.heartbeatIntervalMilliseconds = qeli["heartbeat_interval"].flatMap(Int.init) ?? 15_000
         config.heartbeatDataSize = qeli["heartbeat_size"].flatMap(Int.init) ?? 16
@@ -349,6 +378,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.apps = list(qeli["apps"])
         config.unparsedBooleanKeys = badBools
         config.duplicateKeys = dupKeys
+        config.unparsedNumericKeys = badNums
         return config
     }
 

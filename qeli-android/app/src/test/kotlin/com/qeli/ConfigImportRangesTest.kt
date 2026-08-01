@@ -180,6 +180,35 @@ class ConfigImportRangesTest {
     }
 
     /**
+     * A number that is present but unreadable must be refused, not replaced by the default.
+     *
+     * `server`'s port has always thrown here, which is why the worst case never bit this port —
+     * but every other numeric key fell back in silence, so `padding_min = abc` quietly became
+     * 0. The C# port had it worse (`server = host:notnum` became `host:443`, a different
+     * server), and all four must now agree. (Audit 2026-08-01, §P2.)
+     */
+    @Test
+    fun `an unreadable number is refused, not replaced by the default`() {
+        val cfg = VpnConfig.fromIni(ini("padding_min = abc"))
+        assertTrue("the bad number must be recorded", cfg.unparsedNumericKeys.contains("padding_min"))
+        val e = runCatching { cfg.validate() }.exceptionOrNull()
+        assertNotNull("validate() must refuse it", e)
+        assertTrue("the message must name the key: ${e?.message}",
+            e!!.message!!.contains("padding_min"))
+
+        // An ABSENT key keeps its default silently — that is what a default is for.
+        assertTrue(VpnConfig.fromIni(ini()).unparsedNumericKeys.isEmpty())
+        // ...and a readable one records nothing, so the check above cannot pass vacuously.
+        val good = VpnConfig.fromIni(ini("padding_min = 10", "padding_max = 200"))
+        assertTrue(good.unparsedNumericKeys.isEmpty())
+        good.validate()
+
+        // The port was already strict and must stay that way — an outright throw, not a record.
+        assertNotNull("a non-numeric port must be rejected outright",
+            runCatching { VpnConfig.fromIni("[qeli]\nserver = 1.2.3.4:notnum\n") }.exceptionOrNull())
+    }
+
+    /**
      * A key written twice must be refused, not silently resolved.
      *
      * The ports disagreed on which line wins: this parser folds entries into a map and keeps
