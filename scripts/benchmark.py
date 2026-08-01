@@ -21,7 +21,12 @@ _PW = os.environ.get("QELI_LAB_PASS", "")
 SERVER = (os.environ.get("QELI_LAB_SERVER", "10.66.116.10"), "root", _PW)
 CLIENT = (os.environ.get("QELI_LAB_CLIENT", "10.66.116.11"), "root", _PW)
 BIN = "/usr/local/bin/qeli"
-SRC_BIN = "/opt/qeli-src/target/release/qeli"
+# Which binary gets installed on both VMs for the sweep. Defaults to the lab's
+# build tree; point QELI_BENCH_SRC_BIN at an already-staged path (e.g. a RELEASE
+# artifact uploaded to /usr/local/bin/qeli) to benchmark that instead — otherwise
+# the copy below would silently overwrite it with the tree build and you would be
+# measuring the wrong binary.
+SRC_BIN = os.environ.get("QELI_BENCH_SRC_BIN", "/opt/qeli-src/target/release/qeli")
 HASH = "$argon2id$v=19$m=16384,t=2,p=1$cWVsaVNhbHRWYWw$CCYuTv8pvqQrvhrBQW3KjPpEN0MZaFfTKv3HOcGqB8w"
 PASS = "testpass123"
 
@@ -98,6 +103,12 @@ def server_ini(m):
         "obf.heartbeat.enabled = true",
         "obf.heartbeat.interval_ms = 15000",
         f"obf.quic.enabled = {str(m.get('quic', False)).lower()}",
+        # AmneziaWG junk. jc/jmin/jmax are the lab's canonical values (same as the
+        # multiprofile example) so the measured cost matches a realistic posture.
+        f"obf.awg.enabled = {str(m.get('awg', False)).lower()}",
+        "obf.awg.jc = 4",
+        "obf.awg.jmin = 40",
+        "obf.awg.jmax = 200",
         "perf.tcp.nodelay = true",
         "perf.tcp.keepalive_secs = 60",
         "perf.tun.read_buffer_size = 65535",
@@ -136,6 +147,10 @@ def client_ini(m, server_key):
         lines.append(f"obfs_key = {m['obfs_key']}")
     if m.get("quic"):
         lines.append("quic = true")
+    # Junk must be enabled on BOTH ends: the client emits it, the server tolerates
+    # and skips it. Values mirror the server profile above.
+    if m.get("awg"):
+        lines += ["awg = true", "jc = 4", "jmin = 40", "jmax = 200"]
     lines += ["", "[logging]", "level = info"]
     return "\n".join(lines) + "\n"
 
@@ -259,6 +274,13 @@ MODES = [
     {"name": "udp-faketls",    "transport": "udp", "port": 4443, "client_mode": "fake-tls",    "server_mode": "fake-tls"},
     {"name": "udp-padding",    "transport": "udp", "port": 4443, "client_mode": "fake-tls",    "server_mode": "fake-tls", "padding": True},
     {"name": "udp-quic",       "transport": "udp", "port": 4443, "client_mode": "fake-tls",    "server_mode": "fake-tls", "quic": True},
+    # AmneziaWG junk (obf.awg): measured on the ONLY two paths where it is actually
+    # emitted. Per validate_profiles, junk goes on the wire on TCP **obfs** and on
+    # UDP in any mode; on a TCP fake-tls/reality-tls profile it is a no-op (the
+    # client must send a real ClientHello first), so benchmarking it there would
+    # report the cost of a feature that never ran.
+    {"name": "tcp-obfs-awg",   "transport": "tcp", "port": 443,  "client_mode": "obfs",     "server_mode": "obfs", "obfs_key": "benchkey", "awg": True},
+    {"name": "udp-faketls-awg","transport": "udp", "port": 4443, "client_mode": "fake-tls", "server_mode": "fake-tls", "awg": True},
 ]
 
 def baseline(s, cl):
