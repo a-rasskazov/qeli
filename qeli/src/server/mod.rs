@@ -2405,8 +2405,20 @@ mod listen_addr_tests {
         let err = joined.expect("the task itself did not panic").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
 
-        // The healthy one is still running — one bad listener must not take the others down.
-        assert_eq!(set.len(), 1);
+        // The endless one is still running at this point — which is exactly why the profile
+        // must NOT go on waiting for it. Surfacing the failure was only half the fix: the
+        // caller used to loop until every listener had finished, so this survivor kept
+        // `run_profile` parked forever, the teardown guard never ran, and the server counted a
+        // profile as healthy while the endpoint its clients were handed refused connections.
+        // The caller now aborts the survivors and fails the profile. (Audit 2026-08-01, §5.)
+        assert_eq!(set.len(), 1, "the healthy listener has not finished on its own");
+        set.abort_all();
+        while tokio::time::timeout(std::time::Duration::from_secs(5), set.join_next())
+            .await
+            .expect("aborted listeners must be reaped promptly")
+            .is_some()
+        {}
+        assert!(set.is_empty(), "abort_all must leave nothing running");
     }
 
     #[test]
@@ -3859,29 +3871,39 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
     // unread in its JoinHandle forever. A profile with `listen = 0.0.0.0:8443` whose extra
     // port was already taken came up looking perfectly healthy, logged nothing, and simply
     // did not answer on that port. `join_next` yields whichever task finishes FIRST, so the
-    // failure is logged the moment it happens, whichever listener it was.
+    // failure surfaces the moment it happens, whichever listener it was.
     // (Audit 2026-07-30, #6.)
-    let mut exited = 0usize;
-    while let Some(joined) = listener_set.join_next().await {
-        exited += 1;
-        match joined {
-            Ok(Err(e)) => log::error!("Profile '{}': a listener exited: {}", name, e),
-            Ok(Ok(())) => log::error!("Profile '{}': a listener stopped unexpectedly", name),
-            Err(e) => log::error!("Profile '{}': a listener task panicked: {}", name, e),
-        }
-    }
-    // Reached only once EVERY listener is gone: the profile has a TUN, a pool and users but
-    // nothing accepting connections. Previously this returned Ok, so a profile whose binds all
-    // failed reported success and went quiet. The caller logs it per profile and keeps the
-    // other profiles serving.
-    if exited > 0 {
-        anyhow::bail!(
-            "profile '{}': every listener stopped — nothing is accepting connections",
-            name
-        );
-    }
-
-    Ok(())
+    // The FIRST listener to finish ends the profile — it does not wait for the rest.
+    //
+    // Waiting for all of them looked thorough and was the bug: an accept loop never returns on
+    // its own, so a profile whose primary `:443` was taken while its extra `:8443` bound fine
+    // sat here forever. The failure was logged and then nothing happened — `run_profile` never
+    // returned, the teardown guard never ran, and the server went on counting the profile as
+    // healthy while the endpoint every client was handed refused connections. "Some of the
+    // addresses I published work" is not a serving profile; a client configured for the
+    // primary has no way to discover it should use the other one.
+    //
+    // Failing here hands the situation to the layer that can act on it: the guard rolls the
+    // profile back (TUN, NAT, registry) and the spawn site logs it per profile while the other
+    // profiles keep serving. (Audit 2026-08-01, §5.)
+    let why = match listener_set.join_next().await {
+        Some(Ok(Err(e))) => format!("a listener exited: {e}"),
+        Some(Ok(Ok(()))) => "a listener stopped unexpectedly".to_string(),
+        Some(Err(e)) => format!("a listener task panicked: {e}"),
+        // Nothing was ever spawned. The profile has a TUN, a pool and users, and accepts
+        // nothing at all — reported rather than returned as success, which is what used to
+        // happen when every bind failed.
+        None => "no listeners were started at all".to_string(),
+    };
+    // Stop the survivors explicitly rather than relying on the JoinSet's drop: their accept
+    // loops would otherwise keep taking connections for a profile that is being torn down,
+    // and a client could complete a handshake against a pool that is about to disappear.
+    listener_set.abort_all();
+    anyhow::bail!(
+        "profile '{}': {} — the profile still publishes endpoints it can no longer serve",
+        name,
+        why
+    );
 }
 
 #[cfg(test)]
