@@ -58,6 +58,18 @@ final class ConfigHardeningTests: XCTestCase {
             XCTAssertTrue("\(error)".contains("padding_min"), "message must name the key: \(error)")
         }
 
+        // EVERY numeric field, not just padding: `mtu = abc` used to become auto-MTU, a
+        // mistyped timeout became 30 s, a mistyped AWG knob became its default — each one a
+        // setting the operator chose and did not get. (Audit 2026-08-01, §8.)
+        for key in ["mtu", "timeout", "jc", "jmin", "jmax", "reconnect_retries",
+                    "reconnect_base_delay", "reconnect_max_delay", "heartbeat_interval",
+                    "heartbeat_size", "heartbeat_jitter", "shaping_gap_mean", "shaping_budget",
+                    "shaping_min_size", "shaping_max_size", "shaping_stealth_mbps"] {
+            let c = try VPNConfig.fromINI(ini("\(key) = abc"))
+            XCTAssertTrue(c.unparsedNumericKeys.contains(key),
+                          "\(key): an unreadable value must be recorded")
+        }
+
         // An ABSENT key keeps its default silently — that is what a default is for.
         XCTAssertTrue(try VPNConfig.fromINI(ini()).unparsedNumericKeys.isEmpty)
         // ...and a readable one records nothing, so the check above cannot pass vacuously.

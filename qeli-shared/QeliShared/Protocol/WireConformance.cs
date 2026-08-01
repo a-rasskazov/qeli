@@ -142,6 +142,27 @@ public static class WireConformance
         check("ini-nums: an out-of-range port is recorded too", rangeRecorded);
         check("ini-nums: a valid config records nothing", numQuiet);
 
+        // Every numeric field, not just padding: `mtu = abc` used to become auto-MTU, a
+        // mistyped timeout became 30 s, a mistyped AWG knob became its default — each one a
+        // setting the operator chose and did not get. (Audit 2026-08-01, §8.)
+        bool everyNumericRecorded = true;
+        foreach (var key in new[] { "mtu", "timeout", "lport", "metric", "jc", "jmin", "jmax",
+                                    "reconnect_retries", "reconnect_base_delay",
+                                    "reconnect_max_delay", "heartbeat_interval", "heartbeat_size",
+                                    "heartbeat_jitter", "shaping_gap_mean", "shaping_budget",
+                                    "shaping_min_size", "shaping_max_size", "shaping_stealth_mbps" })
+        {
+            everyNumericRecorded &= Ini($"{key} = abc").UnparsedNumericKeys.Contains(key);
+        }
+        // ...while a value that is merely OUT OF RANGE still falls back silently. That is a
+        // documented clamp, not a mistake, and conflating the two would start rejecting
+        // configs that have always been accepted.
+        var outOfRange = Ini("lport = 99999", "heartbeat_interval = -5");
+        bool rangeStillSilent = outOfRange.UnparsedNumericKeys.Count == 0
+            && outOfRange.LocalPort == 0 && outOfRange.HeartbeatIntervalMs == 15000;
+        check("ini-nums: every numeric field records an unreadable value", everyNumericRecorded);
+        check("ini-nums: out-of-range still falls back silently", rangeStillSilent);
+
         // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
         // change silently keeps its default — `gatway = true` left the tunnel split with
         // nothing said anywhere. The Rust client has always refused these; this port did not.

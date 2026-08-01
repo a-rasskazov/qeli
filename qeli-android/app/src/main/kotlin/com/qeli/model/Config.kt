@@ -544,11 +544,11 @@ data class VpnConfig(
                 serverAddress = host,
                 port = port,
                 protocol = q["proto"]?.ifBlank { null } ?: "tcp",
-                connectionTimeoutSecs = q["timeout"]?.toLongOrNull() ?: 30L,
+                connectionTimeoutSecs = longAt("timeout", 30L, badNums, q),
                 reconnectEnabled = boolAt("reconnect", true),
-                reconnectMaxRetries = q["reconnect_retries"]?.toIntOrNull() ?: -1,
-                reconnectBaseDelaySecs = q["reconnect_base_delay"]?.toLongOrNull() ?: 1L,
-                reconnectMaxDelaySecs = q["reconnect_max_delay"]?.toLongOrNull() ?: 60L,
+                reconnectMaxRetries = numAt("reconnect_retries", -1, badNums, q),
+                reconnectBaseDelaySecs = longAt("reconnect_base_delay", 1L, badNums, q),
+                reconnectMaxDelaySecs = longAt("reconnect_max_delay", 60L, badNums, q),
                 username = q["user"]?.ifBlank { null } ?: "client",
                 password = q["pass"] ?: "",
                 serverPublicKeyHex = q["key"]?.takeIf { it.isNotEmpty() },
@@ -563,9 +563,9 @@ data class VpnConfig(
                 obfsFronting = q["front"]?.ifBlank { null } ?: "websocket",
                 // F2: AmneziaWG junk. `awg = true` + jc/jmin/jmax (caps applied at use).
                 awgEnabled = boolAt("awg", false),
-                awgJc = q["jc"]?.toIntOrNull() ?: 0,
-                awgJmin = q["jmin"]?.toIntOrNull() ?: 40,
-                awgJmax = q["jmax"]?.toIntOrNull() ?: 300,
+                awgJc = numAt("jc", 0, badNums, q),
+                awgJmin = numAt("jmin", 40, badNums, q),
+                awgJmax = numAt("jmax", 300, badNums, q),
                 quicEnabled = boolAt("quic", false),
                 routeLocalNetworks = boolAt("route_local", false),
                 allowIpv6Leak = boolAt("allow_ipv6_leak", false),
@@ -576,7 +576,7 @@ data class VpnConfig(
                 excludeRoutes = q["exclude"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 dnsServers = if (dns.isNullOrEmpty()) emptyList() else dns,
                 // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
-                mtu = checkedMtu(q["mtu"]?.toIntOrNull() ?: 0),
+                mtu = checkedMtu(numAt("mtu", 0, badNums, q)),
                 // Same false-set as the Rust `bool_or` and the iOS client. The old test
                 // (`!= "false" && != "0"`) read `mtu_probe = off` / `no` as ON — the exact
                 // opposite of what the user wrote, and of what the desktop client does.
@@ -593,18 +593,18 @@ data class VpnConfig(
                 paddingMin = pad.first,
                 paddingMax = pad.second,
                 heartbeatEnabled = boolAt("heartbeat", true),
-                heartbeatIntervalMs = q["heartbeat_interval"]?.toLongOrNull() ?: 15000L,
-                heartbeatDataSize = q["heartbeat_size"]?.toIntOrNull() ?: 16,
-                heartbeatJitterMs = q["heartbeat_jitter"]?.toLongOrNull() ?: 2000L,
+                heartbeatIntervalMs = longAt("heartbeat_interval", 15000L, badNums, q),
+                heartbeatDataSize = numAt("heartbeat_size", 16, badNums, q),
+                heartbeatJitterMs = longAt("heartbeat_jitter", 2000L, badNums, q),
                 shapingEnabled = boolAt("shaping", false),
-                shapingGapMeanMs = q["shaping_gap_mean"]?.toLongOrNull() ?: 700L,
-                shapingGapMinMs = q["shaping_gap_min"]?.toLongOrNull() ?: 40L,
-                shapingGapMaxMs = q["shaping_gap_max"]?.toLongOrNull() ?: 6000L,
-                shapingBudgetBytesPerSec = q["shaping_budget"]?.toIntOrNull() ?: 16384,
-                shapingMinSize = q["shaping_min_size"]?.toIntOrNull() ?: 64,
-                shapingMaxSize = q["shaping_max_size"]?.toIntOrNull() ?: 1024,
+                shapingGapMeanMs = longAt("shaping_gap_mean", 700L, badNums, q),
+                shapingGapMinMs = longAt("shaping_gap_min", 40L, badNums, q),
+                shapingGapMaxMs = longAt("shaping_gap_max", 6000L, badNums, q),
+                shapingBudgetBytesPerSec = numAt("shaping_budget", 16384, badNums, q),
+                shapingMinSize = numAt("shaping_min_size", 64, badNums, q),
+                shapingMaxSize = numAt("shaping_max_size", 1024, badNums, q),
                 shapingStealth = boolAt("shaping_stealth", false),
-                shapingStealthRateMbps = q["shaping_stealth_mbps"]?.toIntOrNull() ?: 2,
+                shapingStealthRateMbps = numAt("shaping_stealth_mbps", 2, badNums, q),
                 // Carried through untouched so re-saving a desktop config keeps its logging.
                 loggingLevel = log?.get("level")?.takeIf { it.isNotEmpty() },
                 loggingFile = log?.get("file")?.takeIf { it.isNotEmpty() },
@@ -657,6 +657,18 @@ data class VpnConfig(
          * THERE and unreadable is a typo, and substituting the default without a word is the
          * same failure mode `boolAt` exists to prevent. (Audit 2026-08-01, §P2.)
          */
+        /** [numAt] for a Long-valued key. */
+        private fun longAt(
+            key: String,
+            default: Long,
+            bad: MutableList<String>,
+            q: Map<String, String>
+        ): Long {
+            val raw = q[key]?.trim() ?: return default
+            if (raw.isEmpty()) return default
+            return raw.toLongOrNull() ?: run { bad.add(key); default }
+        }
+
         private fun numAt(
             key: String,
             default: Int,

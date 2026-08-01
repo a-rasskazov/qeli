@@ -347,16 +347,16 @@ struct VPNConfig: Codable, Equatable, Sendable {
 
         var config = VPNConfig(serverAddress: host, port: port)
         config.protocolName = qeli["proto"].nonEmpty ?? "tcp"
-        config.connectionTimeoutSeconds = qeli["timeout"].flatMap(Int.init) ?? 30
+        config.connectionTimeoutSeconds = numAt("timeout", default: 30)
         config.reconnectEnabled = boolAt("reconnect", default: true)
-        config.reconnectMaxRetries = qeli["reconnect_retries"].flatMap(Int.init) ?? -1
-        config.reconnectBaseDelaySeconds = qeli["reconnect_base_delay"].flatMap(Int.init) ?? 1
-        config.reconnectMaxDelaySeconds = qeli["reconnect_max_delay"].flatMap(Int.init) ?? 60
+        config.reconnectMaxRetries = numAt("reconnect_retries", default: -1)
+        config.reconnectBaseDelaySeconds = numAt("reconnect_base_delay", default: 1)
+        config.reconnectMaxDelaySeconds = numAt("reconnect_max_delay", default: 60)
         config.username = qeli["user"].nonEmpty ?? "client"
         config.password = qeli["pass"] ?? ""
         config.serverPublicKeyHex = qeli["key"].nonEmpty
         config.bindStaticToSession = boolAt("bind_static", default: true)
-        config.mtu = qeli["mtu"].flatMap(Int.init) ?? 0
+        config.mtu = numAt("mtu", default: 0)
         // Through boolAt like every other boolean: the old "anything not in the off-set is ON"
         // reading meant `mtu_probe = ture` silently enabled probing and was never recorded as a
         // typo. (Audit 2026-07-31.)
@@ -387,28 +387,28 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.obfsKey = qeli["obfs_key"] ?? ""
         config.obfsFronting = qeli["front"].nonEmpty ?? "websocket"
         config.awgEnabled = boolAt("awg", default: false)
-        config.awgJunkCount = qeli["jc"].flatMap(Int.init) ?? 0
-        config.awgJunkMin = qeli["jmin"].flatMap(Int.init) ?? 40
-        config.awgJunkMax = qeli["jmax"].flatMap(Int.init) ?? 300
+        config.awgJunkCount = numAt("jc", default: 0)
+        config.awgJunkMin = numAt("jmin", default: 40)
+        config.awgJunkMax = numAt("jmax", default: 300)
         config.quicEnabled = boolAt("quic", default: false)
 
         config.paddingEnabled = boolAt("padding", default: true)
         config.paddingMin = numAt("padding_min", default: 0)
         config.paddingMax = numAt("padding_max", default: 255)
         config.heartbeatEnabled = boolAt("heartbeat", default: true)
-        config.heartbeatIntervalMilliseconds = qeli["heartbeat_interval"].flatMap(Int.init) ?? 15_000
-        config.heartbeatDataSize = qeli["heartbeat_size"].flatMap(Int.init) ?? 16
-        config.heartbeatJitterMilliseconds = qeli["heartbeat_jitter"].flatMap(Int.init) ?? 2_000
+        config.heartbeatIntervalMilliseconds = numAt("heartbeat_interval", default: 15_000)
+        config.heartbeatDataSize = numAt("heartbeat_size", default: 16)
+        config.heartbeatJitterMilliseconds = numAt("heartbeat_jitter", default: 2_000)
 
         config.shapingEnabled = boolAt("shaping", default: false)
-        config.shapingGapMeanMilliseconds = qeli["shaping_gap_mean"].flatMap(Int.init) ?? 700
-        config.shapingGapMinMilliseconds = qeli["shaping_gap_min"].flatMap(Int.init) ?? 40
-        config.shapingGapMaxMilliseconds = qeli["shaping_gap_max"].flatMap(Int.init) ?? 6_000
-        config.shapingBudgetBytesPerSecond = qeli["shaping_budget"].flatMap(Int.init) ?? 16_384
-        config.shapingMinSize = qeli["shaping_min_size"].flatMap(Int.init) ?? 64
-        config.shapingMaxSize = qeli["shaping_max_size"].flatMap(Int.init) ?? 1_024
+        config.shapingGapMeanMilliseconds = numAt("shaping_gap_mean", default: 700)
+        config.shapingGapMinMilliseconds = numAt("shaping_gap_min", default: 40)
+        config.shapingGapMaxMilliseconds = numAt("shaping_gap_max", default: 6_000)
+        config.shapingBudgetBytesPerSecond = numAt("shaping_budget", default: 16_384)
+        config.shapingMinSize = numAt("shaping_min_size", default: 64)
+        config.shapingMaxSize = numAt("shaping_max_size", default: 1_024)
         config.shapingStealth = boolAt("shaping_stealth", default: false)
-        config.shapingStealthRateMbps = qeli["shaping_stealth_mbps"].flatMap(Int.init) ?? 2
+        config.shapingStealthRateMbps = numAt("shaping_stealth_mbps", default: 2)
 
         let mode = qeli["apps_mode"]?.lowercased() ?? "all"
         config.appsMode = ["include", "exclude"].contains(mode) ? mode : "all"

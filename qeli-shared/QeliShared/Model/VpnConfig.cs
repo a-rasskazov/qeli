@@ -668,13 +668,28 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // parsing still SUCCEEDS so an editor can open the profile to fix it.
         // (Audit 2026-08-01, §P2.)
         var badNums = new List<string>();
-        int NumAt(string key, int dflt)
+        long LongAt(string key, long dflt)
         {
             var v = Get(key);
             if (v.Length == 0) return dflt;
-            if (int.TryParse(v, out var parsed)) return parsed;
+            if (long.TryParse(v, out var parsed)) return parsed;
             badNums.Add(key);
             return dflt;
+        }
+        int NumAt(string key, int dflt) => (int)Math.Clamp(LongAt(key, dflt), int.MinValue, int.MaxValue);
+        // Range checks stay SEPARATE from readability, and both stay as they were: a value out
+        // of range still falls back silently (that is a documented clamp, not a mistake), while
+        // a value that is not a number at all is recorded. Conflating them would either start
+        // rejecting configs that have always been accepted, or keep hiding real typos.
+        int RangedNum(string key, int dflt, int lo, int hi)
+        {
+            int v = NumAt(key, dflt);
+            return v >= lo && v <= hi ? v : dflt;
+        }
+        long RangedLong(string key, long dflt, long lo, long hi)
+        {
+            long v = LongAt(key, dflt);
+            return v >= lo && v <= hi ? v : dflt;
         }
         var iniPad = CheckedPadding(NumAt("padding_min", 0), NumAt("padding_max", 255));
         string host = "127.0.0.1";
@@ -733,9 +748,9 @@ public sealed class VpnConfig : INotifyPropertyChanged
             // F2 AmneziaWG junk (off by default). `awg = true` enables; jc/jmin/jmax
             // bound the junk. Clamped to the wire caps (jc<=128, len<=1400).
             AwgEnabled = BoolAt("awg", false),
-            AwgJc = (uint)(uint.TryParse(Get("jc"), out var jcv) ? Math.Min(jcv, 128u) : 0u),
-            AwgJmin = (ushort)(ushort.TryParse(Get("jmin"), out var jminv) ? Math.Min(jminv, (ushort)1400) : (ushort)40),
-            AwgJmax = (ushort)(ushort.TryParse(Get("jmax"), out var jmaxv) ? Math.Min(jmaxv, (ushort)1400) : (ushort)300),
+            AwgJc = (uint)RangedNum("jc", 0, 0, 128),
+            AwgJmin = (ushort)RangedNum("jmin", 40, 0, 1400),
+            AwgJmax = (ushort)RangedNum("jmax", 300, 0, 1400),
             QuicEnabled = quic,
             Sni = sni.Length > 0 ? sni : null,
             RealityShortId = Get("reality_sid").Length > 0 ? Get("reality_sid") : null,
@@ -753,23 +768,23 @@ public sealed class VpnConfig : INotifyPropertyChanged
             KillSwitch = BoolAt("kill_switch", false),
             AllowIpv6Leak = BoolAt("allow_ipv6_leak", false),
             LocalAddress = Get("local").Length > 0 ? Get("local") : null,
-            LocalPort = int.TryParse(Get("lport"), out var lpv) && lpv is > 0 and <= 65535 ? lpv : 0,
+            LocalPort = RangedNum("lport", 0, 1, 65535),
             RouteFile = Get("route_file").Length > 0 ? Get("route_file") : null,
-            InterfaceMetric = int.TryParse(Get("metric"), out var imv) && imv > 0 ? imv : 0,
+            InterfaceMetric = RangedNum("metric", 0, 1, int.MaxValue),
             // Accept the Rust/Android client's `dev` key as an alias for `dev_node` so a
             // shared flat-INI config's TUN interface name transfers across clients.
             DevNode = Get("dev_node").Length > 0 ? Get("dev_node")
                     : Get("dev").Length > 0 ? Get("dev") : null,
-            Mtu = CheckedMtu(int.TryParse(Get("mtu"), out var miv) ? miv : 0),  // 0 = auto
+            Mtu = CheckedMtu(NumAt("mtu", 0)),  // 0 = auto
             MtuProbe = BoolAt("mtu_probe", true),
             // The counterpart of the block ToIni now emits. Every one of these defaults to
             // the value the property already carries, so an absent key leaves it untouched
             // and a profile without them behaves exactly as before. (Audit 2026-07-29, #7.)
             ReconnectEnabled = BoolAt("reconnect", true),
-            ReconnectMaxRetries = int.TryParse(Get("reconnect_retries"), out var rr) ? rr : -1,
-            ReconnectBaseDelaySecs = long.TryParse(Get("reconnect_base_delay"), out var rb) && rb > 0 ? rb : 1,
-            ReconnectMaxDelaySecs = long.TryParse(Get("reconnect_max_delay"), out var rm) && rm > 0 ? rm : 60,
-            ConnectionTimeoutSecs = CheckedTimeout(long.TryParse(Get("timeout"), out var ct) ? ct : 30),
+            ReconnectMaxRetries = NumAt("reconnect_retries", -1),
+            ReconnectBaseDelaySecs = RangedLong("reconnect_base_delay", 1, 1, long.MaxValue),
+            ReconnectMaxDelaySecs = RangedLong("reconnect_max_delay", 60, 1, long.MaxValue),
+            ConnectionTimeoutSecs = CheckedTimeout(LongAt("timeout", 30)),
             PaddingEnabled = BoolAt("padding", true),
             // Through CheckedPadding, like FromJson: on its own each field only checked `>= 0`,
             // so a hand-written INI could set padding_min > padding_max (an inverted range) or a
@@ -778,18 +793,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
             PaddingMin = iniPad.Min,
             PaddingMax = iniPad.Max,
             HeartbeatEnabled = BoolAt("heartbeat", true),
-            HeartbeatIntervalMs = long.TryParse(Get("heartbeat_interval"), out var hi) && hi > 0 ? hi : 15000,
-            HeartbeatDataSize = int.TryParse(Get("heartbeat_size"), out var hs) && hs >= 0 ? hs : 16,
-            HeartbeatJitterMs = long.TryParse(Get("heartbeat_jitter"), out var hj) && hj >= 0 ? hj : 2000,
+            HeartbeatIntervalMs = RangedLong("heartbeat_interval", 15000, 1, long.MaxValue),
+            HeartbeatDataSize = RangedNum("heartbeat_size", 16, 0, int.MaxValue),
+            HeartbeatJitterMs = RangedLong("heartbeat_jitter", 2000, 0, long.MaxValue),
             ShapingEnabled = BoolAt("shaping", false),
-            ShapingGapMeanMs = long.TryParse(Get("shaping_gap_mean"), out var sgm) && sgm > 0 ? sgm : 700,
-            ShapingGapMinMs = long.TryParse(Get("shaping_gap_min"), out var sgn) && sgn > 0 ? sgn : 40,
-            ShapingGapMaxMs = long.TryParse(Get("shaping_gap_max"), out var sgx) && sgx > 0 ? sgx : 6000,
-            ShapingBudgetBytesPerSec = int.TryParse(Get("shaping_budget"), out var sb2) && sb2 > 0 ? sb2 : 16384,
-            ShapingMinSize = int.TryParse(Get("shaping_min_size"), out var sms) && sms > 0 ? sms : 64,
-            ShapingMaxSize = int.TryParse(Get("shaping_max_size"), out var sxs) && sxs > 0 ? sxs : 1024,
+            ShapingGapMeanMs = RangedLong("shaping_gap_mean", 700, 1, long.MaxValue),
+            ShapingGapMinMs = RangedLong("shaping_gap_min", 40, 1, long.MaxValue),
+            ShapingGapMaxMs = RangedLong("shaping_gap_max", 6000, 1, long.MaxValue),
+            ShapingBudgetBytesPerSec = RangedNum("shaping_budget", 16384, 1, int.MaxValue),
+            ShapingMinSize = RangedNum("shaping_min_size", 64, 1, int.MaxValue),
+            ShapingMaxSize = RangedNum("shaping_max_size", 1024, 1, int.MaxValue),
             ShapingStealth = BoolAt("shaping_stealth", false),
-            ShapingStealthRateMbps = int.TryParse(Get("shaping_stealth_mbps"), out var ssr) && ssr > 0 ? ssr : 2,
+            ShapingStealthRateMbps = RangedNum("shaping_stealth_mbps", 2, 1, int.MaxValue),
             UnparsedBooleanKeys = badBools,
             DuplicateKeys = dupKeys,
             UnparsedNumericKeys = badNums,
