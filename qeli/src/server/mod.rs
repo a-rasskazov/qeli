@@ -1496,6 +1496,29 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         if p.dhcp.enabled {
             crate::config::server::dhcp_pool_bounds(&p.dhcp, &p.tun.address, &p.tun.netmask)
                 .map_err(|e| anyhow::anyhow!("profile '{}': {}", p.name, e))?;
+            // A zero lease is not "no expiry", it is a lease that has already expired: the
+            // client is told to renew at half of zero, so it renews continuously and the
+            // server's own sweep reclaims the address on its next pass. Nothing about that is
+            // a configuration someone meant. (Audit 2026-08-01, §12.)
+            if p.dhcp.lease_time_secs == 0 {
+                anyhow::bail!(
+                    "profile '{}': dhcp.lease_time_secs = 0 hands out leases that are already \
+                     expired — clients would renew in a loop and addresses would churn. Set a \
+                     real lifetime (the default is 86400).",
+                    p.name
+                );
+            }
+            // Option 12/15 carry a single length BYTE, so anything past 255 cannot be encoded.
+            // It was silently omitted from the reply instead, leaving clients with no domain
+            // and no indication why.
+            if p.dhcp.domain_name.len() > 255 {
+                anyhow::bail!(
+                    "profile '{}': dhcp.domain_name is {} bytes — a DHCP option's length field \
+                     is one byte, so anything past 255 cannot be sent at all",
+                    p.name,
+                    p.dhcp.domain_name.len()
+                );
+            }
         }
         // dns.upstream entries are only validated lazily, per-query (`parse::<SocketAddr>()`
         // then `continue` on error in dns.rs), so a malformed resolver was accepted at load

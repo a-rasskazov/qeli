@@ -106,6 +106,23 @@ impl DhcpServer {
         }
     }
 
+    /// A rate-limiter key derived from the BOOTP client hardware address (`chaddr`, offset 28),
+    /// packed into an IPv4 address because that is what the shared limiter is keyed on.
+    ///
+    /// The first four MAC bytes are the OUI plus one — enough to separate machines on a LAN,
+    /// and the limiter is a flood guard rather than an access control. `None` for a packet too
+    /// short to contain a `chaddr` or with an all-zero one, so the caller falls back to the
+    /// source IP.
+    fn client_mac_key(data: &[u8]) -> Option<std::net::IpAddr> {
+        let mac = data.get(28..34)?;
+        if mac.iter().all(|&b| b == 0) {
+            return None;
+        }
+        Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+            mac[0], mac[1], mac[2], mac[3],
+        )))
+    }
+
     /// Bind the DHCP socket, SEPARATELY from serving on it.
     ///
     /// The bind used to happen inside the detached serve task, so a taken port, a bad address
@@ -166,12 +183,22 @@ impl DhcpServer {
         socket: &UdpSocket,
         _src: &std::net::SocketAddr,
     ) -> anyhow::Result<()> {
-        // Per-source-IP rate limit: DHCP is unauthenticated, so cap how fast any
-        // single source can drive the recv/allocate path. Excess packets are
-        // dropped silently (no reply, no pool churn) rather than erroring.
+        // Per-CLIENT rate limit: DHCP is unauthenticated, so cap how fast any one client can
+        // drive the recv/allocate path. Excess packets are dropped silently (no reply, no pool
+        // churn) rather than erroring.
+        //
+        // Keyed on the client's MAC, not its source IP. A DHCPDISCOVER comes from 0.0.0.0 by
+        // definition — the client has no address yet, that is why it is asking — so an
+        // IP-keyed bucket lumped EVERY new client on the network into one counter: the tenth
+        // machine to boot after a power cut was throttled because nine others had just asked.
+        // The MAC is the only identity present in the packet at that point. It is spoofable,
+        // but a limiter here is about accidental floods and cheap abuse, and spoofing MACs
+        // costs an attacker exactly as much as spoofing source IPs did.
+        // (Audit 2026-08-01, §12.)
         {
+            let key = Self::client_mac_key(data).unwrap_or_else(|| _src.ip());
             let mut rl = self.recv_limiter.lock().await;
-            if !rl.check_and_record(_src.ip()) {
+            if !rl.check_and_record(key) {
                 log::warn!("DHCP: rate limit exceeded for {}, dropping packet", _src);
                 return Ok(());
             }

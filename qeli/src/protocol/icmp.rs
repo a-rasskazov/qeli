@@ -172,8 +172,16 @@ pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
     let later_hdr = later_fragment_header(&pkt[..ihl])?;
     let later_ihl = later_hdr.len();
     let total_len = u16::from_be_bytes([pkt[2], pkt[3]]) as usize;
-    // Trust the wire length, not the header's claim — they disagree on a truncated read.
-    let payload = &pkt[ihl..total_len.clamp(ihl, pkt.len())];
+    // A header CLAIMING more bytes than arrived is a truncated (or lying) datagram, and it must
+    // not be re-fragmented. Clamping the length silently produced fragments whose headers
+    // described a complete datagram while carrying only the bytes that happened to be present:
+    // the receiver would then reassemble a short packet as if it were whole, and MF/offset
+    // would say nothing was missing. Refuse and let the caller drop it — the same treatment as
+    // a declared length below the header. (Audit 2026-08-01, §11.)
+    if total_len > pkt.len() || total_len < ihl {
+        return None;
+    }
+    let payload = &pkt[ihl..total_len];
     if pkt.len() <= mtu {
         return None;
     }
@@ -199,6 +207,17 @@ pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
     let flags_frag = u16::from_be_bytes([pkt[6], pkt[7]]);
     let base_offset = (flags_frag & 0x1FFF) as usize;
     let orig_mf = (flags_frag & 0x2000) != 0;
+
+    // The last piece's offset must still FIT the 13-bit field. `base_offset + sent/8` was
+    // masked with `& 0x1FFF` when written, so a datagram already far into a larger one wrapped
+    // around to a low offset instead of overflowing — producing fragments that a receiver
+    // reassembles OVER the beginning of the packet. That is a rewrite of data the sender never
+    // asked for, so refuse the whole thing rather than emit it. (Audit 2026-08-01, §11.)
+    const MAX_FRAG_OFFSET_UNITS: usize = 0x1FFF;
+    let last_offset_units = base_offset + (payload.len().saturating_sub(1)) / 8;
+    if last_offset_units > MAX_FRAG_OFFSET_UNITS {
+        return None;
+    }
 
     let mut out = Vec::with_capacity(payload.len().div_ceil(per_frag));
     let mut sent = 0usize;
@@ -426,6 +445,23 @@ mod tests {
         let mut empty = tcp_packet(1400, false);
         empty[2..4].copy_from_slice(&(IPV4_HDR_LEN as u16).to_be_bytes());
         assert!(fragment_ipv4(&empty, router_mtu).is_none());
+
+        // A header claiming MORE bytes than arrived is truncated (or lying). This used to be
+        // clamped, which produced fragments whose headers described a complete datagram while
+        // carrying only the bytes that happened to be present — the receiver then reassembled
+        // a short packet as if it were whole, with MF/offset saying nothing was missing.
+        // (Audit 2026-08-01, §11.)
+        let mut lying_len = tcp_packet(1400, false);
+        lying_len[2..4].copy_from_slice(&9000u16.to_be_bytes());
+        assert!(fragment_ipv4(&lying_len, router_mtu).is_none());
+
+        // A datagram already so far into a larger one that our last piece would not fit the
+        // 13-bit offset field. The offset was masked with `& 0x1FFF` on write, so it WRAPPED
+        // to a low value and the receiver reassembled those bytes over the start of the packet.
+        let mut near_max = tcp_packet(1400, false);
+        // offset = 8188 units (of a 8191 maximum): 1400 bytes needs 175 more units.
+        near_max[6..8].copy_from_slice(&8188u16.to_be_bytes());
+        assert!(fragment_ipv4(&near_max, router_mtu).is_none());
     }
 
     /// A header with OPTIONS fragments, and the copied bit decides which options travel.
