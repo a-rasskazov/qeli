@@ -1337,14 +1337,20 @@ public abstract class VpnTunnelBase
     {
         const int PathFloor = 1280;  // IPv6 minimum PATH MTU — the narrowest path we must serve
         int floor = Math.Clamp(PathFloor - outerOverhead, 576, Math.Max(ceiling, 576));
-        // The jumbo rungs (9000..1500) exist because the ceiling stopped being an Ethernet
+        // The jumbo rungs (12000..1500) exist because the ceiling stopped being an Ethernet
         // number. While it was 1500 the next rung down was 1360 and the gap was 140 bytes; once
         // the ceiling became 16638 the same ladder went straight from 16638 to 1360, so a path
         // that carries 9000 — an ordinary jumbo LAN, which is exactly who configures a large
         // MTU — was certified at 1360 and lost ~85% of its frame. These cost nothing on a
         // normal path: they are all above a 1500 ceiling and the filter drops them.
+        //
+        // The set is a COMPROMISE, not an exact answer: probing fixed rungs certifies the
+        // best rung that FITS, not the path's real maximum, so a 7000-byte path lands on 6000.
+        // Closing that needs a binary search between the highest failing rung and the best
+        // passing one — worth doing, and deliberately not smuggled in here, since it changes
+        // the probe's control flow in all four ports.
         // (Audit 2026-08-01, §8.)
-        return new[] { ceiling, 9000, 4000, 2000, 1500, 1360, 1320, 1280, 1200, floor }
+        return new[] { ceiling, 12000, 9000, 6000, 4000, 2500, 2000, 1500, 1360, 1320, 1280, 1200, floor }
             .Where(m => m >= floor && m <= ceiling)
             .Distinct().OrderByDescending(m => m).ToArray();
     }

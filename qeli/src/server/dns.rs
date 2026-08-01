@@ -435,13 +435,16 @@ async fn resolve(
         // carries the matching transaction ID — otherwise an off-/on-path spoof
         // could poison the cache. Bound the total wait by the configured timeout.
         let deadline = tokio::time::Instant::now() + ttl;
-        // 4 KiB, not 1500: with EDNS0 the client can advertise a larger UDP payload and the
-        // resolver will use it. `recv_from` DISCARDS whatever does not fit the buffer, so a
-        // 1500-byte buffer silently chopped such a reply and forwarded a malformed answer —
-        // no error anywhere, just a broken lookup. 4096 covers the common advertisements
-        // (1232/4096); anything beyond still arrives truncated at the DNS level and is
-        // handled by the TC path above. (S-14)
-        let mut resp_buf = vec![0u8; 4096];
+        // Sized from what the CLIENT advertised, with a 4 KiB floor.
+        //
+        // `recv_from` DISCARDS whatever does not fit, silently and with no short-read signal,
+        // so the buffer has to be at least as large as the answer the upstream is entitled to
+        // send — and that entitlement comes from the OPT record in the query, which is the
+        // client's, forwarded verbatim. A fixed 4096 was right for the common advertisements
+        // (1232/4096) and wrong for a client that asked for more: its answer came back chopped
+        // mid-record and was forwarded as a malformed message. (S-14, extended 2026-08-01 §10.)
+        let want = upstream_buf_size(&query);
+        let mut resp_buf = vec![0u8; want];
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
@@ -472,6 +475,23 @@ async fn resolve(
                         }
                         // TCP retry failed — fall through and use the truncated answer
                         // rather than nothing (a stub reply still carries the header flags).
+                    }
+                    // A datagram that exactly fills the buffer is the one case `recv_from`
+                    // cannot distinguish from one that was cut off, because it reports the
+                    // bytes COPIED, not the bytes that arrived. Treating it as complete is how
+                    // a chopped answer got forwarded; treating it as truncated costs one TCP
+                    // retry in the rare legitimate case and is correct in the bad one.
+                    if m == resp_buf.len() {
+                        log::debug!(
+                            "DNS: reply from {} exactly filled the {}-byte buffer — may have                              been cut off, retrying over TCP",
+                            upstream_ip,
+                            resp_buf.len()
+                        );
+                        if let Some(full) = query_tcp(&upstream_addr, &query, ttl).await {
+                            response = Some(full);
+                            pref.store(idx, Ordering::Relaxed);
+                            break;
+                        }
                     }
                     response = Some(resp_buf[..m].to_vec());
                     pref.store(idx, Ordering::Relaxed);
@@ -524,6 +544,13 @@ async fn resolve(
     None
 }
 
+/// How large a reply the UPSTREAM may legitimately send us, which is what the client asked
+/// for — its OPT record travels upstream verbatim — with a 4 KiB floor so the common case
+/// keeps its old headroom, and the UDP maximum as the ceiling.
+fn upstream_buf_size(query: &[u8]) -> usize {
+    advertised_udp_size(query).clamp(4096, 65_535)
+}
+
 /// The UDP payload size the client said it can accept: its EDNS0 OPT record, or the 512-byte
 /// floor from RFC 1035 §4.2.1 when it sent no OPT at all.
 fn advertised_udp_size(query: &[u8]) -> usize {
@@ -549,8 +576,9 @@ fn advertised_udp_size(query: &[u8]) -> usize {
         let rtype = u16::from_be_bytes([query[after_name], query[after_name + 1]]);
         let class = u16::from_be_bytes([query[after_name + 2], query[after_name + 3]]);
         if rtype == 41 {
-            // Clamp: a peer may advertise anything, and this bounds the buffer we honour.
-            return (class as usize).clamp(FLOOR, 4096);
+            // Clamp: a peer may advertise anything, and a UDP datagram cannot exceed 65535
+            // however large a number it writes here.
+            return (class as usize).clamp(FLOOR, 65_535);
         }
         let rdlen = u16::from_be_bytes([query[after_name + 8], query[after_name + 9]]) as usize;
         pos = match after_name.checked_add(10).and_then(|p| p.checked_add(rdlen)) {
@@ -782,9 +810,18 @@ mod tests {
     fn the_advertised_udp_size_comes_from_the_opt_record() {
         assert_eq!(advertised_udp_size(&query(None)), 512);
         assert_eq!(advertised_udp_size(&query(Some(1232))), 1232);
-        // Clamped at both ends: a peer may advertise anything, and this bounds what we honour.
+        // Clamped at both ends: a peer may advertise anything, and a UDP datagram cannot
+        // exceed 65535 however large a number it writes.
         assert_eq!(advertised_udp_size(&query(Some(128))), 512);
-        assert_eq!(advertised_udp_size(&query(Some(65535))), 4096);
+        assert_eq!(advertised_udp_size(&query(Some(65535))), 65_535);
+
+        // The receive buffer follows the advertisement, because `recv_from` silently discards
+        // whatever does not fit — a client that asked for 8192 used to have its answer chopped
+        // at 4096 and forwarded malformed. The floor keeps the common case unchanged.
+        assert_eq!(upstream_buf_size(&query(None)), 4096);
+        assert_eq!(upstream_buf_size(&query(Some(1232))), 4096);
+        assert_eq!(upstream_buf_size(&query(Some(8192))), 8192);
+        assert_eq!(upstream_buf_size(&query(Some(65535))), 65_535);
         // Malformed input falls back to the floor rather than panicking.
         let full = query(Some(4096));
         for cut in 0..full.len() {

@@ -57,14 +57,20 @@ struct UDPPathMTUProbePolicy: Equatable, Sendable {
     /// to the pushed MTU with fragmentation switched back on.
     var candidates: [Int] {
         let low = floor
-        // The jumbo rungs (9000..1500) exist because the ceiling stopped being an Ethernet
+        // The jumbo rungs (12000..1500) exist because the ceiling stopped being an Ethernet
         // number. While it was 1500 the next rung down was 1360 and the gap was 140 bytes; once
         // the ceiling became 16638 the same ladder went straight from 16638 to 1360, so a path
         // that carries 9000 — an ordinary jumbo LAN, which is exactly who configures a large
         // MTU — was certified at 1360 and lost ~85% of its frame. These cost nothing on a
         // normal path: they are all above a 1500 ceiling and the filter drops them.
+        //
+        // The set is a COMPROMISE, not an exact answer: probing fixed rungs certifies the
+        // best rung that FITS, not the path's real maximum, so a 7000-byte path lands on 6000.
+        // Closing that needs a binary search between the highest failing rung and the best
+        // passing one — worth doing, and deliberately not smuggled in here, since it changes
+        // the probe's control flow in all four ports.
         // (Audit 2026-08-01, §8.)
-        return [ceiling, 9_000, 4_000, 2_000, 1_500, 1_360, 1_320, 1_280, 1_200, low]
+        return [ceiling, 12_000, 9_000, 6_000, 4_000, 2_500, 2_000, 1_500, 1_360, 1_320, 1_280, 1_200, low]
             .filter { $0 >= low && $0 <= ceiling }
             .reduce(into: [Int]()) { values, candidate in
                 if !values.contains(candidate) { values.append(candidate) }

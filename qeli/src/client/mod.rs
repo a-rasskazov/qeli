@@ -2641,13 +2641,19 @@ async fn probe_udp_mtu(
 fn mtu_probe_ladder(ceiling: i32, outer_overhead: usize) -> Vec<i32> {
     const PATH_FLOOR: i32 = 1280; // IPv6 minimum path MTU — the narrowest path we must serve
     let floor = (PATH_FLOOR - outer_overhead as i32).clamp(576, ceiling);
-    // The jumbo rungs (9000..1500) exist because the ceiling stopped being an Ethernet number.
+    // The jumbo rungs (12000..1500) exist because the ceiling stopped being an Ethernet number.
     // While it was 1500 the next rung down was 1360 and the gap was 140 bytes; once the ceiling
     // became 16638 the same ladder went straight from 16638 to 1360, so a path that carries
     // 9000 — an ordinary jumbo LAN, which is exactly who configures a large MTU — was certified
     // at 1360 and lost ~85% of its frame. These rungs cost nothing on a normal path: they are
-    // all above a 1500 ceiling and the filter below drops them. (Audit 2026-08-01, §8.)
-    let mut ladder: Vec<i32> = [ceiling, 9000, 4000, 2000, 1500, 1360, 1320, 1280, 1200, floor]
+    // all above a 1500 ceiling and the filter below drops them.
+    //
+    // The set is a COMPROMISE, not an exact answer: probing fixed rungs certifies the best rung
+    // that FITS, not the path's real maximum, so a 7000-byte path lands on 6000. Closing that
+    // needs a binary search between the highest failing rung and the best passing one — worth
+    // doing, and deliberately not smuggled in here, since it changes the probe's control flow
+    // in all four ports. (Audit 2026-08-01, §8.)
+    let mut ladder: Vec<i32> = [ceiling, 12000, 9000, 6000, 4000, 2500, 2000, 1500, 1360, 1320, 1280, 1200, floor]
         .into_iter()
         .filter(|&m| (floor..=ceiling).contains(&m))
         .collect();
