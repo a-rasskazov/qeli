@@ -154,7 +154,14 @@ data class VpnConfig(
      * this port as strict as the C# one. Parsing still SUCCEEDS; [validate] refuses.
      * (Audit 2026-08-01, §P2.)
      */
-    val unparsedNumericKeys: List<String> = emptyList()
+    val unparsedNumericKeys: List<String> = emptyList(),
+
+    /**
+     * `[qeli]` keys no qeli client understands — i.e. misspellings. The setting they were meant
+     * to change silently keeps its default, which is how `gatway = true` left a tunnel split
+     * with nothing said. Reported, not resolved; [validate] refuses. (Audit 2026-08-01, §14.)
+     */
+    val unknownKeys: List<String> = emptyList()
 ) : Serializable {
 
     /** True when the protocol is UDP (DatagramChannel transport, QUIC masking). */
@@ -205,6 +212,13 @@ data class VpnConfig(
         require(duplicateKeys.isEmpty()) {
             "key(s) ${duplicateKeys.joinToString(", ")} appear more than once and are read as a " +
                 "single value; implementations disagree on which wins — keep one"
+        }
+
+        // A misspelled key name is invisible: nothing reads it, so the setting it was meant to
+        // change silently keeps its default. (Audit 2026-08-01, §14.)
+        require(unknownKeys.isEmpty()) {
+            "unknown key(s), likely misspelled: ${unknownKeys.joinToString(", ")} — nothing " +
+                "reads these, so the setting they were meant to change is at its default"
         }
 
         // A number nobody could parse must not become a default in silence. (Audit 2026-08-01.)
@@ -597,13 +611,45 @@ data class VpnConfig(
                 loggingTimeFormat = log?.get("time_format")?.takeIf { it.isNotEmpty() },
                 unparsedBooleanKeys = badBools.toList(),
                 duplicateKeys = dupKeys.toList(),
-                unparsedNumericKeys = badNums.toList()
+                unparsedNumericKeys = badNums.toList(),
+                unknownKeys = q.keys.filter { it.lowercase() !in KNOWN_INI_KEYS }.sorted()
             )
         }
 
         /** Minimal line-oriented INI parser (mirrors qeli/src/config/format.rs):
          *  `[section]` / `[kind:instance]`, `key = value`, full-line `;`/`#`
          *  comments, surrounding double-quotes stripped. */
+        /**
+         * Every `[qeli]` key any qeli client understands — the union across the four ports,
+         * NOT just the ones this one reads.
+         *
+         * The distinction is the whole point. A key this port ignores is not necessarily a
+         * typo: `keepalive`, `post_up`, `exit_node` and friends are real settings the Rust
+         * client acts on, and a desktop profile carrying them must still open here. Only a
+         * name NOTHING understands is a typo — a misspelled `gatway = true` silently leaving
+         * the tunnel split is the failure this catches. (Audit 2026-08-01, §14.)
+         *
+         * Kept honest by `everything toIni writes is accepted back` in the test suite.
+         */
+        private val KNOWN_INI_KEYS = setOf(
+            // Read by this port.
+            "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "exclude",
+            "forward", "front", "gateway", "heartbeat", "heartbeat_interval",
+            "heartbeat_jitter", "heartbeat_size", "include", "jc", "jmax", "jmin", "key",
+            "kill_switch", "local", "lport", "metric", "mode", "mtu", "mtu_probe", "name",
+            "obfs_key", "padding", "padding_max", "padding_min", "pass", "persist_tun",
+            "proto", "quic", "reality_sid", "reconnect", "reconnect_base_delay",
+            "reconnect_max_delay", "reconnect_retries", "route_file", "route_local", "server",
+            "shaping", "shaping_budget", "shaping_gap_max", "shaping_gap_mean",
+            "shaping_gap_min", "shaping_max_size", "shaping_min_size", "shaping_stealth",
+            "shaping_stealth_mbps", "sni", "timeout", "user",
+            // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
+            // "Что пушем НЕ передаётся" lists these as client file-only keys. Carried
+            // through, never a typo. A profile written for the CLI must open here.
+            "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
+            "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+        )
+
         /**
          * An INI integer, recording the key when the value is present but not a number.
          *

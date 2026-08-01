@@ -16,6 +16,34 @@ final class ConfigHardeningTests: XCTestCase {
         return out
     }
 
+    /// A misspelled key name must be refused — but a key another PORT owns must not be.
+    ///
+    /// Nothing reads a typo, so the setting it was meant to change silently keeps its default:
+    /// `gatway = true` left the tunnel split with nothing said. The trap is over-correcting:
+    /// `keepalive`, `post_up`, `exit_node` and friends are real Rust-client file-only keys
+    /// (docs/ru/CONFIG.md, "Что пушем НЕ передаётся"), and refusing a CLI profile carrying
+    /// them would be a worse regression than the typo it catches. (Audit 2026-08-01, §14.)
+    func testAMisspelledKeyIsRefusedButAnotherPortsKeyIsNot() throws {
+        let typo = try VPNConfig.fromINI(ini("gatway = true"))
+        XCTAssertTrue(typo.unknownKeys.contains("gatway"), "the typo must be recorded")
+        XCTAssertThrowsError(try typo.validate()) { error in
+            XCTAssertTrue("\(error)".contains("gatway"), "message must name the key: \(error)")
+        }
+
+        // Keys this port does not read but the Rust client does — must open cleanly.
+        for k in ["keepalive = 25", "post_up = /bin/true", "exit_node = true",
+                  "lan_subnet = 10.0.0.0/24", "tcp_nodelay = true", "autostart = true"] {
+            let c = try VPNConfig.fromINI(ini(k))
+            XCTAssertTrue(c.unknownKeys.isEmpty, "\(k) must not be treated as a typo")
+            XCTAssertNoThrow(try c.validate())
+        }
+
+        // The strongest guard against a wrong list: everything this port WRITES must be
+        // something it accepts back, or the client would refuse its own saved profile.
+        let full = try VPNConfig.fromINI(ini("mtu = 1400", "quic = true", "front = none"))
+        XCTAssertTrue(try VPNConfig.fromINI(full.toINI()).unknownKeys.isEmpty)
+    }
+
     /// A number that is present but unreadable must be refused, not replaced by the default.
     ///
     /// `server`'s port has always thrown here, which is why the worst case never bit this port —

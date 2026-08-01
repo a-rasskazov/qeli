@@ -180,6 +180,38 @@ class ConfigImportRangesTest {
     }
 
     /**
+     * A misspelled key name must be refused — but a key another PORT owns must not be.
+     *
+     * Nothing reads a typo, so the setting it was meant to change silently keeps its default:
+     * `gatway = true` left the tunnel split with nothing said. The Rust client has always
+     * refused these. The trap is over-correcting: `keepalive`, `post_up`, `exit_node` and
+     * friends are real Rust-client file-only keys (docs/ru/CONFIG.md, "Что пушем НЕ
+     * передаётся"), and refusing a CLI profile that carries them would be a worse regression
+     * than the typo it catches. (Audit 2026-08-01, §14.)
+     */
+    @Test
+    fun `a misspelled key is refused, a key another port owns is not`() {
+        val typo = VpnConfig.fromIni(ini("gatway = true"))
+        assertTrue("the typo must be recorded", typo.unknownKeys.contains("gatway"))
+        val e = runCatching { typo.validate() }.exceptionOrNull()
+        assertNotNull("validate() must refuse it", e)
+        assertTrue("the message must name the key: ${e?.message}", e!!.message!!.contains("gatway"))
+
+        // Keys this port does not read but the Rust client does — must open cleanly.
+        for (k in listOf("keepalive = 25", "post_up = /bin/true", "exit_node = true",
+                         "lan_subnet = 10.0.0.0/24", "tcp_nodelay = true", "autostart = true")) {
+            val c = VpnConfig.fromIni(ini(k))
+            assertTrue("$k must not be treated as a typo: ${c.unknownKeys}", c.unknownKeys.isEmpty())
+            c.validate()
+        }
+
+        // The strongest guard against a wrong list: everything this port WRITES must be
+        // something it accepts back, or the client would refuse its own saved profile.
+        val full = VpnConfig.fromIni(ini("mtu = 1400", "quic = true", "front = none"))
+        assertTrue(VpnConfig.fromIni(full.toIni()).unknownKeys.isEmpty())
+    }
+
+    /**
      * A number that is present but unreadable must be refused, not replaced by the default.
      *
      * `server`'s port has always thrown here, which is why the worst case never bit this port —

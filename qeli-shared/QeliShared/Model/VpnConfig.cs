@@ -165,6 +165,43 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// <summary>A key that appears twice and is read as a SINGLE value makes the config ambiguous, and the implementations resolved it differently: this parser folds entries into a map and keeps the LAST, while the Rust client takes the FIRST. Two `server` lines therefore sent the Rust client to one host and every GUI client to another, from one file, with nothing reported. Recorded rather than resolved — picking a winner still leaves the others disagreeing. (Audit 2026-08-01, §7.)</summary>
     public IReadOnlyList<string> DuplicateKeys { get; init; } = Array.Empty<string>();
 
+    /// <summary>Every `[qeli]` key any qeli client understands — the union across the four
+    /// ports, NOT just the ones this one reads.
+    ///
+    /// The distinction is the whole point. A key this port ignores is not necessarily a typo:
+    /// `keepalive`, `post_up`, `exit_node` and friends are real settings the Rust client acts
+    /// on, and a desktop profile carrying them must still open here (it is preserved verbatim
+    /// on re-save via the extra-key carry). Only a name NOTHING understands is a typo, and
+    /// that is what gets reported — a misspelled `gatway = true` silently leaving the tunnel
+    /// split is the failure this catches.
+    ///
+    /// Kept in sync by `RoundTripKeysAreAllKnown` in the conformance suite, which asserts that
+    /// everything `ToIni` emits appears here.</summary>
+    private static readonly HashSet<string> KnownIniKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Read by this port.
+        "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "exclude", "forward",
+        "front", "gateway", "heartbeat", "heartbeat_interval", "heartbeat_jitter",
+        "heartbeat_size", "include", "jc", "jmax", "jmin", "key", "kill_switch", "local",
+        "lport", "metric", "mode", "mtu", "mtu_probe", "name", "obfs_key", "padding",
+        "padding_max", "padding_min", "pass", "persist_tun", "proto", "quic", "reality_sid",
+        "reconnect", "reconnect_base_delay", "reconnect_max_delay", "reconnect_retries",
+        "route_file", "route_local", "server", "shaping", "shaping_budget", "shaping_gap_max",
+        "shaping_gap_mean", "shaping_gap_min", "shaping_max_size", "shaping_min_size",
+        "shaping_stealth", "shaping_stealth_mbps", "sni", "timeout", "user",
+        // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
+        // "Что пушем НЕ передаётся" lists these as client file-only keys. Carried through
+        // untouched, never a typo. A profile written for the CLI must open here.
+        "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
+        "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+    };
+
+    /// <summary>`[qeli]` keys no qeli client understands — i.e. misspellings. The setting they
+    /// were meant to change silently keeps its default, which is how `gatway = true` left a
+    /// tunnel split with nothing said. Reported, not resolved; Validate() refuses.
+    /// (Audit 2026-08-01, §14.)</summary>
+    public IReadOnlyList<string> UnknownKeys { get; init; } = Array.Empty<string>();
+
     /// <summary>Numeric fields whose value could not be parsed (or was out of range), which
     /// used to fall back to a default in silence — the same failure mode the boolean handling
     /// already fixed. `server = host:notnum` became `host:443`, i.e. a different server, with
@@ -756,6 +793,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             UnparsedBooleanKeys = badBools,
             DuplicateKeys = dupKeys,
             UnparsedNumericKeys = badNums,
+            UnknownKeys = q.Keys.Where(k => !KnownIniKeys.Contains(k)).OrderBy(k => k).ToArray(),
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
@@ -825,6 +863,12 @@ public sealed class VpnConfig : INotifyPropertyChanged
             throw new ArgumentException(
                 $"key(s) {string.Join(", ", DuplicateKeys)} appear more than once and are read "
                 + "as a single value; implementations disagree on which wins — keep one");
+        }
+        if (UnknownKeys.Count > 0)
+        {
+            throw new ArgumentException(
+                $"unknown key(s), likely misspelled: {string.Join(", ", UnknownKeys)} — nothing "
+                + "reads these, so the setting they were meant to change is at its default");
         }
         if (UnparsedNumericKeys.Count > 0)
         {

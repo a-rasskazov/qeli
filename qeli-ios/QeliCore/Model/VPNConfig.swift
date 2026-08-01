@@ -31,6 +31,35 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// (Audit 2026-08-01, §P2.)
     var unparsedNumericKeys: [String] = []
 
+    /// `[qeli]` keys no qeli client understands — i.e. misspellings. The setting they were
+    /// meant to change silently keeps its default, which is how `gatway = true` left a tunnel
+    /// split with nothing said. Reported, not resolved; ``validate()`` refuses.
+    /// (Audit 2026-08-01, §14.)
+    var unknownKeys: [String] = []
+
+    /// Every `[qeli]` key any qeli client understands — the union across the four ports, NOT
+    /// just the ones this one reads.
+    ///
+    /// The distinction is the whole point. A key this port ignores is not necessarily a typo:
+    /// `keepalive`, `post_up`, `exit_node` and friends are real Rust-client file-only settings
+    /// (docs/ru/CONFIG.md, "Что пушем НЕ передаётся"), and a CLI profile carrying them must
+    /// still open here. Only a name NOTHING understands is a typo.
+    static let knownINIKeys: Set<String> = [
+        // Read by this port.
+        "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "exclude", "forward",
+        "front", "gateway", "heartbeat", "heartbeat_interval", "heartbeat_jitter",
+        "heartbeat_size", "include", "jc", "jmax", "jmin", "key", "kill_switch", "local",
+        "lport", "metric", "mode", "mtu", "mtu_probe", "name", "obfs_key", "padding",
+        "padding_max", "padding_min", "pass", "persist_tun", "proto", "quic", "reality_sid",
+        "reconnect", "reconnect_base_delay", "reconnect_max_delay", "reconnect_retries",
+        "route_file", "route_local", "server", "shaping", "shaping_budget", "shaping_gap_max",
+        "shaping_gap_mean", "shaping_gap_min", "shaping_max_size", "shaping_min_size",
+        "shaping_stealth", "shaping_stealth_mbps", "sni", "timeout", "user",
+        // Rust-client only. Carried through, never a typo.
+        "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
+        "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+    ]
+
     /// Accepted tunnel-MTU range. The ceiling is derived, in Rust, from the record format
     /// (`protocol/packet.rs MAX_TUNNEL_MTU`): a record holds nonce + counter + payload +
     /// padding-length + tag and must fit `MAX_RECORD_SIZE`, so anything larger the PEER
@@ -180,6 +209,14 @@ struct VPNConfig: Codable, Equatable, Sendable {
             throw VPNConfigError.invalid(
                 "unrecognised boolean value for \(unparsedBooleanKeys.joined(separator: ", ")) — "
                 + "expected true/false, yes/no, on/off or 1/0")
+        }
+
+        // A misspelled key name is invisible: nothing reads it, so the setting it was meant to
+        // change silently keeps its default. (Audit 2026-08-01, §14.)
+        if !unknownKeys.isEmpty {
+            throw VPNConfigError.invalid(
+                "unknown key(s), likely misspelled: \(unknownKeys.joined(separator: ", ")) — "
+                + "nothing reads these, so the setting they were meant to change is at its default")
         }
 
         // A number nobody could parse must not become a default in silence. (Audit 2026-08-01.)
@@ -379,6 +416,9 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.unparsedBooleanKeys = badBools
         config.duplicateKeys = dupKeys
         config.unparsedNumericKeys = badNums
+        config.unknownKeys = qeli.keys
+            .filter { !Self.knownINIKeys.contains($0.lowercased()) }
+            .sorted()
         return config
     }
 

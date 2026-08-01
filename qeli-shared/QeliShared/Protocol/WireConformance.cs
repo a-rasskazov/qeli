@@ -142,6 +142,42 @@ public static class WireConformance
         check("ini-nums: an out-of-range port is recorded too", rangeRecorded);
         check("ini-nums: a valid config records nothing", numQuiet);
 
+        // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
+        // change silently keeps its default — `gatway = true` left the tunnel split with
+        // nothing said anywhere. The Rust client has always refused these; this port did not.
+        // (Audit 2026-08-01, §14.)
+        var typo = Ini("gatway = true");
+        bool typoRecorded = typo.UnknownKeys.Contains("gatway");
+        bool typoRefused = false;
+        try { typo.Validate(); } catch (ArgumentException e) { typoRefused = e.Message.Contains("gatway"); }
+
+        // ...but a key another PORT understands is not a typo. `keepalive`, `post_up` and
+        // friends are real Rust-client settings, and a desktop profile carrying them must
+        // still open here — refusing them would be a worse regression than the typo.
+        bool foreignKeysAccepted = true;
+        foreach (var k in new[] { "keepalive = 25", "post_up = /bin/true", "exit_node = true",
+                                  "lan_subnet = 10.0.0.0/24", "tcp_nodelay = true" })
+        {
+            var c = Ini(k);
+            foreignKeysAccepted &= c.UnknownKeys.Count == 0;
+        }
+
+        // The strongest guard against a wrong list: everything this port WRITES must be
+        // something it accepts back. A key added to ToIni without KnownIniKeys would make the
+        // client refuse its own saved profile, so that failure shows up here instead.
+        var full = new Model.VpnConfig
+        {
+            ServerAddress = "h", Port = 443, WireMode = "obfs", ObfsKey = "k",
+            ObfsFronting = "none", Protocol = "udp", QuicEnabled = true, Sni = "www.example.com",
+            RealityShortId = "abcdef01", Mtu = 1400, DnsServers = new List<string> { "1.1.1.1" },
+        };
+        var roundTripped = Model.VpnConfig.FromIni(full.ToIni());
+        bool roundTripClean = roundTripped.UnknownKeys.Count == 0;
+        check("ini-unknown: a misspelled key is recorded", typoRecorded);
+        check("ini-unknown: Validate() refuses it", typoRefused);
+        check("ini-unknown: keys other ports own are NOT typos", foreignKeysAccepted);
+        check("ini-unknown: everything ToIni writes is accepted back", roundTripClean);
+
         // The enum checks the desktop client had no equivalent of at all.
         bool enums = true;
         foreach (var (line, _) in new[] { ("proto = ucp", 0), ("mode = realty-tls", 0), ("front = webscoket", 0) })
