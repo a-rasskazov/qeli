@@ -132,7 +132,21 @@ data class VpnConfig(
      * it); [validate] is what refuses to connect. Same split as the enum checks.
      * (Audit 2026-07-31.)
      */
-    val unparsedBooleanKeys: List<String> = emptyList()
+    val unparsedBooleanKeys: List<String> = emptyList(),
+
+    /**
+     * Keys that appeared more than once in one section, as `section.key`.
+     *
+     * A key read as a SINGLE value but written twice makes the file ambiguous, and the ports
+     * resolved it differently: this parser folds entries into a map and keeps the LAST, while
+     * the Rust client takes the FIRST. Two `server` lines therefore sent the Rust client to one
+     * host and every GUI client to another, out of one file, with nothing reported anywhere.
+     *
+     * Recorded, not resolved — picking a winner still leaves the other implementations
+     * disagreeing, and only the author knows which line was meant. Parsing still SUCCEEDS, as
+     * with [unparsedBooleanKeys]; [validate] is what refuses. (Audit 2026-08-01, §7.)
+     */
+    val duplicateKeys: List<String> = emptyList()
 ) : Serializable {
 
     /** True when the protocol is UDP (DatagramChannel transport, QUIC masking). */
@@ -176,6 +190,13 @@ data class VpnConfig(
         require(unparsedBooleanKeys.isEmpty()) {
             "unrecognised boolean value for ${unparsedBooleanKeys.joinToString(", ")} — " +
                 "expected true/false, yes/no, on/off or 1/0"
+        }
+
+        // A key written twice is ambiguous, and the ports disagreed on which line wins — the
+        // same file reached two different servers depending on the client. (Audit 2026-08-01.)
+        require(duplicateKeys.isEmpty()) {
+            "key(s) ${duplicateKeys.joinToString(", ")} appear more than once and are read as a " +
+                "single value; implementations disagree on which wins — keep one"
         }
         fun scalar(name: String, v: String?) {
             val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
@@ -444,7 +465,8 @@ data class VpnConfig(
          * handshake. `dns`/`mtu` are optional app extras.
          */
         fun fromIni(text: String): VpnConfig {
-            val ini = parseIni(text)
+            val dupKeys = mutableListOf<String>()
+            val ini = parseIni(text, dupKeys)
             val q = ini["qeli"] ?: throw IllegalArgumentException("config: missing [qeli] section")
             val log = ini["logging"]
             val server = q["server"]?.takeIf { it.isNotBlank() }
@@ -554,29 +576,41 @@ data class VpnConfig(
                 loggingLevel = log?.get("level")?.takeIf { it.isNotEmpty() },
                 loggingFile = log?.get("file")?.takeIf { it.isNotEmpty() },
                 loggingTimeFormat = log?.get("time_format")?.takeIf { it.isNotEmpty() },
-                unparsedBooleanKeys = badBools.toList()
+                unparsedBooleanKeys = badBools.toList(),
+                duplicateKeys = dupKeys.toList()
             )
         }
 
         /** Minimal line-oriented INI parser (mirrors qeli/src/config/format.rs):
          *  `[section]` / `[kind:instance]`, `key = value`, full-line `;`/`#`
          *  comments, surrounding double-quotes stripped. */
-        private fun parseIni(text: String): Map<String, MutableMap<String, String>> {
+        private fun parseIni(
+            text: String,
+            duplicates: MutableList<String>? = null
+        ): Map<String, MutableMap<String, String>> {
             val out = LinkedHashMap<String, MutableMap<String, String>>()
             var cur: MutableMap<String, String>? = null
+            var curName = ""
             for (raw in text.lineSequence()) {
                 val line = raw.trim()
                 if (line.isEmpty() || line.startsWith(";") || line.startsWith("#")) continue
                 if (line.startsWith("[") && line.endsWith("]")) {
                     val name = line.substring(1, line.length - 1).trim().substringBefore(':').trim()
                     cur = out.getOrPut(name) { LinkedHashMap() }
+                    curName = name
                 } else {
                     val eq = line.indexOf('=')
                     if (eq < 0) continue
                     val k = line.substring(0, eq).trim()
                     var v = line.substring(eq + 1).trim()
                     if (v.length >= 2 && v.startsWith("\"") && v.endsWith("\"")) v = v.substring(1, v.length - 1)
-                    if (k.isNotEmpty()) cur?.put(k, v)
+                    if (k.isEmpty()) continue
+                    // Keep LAST-wins, so a file that never had a duplicate parses exactly as it
+                    // did before, and record the ambiguity for validate() to refuse.
+                    val qualified = "$curName.$k"
+                    if (cur?.put(k, v) != null && duplicates?.contains(qualified) == false) {
+                        duplicates.add(qualified)
+                    }
                 }
             }
             return out

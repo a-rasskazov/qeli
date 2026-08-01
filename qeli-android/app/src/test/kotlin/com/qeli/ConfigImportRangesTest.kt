@@ -178,6 +178,40 @@ class ConfigImportRangesTest {
     fun `a clamped profile still passes validate on re-save`() {
         VpnConfig.fromIni(ini("padding_min = -5", "padding_max = 60000", "mtu = 1380")).validate()
     }
+
+    /**
+     * A key written twice must be refused, not silently resolved.
+     *
+     * The ports disagreed on which line wins: this parser folds entries into a map and keeps
+     * the LAST, while the Rust client (config/format.rs `Section::get`) takes the FIRST. Two
+     * `server` lines therefore sent the Rust client to one host and every GUI client to
+     * another, out of one file, with nothing reported anywhere. Parsing still succeeds — the
+     * editor must be able to open the file to fix it; validate() is what refuses.
+     * (Audit 2026-08-01, §7.)
+     */
+    @Test
+    fun `a key written twice is refused, not silently resolved`() {
+        val cfg = VpnConfig.fromIni(ini("server = other.example.com:8443"))
+        assertTrue("the duplicate must be recorded",
+            cfg.duplicateKeys.contains("qeli.server"))
+        val e = runCatching { cfg.validate() }.exceptionOrNull()
+        assertNotNull("validate() must refuse an ambiguous config", e)
+        assertTrue("the message must name the key: ${e?.message}",
+            e!!.message!!.contains("qeli.server"))
+
+        // Duplicates are found per SECTION — the same key name in two different sections is
+        // not a duplicate, and a clean file must stay clean.
+        val clean = VpnConfig.fromIni(ini("mtu = 1400") + "[logging]\nlevel = debug\n")
+        assertTrue("a clean config must record nothing: ${clean.duplicateKeys}",
+            clean.duplicateKeys.isEmpty())
+        clean.validate()
+
+        // Recorded ONCE however many times the key repeats, and the last value still wins, so
+        // a file that already had a duplicate parses as it always did.
+        val thrice = VpnConfig.fromIni(ini("mtu = 1400", "mtu = 1300", "mtu = 1200"))
+        assertEquals(listOf("qeli.mtu"), thrice.duplicateKeys)
+        assertEquals(1200, thrice.mtu)
+    }
 }
 
 /**

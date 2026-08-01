@@ -65,6 +65,9 @@ pub struct Section {
     /// the marker. State that decides an accept/reject belongs to the parse that produced it.
     /// (Audit 2026-08-01, §2.)
     bad: std::cell::RefCell<Vec<String>>,
+    /// Keys already reported as duplicated, so one finding is emitted per key however many
+    /// times the parse reads it.
+    dup_reported: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl PartialEq for Section {
@@ -83,6 +86,7 @@ impl Section {
             entries: Vec::new(),
             read: Default::default(),
             bad: Default::default(),
+            dup_reported: Default::default(),
         }
     }
 
@@ -148,12 +152,32 @@ impl Section {
     }
 
     /// First value for `key`, or `None` if absent.
+    ///
+    /// A key read HERE is a scalar: exactly one value is meaningful. If the document carries
+    /// several, the config is ambiguous and every implementation resolved it differently — this
+    /// parser takes the first, while the C#, Kotlin and Swift ports fold entries into a map and
+    /// keep the LAST. Two `server` lines therefore sent the Rust client to one host and every
+    /// GUI client to another, from one file, with nothing reported anywhere. Recorded as a
+    /// finding rather than resolved: picking a winner still leaves the other three disagreeing,
+    /// and a config that means two things should be refused, not guessed at. Keys that are
+    /// legitimately repeated are read through [`all`] / [`list`], which do not record.
+    /// (Audit 2026-08-01, §7.)
     pub fn get(&self, key: &str) -> Option<&str> {
         self.mark_read(key);
-        self.entries
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+        let mut it = self.entries.iter().filter(|(k, _)| k == key);
+        let first = it.next().map(|(_, v)| v.as_str());
+        if it.next().is_some() && self.note_duplicate(key) {
+            self.record_bad_value(format!(
+                "key '{key}' appears more than once and is read as a single value;                  implementations disagree on which wins — keep one"
+            ));
+        }
+        first
+    }
+
+    /// True the FIRST time `key` is reported duplicated, so a key read repeatedly during one
+    /// parse produces one finding rather than a pile of identical ones.
+    fn note_duplicate(&self, key: &str) -> bool {
+        self.dup_reported.borrow_mut().insert(key.to_string())
     }
 
     /// First value for `key`, or `default` if absent or empty.
@@ -749,6 +773,50 @@ kill_switch = true
         assert_eq!(
             doc.unread_keys(),
             vec![("[profile:tcp]".to_string(), "nope")]
+        );
+    }
+
+    /// A key written twice and read as a SINGLE value must be reported.
+    ///
+    /// The ports resolved it differently: this parser takes the FIRST entry, while the C#,
+    /// Kotlin and Swift clients fold entries into a map and keep the LAST. Two `server` lines
+    /// therefore sent the Rust client to one host and every GUI client to another, out of one
+    /// file, with nothing reported anywhere. Reported, not resolved — picking a winner still
+    /// leaves the other three disagreeing. (Audit 2026-08-01, §7.)
+    #[test]
+    fn a_key_read_as_a_scalar_but_written_twice_is_reported() {
+        let doc = IniDoc::parse("[qeli]\nserver = a:443\nserver = b:8443\nmtu = 1400\n").unwrap();
+        let s = doc.section("qeli").unwrap();
+
+        // FIRST still wins, so a file that already had a duplicate parses as it always did.
+        assert_eq!(s.get("server"), Some("a:443"));
+        let bad = doc.bad_values();
+        assert_eq!(bad.len(), 1, "one finding for one duplicated key: {bad:?}");
+        assert!(bad[0].contains("server"), "the finding must name the key: {}", bad[0]);
+
+        // Reported ONCE however many times the key is read.
+        let _ = s.get("server");
+        let _ = s.get("server");
+        assert_eq!(doc.bad_values().len(), 1, "one finding per key, not per read");
+
+        // A key that is only WRITTEN once must stay silent, or the check above would pass
+        // against a parser that flagged everything.
+        assert_eq!(s.get("mtu"), Some("1400"));
+        assert_eq!(doc.bad_values().len(), 1, "a unique key must not be reported");
+    }
+
+    /// Keys that are legitimately repeated are read through `all()`/`list()`, which do NOT
+    /// report — `listen = …` twice in a profile is the documented way to add a second
+    /// endpoint, not an ambiguity.
+    #[test]
+    fn keys_read_as_a_list_are_not_reported_as_duplicates() {
+        let doc = IniDoc::parse("[profile:tcp]\nlisten = 1\nlisten = 2\n").unwrap();
+        let s = doc.section("profile").unwrap();
+        assert_eq!(s.all("listen"), vec!["1", "2"]);
+        assert!(
+            doc.bad_values().is_empty(),
+            "a repeated list key is not a duplicate: {:?}",
+            doc.bad_values()
         );
     }
 

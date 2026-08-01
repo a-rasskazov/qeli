@@ -13,6 +13,18 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// ``validate()`` is what refuses. (Audit 2026-07-31.)
     var unparsedBooleanKeys: [String] = []
 
+    /// Keys that appeared more than once in one section, as `section.key`.
+    ///
+    /// A key read as a SINGLE value but written twice makes the file ambiguous, and the ports
+    /// resolved it differently: this parser folds entries into a dictionary and keeps the LAST,
+    /// while the Rust client takes the FIRST. Two `server` lines therefore sent the Rust client
+    /// to one host and every GUI client to another, out of one file, with nothing reported.
+    ///
+    /// Recorded, not resolved — picking a winner still leaves the other implementations
+    /// disagreeing, and only the author knows which line was meant. Parsing still SUCCEEDS, as
+    /// with ``unparsedBooleanKeys``; ``validate()`` is what refuses. (Audit 2026-08-01, §7.)
+    var duplicateKeys: [String] = []
+
     /// Accepted tunnel-MTU range. The ceiling is derived, in Rust, from the record format
     /// (`protocol/packet.rs MAX_TUNNEL_MTU`): a record holds nonce + counter + payload +
     /// padding-length + tag and must fit `MAX_RECORD_SIZE`, so anything larger the PEER
@@ -164,6 +176,14 @@ struct VPNConfig: Codable, Equatable, Sendable {
                 + "expected true/false, yes/no, on/off or 1/0")
         }
 
+        // A key written twice is ambiguous, and the ports disagreed on which line wins — the
+        // same file reached two different servers depending on the client. (Audit 2026-08-01.)
+        if !duplicateKeys.isEmpty {
+            throw VPNConfigError.invalid(
+                "key(s) \(duplicateKeys.joined(separator: ", ")) appear more than once and are "
+                + "read as a single value; implementations disagree on which wins — keep one")
+        }
+
         // String enums the runtime compares against ONE literal, so an unknown value does not
         // error — it silently selects the other branch. `front = webscoket` drops the WebSocket
         // framing and the peer then disagrees about the wire; `routing_mode = full-tunel` with
@@ -229,7 +249,8 @@ struct VPNConfig: Codable, Equatable, Sendable {
     }
 
     static func fromINI(_ text: String) throws -> VPNConfig {
-        let sections = parseINI(text)
+        var dupKeys: [String] = []
+        let sections = parseINI(text, duplicates: &dupKeys)
         guard let qeli = sections["qeli"] else {
             throw VPNConfigError.invalid("config is missing [qeli] section")
         }
@@ -327,6 +348,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.appsMode = ["include", "exclude"].contains(mode) ? mode : "all"
         config.apps = list(qeli["apps"])
         config.unparsedBooleanKeys = badBools
+        config.duplicateKeys = dupKeys
         return config
     }
 
@@ -615,7 +637,9 @@ struct VPNConfig: Codable, Equatable, Sendable {
         return "qeli://\(auth)\(Self.formatEndpoint(host: serverAddress, port: port))?\(query.joined(separator: "&"))\(fragment)"
     }
 
-    private static func parseINI(_ text: String) -> [String: [String: String]] {
+    private static func parseINI(
+        _ text: String, duplicates: inout [String]
+    ) -> [String: [String: String]] {
         var result: [String: [String: String]] = [:]
         var section: String?
         for rawLine in text.components(separatedBy: .newlines) {
@@ -633,7 +657,15 @@ struct VPNConfig: Codable, Equatable, Sendable {
             if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
                 value = String(value.dropFirst().dropLast())
             }
-            if !key.isEmpty { result[section, default: [:]][key] = value }
+            if !key.isEmpty {
+                // Keep LAST-wins, so a file that never had a duplicate parses exactly as it did
+                // before, and record the ambiguity for validate() to refuse.
+                let qualified = "\(section).\(key)"
+                if result[section, default: [:]][key] != nil, !duplicates.contains(qualified) {
+                    duplicates.append(qualified)
+                }
+                result[section, default: [:]][key] = value
+            }
         }
         return result
     }

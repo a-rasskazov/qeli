@@ -99,6 +99,29 @@ public static class WireConformance
             spellings &= !Ini($"quic = {no}").QuicEnabled;
         check("ini-bools: every accepted spelling still parses, both ways", spellings);
 
+        // A key written twice must be REFUSED, not silently resolved. The ports disagreed on
+        // which line wins: this parser folds entries into a dictionary and keeps the LAST,
+        // while the Rust client (config/format.rs Section::get) takes the FIRST — so two
+        // `server` lines sent the Rust client to one host and every GUI client to another, out
+        // of one file, with nothing reported. Parsing still succeeds (an editor must be able to
+        // open the file to fix it); Validate() refuses. (Audit 2026-08-01, §7.)
+        var dup = Ini("server = other.example.com:8443");
+        bool dupRecorded = dup.DuplicateKeys.Contains("server");
+        bool dupRefused = false;
+        // The message must name the key, so this cannot pass because Validate() happened to
+        // dislike something else about the fixture.
+        try { dup.Validate(); } catch (ArgumentException e) { dupRefused = e.Message.Contains("server"); }
+        // Recorded ONCE however many times it repeats, and the last value still wins, so a file
+        // that already had a duplicate parses exactly as it always did.
+        var thrice = Ini("mtu = 1400", "mtu = 1300", "mtu = 1200");
+        bool dupOnce = thrice.DuplicateKeys.Count == 1 && thrice.Mtu == 1200;
+        // A clean config must record nothing — otherwise the check above passes vacuously.
+        bool cleanQuiet = Ini("mtu = 1400").DuplicateKeys.Count == 0;
+        check("ini-dups: a key written twice is recorded", dupRecorded);
+        check("ini-dups: Validate() refuses an ambiguous config", dupRefused);
+        check("ini-dups: recorded once, last value still wins", dupOnce);
+        check("ini-dups: a clean config records nothing", cleanQuiet);
+
         // The enum checks the desktop client had no equivalent of at all.
         bool enums = true;
         foreach (var (line, _) in new[] { ("proto = ucp", 0), ("mode = realty-tls", 0), ("front = webscoket", 0) })

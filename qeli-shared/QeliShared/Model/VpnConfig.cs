@@ -162,6 +162,9 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// <see cref="Validate"/> is what refuses. (Audit 2026-07-31.)</summary>
     public IReadOnlyList<string> UnparsedBooleanKeys { get; init; } = Array.Empty<string>();
 
+    /// <summary>A key that appears twice and is read as a SINGLE value makes the config ambiguous, and the implementations resolved it differently: this parser folds entries into a map and keeps the LAST, while the Rust client takes the FIRST. Two `server` lines therefore sent the Rust client to one host and every GUI client to another, from one file, with nothing reported. Recorded rather than resolved — picking a winner still leaves the others disagreeing. (Audit 2026-08-01, §7.)</summary>
+    public IReadOnlyList<string> DuplicateKeys { get; init; } = Array.Empty<string>();
+
     public int PaddingMin { get; init; }
     public int PaddingMax { get; init; } = 255;
     // heartbeat
@@ -307,6 +310,10 @@ public sealed class VpnConfig : INotifyPropertyChanged
         UnparsedBooleanKeys = UnparsedBooleanKeys
             .Where(k => !EditorControlledBooleanKeys.Contains(k))
             .ToArray(),
+        // DuplicateKeys is deliberately NOT carried (it defaults to empty). Unlike a bool typo,
+        // a duplicate cannot survive this call: the parse already collapsed the key to one
+        // value, and saving rewrites the file with one line per key. The ambiguity is genuinely
+        // gone, so carrying the marker would reject a profile that is now fine.
     };
 
     // REMOVED: ToConfigJson(). It had no call sites anywhere in the tree, and what it
@@ -565,6 +572,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
     public static VpnConfig FromIni(string text)
     {
         var q = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var dupKeys = new List<string>();
         string section = "";
         foreach (var raw in text.Replace("\r", "").Split('\n'))
         {
@@ -574,7 +582,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
             int eq = line.IndexOf('=');
             if (eq < 0) continue;
             if (section.Equals("qeli", StringComparison.OrdinalIgnoreCase))
-                q[line[..eq].Trim()] = line[(eq + 1)..].Trim();
+            {
+                var iniKey = line[..eq].Trim();
+                var iniValue = line[(eq + 1)..].Trim();
+                if (!q.TryAdd(iniKey, iniValue))
+                {
+                    // Second occurrence: keep the map's LAST-wins behaviour, so a config that
+                    // never had a duplicate parses exactly as before, and record the ambiguity
+                    // for Validate() to refuse.
+                    q[iniKey] = iniValue;
+                    if (!dupKeys.Contains(iniKey)) dupKeys.Add(iniKey);
+                }
+            }
         }
 
         string Get(string k, string def = "") => q.TryGetValue(k, out var v) ? v : def;
@@ -708,6 +727,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             ShapingStealth = BoolAt("shaping_stealth", false),
             ShapingStealthRateMbps = int.TryParse(Get("shaping_stealth_mbps"), out var ssr) && ssr > 0 ? ssr : 2,
             UnparsedBooleanKeys = badBools,
+            DuplicateKeys = dupKeys,
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
@@ -772,6 +792,12 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// order to fix it. Same split as the Rust client. (Audit 2026-07-31.)</summary>
     public void Validate()
     {
+        if (DuplicateKeys.Count > 0)
+        {
+            throw new ArgumentException(
+                $"key(s) {string.Join(", ", DuplicateKeys)} appear more than once and are read "
+                + "as a single value; implementations disagree on which wins — keep one");
+        }
         if (UnparsedBooleanKeys.Count > 0)
         {
             throw new ArgumentException(
