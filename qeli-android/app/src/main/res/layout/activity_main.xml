@@ -339,6 +339,7 @@
                 app:cardElevation="0dp"
                 app:strokeColor="@color/outline"
                 app:strokeWidth="1dp"
+                android:layout_marginBottom="14dp"
                 android:visibility="gone">
 
                 <LinearLayout
@@ -466,7 +467,6 @@
                 android:id="@+id/protectionCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
                 app:cardBackgroundColor="@color/surface"
                 app:cardCornerRadius="18dp"
                 app:cardElevation="0dp"
@@ -529,7 +529,7 @@
                         android:id="@+id/tvProtectionMode"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="3dp"
+                        android:layout_marginTop="2dp"
                         android:textSize="12sp"
                         android:textColor="@color/text_secondary"
                         tools:text="Reality-TLS · TCP · ключ запинен" />
@@ -547,36 +547,10 @@
                         android:visibility="gone"
                         tools:text="IPv6 идёт мимо туннеля" />
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginTop="12dp">
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnProtectionApps"
-                            style="@style/Widget.Material3.Button.OutlinedButton"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:layout_marginEnd="6dp"
-                            android:text="@string/protection_apps"
-                            android:textSize="12sp"
-                            app:strokeColor="@color/outline"
-                            app:cornerRadius="12dp" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnProtectionAlwaysOn"
-                            style="@style/Widget.Material3.Button.OutlinedButton"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:layout_marginStart="6dp"
-                            android:text="@string/protection_always_on"
-                            android:textSize="12sp"
-                            app:strokeColor="@color/outline"
-                            app:cornerRadius="12dp" />
-                    </LinearLayout>
+                    <!-- Apps / Always-on used to sit here as a button row. They were 60dp of
+                         a 186dp card and both only navigate elsewhere, which is exactly what
+                         the detail sheet is for — with them here the connection tab
+                         overflowed into a scroll the moment a tunnel came up. -->
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
           </LinearLayout>

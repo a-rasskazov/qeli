@@ -267,15 +267,6 @@ sni = www.microsoft.com
         // Reuses the existing per-app picker rather than a second entry point for the same
         // setting; it edits the ACTIVE profile, which is what the card describes.
         binding.protectionCard.setOnClickListener { showProtectionDetails() }
-        binding.btnProtectionApps.setOnClickListener { showAppsDialog(activeIndex) }
-        // Always-on + "block connections without VPN" is a SYSTEM setting an app cannot flip
-        // (or even read from here), so the button only takes the user to the right screen.
-        binding.btnProtectionAlwaysOn.setOnClickListener {
-            try { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }
-            catch (e: Exception) {
-                Toast.makeText(this, e.message ?: "", Toast.LENGTH_SHORT).show()
-            }
-        }
 
         binding.tvVersion.text = getString(R.string.version_label, appVersion())
         binding.tvVersion.setOnClickListener { showUpdatesDialog() }
@@ -877,6 +868,33 @@ sni = www.microsoft.com
                 })
             })
         }
+        // The two actions live here rather than on the card: both merely navigate (the
+        // existing per-app picker, and the system VPN screen), and on the card they cost
+        // 60dp — enough to push the connection tab into a scroll once a tunnel is up.
+        fun outlined() = com.google.android.material.button.MaterialButton(
+            this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        val actions = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        val lp = android.widget.LinearLayout.LayoutParams(0, -2, 1f)
+        actions.addView(outlined().apply {
+            text = getString(R.string.protection_apps)
+            layoutParams = android.widget.LinearLayout.LayoutParams(lp).also { it.marginEnd = dp(6) }
+            setOnClickListener { showAppsDialog(activeIndex) }
+        })
+        actions.addView(outlined().apply {
+            text = getString(R.string.protection_always_on)
+            layoutParams = android.widget.LinearLayout.LayoutParams(lp).also { it.marginStart = dp(6) }
+            // Always-on + "block connections without VPN" is a SYSTEM setting an app can
+            // neither flip nor read from an Activity, so this only opens the right screen.
+            setOnClickListener {
+                try { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }
+                catch (e: Exception) { Toast.makeText(this@MainActivity, e.message ?: "", Toast.LENGTH_SHORT).show() }
+            }
+        })
+        box.addView(actions)
+
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.protection)
             .setView(android.widget.ScrollView(this).apply { addView(box) })
