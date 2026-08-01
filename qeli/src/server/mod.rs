@@ -854,11 +854,26 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         );
     }
     let mut seen = std::collections::HashSet::new();
-    // Every endpoint an enabled profile will bind, in declaration order. A Vec rather than a
+    // Every endpoint this configuration will bind, in declaration order. A Vec rather than a
     // map because the collision rule is not key equality: a wildcard address overlaps every
     // concrete one on the same port, so each new endpoint is compared against all the ones
     // already claimed.
     let mut endpoints: Vec<BoundEndpoint> = Vec::new();
+
+    // The PANEL goes in first, because it is not a profile and it starts EARLIER — the
+    // supervisor spawns it before the worker. A panel sitting on a port a profile wants
+    // therefore wins, and the worker crash-loops against a port that is taken by the same
+    // server; from the outside the panel is fine and the VPN "just doesn't work".
+    // (Audit 2026-08-01, §4.)
+    if config.web.enabled {
+        endpoints.push(BoundEndpoint {
+            host: normalize_bind_host(&config.web.bind),
+            port: config.web.port,
+            transport: "tcp".to_string(),
+            profile: "[web]".to_string(),
+            label: format!("{}:{}", config.web.bind, config.web.port),
+        });
+    }
     // tun.name -> profile that claimed it first. Two profiles on one device name is not a
     // cosmetic clash: `run_profile` starts with `TunInterface::delete(&tun.name)`, so the
     // second profile DELETES the first one's live interface and both then write into whatever
@@ -1034,22 +1049,56 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // Hostname/IP equivalence is deliberately NOT resolved: `check-config` must work on a
         // machine that cannot reach DNS, and a resolver answer at validation time need not be
         // the answer at bind time. Two spellings of one host therefore still slip through.
-        let mut profile_endpoints: Vec<(String, u16, String)> = vec![(
+        let transport = p.bind.transport.clone();
+        let mut profile_endpoints: Vec<(String, u16, String, String)> = vec![(
             normalize_bind_host(&p.bind.address),
             p.bind.port,
-            format!("{}:{}", p.bind.address, p.bind.port),
+            transport.clone(),
+            format!("bind {}:{}", p.bind.address, p.bind.port),
         )];
         for spec in &p.bind.listen {
             if let Some((host, port)) = split_listen_spec(spec) {
-                profile_endpoints.push((host, port, spec.trim().to_string()));
+                profile_endpoints.push((
+                    host,
+                    port,
+                    transport.clone(),
+                    format!("listen {}", spec.trim()),
+                ));
             }
         }
-        for (host, port, label) in profile_endpoints {
+        // The profile's SERVICES bind too, and they were never checked against anything. Two
+        // profiles each running a resolver on the same address, or — far likelier — two with
+        // DHCP left at its `0.0.0.0:67` default, both passed validation; the second bind then
+        // failed inside a detached task and was logged once, so the profile came up serving
+        // clients that never got a lease. (Audit 2026-08-01, §4.)
+        if p.dns.enabled {
+            let dns_host = normalize_bind_host(&p.dns.listen);
+            // Both transports: the resolver now serves TCP as well (RFC 7766).
+            for t in ["udp", "tcp"] {
+                profile_endpoints.push((
+                    dns_host.clone(),
+                    p.dns.port,
+                    t.to_string(),
+                    format!("dns {}:{}", p.dns.listen, p.dns.port),
+                ));
+            }
+        }
+        if p.dhcp.enabled {
+            if let Some((host, port)) = split_listen_spec(&p.dhcp.listen) {
+                profile_endpoints.push((
+                    host,
+                    port,
+                    "udp".to_string(),
+                    format!("dhcp {}", p.dhcp.listen.trim()),
+                ));
+            }
+        }
+        for (host, port, transport, label) in profile_endpoints {
             if let Some(other) = endpoints.iter().find(|e| {
                 // A wildcard covers every address on the box, so `0.0.0.0:443` collides with
                 // `1.2.3.4:443` just as surely as with another `0.0.0.0:443`.
                 e.port == port
-                    && e.transport == p.bind.transport
+                    && e.transport == transport
                     && (e.host == host
                         || is_wildcard_bind_host(&e.host)
                         || is_wildcard_bind_host(&host))
@@ -1063,13 +1112,13 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                     p.name,
                     label,
                     port,
-                    p.bind.transport
+                    transport
                 );
             }
             endpoints.push(BoundEndpoint {
                 host,
                 port,
-                transport: p.bind.transport.clone(),
+                transport,
                 profile: p.name.clone(),
                 label,
             });
@@ -4218,6 +4267,67 @@ pool.cidr = 10.1.0.0/24
                 "concrete address under an existing wildcard",
                 profile("a", "0.0.0.0", "4443", 0, &[])
                     + &profile("b", "10.0.0.1", "4443", 1, &[]),
+            ),
+        ] {
+            let err = validate_profiles(&cfg(&text))
+                .expect_err(&format!("{label}: must be rejected at load"));
+            assert!(
+                err.to_string().contains("both bind port"),
+                "{label}: rejected for the wrong reason: {err}"
+            );
+        }
+    }
+
+    /// The panel and the per-profile services bind too, and none of them used to be checked.
+    ///
+    /// The panel is the nastiest of the three: it is not a profile and it starts EARLIER (the
+    /// supervisor spawns it before the worker), so it wins the port and the worker crash-loops
+    /// against a port held by the same server — from outside, the panel looks healthy and the
+    /// VPN "just doesn't work". DHCP is the likeliest: its default is `0.0.0.0:67`, so two
+    /// profiles with DHCP on collide unless the operator changed it, and the loser failed
+    /// inside a detached task with one log line. (Audit 2026-08-01, §4.)
+    #[test]
+    fn the_panel_and_profile_services_are_in_the_conflict_map() {
+        fn cfg(text: &str) -> ServerConfig {
+            crate::config::parse_server_config(text).expect("fixture INI must parse")
+        }
+        fn profile(name: &str, port: &str, tun: u8, extra: &str) -> String {
+            format!(
+                "[profile:{name}]\n\
+                 bind.address = 0.0.0.0\n\
+                 bind.port = {port}\n\
+                 bind.transport = tcp\n\
+                 tun.name = vpn{tun}\n\
+                 tun.address = 10.{tun}.0.1\n\
+                 tun.netmask = 255.255.255.0\n\
+                 tun.mtu = 1400\n\
+                 pool.cidr = 10.{tun}.0.0/24\n\
+                 obf.mode = fake-tls\n\
+                 {extra}"
+            )
+        }
+        let web = |port: &str| format!("[web]\nenabled = true\nport = {port}\n");
+
+        // Control: a panel on its own port, and per-profile services on distinct addresses.
+        validate_profiles(&cfg(&(web("8443")
+            + &profile("a", "4443", 0, "dns.enabled = true\ndns.listen = 10.0.0.1\n")
+            + &profile("b", "5443", 1, "dns.enabled = true\ndns.listen = 10.1.0.1\n"))))
+            .expect("distinct ports and resolver addresses must validate");
+
+        for (label, text) in [
+            (
+                "the panel over a profile's bind port",
+                web("4443") + &profile("a", "4443", 0, ""),
+            ),
+            (
+                "two resolvers on one address",
+                profile("a", "4443", 0, "dns.enabled = true\ndns.listen = 10.9.0.1\n")
+                    + &profile("b", "5443", 1, "dns.enabled = true\ndns.listen = 10.9.0.1\n"),
+            ),
+            (
+                "two DHCP servers on the 0.0.0.0:67 default",
+                profile("a", "4443", 0, "dhcp.enabled = true\n")
+                    + &profile("b", "5443", 1, "dhcp.enabled = true\n"),
             ),
         ] {
             let err = validate_profiles(&cfg(&text))

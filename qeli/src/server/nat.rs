@@ -80,16 +80,23 @@ fn detect_wan() -> Option<String> {
 /// Best-effort `net.ipv4.ip_forward = 1` (needs CAP_NET_ADMIN, which the worker has).
 /// Left enabled on teardown — forwarding is a global host knob and flipping it off
 /// could break other services on the box.
-fn enable_ip_forward() {
+fn enable_ip_forward() -> bool {
     let path = "/proc/sys/net/ipv4/ip_forward";
     if matches!(std::fs::read_to_string(path), Ok(ref v) if v.trim() == "1") {
-        return; // already on
+        return true; // already on
     }
     match std::fs::write(path, "1\n") {
-        Ok(()) => log::info!("NAT: enabled net.ipv4.ip_forward (left enabled on teardown)"),
-        Err(e) => log::warn!(
-            "NAT: could not enable net.ipv4.ip_forward ({e}); full-tunnel egress may not route"
-        ),
+        Ok(()) => {
+            log::info!("NAT: enabled net.ipv4.ip_forward (left enabled on teardown)");
+            true
+        }
+        Err(e) => {
+            log::error!(
+                "NAT: could not enable net.ipv4.ip_forward ({e}) — the kernel will not forward \
+                 anything between the tunnel and the WAN"
+            );
+            false
+        }
     }
 }
 
@@ -238,7 +245,20 @@ pub fn setup(
         })?
     };
 
-    enable_ip_forward();
+    // `routing.nat.enabled = true` is a PROMISE that clients reach the internet, and without
+    // `ip_forward` the kernel drops every transit packet no matter how correct the iptables
+    // rules are. This used to be best-effort — a warning, then `Ok(wan)` — so the profile came
+    // up, clients connected, got an address, and had no connectivity at all, with the cause a
+    // single WARN line above a screen of INFO. Making it fatal is what turns "NAT is enabled"
+    // into something that was actually checked. (Audit 2026-08-01, §6.)
+    if !enable_ip_forward() {
+        anyhow::bail!(
+            "routing.nat.enabled = true but net.ipv4.ip_forward could not be enabled — the \
+             kernel would not forward client traffic, so every client would connect and then \
+             reach nothing. Enable it on the host (`sysctl -w net.ipv4.ip_forward=1`), or set \
+             routing.nat.enabled = false"
+        );
+    }
     // Clear any stale copies first so a re-apply can't stack duplicates.
     cleanup_with(&path, profile);
 
@@ -263,13 +283,44 @@ pub fn setup(
         }
     }
     if forward_unapplied {
-        log::warn!(
-            "Profile '{profile}': FORWARD ACCEPT rules could not be applied (host has a mixed \
-             legacy/nft filter table). NAT egress still works when the FORWARD policy is ACCEPT; \
-             if it is DROP, permit forwarding {pool_cidr} <-> {wan} yourself."
-        );
+        // Whether this is survivable depends on the host's FORWARD POLICY, so ask instead of
+        // guessing. With a policy of ACCEPT the missing rules change nothing and a warning is
+        // the right response — that is why they are not `essential`. With DROP the chain
+        // discards exactly the transit traffic those rules existed to permit, so the profile
+        // would serve clients that can reach nothing; the old code warned in both cases and
+        // returned Ok. (Audit 2026-08-01, §6.)
+        match forward_policy(&path) {
+            Some(policy) if policy.eq_ignore_ascii_case("DROP") => {
+                cleanup_with(&path, profile); // roll back the partial set
+                anyhow::bail!(
+                    "the FORWARD ACCEPT rules could not be applied (host has a mixed legacy/nft \
+                     filter table) AND the FORWARD policy is DROP — every client packet between \
+                     {pool_cidr} and {wan} would be dropped. Permit that forwarding yourself, \
+                     fix the iptables backend, or set routing.nat.enabled = false"
+                );
+            }
+            _ => log::warn!(
+                "Profile '{profile}': FORWARD ACCEPT rules could not be applied (host has a \
+                 mixed legacy/nft filter table). The FORWARD policy is not DROP, so egress \
+                 still works — but if you tighten it later, permit forwarding {pool_cidr} \
+                 <-> {wan} yourself."
+            ),
+        }
     }
     Ok(wan)
+}
+
+/// The `filter/FORWARD` chain's default policy (`ACCEPT` / `DROP`), or `None` when it cannot
+/// be read. `iptables -S FORWARD` opens with the policy line: `-P FORWARD DROP`.
+fn forward_policy(path: &str) -> Option<String> {
+    let out = ipt(path, &["-t", "filter", "-S", "FORWARD"]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("-P FORWARD "))
+        .map(|p| p.trim().to_string())
 }
 
 /// Pure L3 routing WITHOUT NAT (`routing.forward_private`): enable `net.ipv4.ip_forward`
