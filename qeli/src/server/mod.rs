@@ -891,6 +891,16 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             anyhow::bail!("profile '{}': tun.name is empty", p.name);
         }
         if tun_name.len() > MAX_IFNAME_LEN {
+            // Cut on a CHARACTER boundary, not a byte one. `&tun_name[..15]` panics outright
+            // when byte 15 lands inside a multi-byte code point — eight Cyrillic letters is
+            // sixteen bytes — and this validator runs inside `PUT /api/config`, so a name typed
+            // into the panel could take the request handler down instead of being rejected.
+            // (Audit 2026-08-01, §P2.)
+            let kept: String = tun_name
+                .char_indices()
+                .take_while(|(i, c)| i + c.len_utf8() <= MAX_IFNAME_LEN)
+                .map(|(_, c)| c)
+                .collect();
             anyhow::bail!(
                 "profile '{}': tun.name '{}' is {} bytes — the kernel keeps only the first {}, \
                  so the device would be created as '{}' and every later `ip ... dev {}` would \
@@ -899,7 +909,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                 tun_name,
                 tun_name.len(),
                 MAX_IFNAME_LEN,
-                &tun_name[..MAX_IFNAME_LEN],
+                kept,
                 tun_name
             );
         }
@@ -2447,6 +2457,72 @@ fn sd_notify(msg: &str) {
 #[cfg(not(target_os = "linux"))]
 fn sd_notify(_msg: &str) {}
 
+/// Wakes a thread parked in a blocking `read()` so it can notice a stop request.
+///
+/// The TUN queue readers block in `read()` with no timeout, which is exactly right for a data
+/// plane — a poll/epoll round per packet would put a syscall on the hot path of a server that
+/// moves hundreds of megabits. But it left them with no way to stop: the fds they hold keep a
+/// non-persistent TUN device alive long after its profile is gone, and closing an fd another
+/// thread is blocked in `read()` on is a use-after-free on the fd number.
+///
+/// A signal is the POSIX answer and it costs the hot path NOTHING. `read()` returns `EINTR`,
+/// which the loop already handles (it was written to retry on it), so the only addition on the
+/// packet path is one relaxed atomic load on a branch that essentially never runs.
+///
+/// The handler is a no-op and is installed WITHOUT `SA_RESTART` on purpose: with it, the kernel
+/// silently restarts the interrupted `read()` and the thread never surfaces — which is the
+/// default for `signal()` on Linux and would make this whole mechanism a no-op that looks
+/// installed. SIGUSR1 is taken (it dumps the packet trace), so this uses SIGUSR2.
+#[cfg(target_os = "linux")]
+mod reader_wakeup {
+    use std::sync::Once;
+
+    pub const SIGNAL: libc::c_int = libc::SIGUSR2;
+
+    extern "C" fn noop(_: libc::c_int) {}
+
+    /// Install the no-op handler once per process.
+    pub fn install() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = noop as *const () as usize;
+            libc::sigemptyset(&mut sa.sa_mask);
+            sa.sa_flags = 0; // NOT SA_RESTART — the point is for read() to return EINTR
+            libc::sigaction(SIGNAL, &sa, std::ptr::null_mut());
+        });
+    }
+
+    /// Interrupt one thread's blocking syscall. Safe to call on a thread that has already
+    /// exited only while its handle is still held; callers pair this with the stop flag.
+    pub fn interrupt(tid: libc::pthread_t) {
+        unsafe {
+            libc::pthread_kill(tid, SIGNAL);
+        }
+    }
+}
+
+/// The per-queue TUN threads, so teardown can stop them and their descriptors can close.
+///
+/// BOTH halves belong here. Readers alone are not enough: a queue's writer holds its own
+/// `libc::dup` of the device fd and only closes it when its channel disconnects, so stopping
+/// just the readers left the last descriptor open and the device survived anyway — the exact
+/// leak this machinery exists to close.
+///
+/// `std::thread`, not `tokio::task::spawn_blocking`: these loops block for the entire life of
+/// the profile, so they permanently occupy blocking-pool slots meant for short operations — and
+/// more importantly a pooled thread is reused, so a signal arriving a moment after the closure
+/// returned would land on an unrelated task. A dedicated thread is owned by exactly one loop
+/// for exactly as long as that loop runs, which is what makes signalling it safe.
+struct QueueThreads {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    handles: Vec<std::thread::JoinHandle<()>>,
+    /// Ids of the threads parked in a blocking syscall, published by each thread as it starts.
+    /// Late registration is expected and handled — see `ProfileTeardown::drop`.
+    #[cfg(target_os = "linux")]
+    tids: Arc<std::sync::Mutex<Vec<libc::pthread_t>>>,
+}
+
 /// Undoes everything `run_profile` created on the host, however it leaves.
 ///
 /// A profile start is a sequence of side effects on the SYSTEM — a TUN device, iptables rules,
@@ -2467,6 +2543,9 @@ struct ProfileTeardown {
     /// The device as the KERNEL named it, set once the TUN exists.
     ifname: Option<String>,
     state: Arc<ServerState>,
+    /// Set once the per-queue reader/writer threads are running, so they can be stopped before
+    /// the device is removed — it only disappears when the last descriptor closes.
+    readers: Option<QueueThreads>,
 }
 
 impl Drop for ProfileTeardown {
@@ -2474,25 +2553,76 @@ impl Drop for ProfileTeardown {
         // iptables first: the rules reference the interface by name, so removing them before
         // the device keeps the window where a rule points at a vanished device closed.
         nat::cleanup(&self.profile);
+
+        // Stop the queue readers BEFORE removing the device.
+        //
+        // Two independent defects sat on top of each other here, and the first masked the
+        // second. `TunInterface::delete` could not delete a MULTI-QUEUE device at all (missing
+        // `multi_queue` on `ip tuntap del` → `ioctl(TUNSETIFF): Invalid argument`), which is
+        // every device this server creates. With that fixed the command succeeds — and the
+        // interface still survived, because each queue hands a `libc::dup` of its fd to a
+        // reader parked in `read()` forever, and a device created without `IFF_PERSIST` only
+        // disappears once the LAST descriptor closes. So the order below is not cosmetic: stop
+        // the readers, let them close their own fds, and only then ask for the device.
+        // (Audit 2026-08-01, §5.)
+        if let Some(threads) = self.readers.take() {
+            // Order matters: the flag goes up FIRST, so a thread that has not reached its
+            // blocking call yet sees it on its own and never parks. The signal is only for the
+            // ones already inside a syscall.
+            threads.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+
+            // Signalling is RETRIED rather than done once, and waiting is BOUNDED.
+            //
+            // A thread publishes its id from inside itself, so between `spawn` returning and
+            // that push there is a window in which the id is not known yet. The first version
+            // took a single `try_lock` and then joined unconditionally: a queue that failed
+            // early — say a DNS bind error immediately after the threads were spawned — could
+            // have a reader that never received a signal, never left `read()`, and a `join()`
+            // that blocked FOREVER. In a Drop running on a tokio worker that wedges the
+            // runtime thread: strictly worse than the leaked device this code is here to fix.
+            //
+            // Re-signalling every round closes the window (a late registrant is signalled on
+            // the next pass), and the deadline means the worst case is a logged leak rather
+            // than a hang.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                #[cfg(target_os = "linux")]
+                {
+                    // A poisoned lock still holds a usable list — a panicking thread must not
+                    // cost us the ids of the healthy ones.
+                    let tids = threads
+                        .tids
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    for tid in tids.iter() {
+                        reader_wakeup::interrupt(*tid);
+                    }
+                }
+                if threads.handles.iter().all(|h| h.is_finished()) {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    log::warn!(
+                        "Profile '{}': {} TUN queue thread(s) did not stop within 3s — leaving \
+                         them detached; the device will outlive the profile",
+                        self.profile,
+                        threads.handles.iter().filter(|h| !h.is_finished()).count()
+                    );
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            // Join ONLY what has actually finished. Joining a still-running thread is the hang
+            // this whole block exists to avoid; the finished ones are joined so their fds are
+            // demonstrably closed before `ip tuntap del` runs, rather than merely scheduled to.
+            for h in threads.handles {
+                if h.is_finished() {
+                    let _ = h.join();
+                }
+            }
+        }
+
         if let Some(ifname) = &self.ifname {
-            // KNOWN LIMIT: this does not always remove the device, and it is logged rather
-            // than swallowed so the leftover is at least visible.
-            //
-            // Two independent defects sat on top of each other here, and the first masked the
-            // second. `TunInterface::delete` could not delete a MULTI-QUEUE device at all
-            // (missing `multi_queue` on `ip tuntap del` → `ioctl(TUNSETIFF): Invalid
-            // argument`), which is every device this server creates; that is fixed and the
-            // command now succeeds. It succeeds, and the interface still survives — because
-            // each queue hands a `libc::dup` of its fd to a `spawn_blocking` reader that parks
-            // in `read()` forever, and a device created without IFF_PERSIST only disappears
-            // once every fd is closed. `ip tuntap del` detaches the name and reports success;
-            // the device lives on behind those descriptors.
-            //
-            // Closing them from here is not the fix: closing an fd another thread is blocked in
-            // `read()` on is a use-after-free on the fd number. The real fix is a per-queue
-            // stop signal the readers can observe, which touches the packet hot path and is
-            // deliberately not being rushed into this round. Until then NAT rules and the
-            // registry entry are rolled back and the device is not. (Audit 2026-08-01, §5.)
             if let Err(e) = TunInterface::delete(ifname) {
                 log::warn!(
                     "Profile '{}': could not remove TUN '{}' during teardown: {} — the device \
@@ -2510,10 +2640,7 @@ impl Drop for ProfileTeardown {
         tokio::spawn(async move {
             state.profiles.write().await.remove(&name);
         });
-        log::info!(
-            "Profile '{}': torn down (NAT rules, registry entry, TUN best-effort)",
-            self.profile
-        );
+        log::info!("Profile '{}': torn down (TUN, NAT, registry)", self.profile);
     }
 }
 
@@ -2534,6 +2661,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         profile: name.clone(),
         ifname: None,
         state: state.clone(),
+        readers: None,
     };
 
     // Setup TUN interface(s). With tun.queues>1 we open several IFF_MULTI_QUEUE fds
@@ -2866,6 +2994,20 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
     // its inbound channel -> TUN), and an async bridge feeding that writer. The kernel
     // RSS-distributes outbound TUN packets across the queues by flow.
     let tun_buf_size = pcfg.performance.tun.read_buffer_size;
+    // Shared with `ProfileTeardown`: the flag the readers check when a signal interrupts their
+    // `read()`, and the thread ids to send that signal to.
+    #[cfg(target_os = "linux")]
+    reader_wakeup::install();
+    let reader_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(target_os = "linux")]
+    let reader_tids: Arc<std::sync::Mutex<Vec<libc::pthread_t>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    // Readers AND writers: both hold a descriptor that keeps the device alive.
+    let mut queue_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    // A failed `spawn` must not leave the threads already created unowned, so the error is
+    // carried out of the loop and returned only AFTER the handles reach the teardown guard.
+    // Returning it here with `?` was the leak: everything spawned so far became detached.
+    let mut spawn_err: Option<anyhow::Error> = None;
     for (qi, ((reader_fd, writer_fd), mut in_rx)) in reader_fds
         .into_iter()
         .zip(writer_fds)
@@ -2877,44 +3019,91 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         {
             let name_r = name.clone();
             let is_tap_reader = is_tap;
-            tokio::task::spawn_blocking(move || {
-                log::info!("TUN reader q{} for profile '{}' started", qi, name_r);
-                let mut buf = vec![0u8; tun_buf_size];
-                loop {
-                    let n = unsafe {
-                        libc::read(reader_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                    };
-                    if n < 0 {
-                        let err = std::io::Error::last_os_error();
-                        // Blocking read: only EINTR is retryable (the fd is no longer
-                        // O_NONBLOCK, so WouldBlock can't happen).
-                        if err.kind() == std::io::ErrorKind::Interrupted {
-                            continue;
+            let stop = reader_stop.clone();
+            #[cfg(target_os = "linux")]
+            let tids = reader_tids.clone();
+            // A DEDICATED thread, not `spawn_blocking`: this loop blocks for the whole life of
+            // the profile, so it would hold a blocking-pool slot meant for short operations —
+            // and a pooled thread gets reused, so the wake-up signal could land on an unrelated
+            // task moments after this closure returned. One thread, one reader, one owner.
+            let handle = std::thread::Builder::new()
+                .name(format!("tun-rx-{name}-q{qi}"))
+                .spawn(move || {
+                    // Publish this thread's id so teardown can interrupt its `read()`.
+                    #[cfg(target_os = "linux")]
+                    {
+                        if let Ok(mut t) = tids.lock() {
+                            t.push(unsafe { libc::pthread_self() });
                         }
-                        log::error!("TUN read error q{} on profile '{}': {}", qi, name_r, err);
-                        break;
                     }
-                    if n == 0 {
-                        break;
-                    }
-                    let raw = &buf[..n as usize];
-                    let packet = if is_tap_reader {
-                        match strip_ethernet_header(raw) {
-                            Some(ip) => ip.to_vec(),
-                            None => continue,
+                    log::info!("TUN reader q{} for profile '{}' started", qi, name_r);
+                    let mut buf = vec![0u8; tun_buf_size];
+                    loop {
+                        // BEFORE parking, not only after an interrupt. A teardown that happens
+                        // while this thread is still starting up would otherwise find it about
+                        // to block on a read that no signal had been aimed at yet — and then
+                        // wait for a thread that never comes back. Checking here is what makes
+                        // the shutdown independent of thread-start timing. One relaxed load per
+                        // packet is the entire cost.
+                        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
                         }
-                    } else {
-                        raw.to_vec()
-                    };
-                    if out_tx.blocking_send(packet).is_err() {
-                        break;
+                        let n = unsafe {
+                            libc::read(reader_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                        };
+                        if n < 0 {
+                            let err = std::io::Error::last_os_error();
+                            // Blocking read: only EINTR is retryable (the fd is no longer
+                            // O_NONBLOCK, so WouldBlock can't happen).
+                            if err.kind() == std::io::ErrorKind::Interrupted {
+                                // ...unless the interruption WAS the stop request. This is the
+                                // whole cost of the shutdown path on the packet hot path: one
+                                // relaxed load, on a branch that essentially never runs.
+                                if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            log::error!(
+                                "TUN read error q{} on profile '{}': {}",
+                                qi,
+                                name_r,
+                                err
+                            );
+                            break;
+                        }
+                        if n == 0 {
+                            break;
+                        }
+                        let raw = &buf[..n as usize];
+                        let packet = if is_tap_reader {
+                            match strip_ethernet_header(raw) {
+                                Some(ip) => ip.to_vec(),
+                                None => continue,
+                            }
+                        } else {
+                            raw.to_vec()
+                        };
+                        if out_tx.blocking_send(packet).is_err() {
+                            break;
+                        }
                     }
+                    // Closed HERE, by the thread that owns it — which is what finally lets a
+                    // non-persistent TUN device go away once every queue has exited.
+                    unsafe {
+                        libc::close(reader_fd);
+                    }
+                    log::info!("TUN reader q{} for profile '{}' stopped", qi, name_r);
+                });
+            match handle {
+                Ok(h) => queue_handles.push(h),
+                Err(e) => {
+                    spawn_err = Some(anyhow::anyhow!(
+                        "profile '{name}': cannot spawn TUN reader q{qi}: {e}"
+                    ));
+                    break;
                 }
-                unsafe {
-                    libc::close(reader_fd);
-                }
-                log::info!("TUN reader q{} for profile '{}' stopped", qi, name_r);
-            });
+            }
         }
         // Created BEFORE the outbound forwarder so that forwarder can inject ICMP
         // "Fragmentation Needed" back toward an origin whose packets are too big for a
@@ -3086,12 +3275,49 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
             let name_w = name.clone();
             let is_tap_writer = is_tap;
             let gw_mac = gateway_mac;
-            std::thread::spawn(move || {
-                log::info!("TUN writer q{} for profile '{}' started", qi, name_w);
-                'writer: for packet in tun_write_rx {
-                    if packet.is_empty() {
-                        continue;
+            let stop_w = reader_stop.clone();
+            #[cfg(target_os = "linux")]
+            let tids_w = reader_tids.clone();
+            let handle = std::thread::Builder::new()
+                .name(format!("tun-tx-{name}-q{qi}"))
+                .spawn(move || {
+                    // Registered like the reader: a writer parked in `write()` needs the same
+                    // interruption, and its fd keeps the device alive just as surely.
+                    #[cfg(target_os = "linux")]
+                    {
+                        if let Ok(mut t) = tids_w.lock() {
+                            t.push(unsafe { libc::pthread_self() });
+                        }
                     }
+                    log::info!("TUN writer q{} for profile '{}' started", qi, name_w);
+                    // `recv_timeout`, not `for packet in rx`. The plain iterator blocks until a
+                    // sender is dropped, and the senders are held by the async bridge and the
+                    // forwarder — so a stopping profile could not make this thread exit, and its
+                    // `writer_fd` stayed open holding the device up. A signal does not help
+                    // either: this parks on a condvar, not in a syscall, so EINTR never
+                    // surfaces. A timed wait is what gives it a chance to look at the flag.
+                    // Idle cost is one wakeup every 250 ms; when packets are flowing `recv_timeout`
+                    // returns immediately and costs nothing extra.
+                    'writer: loop {
+                        let packet = match tun_write_rx
+                            .recv_timeout(std::time::Duration::from_millis(250))
+                        {
+                            Ok(p) => p,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                if stop_w.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break 'writer;
+                                }
+                                continue;
+                            }
+                            // Every sender gone: nothing more can arrive.
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break 'writer,
+                        };
+                        if stop_w.load(std::sync::atomic::Ordering::Relaxed) {
+                            break 'writer;
+                        }
+                        if packet.is_empty() {
+                            continue;
+                        }
                     // TAP prepends an Ethernet header (dst = gateway_mac; src = a MAC
                     // derived from the client src-IP for ARP attribution); TUN writes the
                     // raw IP packet as-is.
@@ -3115,7 +3341,14 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                         }
                         let err = std::io::Error::last_os_error();
                         match err.raw_os_error() {
-                            Some(libc::EINTR) => continue, // interrupted — retry same buffer
+                            // Interrupted — retry the same buffer, UNLESS the interruption was
+                            // the teardown signal aimed at exactly this case.
+                            Some(libc::EINTR) => {
+                                if stop_w.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break 'writer;
+                                }
+                                continue;
+                            }
                             // NB: on Linux EAGAIN == EWOULDBLOCK (same value) — listing one.
                             Some(libc::ENOBUFS) | Some(libc::EAGAIN) => {
                                 // TX queue full — drop this packet like a congested link.
@@ -3141,11 +3374,22 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                         }
                     }
                 }
-                unsafe {
-                    libc::close(writer_fd);
+                    // Closed HERE, by the thread that owns it. Together with the reader's own
+                    // close this is what finally lets a non-persistent TUN device go away.
+                    unsafe {
+                        libc::close(writer_fd);
+                    }
+                    log::info!("TUN writer q{} for profile '{}' stopped", qi, name_w);
+                });
+            match handle {
+                Ok(h) => queue_handles.push(h),
+                Err(e) => {
+                    spawn_err = Some(anyhow::anyhow!(
+                        "profile '{name}': cannot spawn TUN writer q{qi}: {e}"
+                    ));
+                    break;
                 }
-                log::info!("TUN writer q{} for profile '{}' stopped", qi, name_w);
-            });
+            }
         }
         tokio::spawn(async move {
             while let Some(packet) = in_rx.recv().await {
@@ -3159,6 +3403,21 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                 }
             }
         });
+    }
+
+    // Hand the readers to the teardown guard, which from here on owns stopping them. Done
+    // right after the loop so every path below — including a `?` out of the DNS bind — goes
+    // through it.
+    teardown.readers = Some(QueueThreads {
+        stop: reader_stop,
+        handles: queue_handles,
+        #[cfg(target_os = "linux")]
+        tids: reader_tids,
+    });
+    // Only NOW may a spawn failure propagate: the guard owns every thread that did start, so
+    // the `?` below tears them down instead of orphaning them.
+    if let Some(e) = spawn_err {
+        return Err(e);
     }
 
     // DNS proxy (per-profile)
@@ -3200,8 +3459,42 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                 dns_listen
             ),
         };
+        // The TCP half, bound with the same fail-early treatment. RFC 7766 requires a resolver
+        // to serve TCP, and it is where a client goes after a truncated UDP answer — so a
+        // missing listener is not a degraded mode, it is a resolver that cannot answer anything
+        // large. (Audit 2026-08-01, §10.)
+        let dns_tcp = match dns::bind_dns_proxy_tcp(&pcfg.dns).await {
+            Ok(l) => l,
+            Err(e) => anyhow::bail!(
+                "profile '{}': {e}. Clients that receive a truncated answer retry over TCP \
+                 (RFC 7766), so without this listener every oversized lookup fails. Free the \
+                 port (`ss -ltnp | grep ':{}'`) or set a different dns.port.",
+                name,
+                pcfg.dns.port
+            ),
+        };
+        // ONE cache and one upstream-preference shared by both transports: two of each would
+        // double upstream traffic and let the same name answer differently depending on which
+        // transport the client happened to use.
+        let dns_cache: dns::DnsCache = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        let dns_pref = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        {
+            let cfg_tcp = pcfg.dns.clone();
+            let cache_tcp = dns_cache.clone();
+            let pref_tcp = dns_pref.clone();
+            let name_tcp = name.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    dns::run_dns_proxy_tcp(cfg_tcp, dns_tcp, cache_tcp, pref_tcp).await
+                {
+                    log::error!("Profile '{name_tcp}': DNS proxy (tcp) stopped: {e}");
+                }
+            });
+        }
         tokio::spawn(async move {
-            if let Err(e) = dns::run_dns_proxy(dns_state, dns_cfg, dns_socket).await {
+            if let Err(e) =
+                dns::run_dns_proxy(dns_state, dns_cfg, dns_socket, dns_cache, dns_pref).await
+            {
                 // LOUD, and it says what it costs. This used to be one ERROR line while the
                 // tunnel came up and kept handing every client the address of a resolver that
                 // does not exist — names simply stopped resolving, with nothing pointing at
@@ -3838,6 +4131,17 @@ pool.cidr = 10.1.0.0/24
         // Exactly at the limit must pass — an off-by-one here would reject a legal name.
         validate_profiles(&cfg(&profile("a", "abcdefghijklmno", "4443", 0)))
             .expect("a 15-byte name is legal");
+
+        // A NON-ASCII overlong name must be REJECTED, not panic. The error message quotes the
+        // part the kernel would keep, and slicing that by byte index lands inside a multi-byte
+        // code point — eight Cyrillic letters is sixteen bytes. This validator runs inside
+        // `PUT /api/config`, so the panic would have been in the panel's request handler.
+        // (Audit 2026-08-01, §P2.)
+        let cyrillic = "интерфейс"; // 9 chars, 18 bytes
+        assert!(cyrillic.len() > MAX_IFNAME_LEN && cyrillic.chars().count() <= MAX_IFNAME_LEN);
+        let err = validate_profiles(&cfg(&profile("a", cyrillic, "4443", 0)))
+            .expect_err("an 18-byte name must be rejected");
+        assert!(err.to_string().contains("tun.name"), "wrong reason: {err}");
 
         for (label, text) in [
             ("16 bytes", profile("a", "abcdefghijklmnop", "4443", 0)),

@@ -382,50 +382,57 @@ pub fn enable_dns_redirect(profile: &str, tun: &str, listen: &str, port: u16) ->
         }
     };
     let comment = tag(profile);
-    // UDP only: the proxy binds a UDP socket and has no TCP listener, so a TCP rule would
-    // point at nothing. Unchanged from the default-port behaviour, where 53/tcp is equally
-    // unserved.
-    let args: Vec<String> = vec![
-        "-i".into(),
-        tun.into(),
-        "-p".into(),
-        "udp".into(),
-        "-d".into(),
-        listen.into(),
-        "--dport".into(),
-        "53".into(),
-        "-m".into(),
-        "comment".into(),
-        "--comment".into(),
-        comment,
-        "-j".into(),
-        "REDIRECT".into(),
-        "--to-ports".into(),
-        port.to_string(),
-    ];
-    let mut argv = vec![
-        "-t".to_string(),
-        "nat".to_string(),
-        "-A".to_string(),
-        "PREROUTING".to_string(),
-    ];
-    argv.extend(args.clone());
-    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let _ = ipt(&path, &refs);
+    // BOTH protocols. This was UDP-only, and correctly so at the time: the proxy bound a UDP
+    // socket and nothing listened on TCP, so a TCP rule would have redirected clients to a
+    // closed port — worse than leaving 53/tcp unserved. Now that the resolver serves TCP
+    // (RFC 7766, and the retry path for a truncated answer), the rule has to cover it, or a
+    // client told to retry over TCP would reach port 53 with nothing behind it — precisely the
+    // black hole the redirect exists to prevent. (Audit 2026-08-01, §10.)
+    for proto in ["udp", "tcp"] {
+        let args: Vec<String> = vec![
+            "-i".into(),
+            tun.into(),
+            "-p".into(),
+            proto.into(),
+            "-d".into(),
+            listen.into(),
+            "--dport".into(),
+            "53".into(),
+            "-m".into(),
+            "comment".into(),
+            "--comment".into(),
+            comment.clone(),
+            "-j".into(),
+            "REDIRECT".into(),
+            "--to-ports".into(),
+            port.to_string(),
+        ];
+        let mut argv = vec![
+            "-t".to_string(),
+            "nat".to_string(),
+            "-A".to_string(),
+            "PREROUTING".to_string(),
+        ];
+        argv.extend(args.clone());
+        let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let _ = ipt(&path, &refs);
 
-    // VERIFY rather than trust the exit code — `iptables-nft` can report success for a rule it
-    // did not install, which is why every other rule here is checked the same way.
-    if rule_present(&path, "nat", "PREROUTING", &args) {
-        log::info!(
-            "Profile '{profile}': DNS redirect {listen}:53 -> :{port} on {tun}              (clients are told 53; the proxy listens on {port})"
-        );
-        true
-    } else {
-        log::error!(
-            "Profile '{profile}': FAILED to install the DNS redirect {listen}:53 -> :{port} on              {tun}. Clients would be handed a resolver they cannot reach — set dns.port = 53,              or fix iptables."
-        );
-        false
+        // VERIFY rather than trust the exit code — `iptables-nft` can report success for a rule
+        // it did not install, which is why every other rule here is checked the same way.
+        if !rule_present(&path, "nat", "PREROUTING", &args) {
+            log::error!(
+                "Profile '{profile}': FAILED to install the DNS redirect {listen}:53/{proto} -> \
+                 :{port} on {tun}. Clients would be handed a resolver they cannot reach — set \
+                 dns.port = 53, or fix iptables."
+            );
+            return false;
+        }
     }
+    log::info!(
+        "Profile '{profile}': DNS redirect {listen}:53 -> :{port} on {tun}, udp+tcp \
+         (clients are told 53; the proxy listens on {port})"
+    );
+    true
 }
 
 /// Remove every NAT rule tagged for `profile` (idempotent; a no-op if none exist or
