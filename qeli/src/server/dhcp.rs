@@ -265,11 +265,10 @@ impl DhcpServer {
             reply.len()
         );
 
-        let broadcast = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::BROADCAST),
-            DHCP_CLIENT_PORT,
-        );
-        match socket.send_to(&reply, broadcast).await {
+        // A DISCOVER comes from a client with no address, so this is normally the broadcast —
+        // but a relayed one must go back to the relay, or it never reaches the client.
+        let dest = Self::reply_destination(data);
+        match socket.send_to(&reply, dest).await {
             Ok(n) => log::info!(
                 "DHCP OFFER {} sent to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} ({} bytes)",
                 offered_ip,
@@ -286,8 +285,63 @@ impl DhcpServer {
         Ok(())
     }
 
+    /// Where a reply for `data` must be sent (RFC 2131 §4.1).
+    ///
+    /// Everything used to go to the limited broadcast address. That is right for a client that
+    /// has no address yet, and wrong for the two cases below — and on a shared segment it also
+    /// means every reply is seen by every host.
+    ///
+    ///   * `giaddr` non-zero: the request came through a RELAY, and the reply belongs to the
+    ///     relay's SERVER port so it can be forwarded back down. Broadcasting instead simply
+    ///     never reached a client on the far side of the relay — DHCP through a relay could
+    ///     not work at all.
+    ///   * `ciaddr` non-zero with the BROADCAST flag clear: a RENEWING client already has the
+    ///     address and asked to be answered directly.
+    ///
+    /// (Audit 2026-08-01, §12.)
+    fn reply_destination(data: &[u8]) -> std::net::SocketAddr {
+        let broadcast = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::BROADCAST),
+            DHCP_CLIENT_PORT,
+        );
+        if data.len() < 44 {
+            return broadcast;
+        }
+        let giaddr = Ipv4Addr::new(data[24], data[25], data[26], data[27]);
+        if !giaddr.is_unspecified() {
+            return std::net::SocketAddr::new(std::net::IpAddr::V4(giaddr), DHCP_SERVER_PORT);
+        }
+        // flags (bytes 10..12), high bit = BROADCAST.
+        let wants_broadcast = data[10] & 0x80 != 0;
+        let ciaddr = Ipv4Addr::new(data[12], data[13], data[14], data[15]);
+        if !wants_broadcast && !ciaddr.is_unspecified() {
+            return std::net::SocketAddr::new(std::net::IpAddr::V4(ciaddr), DHCP_CLIENT_PORT);
+        }
+        broadcast
+    }
+
+    /// True when Option 54 (Server Identifier) names a DIFFERENT server.
+    ///
+    /// A client in SELECTING state puts the server it chose in the DHCPREQUEST it broadcasts.
+    /// Every other server on the segment must then stay SILENT — answering means NAKing a
+    /// perfectly good lease another server just offered, which knocks the client back to
+    /// DISCOVER and can loop as long as both servers keep replying. This proxy answered every
+    /// request it saw, so on a shared network it actively broke other people's DHCP.
+    /// (Audit 2026-08-01, §12.)
+    fn addressed_to_other_server(data: &[u8], me: Ipv4Addr) -> bool {
+        match Self::find_dhcp_option(data, DHCP_OPTION_SERVER_ID).and_then(|o| o.get(2..6)) {
+            Some(b) => Ipv4Addr::new(b[0], b[1], b[2], b[3]) != me,
+            None => false, // no Option 54: RENEWING/REBINDING, addressed to whoever answers
+        }
+    }
+
     async fn handle_request(&self, data: &[u8], socket: &UdpSocket) -> anyhow::Result<()> {
         let mac = MacAddr::from_bytes(&data[28..34]);
+        // Not for us — say nothing at all. See `addressed_to_other_server`.
+        if Self::addressed_to_other_server(data, self.server_ip) {
+            log::debug!("DHCP: REQUEST selects another server, staying silent");
+            return Ok(());
+        }
         // Prefer Option 50 (Requested IP Address). If absent, fall back to ciaddr
         // (BOOTP header bytes 12..16), where a RENEWING/REBINDING client carries
         // its current address. Option 54 (Server Identifier) is NOT a source of
@@ -302,10 +356,8 @@ impl DhcpServer {
                 (!ip.is_unspecified()).then_some(ip)
             });
 
-        let broadcast = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::BROADCAST),
-            DHCP_CLIENT_PORT,
-        );
+        // Relay-aware, and unicast to a RENEWING client that asked for it.
+        let broadcast = Self::reply_destination(data);
 
         // Never ACK an address just because the client asked for it. Run the
         // request through the real allocator (which honours this MAC's existing
@@ -590,6 +642,80 @@ mod tests {
         d.push(0x01);
         // Must return None (bounded), never panic / OOB.
         assert_eq!(DhcpServer::find_dhcp_option_pub(&d, 53), None);
+    }
+
+    /// A DHCPREQUEST that names ANOTHER server must be ignored, not answered.
+    ///
+    /// A client in SELECTING state puts the server it chose in Option 54. Answering anyway
+    /// means NAKing a lease another server just offered, which knocks the client back to
+    /// DISCOVER and can loop for as long as both servers keep replying — so on a shared
+    /// segment this proxy actively broke other people's DHCP. No Option 54 at all is a
+    /// RENEWING/REBINDING client, addressed to whoever can answer. (Audit 2026-08-01, §12.)
+    #[test]
+    fn a_request_selecting_another_server_is_ignored() {
+        let me = Ipv4Addr::new(10, 8, 0, 1);
+        fn with_server_id(ip: [u8; 4]) -> Vec<u8> {
+            let mut d = vec![0u8; 240];
+            d[236..240].copy_from_slice(&[99, 130, 83, 99]);
+            d.extend_from_slice(&[53, 1, 3]); // REQUEST
+            d.extend_from_slice(&[54, 4, ip[0], ip[1], ip[2], ip[3]]);
+            d.push(255);
+            d
+        }
+        assert!(DhcpServer::addressed_to_other_server(
+            &with_server_id([10, 8, 0, 99]),
+            me
+        ));
+        assert!(!DhcpServer::addressed_to_other_server(
+            &with_server_id([10, 8, 0, 1]),
+            me
+        ));
+        // No Option 54 — a renewing client, ours to answer.
+        let mut renew = dhcp_base();
+        renew.extend_from_slice(&[53, 1, 3]);
+        renew.push(255);
+        assert!(!DhcpServer::addressed_to_other_server(&renew, me));
+    }
+
+    /// Replies go to the relay, or unicast to a renewing client, or broadcast — in that order.
+    ///
+    /// Everything used to be broadcast, which meant DHCP through a relay could not work at all
+    /// (the reply never crossed back) and every renewal was seen by every host on the segment.
+    /// (Audit 2026-08-01, §12.)
+    #[test]
+    fn replies_are_addressed_per_rfc_2131() {
+        let bcast = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(Ipv4Addr::BROADCAST),
+            DHCP_CLIENT_PORT,
+        );
+
+        // A fresh DISCOVER: no ciaddr, no giaddr — broadcast.
+        assert_eq!(DhcpServer::reply_destination(&dhcp_base()), bcast);
+
+        // Relayed: back to the relay's SERVER port, whatever else the packet says.
+        let mut relayed = dhcp_base();
+        relayed[24..28].copy_from_slice(&[10, 9, 0, 1]);
+        relayed[12..16].copy_from_slice(&[10, 8, 0, 5]); // ciaddr must not win over giaddr
+        assert_eq!(
+            DhcpServer::reply_destination(&relayed),
+            std::net::SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(10, 9, 0, 1)), 67)
+        );
+
+        // Renewing with the broadcast flag CLEAR: straight to the client.
+        let mut renew = dhcp_base();
+        renew[12..16].copy_from_slice(&[10, 8, 0, 5]);
+        assert_eq!(
+            DhcpServer::reply_destination(&renew),
+            std::net::SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(10, 8, 0, 5)), 68)
+        );
+
+        // ...but a client that SET the broadcast flag is honoured, address or not.
+        let mut wants_bcast = renew.clone();
+        wants_bcast[10] = 0x80;
+        assert_eq!(DhcpServer::reply_destination(&wants_bcast), bcast);
+
+        // A runt packet must not index out of bounds.
+        assert_eq!(DhcpServer::reply_destination(&[0u8; 12]), bcast);
     }
 
     #[test]
