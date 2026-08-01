@@ -202,6 +202,55 @@ impl IpPool {
         None
     }
 
+    /// Allocate for `key` from a SUB-RANGE of the pool, or `None` when that sub-range is full.
+    ///
+    /// DHCP needs this because it hands out addresses from its own window (`dhcp.pool_start`
+    /// .. `dhcp.pool_end`) while sharing one allocator with the VPN, and the ordinary
+    /// [`Self::allocate`] knows nothing about that window. Asking it and then rejecting the
+    /// answer did not merely waste a call — it DEADLOCKED the service: the rejected address
+    /// went back via `release`, which pushes onto `freed`, and `freed` is exactly what the
+    /// next `allocate` pops FIRST. So every DHCPDISCOVER got the same out-of-window address
+    /// back, released it again, and reported "no IP available" while the configured window sat
+    /// entirely free. (Audit 2026-08-01, §1.)
+    ///
+    /// Idempotent while the key's existing address is still inside the window, so a repeated
+    /// DHCPREQUEST keeps its lease rather than consuming another address.
+    pub fn allocate_in_range(&mut self, key: &str, lo: u32, hi: u32) -> Option<Ipv4Addr> {
+        if let Some(&cur) = self.user_allocations.get(key) {
+            if cur >= lo && cur <= hi {
+                return Some(ip_from_u32(cur));
+            }
+            // Held an address OUTSIDE the window (e.g. the VPN side allocated it first):
+            // give it up so it can serve someone else rather than pinning two per client.
+            self.allocated.remove(&cur);
+            self.freed.push(cur);
+            self.user_allocations.remove(key);
+        }
+        // Linear scan of the window. `freed` is not consulted separately: an address released
+        // earlier is simply absent from `allocated`, so the scan picks it up naturally, and
+        // `allocate`'s own `freed` pop re-checks `allocated` before handing anything out — so
+        // an entry left behind there can never be issued twice.
+        let start = lo.max(self.start_ip);
+        let end = hi.min(self.end_ip);
+        let mut ip_val = start;
+        while ip_val <= end {
+            if !self.excluded.contains(&ip_val)
+                && !self.reserved.contains(&ip_val)
+                && !self.allocated.contains(&ip_val)
+            {
+                self.allocated.insert(ip_val);
+                self.user_allocations.insert(key.to_string(), ip_val);
+                return Some(ip_from_u32(ip_val));
+            }
+            // The window can end at u32::MAX in principle; stop rather than wrap.
+            ip_val = match ip_val.checked_add(1) {
+                Some(v) => v,
+                None => break,
+            };
+        }
+        None
+    }
+
     /// Assign a SPECIFIC in-range address to `key`, stealing it from any current holder
     /// (variant-b static IP: a user's fixed address always wins — the caller evicts the
     /// holder's session, then this reassigns the address). Idempotent for the same key.
@@ -295,6 +344,51 @@ mod tests {
             exclude: Vec::new(),
             static_reservations: HashMap::new(),
         }
+    }
+
+    /// A sub-range allocation must come FROM that sub-range, and must keep working.
+    ///
+    /// This models the DHCP deadlock: the service asked the shared allocator for any address,
+    /// got one below its window, released it — and `release` pushes onto `freed`, which the
+    /// next `allocate` pops FIRST. So every request received the same out-of-window address,
+    /// released it again, and reported "no IP available" while the window sat entirely free.
+    /// (Audit 2026-08-01, §1.)
+    #[test]
+    fn allocating_from_a_sub_range_stays_in_it_and_does_not_deadlock() {
+        let mut pool = IpPool::new(&pool_config("10.8.0.0/24")).unwrap();
+        let (lo, hi) = (u32_from_ip("10.8.0.100".parse().unwrap()),
+                        u32_from_ip("10.8.0.102".parse().unwrap()));
+
+        // The VPN side takes the low addresses first, exactly as it does in practice.
+        assert_eq!(pool.allocate("vpn-user").unwrap().to_string(), "10.8.0.2");
+
+        // Every address handed out for the window must be INSIDE the window...
+        let mut got = Vec::new();
+        for mac in ["aa", "bb", "cc"] {
+            let ip = pool
+                .allocate_in_range(mac, lo, hi)
+                .unwrap_or_else(|| panic!("{mac}: the window has free addresses"));
+            let v = u32_from_ip(ip);
+            assert!((lo..=hi).contains(&v), "{mac}: {ip} is outside the window");
+            got.push(ip.to_string());
+        }
+        // ...and distinct, so a repeat request cannot hand two clients one address.
+        got.sort();
+        assert_eq!(got, ["10.8.0.100", "10.8.0.101", "10.8.0.102"]);
+
+        // A full window reports exhaustion rather than escaping it.
+        assert_eq!(pool.allocate_in_range("dd", lo, hi), None);
+
+        // Idempotent for a key that already holds an in-window address (a repeated
+        // DHCPREQUEST must keep its lease, not consume another address).
+        assert_eq!(pool.allocate_in_range("aa", lo, hi).unwrap().to_string(), "10.8.0.100");
+
+        // Releasing one frees it for the next caller — the loop that used to spin.
+        pool.release("bb");
+        assert_eq!(pool.allocate_in_range("ee", lo, hi).unwrap().to_string(), "10.8.0.101");
+
+        // The VPN side is untouched by any of it.
+        assert_eq!(pool.get_ip_by_username("vpn-user").unwrap().to_string(), "10.8.0.2");
     }
 
     /// `pool.reservation.<user>` must be ASSIGNABLE to its owner. Regression guard: the

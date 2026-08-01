@@ -372,72 +372,51 @@ impl DhcpServer {
                 let idx = (pref_u32 - self.pool_start) as usize;
                 if idx < leases.len() && leases[idx].is_none() {
                     let mut pool = self.shared_pool.lock().await;
-                    // Temporarily allocate under this MAC's key; if the slot is taken in the
-                    // shared pool it will return a different address — fall through below.
-                    if pool.get_ip_by_username(&mac_str).is_none() {
-                        if let Some(allocated) = pool.allocate(&mac_str) {
-                            if allocated == pref {
-                                leases[idx] = Some(DhcpLease {
-                                    ip: pref,
-                                    mac: *mac,
-                                    expires_at: now_secs + self.lease_time_secs as u64,
-                                });
-                                return Some(pref);
-                            }
-                            // Got a different IP from pool — only hand it out if it
-                            // falls inside our DHCP index range, where the expiry
-                            // sweep can track and release it. An out-of-range address
-                            // has no lease slot: previously it was returned untracked
-                            // and leaked forever. Release it back to the pool and
-                            // report no-IP so we never lease what we cannot reclaim.
-                            let alloc_u32 = u32_from_ip(allocated);
-                            if alloc_u32 >= self.pool_start && alloc_u32 <= self.pool_end {
-                                let alloc_idx = (alloc_u32 - self.pool_start) as usize;
-                                if alloc_idx < leases.len() {
-                                    leases[alloc_idx] = Some(DhcpLease {
-                                        ip: allocated,
-                                        mac: *mac,
-                                        expires_at: now_secs + self.lease_time_secs as u64,
-                                    });
-                                    return Some(allocated);
-                                }
-                            }
-                            log::warn!(
-                                "DHCP: pool returned out-of-range {} (not in DHCP index), releasing",
-                                allocated
-                            );
-                            pool.release(&mac_str);
-                            return None;
-                        }
+                    // Ask for the requested address SPECIFICALLY. `allocate_fixed` returns it
+                    // or nothing, so a client re-requesting the address it already had keeps
+                    // it; anything else falls through to the windowed dynamic path below,
+                    // which is where the shared allocator is consulted at all.
+                    if pool.get_ip_by_username(&mac_str).is_none()
+                        && pool.allocate_fixed(&mac_str, pref).is_some()
+                    {
+                        leases[idx] = Some(DhcpLease {
+                            ip: pref,
+                            mac: *mac,
+                            expires_at: now_secs + self.lease_time_secs as u64,
+                        });
+                        return Some(pref);
                     }
                 }
             }
         }
 
-        // Dynamic allocation through the shared pool
+        // Dynamic allocation, constrained to the DHCP window.
+        //
+        // This used to call the plain `pool.allocate()` and then reject anything outside the
+        // window — which did not just waste the call, it DEADLOCKED the service. The rejected
+        // address went back through `release`, `release` pushes onto the pool's `freed` list,
+        // and `freed` is exactly what the next `allocate` pops FIRST. Every DHCPDISCOVER
+        // therefore received the same out-of-window address, released it again, and reported
+        // "no IP available" while the configured window sat entirely free. Asking the pool for
+        // an address IN the window removes the reject-and-retry loop altogether.
+        // (Audit 2026-08-01, §1.)
         let mut pool = self.shared_pool.lock().await;
-        if let Some(allocated) = pool.allocate(&mac_str) {
+        if let Some(allocated) = pool.allocate_in_range(&mac_str, self.pool_start, self.pool_end) {
             let alloc_u32 = u32_from_ip(allocated);
-            if alloc_u32 >= self.pool_start && alloc_u32 <= self.pool_end {
-                let alloc_idx = (alloc_u32 - self.pool_start) as usize;
-                if alloc_idx < leases.len() {
-                    leases[alloc_idx] = Some(DhcpLease {
-                        ip: allocated,
-                        mac: *mac,
-                        expires_at: now_secs + self.lease_time_secs as u64,
-                    });
-                    return Some(allocated);
-                }
+            let alloc_idx = (alloc_u32 - self.pool_start) as usize;
+            if alloc_idx < leases.len() {
+                leases[alloc_idx] = Some(DhcpLease {
+                    ip: allocated,
+                    mac: *mac,
+                    expires_at: now_secs + self.lease_time_secs as u64,
+                });
+                return Some(allocated);
             }
-            // Out of the DHCP index range — no lease slot exists, so the expiry
-            // sweep could never release it (leak). Give it back and report
-            // no-IP rather than handing out an untrackable address.
-            log::warn!(
-                "DHCP: pool returned out-of-range {} (not in DHCP index), releasing",
-                allocated
-            );
+            // The window and the lease table are built from the same bounds, so this cannot
+            // happen — but handing out an address with no lease slot would leak it forever
+            // (nothing could ever expire it), so give it back rather than trust the invariant.
+            log::warn!("DHCP: {allocated} has no lease slot, releasing");
             pool.release(&mac_str);
-            return None;
         }
 
         None

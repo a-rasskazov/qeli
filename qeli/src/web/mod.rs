@@ -712,12 +712,35 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
                 return;
             }
         };
-        log::info!("Web UI (HTTPS) listening on https://{}", addr);
+        // Bind EXPLICITLY, before reporting success.
+        //
+        // `axum_server::bind_rustls` binds lazily inside `serve`, so the obvious version of
+        // this — parse the address, report true, hand it to `serve` — announced a panel that
+        // had not yet touched the port, and the commonest failure of all (the port is taken)
+        // arrived afterwards as a log line under a "panel on" status. Parsing a `SocketAddr`
+        // says nothing about whether anything can listen on it. `from_tcp_rustls` takes a
+        // listener we already own, which is what makes the report truthful.
+        // (Audit 2026-08-01, §4.)
+        let listener = match std::net::TcpListener::bind(sockaddr) {
+            Ok(l) => l,
+            Err(e) => {
+                log::error!("Web UI failed to bind {addr}: {e}");
+                report(false);
+                return;
+            }
+        };
         let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_config(tls_cfg);
-        // `bind_rustls` binds lazily inside `serve`, so there is no listener to check first;
-        // reaching here means the configuration is sound and the port was free at parse time.
+        let server = match axum_server::from_tcp_rustls(listener, rustls_cfg) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Web panel could not adopt the listener on {addr}: {e}");
+                report(false);
+                return;
+            }
+        };
+        log::info!("Web UI (HTTPS) listening on https://{}", addr);
         report(true);
-        if let Err(e) = axum_server::bind_rustls(sockaddr, rustls_cfg).serve(make).await {
+        if let Err(e) = server.serve(make).await {
             log::error!("Web panel (HTTPS) stopped: {e}");
         }
     } else {
