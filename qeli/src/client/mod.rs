@@ -2641,7 +2641,13 @@ async fn probe_udp_mtu(
 fn mtu_probe_ladder(ceiling: i32, outer_overhead: usize) -> Vec<i32> {
     const PATH_FLOOR: i32 = 1280; // IPv6 minimum path MTU — the narrowest path we must serve
     let floor = (PATH_FLOOR - outer_overhead as i32).clamp(576, ceiling);
-    let mut ladder: Vec<i32> = [ceiling, 1360, 1320, 1280, 1200, floor]
+    // The jumbo rungs (9000..1500) exist because the ceiling stopped being an Ethernet number.
+    // While it was 1500 the next rung down was 1360 and the gap was 140 bytes; once the ceiling
+    // became 16638 the same ladder went straight from 16638 to 1360, so a path that carries
+    // 9000 — an ordinary jumbo LAN, which is exactly who configures a large MTU — was certified
+    // at 1360 and lost ~85% of its frame. These rungs cost nothing on a normal path: they are
+    // all above a 1500 ceiling and the filter below drops them. (Audit 2026-08-01, §8.)
+    let mut ladder: Vec<i32> = [ceiling, 9000, 4000, 2000, 1500, 1360, 1320, 1280, 1200, floor]
         .into_iter()
         .filter(|&m| (floor..=ceiling).contains(&m))
         .collect();
@@ -2683,6 +2689,53 @@ mod mtu_ladder_tests {
         let ladder = mtu_probe_ladder(1000, 48 + 13 + 9 + 8 + 40);
         assert!(!ladder.is_empty());
         assert!(ladder.iter().all(|&m| m <= 1000));
+    }
+
+    /// A jumbo ceiling must not fall straight to 1360.
+    ///
+    /// The ladder was written when the ceiling was an Ethernet-sized number, so the rung below
+    /// it was 1360 and the gap was 140 bytes. Raising the ceiling to 16638 turned that same gap
+    /// into 15278: a path carrying 9000 — an ordinary jumbo LAN, and precisely the setup where
+    /// someone configures a large MTU — probed 16638, failed, and was certified at 1360.
+    /// (Audit 2026-08-01, §8.)
+    #[test]
+    fn a_jumbo_ceiling_has_rungs_between_it_and_1360() {
+        let overhead = 48 + 13 + 9 + 8 + 40;
+        let ladder = mtu_probe_ladder(16638, overhead);
+        let jumbo: Vec<i32> = ladder
+            .iter()
+            .copied()
+            .filter(|&m| (1360..16638).contains(&m))
+            .collect();
+        assert!(
+            jumbo.len() >= 3,
+            "a jumbo ceiling needs intermediate rungs, got {ladder:?}"
+        );
+        // The specific case that regressed: a 9000-byte path must certify near 9000, not 1360.
+        let best_under_9000 = ladder
+            .iter()
+            .copied()
+            .find(|&m| m + overhead as i32 <= 9000)
+            .expect("some rung must fit a 9000-byte path");
+        assert!(
+            best_under_9000 >= 4000,
+            "a 9000-byte path certified at {best_under_9000}, wasting most of the frame"
+        );
+        assert!(
+            ladder.windows(2).all(|w| w[0] > w[1]),
+            "ladder must descend: {ladder:?}"
+        );
+    }
+
+    /// ...and a normal 1500-class path must be probed exactly as before, so the jumbo rungs
+    /// cost no extra round-trips for the common case.
+    #[test]
+    fn a_normal_ceiling_gains_no_extra_rungs() {
+        let overhead = 48 + 13 + 9 + 8 + 40;
+        assert_eq!(
+            mtu_probe_ladder(1400, overhead),
+            vec![1400, 1360, 1320, 1280, 1200, 1280 - overhead as i32]
+        );
     }
 }
 

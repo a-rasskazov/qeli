@@ -110,6 +110,29 @@ final class UDPDataPlaneTests: XCTestCase {
         XCTAssertLessThanOrEqual(tiny.candidates.first ?? .max, 700)
     }
 
+    /// A JUMBO ceiling must not fall straight to 1360.
+    ///
+    /// The ladder was written when the ceiling was an Ethernet-sized number, so the rung below
+    /// it was 1360 and the gap was 140 bytes. Raising the ceiling to 16638 turned that same gap
+    /// into 15278: a path carrying 9000 — an ordinary jumbo LAN, and precisely the setup where
+    /// someone configures a large MTU — probed 16638, failed, and was certified at 1360.
+    /// (Audit 2026-08-01, §8.)
+    func testAJumboCeilingHasRungsBetweenItAnd1360() {
+        let overhead = 48 + 13 + 9 + 8 + 40
+        let rungs = UDPPathMTUProbePolicy(ceiling: 16_638, outerOverhead: overhead).candidates
+        XCTAssertGreaterThanOrEqual(rungs.filter { (1_360..<16_638).contains($0) }.count, 3,
+                                    "a jumbo ceiling needs intermediate rungs, got \(rungs)")
+        let bestUnder9000 = rungs.first { $0 + overhead <= 9_000 } ?? 0
+        XCTAssertGreaterThanOrEqual(bestUnder9000, 4_000,
+                                    "a 9000-byte path certified at \(bestUnder9000)")
+
+        // ...and a normal path is probed exactly as before, so the jumbo rungs cost no extra
+        // round-trips for the common case.
+        XCTAssertEqual(
+            UDPPathMTUProbePolicy(ceiling: 1_400, outerOverhead: overhead).candidates,
+            [1_400, 1_360, 1_320, 1_280, 1_200, 1_280 - overhead])
+    }
+
     private func tlsRecord(body: Data) -> Data {
         var record = Data([0x16, 0x03, 0x03, UInt8((body.count >> 8) & 0xff), UInt8(body.count & 0xff)])
         record.append(body)

@@ -250,6 +250,36 @@ class WireConformanceTest {
     }
 
     /**
+     * A JUMBO ceiling must not fall straight to 1360.
+     *
+     * The ladder was written when the ceiling was an Ethernet-sized number, so the rung below it
+     * was 1360 and the gap was 140 bytes. Raising the ceiling to 16638 turned that same gap into
+     * 15278: a path carrying 9000 — an ordinary jumbo LAN, and precisely the setup where someone
+     * configures a large MTU — probed 16638, failed, and was certified at 1360.
+     * (Audit 2026-08-01, §8.)
+     */
+    @Test
+    fun `a jumbo ceiling has rungs between it and 1360`() {
+        val overhead = 48 + 13 + 9 + 8 + 40
+        val ladder = MtuLadder.rungs(16638, overhead)
+        assertTrue(
+            "a jumbo ceiling needs intermediate rungs, got $ladder",
+            ladder.count { it in 1360 until 16638 } >= 3,
+        )
+        val bestUnder9000 = ladder.first { it + overhead <= 9000 }
+        assertTrue(
+            "a 9000-byte path certified at $bestUnder9000, wasting most of the frame",
+            bestUnder9000 >= 4000,
+        )
+        // ...and a normal path is probed exactly as before, so the jumbo rungs cost no extra
+        // round-trips for the common case.
+        assertEquals(
+            listOf(1400, 1360, 1320, 1280, 1200, 1280 - overhead),
+            MtuLadder.rungs(1400, overhead),
+        )
+    }
+
+    /**
      * The exact bytes of the in-tunnel MTU report, pinned identically in the Rust, C# and Swift
      * ports. A port that drifts on byte order or the magic makes the server read a nonsense MTU.
      */

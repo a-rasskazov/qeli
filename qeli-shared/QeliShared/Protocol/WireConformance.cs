@@ -163,7 +163,25 @@ public static class WireConformance
         var tiny = Vpn.VpnTunnelBase.MtuProbeLadder(700, 48 + 13 + 9 + 8 + 40);
         check("mtu-ladder: a low ceiling still produces a rung", tiny.Length > 0 && tiny[0] <= 700);
 
-        return floorFits && descending && nonEmpty && tiny.Length > 0;
+        // A JUMBO ceiling must not fall straight to 1360. The ladder was written when the
+        // ceiling was an Ethernet-sized number, so the rung below it was 1360 and the gap was
+        // 140 bytes; raising the ceiling to 16638 turned that gap into 15278, and a path
+        // carrying 9000 was certified at 1360. (Audit 2026-08-01, §8.)
+        int jumboOverhead = 48 + 13 + 9 + 8 + 40;
+        var jumbo = Vpn.VpnTunnelBase.MtuProbeLadder(16638, jumboOverhead);
+        bool hasMiddle = jumbo.Count(m => m >= 1360 && m < 16638) >= 3;
+        int under9000 = jumbo.FirstOrDefault(m => m + jumboOverhead <= 9000);
+        bool jumboUseful = under9000 >= 4000;
+        check("mtu-ladder: a jumbo ceiling has rungs between it and 1360", hasMiddle);
+        check("mtu-ladder: a 9000-byte path certifies near 9000, not 1360", jumboUseful);
+        // ...and a normal path is probed exactly as before, so the jumbo rungs cost no extra
+        // round-trips for the common case.
+        bool normalUnchanged = Vpn.VpnTunnelBase.MtuProbeLadder(1400, jumboOverhead)
+            .SequenceEqual(new[] { 1400, 1360, 1320, 1280, 1200, 1280 - jumboOverhead });
+        check("mtu-ladder: a normal ceiling gains no extra rungs", normalUnchanged);
+
+        return floorFits && descending && nonEmpty && tiny.Length > 0
+            && hasMiddle && jumboUseful && normalUnchanged;
     }
 
     /// <summary>In-tunnel control frames. Not fixture-driven — the frame is six bytes, so the

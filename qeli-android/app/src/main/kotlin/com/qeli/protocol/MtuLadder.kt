@@ -25,7 +25,14 @@ object MtuLadder {
      */
     fun rungs(ceiling: Int, outerOverhead: Int): List<Int> {
         val floor = (PATH_FLOOR - outerOverhead).coerceIn(576, maxOf(ceiling, 576))
-        return listOf(ceiling, 1360, 1320, 1280, 1200, floor)
+        // The jumbo rungs (9000..1500) exist because the ceiling stopped being an Ethernet
+        // number. While it was 1500 the next rung down was 1360 and the gap was 140 bytes; once
+        // the ceiling became 16638 the same ladder went straight from 16638 to 1360, so a path
+        // that carries 9000 — an ordinary jumbo LAN, which is exactly who configures a large
+        // MTU — was certified at 1360 and lost ~85% of its frame. These cost nothing on a
+        // normal path: they are all above a 1500 ceiling and the filter drops them.
+        // (Audit 2026-08-01, §8.)
+        return listOf(ceiling, 9000, 4000, 2000, 1500, 1360, 1320, 1280, 1200, floor)
             .filter { it in floor..ceiling }
             .distinct()
             .sortedDescending()
