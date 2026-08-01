@@ -471,6 +471,13 @@ fn rule_comment(line: &str) -> Option<String> {
 fn cleanup_matching(path: &str, needle: &str, exact: bool) {
     for (table, chain) in [
         ("nat", "POSTROUTING"),
+        // `nat/PREROUTING` holds the `dns.port` REDIRECT installed by `enable_dns_redirect`,
+        // and it was missing from this list — so that rule was never removed by ANYTHING:
+        // not a profile stop, not `cleanup_all()` at worker startup, not shutdown. Every
+        // restart appended another copy, and a profile that changed `dns.port` (or turned DNS
+        // off) left a rule still redirecting :53 to a port nothing listens on any more.
+        // (Audit 2026-08-01, follow-up to §5.)
+        ("nat", "PREROUTING"),
         ("filter", "FORWARD"),
         ("mangle", "FORWARD"),
     ] {

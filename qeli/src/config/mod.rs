@@ -97,8 +97,22 @@ pub fn parse_server_config_reporting(
 ) -> anyhow::Result<(server::ServerConfig, Vec<String>)> {
     let doc = format::IniDoc::parse(s)?;
     let cfg = server::ServerConfig::from_ini(&doc)?;
-    let bad = doc.bad_values();
-    Ok((cfg, bad))
+    let mut findings = doc.bad_values();
+    // Misspelled key NAMES, which this path did not look at AT ALL. Only the value-level
+    // findings were surfaced, so `kill_switch = ture` warned while `kill_swtich = true` — the
+    // same setting, silently off, one letter away — produced nothing anywhere but
+    // `check-config`, a command nobody runs on an already-working server. The client has
+    // refused both since §4; the server reports both and still starts, for the reason above.
+    // (Audit 2026-08-01, §1.)
+    let unknown = unknown_keys(&doc, false);
+    if !unknown.is_empty() {
+        findings.push(format!(
+            "unknown key(s), likely misspelled — nothing reads these, so the setting they were \
+             meant to change is at its default: {}",
+            unknown.join(", ")
+        ));
+    }
+    Ok((cfg, findings))
 }
 
 pub fn parse_client_config_strict(s: &str) -> anyhow::Result<client::ClientConfig> {

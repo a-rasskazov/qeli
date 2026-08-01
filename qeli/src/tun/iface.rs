@@ -176,27 +176,43 @@ impl TunInterface {
     }
 
     pub fn delete(ifname: &str) -> io::Result<()> {
-        // Try both tuntap modes. The device is exactly one type, and the name prefix
-        // doesn't reliably tell us which (a TAP may be named "vpn0", a TUN "tap0").
-        // The matching mode removes it; the other no-ops with "No such device". This
-        // stays scoped to tuntap, so a same-named non-tuntap interface (WireGuard /
-        // ethernet) is never touched.
+        // Try both tuntap modes, each with and without `multi_queue`. The device is exactly
+        // one combination, and the name prefix doesn't reliably tell us which (a TAP may be
+        // named "vpn0", a TUN "tap0"). The matching form removes it; the others no-op with
+        // "No such device". This stays scoped to tuntap, so a same-named non-tuntap interface
+        // (WireGuard / ethernet) is never touched.
+        //
+        // The `multi_queue` variants are why this is a four-way loop rather than the original
+        // two: `ip tuntap del` reconstructs the interface flags and calls TUNSETIFF, so
+        // deleting an IFF_MULTI_QUEUE device WITHOUT that flag fails with a bare
+        // `ioctl(TUNSETIFF): Invalid argument`. Every server profile creates a multi-queue
+        // device (`create_multiqueue`, queues default to one per core), so this function could
+        // not delete the devices this codebase actually makes — silently, because both call
+        // sites used `.ok()`. That left a stale interface behind whenever a profile stopped or
+        // failed to start, and made the "delete any leftover first" step at profile start a
+        // no-op. Verified on the lab: plain del → EINVAL and the device survives; with
+        // `multi_queue` → removed. (Audit 2026-08-01, §5.)
         let mut hard_err = None;
         for mode in ["tun", "tap"] {
-            let output = std::process::Command::new("ip")
-                .args(["tuntap", "del", "mode", mode, "name", ifname])
-                .output()?;
-            if output.status.success() {
-                return Ok(());
+            for mq in [true, false] {
+                let mut args = vec!["tuntap", "del", "mode", mode];
+                if mq {
+                    args.push("multi_queue");
+                }
+                args.extend(["name", ifname]);
+                let output = std::process::Command::new("ip").args(&args).output()?;
+                if output.status.success() {
+                    return Ok(());
+                }
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("No such device") || stderr.contains("does not exist") {
+                    continue; // wrong mode/queueing for this device, or it's already gone
+                }
+                hard_err = Some(stderr.to_string());
             }
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("No such device") || stderr.contains("does not exist") {
-                continue; // wrong mode for this device, or it's already gone
-            }
-            hard_err = Some(stderr.to_string());
         }
-        // Neither mode deleted it: either it was absent (fine) or one mode failed for
-        // a real reason (busy/permission) — surface that.
+        // Nothing deleted it: either it was absent (fine) or one form failed for a real reason
+        // (busy/permission) — surface that.
         match hard_err {
             Some(e) => Err(io::Error::other(e)),
             None => Ok(()),

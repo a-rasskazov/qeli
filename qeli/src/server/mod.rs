@@ -785,6 +785,46 @@ pub fn generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<StaticKeypai
 /// Schema checks the data-plane worker runs before binding anything. Public so
 /// the `check-config` subcommand (a separate bin crate) reaches the exact same
 /// validation, and its verdict cannot drift from a real start.
+/// One address a profile will actually listen on — its primary `bind`, or one of its extra
+/// `listen` specs.
+struct BoundEndpoint {
+    host: String,
+    port: u16,
+    transport: String,
+    profile: String,
+    /// The spelling from the config, so an error can point at the line the operator wrote.
+    label: String,
+}
+
+/// Normalise a bind host for comparison: lowercase, IPv6 brackets stripped, and IP literals
+/// put in canonical form so `[::]` and `::` (or `010.0.0.1` and `10.0.0.1`) are one address.
+fn normalize_bind_host(host: &str) -> String {
+    let h = host.trim().trim_start_matches('[').trim_end_matches(']');
+    match h.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.to_string(),
+        Err(_) => h.to_ascii_lowercase(),
+    }
+}
+
+/// True for an address that means "every address on this host", which therefore overlaps every
+/// concrete address on the same port.
+fn is_wildcard_bind_host(host: &str) -> bool {
+    matches!(host, "" | "*" | "0.0.0.0" | "::")
+}
+
+/// Split an already-form-validated `addr:port` spec into a comparable (host, port).
+fn split_listen_spec(spec: &str) -> Option<(String, u16)> {
+    let addr = spec.trim();
+    if let Ok(sa) = addr.parse::<std::net::SocketAddr>() {
+        return Some((sa.ip().to_string(), sa.port()));
+    }
+    let (host, port) = addr.rsplit_once(':')?;
+    Some((normalize_bind_host(host), port.parse().ok()?))
+}
+
+/// Longest interface name the kernel will accept, from `IFNAMSIZ` (16) minus the NUL.
+const MAX_IFNAME_LEN: usize = 15;
+
 pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
     // Both brute-force policies, before anything profile-specific. This function is the
     // one gate every write path shares — `check-config`, worker startup, `PUT /api/config`
@@ -800,9 +840,30 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         .brute_force
         .validate("[web]")
         .map_err(|e| anyhow::anyhow!(e))?;
+    // The panel binds `web.port`, and 0 gives an ephemeral port while the log still prints the
+    // configured zero — the operator is told an address that was never listened on.
+    //
+    // This check used to sit INSIDE the per-profile loop, and inside that loop's
+    // `if p.dns.enabled` branch, so it ran once per DNS-enabled profile and not at all when no
+    // profile served DNS — `[web]` has nothing to do with either. Belongs here with the other
+    // whole-config checks. (Audit 2026-08-01, §9.)
+    if config.web.enabled && config.web.port == 0 {
+        anyhow::bail!(
+            "web.port = 0 would bind an ephemeral port while the log reports 0 — set the \
+             port you actually reach the panel on"
+        );
+    }
     let mut seen = std::collections::HashSet::new();
-    // (address, port, transport) -> profile that claimed it first.
-    let mut endpoints: std::collections::HashMap<(String, u16, String), String> =
+    // Every endpoint an enabled profile will bind, in declaration order. A Vec rather than a
+    // map because the collision rule is not key equality: a wildcard address overlaps every
+    // concrete one on the same port, so each new endpoint is compared against all the ones
+    // already claimed.
+    let mut endpoints: Vec<BoundEndpoint> = Vec::new();
+    // tun.name -> profile that claimed it first. Two profiles on one device name is not a
+    // cosmetic clash: `run_profile` starts with `TunInterface::delete(&tun.name)`, so the
+    // second profile DELETES the first one's live interface and both then write into whatever
+    // survives. (Audit 2026-08-01, §4.)
+    let mut tun_names: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for p in &config.profiles {
         // Disabled profiles are not bound/served, so their config is not validated
@@ -814,28 +875,85 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         if p.name.is_empty() {
             anyhow::bail!("profile has an empty name");
         }
-        // Two profiles on the SAME endpoint is not a harmless duplicate. On UDP the sockets are
-        // opened with SO_REUSEPORT, so the bind SUCCEEDS and the kernel then flow-hashes
-        // datagrams across profiles with different keys, users and pools — handshakes fail at
-        // random and a client can land in the wrong profile entirely. On TCP the second bind
-        // simply loses. Neither is discoverable from the logs. (Audit 2026-08-01, §5.)
-        let endpoint = (
-            p.bind.address.trim().to_ascii_lowercase(),
-            p.bind.port,
-            p.bind.transport.clone(),
-        );
-        if let Some(other) = endpoints.insert(endpoint, p.name.clone()) {
-            anyhow::bail!(
-                "profiles '{}' and '{}' both bind {}:{}/{} — on UDP SO_REUSEPORT lets both                  succeed and the kernel then splits clients between them at random",
-                other,
-                p.name,
-                p.bind.address,
-                p.bind.port,
-                p.bind.transport
-            );
-        }
         if !seen.insert(&p.name) {
             anyhow::bail!("duplicate profile name: '{}'", p.name);
+        }
+
+        // `tun.name` reaches the kernel through an ioctl that copies only the first 15 bytes
+        // (IFNAMSIZ - 1). A longer name therefore CREATED a truncated device and every
+        // follow-up `ip ... dev <full name>` then failed against a device that does not exist —
+        // late, one command at a time, with the interface already half configured. And two
+        // profiles sharing a name is worse than a clash: `run_profile` opens with
+        // `TunInterface::delete(&tun.name)`, so starting the second profile destroys the first
+        // one's live interface. Neither was checked anywhere. (Audit 2026-08-01, §4.)
+        let tun_name = p.tun.name.trim();
+        if tun_name.is_empty() {
+            anyhow::bail!("profile '{}': tun.name is empty", p.name);
+        }
+        if tun_name.len() > MAX_IFNAME_LEN {
+            anyhow::bail!(
+                "profile '{}': tun.name '{}' is {} bytes — the kernel keeps only the first {}, \
+                 so the device would be created as '{}' and every later `ip ... dev {}` would \
+                 fail",
+                p.name,
+                tun_name,
+                tun_name.len(),
+                MAX_IFNAME_LEN,
+                &tun_name[..MAX_IFNAME_LEN],
+                tun_name
+            );
+        }
+        if tun_name.contains('/') || tun_name.contains(char::is_whitespace) {
+            anyhow::bail!(
+                "profile '{}': tun.name '{}' contains a space or '/' — not a valid interface name",
+                p.name,
+                tun_name
+            );
+        }
+        if let Some(other) = tun_names.insert(tun_name.to_string(), p.name.clone()) {
+            anyhow::bail!(
+                "profiles '{}' and '{}' both use tun.name '{}' — starting the second one \
+                 deletes the first one's live interface",
+                other,
+                p.name,
+                tun_name
+            );
+        }
+
+        // `perf.tun.read_buffer_size` is the exact size of the buffer each queue reads a TUN
+        // frame into, and it was parsed as a bare `usize` with no bounds at all — the only
+        // limit anywhere was `min="1500"` on the panel's number input, which a hand-written
+        // config or `PUT /api/config/raw` never sees. Zero is the worst of them: `read()` into
+        // an empty buffer returns Ok(0), the reader takes that for EOF and the profile's data
+        // plane stops with no error. Anything below the MTU silently truncates every packet
+        // that fills the interface. (Audit 2026-08-01, §3.)
+        let is_tap = p.tun.device_type.eq_ignore_ascii_case("tap");
+        // TAP frames carry a 14-byte Ethernet header on top of the IP MTU.
+        let min_buf = p.tun.mtu.max(0) as usize + if is_tap { 14 } else { 0 };
+        if p.performance.tun.read_buffer_size < min_buf {
+            anyhow::bail!(
+                "profile '{}': perf.tun.read_buffer_size = {} is smaller than {} ({} mtu {}{}) \
+                 — every frame that fills the interface would be truncated, and 0 reads as EOF \
+                 and stops the data plane",
+                p.name,
+                p.performance.tun.read_buffer_size,
+                min_buf,
+                if is_tap { "TAP" } else { "TUN" },
+                p.tun.mtu,
+                if is_tap { " + 14 ethernet" } else { "" }
+            );
+        }
+        // The buffer is allocated PER QUEUE, and queues default to one per core, so an absurd
+        // value is a multiplied allocation. 1 MiB is far above any real frame.
+        const MAX_TUN_READ_BUFFER: usize = 1024 * 1024;
+        if p.performance.tun.read_buffer_size > MAX_TUN_READ_BUFFER {
+            anyhow::bail!(
+                "profile '{}': perf.tun.read_buffer_size = {} exceeds {} — this is allocated \
+                 once per TUN queue (default: one per core)",
+                p.name,
+                p.performance.tun.read_buffer_size,
+                MAX_TUN_READ_BUFFER
+            );
         }
         // Reject unknown bind.transport / obf.mode outright. Both are plain
         // Strings compared verbatim elsewhere: an unrecognised transport parses
@@ -889,6 +1007,62 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                     spec
                 );
             }
+        }
+
+        // Two listeners on the SAME endpoint is not a harmless duplicate. On UDP the sockets
+        // are opened with SO_REUSEPORT, so the bind SUCCEEDS and the kernel then flow-hashes
+        // datagrams across profiles with different keys, users and pools — handshakes fail at
+        // random and a client can land in the wrong profile entirely. On TCP the second bind
+        // simply loses. Neither is discoverable from the logs. (Audit 2026-08-01, §5.)
+        //
+        // Only the PRIMARY endpoint used to be entered here; the extra `listen` specs were
+        // checked for form and then dropped, so `primary <-> extra` and `extra <-> extra`
+        // collisions were invisible — including a profile colliding with ITSELF by repeating
+        // its own bind address in `listen`. Every endpoint the profile will actually bind goes
+        // in. (Audit 2026-08-01, §2.)
+        //
+        // Hostname/IP equivalence is deliberately NOT resolved: `check-config` must work on a
+        // machine that cannot reach DNS, and a resolver answer at validation time need not be
+        // the answer at bind time. Two spellings of one host therefore still slip through.
+        let mut profile_endpoints: Vec<(String, u16, String)> = vec![(
+            normalize_bind_host(&p.bind.address),
+            p.bind.port,
+            format!("{}:{}", p.bind.address, p.bind.port),
+        )];
+        for spec in &p.bind.listen {
+            if let Some((host, port)) = split_listen_spec(spec) {
+                profile_endpoints.push((host, port, spec.trim().to_string()));
+            }
+        }
+        for (host, port, label) in profile_endpoints {
+            if let Some(other) = endpoints.iter().find(|e| {
+                // A wildcard covers every address on the box, so `0.0.0.0:443` collides with
+                // `1.2.3.4:443` just as surely as with another `0.0.0.0:443`.
+                e.port == port
+                    && e.transport == p.bind.transport
+                    && (e.host == host
+                        || is_wildcard_bind_host(&e.host)
+                        || is_wildcard_bind_host(&host))
+            }) {
+                anyhow::bail!(
+                    "'{}' ({}) and '{}' ({}) both bind port {}/{} on overlapping addresses — \
+                     on UDP SO_REUSEPORT lets both succeed and the kernel then splits clients \
+                     between them at random",
+                    other.profile,
+                    other.label,
+                    p.name,
+                    label,
+                    port,
+                    p.bind.transport
+                );
+            }
+            endpoints.push(BoundEndpoint {
+                host,
+                port,
+                transport: p.bind.transport.clone(),
+                profile: p.name.clone(),
+                label,
+            });
         }
         if !matches!(p.obfuscation.fronting.as_str(), "websocket" | "none") {
             anyhow::bail!(
@@ -1316,14 +1490,6 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // operator never chose and cannot redirect to (`--to-ports 0` is meaningless), and
             // `dns.timeout_secs = 0` makes every upstream wait expire instantly — both parsed
             // cleanly and failed later, or not visibly at all. (Audit 2026-08-01, §3.)
-            // The panel binds `web.port`, and 0 gives an ephemeral port while the log still prints
-            // the configured zero — the operator is told an address that was never listened on.
-            // (Audit 2026-08-01.)
-            if config.web.enabled && config.web.port == 0 {
-                anyhow::bail!(
-                "web.port = 0 would bind an ephemeral port while the log reports 0 — set the                  port you actually reach the panel on"
-            );
-            }
             if p.dns.port == 0 {
                 anyhow::bail!(
                     "profile '{}': dns.port = 0 would bind an ephemeral port nothing can be                      pointed at — set 53, or a fixed port",
@@ -2281,6 +2447,76 @@ fn sd_notify(msg: &str) {
 #[cfg(not(target_os = "linux"))]
 fn sd_notify(_msg: &str) {}
 
+/// Undoes everything `run_profile` created on the host, however it leaves.
+///
+/// A profile start is a sequence of side effects on the SYSTEM — a TUN device, iptables rules,
+/// a `post_up` hook, an entry in the shared registry — and it is only at the very end that the
+/// listeners come up. Any failure after the first of those (a taken port, a bad DNS bind, a
+/// pool that will not allocate) returned an error that the spawn site merely LOGGED, leaving
+/// the device and the rules behind. In a multi-profile process a healthy sibling then keeps
+/// the worker alive, so nothing tears them down until the whole server restarts — and the next
+/// start finds a live interface it did not create.
+///
+/// Tearing down on the success path too is deliberate: `run_profile` only returns once the
+/// profile has genuinely stopped serving, and a stopped profile should not keep a configured
+/// interface. Every step is idempotent (`ip link delete` and `iptables -D` on something that
+/// is already gone are no-ops), so overlapping with the shutdown-time `cleanup_all` is safe.
+/// (Audit 2026-08-01, §5.)
+struct ProfileTeardown {
+    profile: String,
+    /// The device as the KERNEL named it, set once the TUN exists.
+    ifname: Option<String>,
+    state: Arc<ServerState>,
+}
+
+impl Drop for ProfileTeardown {
+    fn drop(&mut self) {
+        // iptables first: the rules reference the interface by name, so removing them before
+        // the device keeps the window where a rule points at a vanished device closed.
+        nat::cleanup(&self.profile);
+        if let Some(ifname) = &self.ifname {
+            // KNOWN LIMIT: this does not always remove the device, and it is logged rather
+            // than swallowed so the leftover is at least visible.
+            //
+            // Two independent defects sat on top of each other here, and the first masked the
+            // second. `TunInterface::delete` could not delete a MULTI-QUEUE device at all
+            // (missing `multi_queue` on `ip tuntap del` → `ioctl(TUNSETIFF): Invalid
+            // argument`), which is every device this server creates; that is fixed and the
+            // command now succeeds. It succeeds, and the interface still survives — because
+            // each queue hands a `libc::dup` of its fd to a `spawn_blocking` reader that parks
+            // in `read()` forever, and a device created without IFF_PERSIST only disappears
+            // once every fd is closed. `ip tuntap del` detaches the name and reports success;
+            // the device lives on behind those descriptors.
+            //
+            // Closing them from here is not the fix: closing an fd another thread is blocked in
+            // `read()` on is a use-after-free on the fd number. The real fix is a per-queue
+            // stop signal the readers can observe, which touches the packet hot path and is
+            // deliberately not being rushed into this round. Until then NAT rules and the
+            // registry entry are rolled back and the device is not. (Audit 2026-08-01, §5.)
+            if let Err(e) = TunInterface::delete(ifname) {
+                log::warn!(
+                    "Profile '{}': could not remove TUN '{}' during teardown: {} — the device \
+                     outlives the profile",
+                    self.profile,
+                    ifname,
+                    e
+                );
+            }
+        }
+        // The registry entry outlives the task otherwise, so `list-clients`, the panel and the
+        // metrics sampler would all keep reporting a profile that is not running.
+        let state = self.state.clone();
+        let name = self.profile.clone();
+        tokio::spawn(async move {
+            state.profiles.write().await.remove(&name);
+        });
+        log::info!(
+            "Profile '{}': torn down (NAT rules, registry entry, TUN best-effort)",
+            self.profile
+        );
+    }
+}
+
 async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Result<()> {
     let name = pcfg.name.clone();
     log::info!(
@@ -2290,6 +2526,15 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         pcfg.bind.address,
         pcfg.bind.port
     );
+
+    // Armed BEFORE the first side effect on the host, so there is no window in which
+    // something has been created and nothing would undo it. Populated as each resource
+    // appears; its Drop runs on every exit path, including `?`.
+    let mut teardown = ProfileTeardown {
+        profile: name.clone(),
+        ifname: None,
+        state: state.clone(),
+    };
 
     // Setup TUN interface(s). With tun.queues>1 we open several IFF_MULTI_QUEUE fds
     // attached to ONE device; the kernel RSS-spreads packets across them so the data
@@ -2315,9 +2560,22 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         n.clamp(1, 256)
     };
     let queues = TunInterface::create_multiqueue(&pcfg.tun.name, pcfg.tun.mtu, dev_type, nq)?;
-    TunInterface::set_address(&pcfg.tun.name, &pcfg.tun.address, &pcfg.tun.netmask)?;
-    TunInterface::set_up(&pcfg.tun.name, pcfg.tun.mtu)?;
-    TunInterface::set_queue_len(&pcfg.tun.name, pcfg.tun.tx_queue_len)?;
+    // The name the KERNEL gave the device, not the one we asked for. TUNSETIFF copies at most
+    // IFNAMSIZ-1 = 15 bytes and writes back what it actually used; `create_multiqueue` has
+    // always read that back, and this code then threw it away and kept configuring
+    // `pcfg.tun.name` — so a longer name created a truncated device and every command below
+    // failed against a device that does not exist. `validate_profiles` now rejects such a name
+    // up front, but taking the kernel's answer is what makes the two agree by construction
+    // rather than by a check that could drift. (Audit 2026-08-01, §4.)
+    let ifname = queues
+        .first()
+        .map(|q| q.name.clone())
+        .unwrap_or_else(|| pcfg.tun.name.clone());
+    // The device exists from here on, so record it before the first fallible call below.
+    teardown.ifname = Some(ifname.clone());
+    TunInterface::set_address(&ifname, &pcfg.tun.address, &pcfg.tun.netmask)?;
+    TunInterface::set_up(&ifname, pcfg.tun.mtu)?;
+    TunInterface::set_queue_len(&ifname, pcfg.tun.tx_queue_len)?;
     log::info!(
         "Profile '{}': {} {} is up with {} queue(s) ({} {})",
         name,
@@ -2326,7 +2584,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         } else {
             "TUN"
         },
-        pcfg.tun.name,
+        ifname,
         queues.len(),
         pcfg.tun.address,
         pcfg.tun.netmask
@@ -2341,7 +2599,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
             &pcfg.name,
             &pcfg.routing.nat.interface,
             &pcfg.pool.cidr,
-            &pcfg.tun.name,
+            &ifname,
             pcfg.tun.mtu,
         ) {
             Ok(wan) => log::info!(
@@ -2366,7 +2624,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         // server's networks keeps its real source IPs (site-to-site). NAT above already
         // does this, hence the else. Server-originated traffic to a client_subnet needs
         // only the route and works regardless (#13).
-        nat::enable_routing(&pcfg.name, &pcfg.tun.name, pcfg.tun.mtu);
+        nat::enable_routing(&pcfg.name, &ifname, pcfg.tun.mtu);
     }
 
     // post_up hook: after this profile's TUN + NAT are up. Honoured ONLY from a
@@ -2380,7 +2638,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                     &pcfg.routing.post_up,
                     &[
                         ("QELI_PROFILE", name.clone()),
-                        ("QELI_TUN", pcfg.tun.name.clone()),
+                        ("QELI_TUN", ifname.clone()),
                         ("QELI_POOL", pcfg.pool.cidr.clone()),
                         ("QELI_WAN", pcfg.routing.nat.interface.clone()),
                         ("QELI_BIND_PORT", pcfg.bind.port.to_string()),
@@ -2914,7 +3172,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         // redirect exists to prevent. Validation already demands iptables for a non-default
         // port, so a failure here means the rule was genuinely refused; fail the profile
         // rather than serve DNS that cannot work. (Audit 2026-08-01, §2.)
-        if !nat::enable_dns_redirect(&name, &pcfg.tun.name, &pcfg.dns.listen, pcfg.dns.port) {
+        if !nat::enable_dns_redirect(&name, &ifname, &pcfg.dns.listen, pcfg.dns.port) {
             anyhow::bail!(
                 "profile '{}': dns.port = {} but the 53 -> {} redirect could not be installed,                  so every client would be pushed a resolver it cannot reach. Fix iptables, or                  set dns.port = 53.",
                 name,
@@ -3472,6 +3730,212 @@ pool.cidr = 10.1.0.0/24
         let mixed =
             profile("a", "0.0.0.0", "4443", "tcp") + &profile("b", "0.0.0.0", "4443", "udp");
         validate_profiles(&cfg(&mixed)).expect("tcp and udp may share a port");
+    }
+
+    /// Endpoint collisions involving the EXTRA `listen` specs, and wildcard overlap.
+    ///
+    /// Only the primary endpoint used to be entered into the collision map; extra `listen`
+    /// entries were checked for shape and then discarded, so `primary <-> extra`,
+    /// `extra <-> extra` and a profile colliding with ITSELF all validated cleanly and then
+    /// bound twice — on UDP with SO_REUSEPORT both binds SUCCEED and the kernel splits clients
+    /// between profiles with different keys and pools. (Audit 2026-08-01, §2.)
+    #[test]
+    fn extra_listeners_and_wildcards_collide_too() {
+        fn cfg(text: &str) -> ServerConfig {
+            crate::config::parse_server_config(text).expect("fixture INI must parse")
+        }
+        fn profile(name: &str, addr: &str, port: &str, tun: u8, listen: &[&str]) -> String {
+            let extra: String = listen.iter().map(|l| format!("listen = {l}\n")).collect();
+            format!(
+                "[profile:{name}]\n\
+                 bind.address = {addr}\n\
+                 bind.port = {port}\n\
+                 bind.transport = udp\n\
+                 {extra}\
+                 tun.name = vpn{tun}\n\
+                 tun.address = 10.{tun}.0.1\n\
+                 tun.netmask = 255.255.255.0\n\
+                 tun.mtu = 1400\n\
+                 pool.cidr = 10.{tun}.0.0/24\n\
+                 obf.mode = fake-tls\n"
+            )
+        }
+
+        // Controls first: extra listeners on free ports are the normal case, and two profiles
+        // on genuinely different concrete addresses do not overlap.
+        validate_profiles(&cfg(&profile(
+            "a",
+            "10.0.0.1",
+            "4443",
+            0,
+            &["10.0.0.1:8443", "10.0.0.1:9443"],
+        )))
+        .expect("extra listeners on free ports must validate");
+        validate_profiles(&cfg(&(profile("a", "10.0.0.1", "4443", 0, &[])
+            + &profile("b", "10.0.0.2", "4443", 1, &[]))))
+        .expect("different concrete addresses on one port must validate");
+
+        for (label, text) in [
+            (
+                "a profile whose listen repeats its own primary",
+                profile("a", "10.0.0.1", "4443", 0, &["10.0.0.1:4443"]),
+            ),
+            (
+                "two listen entries on one endpoint",
+                profile("a", "10.0.0.1", "4443", 0, &["10.0.0.1:8443", "10.0.0.1:8443"]),
+            ),
+            (
+                "one profile's listen over another's primary",
+                profile("a", "10.0.0.1", "4443", 0, &[])
+                    + &profile("b", "10.0.0.2", "9443", 1, &["10.0.0.1:4443"]),
+            ),
+            (
+                "wildcard over a concrete address",
+                profile("a", "10.0.0.1", "4443", 0, &[])
+                    + &profile("b", "0.0.0.0", "4443", 1, &[]),
+            ),
+            (
+                "concrete address under an existing wildcard",
+                profile("a", "0.0.0.0", "4443", 0, &[])
+                    + &profile("b", "10.0.0.1", "4443", 1, &[]),
+            ),
+        ] {
+            let err = validate_profiles(&cfg(&text))
+                .expect_err(&format!("{label}: must be rejected at load"));
+            assert!(
+                err.to_string().contains("both bind port"),
+                "{label}: rejected for the wrong reason: {err}"
+            );
+        }
+    }
+
+    /// A device name the kernel would truncate, or one two profiles share.
+    ///
+    /// TUNSETIFF copies at most 15 bytes, so a longer name created a device under a DIFFERENT
+    /// name than every following `ip ... dev <name>` used. And `run_profile` opens with
+    /// `TunInterface::delete(&tun.name)`, so two profiles sharing a name means starting the
+    /// second one destroys the first one's live interface. (Audit 2026-08-01, §4.)
+    #[test]
+    fn tun_names_that_truncate_or_collide_are_rejected() {
+        fn cfg(text: &str) -> ServerConfig {
+            crate::config::parse_server_config(text).expect("fixture INI must parse")
+        }
+        fn profile(name: &str, tun: &str, port: &str, net: u8) -> String {
+            format!(
+                "[profile:{name}]\n\
+                 bind.address = 0.0.0.0\n\
+                 bind.port = {port}\n\
+                 bind.transport = tcp\n\
+                 tun.name = {tun}\n\
+                 tun.address = 10.{net}.0.1\n\
+                 tun.netmask = 255.255.255.0\n\
+                 tun.mtu = 1400\n\
+                 pool.cidr = 10.{net}.0.0/24\n\
+                 obf.mode = fake-tls\n"
+            )
+        }
+
+        // Exactly at the limit must pass — an off-by-one here would reject a legal name.
+        validate_profiles(&cfg(&profile("a", "abcdefghijklmno", "4443", 0)))
+            .expect("a 15-byte name is legal");
+
+        for (label, text) in [
+            ("16 bytes", profile("a", "abcdefghijklmnop", "4443", 0)),
+            ("empty", profile("a", "", "4443", 0)),
+            ("contains a space", profile("a", "vpn 0", "4443", 0)),
+            (
+                "two profiles share a device",
+                profile("a", "vpn0", "4443", 0) + &profile("b", "vpn0", "5443", 1),
+            ),
+        ] {
+            let err = validate_profiles(&cfg(&text))
+                .expect_err(&format!("{label}: must be rejected at load"));
+            assert!(
+                err.to_string().contains("tun.name"),
+                "{label}: rejected for the wrong reason: {err}"
+            );
+        }
+    }
+
+    /// The TUN read buffer had no bounds outside the panel's HTML input, and 0 is not a slow
+    /// data plane — `read()` into an empty buffer returns Ok(0), the reader reads that as EOF
+    /// and the profile stops moving packets with nothing logged. (Audit 2026-08-01, §3.)
+    #[test]
+    fn a_tun_read_buffer_smaller_than_the_mtu_is_rejected() {
+        fn cfg(dev: &str, mtu: u32, buf: &str) -> ServerConfig {
+            crate::config::parse_server_config(&format!(
+                "[profile:p]\n\
+                 bind.address = 0.0.0.0\n\
+                 bind.port = 4443\n\
+                 bind.transport = tcp\n\
+                 tun.name = vpn0\n\
+                 tun.address = 10.1.0.1\n\
+                 tun.netmask = 255.255.255.0\n\
+                 tun.mtu = {mtu}\n\
+                 tun.device_type = {dev}\n\
+                 pool.cidr = 10.1.0.0/24\n\
+                 obf.mode = fake-tls\n\
+                 perf.tun.read_buffer_size = {buf}\n"
+            ))
+            .expect("fixture INI must parse")
+        }
+
+        validate_profiles(&cfg("tun", 1400, "65535")).expect("the default buffer must validate");
+        // Exactly the MTU is enough for a TUN: no link header.
+        validate_profiles(&cfg("tun", 1400, "1400")).expect("a buffer of exactly the mtu is fine");
+
+        assert!(
+            validate_profiles(&cfg("tun", 1400, "0")).is_err(),
+            "0 reads as EOF and stops the data plane"
+        );
+        assert!(
+            validate_profiles(&cfg("tun", 9000, "1500")).is_err(),
+            "a buffer below a jumbo mtu truncates every full frame"
+        );
+        assert!(
+            validate_profiles(&cfg("tap", 1400, "1400")).is_err(),
+            "TAP frames carry a 14-byte ethernet header on top of the mtu"
+        );
+        assert!(
+            validate_profiles(&cfg("tun", 1400, "16777216")).is_err(),
+            "the buffer is allocated per queue, so an absurd value multiplies"
+        );
+    }
+
+    /// `web.port = 0` is a whole-config property and has nothing to do with DNS — but the check
+    /// was written inside the per-profile loop's `if p.dns.enabled` branch, so it never ran for
+    /// a config whose profiles do not serve DNS. (Audit 2026-08-01, §9.)
+    #[test]
+    fn web_port_zero_is_rejected_with_dns_off() {
+        fn cfg(dns: bool, port: u16) -> ServerConfig {
+            crate::config::parse_server_config(&format!(
+                "[web]\n\
+                 enabled = true\n\
+                 port = {port}\n\
+                 [profile:p]\n\
+                 bind.address = 0.0.0.0\n\
+                 bind.port = 4443\n\
+                 bind.transport = tcp\n\
+                 tun.name = vpn0\n\
+                 tun.address = 10.1.0.1\n\
+                 tun.netmask = 255.255.255.0\n\
+                 tun.mtu = 1400\n\
+                 pool.cidr = 10.1.0.0/24\n\
+                 obf.mode = fake-tls\n\
+                 dns.enabled = {dns}\n"
+            ))
+            .expect("fixture INI must parse")
+        }
+
+        validate_profiles(&cfg(false, 8443)).expect("a real web.port must validate");
+        assert!(
+            validate_profiles(&cfg(false, 0)).is_err(),
+            "web.port = 0 must be rejected even when no profile serves DNS"
+        );
+        assert!(
+            validate_profiles(&cfg(true, 0)).is_err(),
+            "and still rejected when DNS is on"
+        );
     }
 
     /// Nonsensical obfuscation values must be refused at load, not accepted and then

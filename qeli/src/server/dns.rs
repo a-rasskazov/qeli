@@ -113,7 +113,16 @@ pub async fn run_dns_proxy(
     // answered, so a dead first resolver isn't retried first every time).
     let pref = Arc::new(AtomicUsize::new(0));
 
-    let mut buf = vec![0u8; 1500];
+    // 4 KiB, matching the reply buffer, NOT 1500.
+    //
+    // `recv_from` on a UDP socket DISCARDS whatever does not fit — silently, with no error and
+    // no short-read signal. A client that advertises a larger EDNS0 payload and then sends a
+    // query bigger than 1500 (a DNSSEC-signed UPDATE, a large TSIG, a long TXT lookup) had its
+    // datagram chopped mid-message and the truncated remains forwarded upstream, which either
+    // FORMERRs or answers the wrong question. The reply path was already widened for exactly
+    // this reason (S-14); the query path was left at an Ethernet-sized guess.
+    // (Audit 2026-08-01, §10.)
+    let mut buf = vec![0u8; 4096];
     loop {
         let (n, src) = match socket.recv_from(&mut buf).await {
             Ok(v) => v,
@@ -373,6 +382,19 @@ async fn handle_query(
     }
 
     if let Some(resp) = response {
+        // The answer is forwarded WHOLE, even when it is larger than the payload size the
+        // client advertised, and that is deliberate.
+        //
+        // The textbook behaviour is to truncate and set TC=1, which tells the resolver "ask me
+        // again over TCP". This proxy has no TCP listener — it binds a UDP socket only — so a
+        // TC=1 reply would send the client to a port where nothing answers and turn a lookup
+        // that works today into one that fails. Of the two behaviours available WITHOUT a TCP
+        // listener, forwarding the full datagram is the one that resolves names; oversized UDP
+        // is handled by IP fragmentation on the tunnel, which the negotiated MTU accommodates.
+        //
+        // Setting TC correctly is gated on adding a TCP listener (and on truncating at RR
+        // boundaries with the counts fixed up, not by cutting bytes) — tracked, not done here.
+        // (Audit 2026-08-01, §10.)
         let _ = socket.send_to(&resp, src).await;
 
         // Cache lifetime from the record itself, clamped. A TTL of 0 means "do not cache"
