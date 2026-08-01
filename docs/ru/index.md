@@ -57,6 +57,7 @@
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | План развития |
 | [REFACTOR-PLAN.md](REFACTOR-PLAN.md) | План рефакторинга: устранение дублей кода |
+| [TRANSPORT-CORE.md](TRANSPORT-CORE.md) | Общее транспортное Rust-ядро для всех клиентов: предложение, замеры, план |
 | [DESIGN-remaining.md](DESIGN-remaining.md) | Стадии разработки REALITY: статус и остаток |
 | [RELEASE-FIXES.md](RELEASE-FIXES.md) | План доводки до стабильного релиза |
 

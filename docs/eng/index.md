@@ -57,6 +57,7 @@ operator need first, then internal and historical material.
 |---|---|
 | [ROADMAP.md](ROADMAP.md) | Roadmap |
 | [REFACTOR-PLAN.md](REFACTOR-PLAN.md) | Refactoring plan: eliminating code duplication |
+| [TRANSPORT-CORE.md](TRANSPORT-CORE.md) | A shared transport core in Rust for every client: proposal, measurements, plan |
 | [DESIGN-remaining.md](DESIGN-remaining.md) | REALITY development stages: status and remainder |
 | [RELEASE-FIXES.md](RELEASE-FIXES.md) | Plan to finish off toward a stable release |
 

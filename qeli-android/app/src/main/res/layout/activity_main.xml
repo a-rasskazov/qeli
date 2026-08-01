@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -453,6 +454,128 @@
                             app:autoSizeMaxTextSize="16sp"
                             android:layout_marginTop="2dp"
                             android:textColor="@color/primary" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- What this profile actually protects. Everything here is derived from the
+                 profile config (and, once connected, from the tunnel snapshot) — never
+                 from parsing the log. Wording must never overstate: see
+                 MainActivity.renderProtection. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/protectionCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                app:cardBackgroundColor="@color/surface"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="0dp"
+                app:strokeColor="@color/outline"
+                app:strokeWidth="1dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/protection"
+                            android:textSize="11sp"
+                            android:letterSpacing="0.08"
+                            android:textAllCaps="true"
+                            android:textColor="@color/text_hint" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/chevron"
+                            android:textSize="16sp"
+                            android:textColor="@color/text_hint" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvProtectionHeadline"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary"
+                        tools:text="Весь трафик защищён" />
+
+                    <TextView
+                        android:id="@+id/tvProtectionCrypto"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary"
+                        tools:text="Гибридное PQ · DNS через VPN" />
+
+                    <TextView
+                        android:id="@+id/tvProtectionMode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary"
+                        tools:text="Reality-TLS · TCP · ключ запинен" />
+
+                    <!-- Shown only when something narrows the protection (split tunnel, LAN
+                         bypass, IPv6 left outside, excluded routes). Amber, never red: the
+                         tunnel works, it just carries less than everything. -->
+                    <TextView
+                        android:id="@+id/tvProtectionWarning"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:textSize="12sp"
+                        android:textColor="@color/status_connecting"
+                        android:visibility="gone"
+                        tools:text="IPv6 идёт мимо туннеля" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="12dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnProtectionApps"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="6dp"
+                            android:text="@string/protection_apps"
+                            android:textSize="12sp"
+                            app:strokeColor="@color/outline"
+                            app:cornerRadius="12dp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnProtectionAlwaysOn"
+                            style="@style/Widget.Material3.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="6dp"
+                            android:text="@string/protection_always_on"
+                            android:textSize="12sp"
+                            app:strokeColor="@color/outline"
+                            app:cornerRadius="12dp" />
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>

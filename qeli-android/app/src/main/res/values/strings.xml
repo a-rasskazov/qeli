@@ -152,9 +152,57 @@
     <string name="log_scroll_off">Scroll</string>
     <string name="clear">Clear</string>
 
+    <!-- ── Protection card ──
+         Wording rule: never overstate. A line may only claim what the profile (and, once
+         connected, the tunnel snapshot) actually says; anything that narrows the tunnel
+         gets its own warning line instead of being folded into the headline. -->
+    <string name="protection">Protection</string>
+    <string name="chevron">›</string>
+    <string name="protection_apps">Apps</string>
+    <string name="protection_always_on">Always-on</string>
+    <!-- Headlines -->
+    <string name="protection_all_traffic">All traffic is protected</string>
+    <string name="protection_selected_apps">%1$d app(s) protected</string>
+    <string name="protection_except_apps">All apps except %1$d protected</string>
+    <string name="protection_split">Split tunnel — only selected routes</string>
+    <string name="protection_idle">Will be used on connect</string>
+    <string name="protection_no_profile">No profile selected</string>
+    <string name="protection_invalid">Profile config is invalid</string>
+    <!-- Detail bits -->
+    <string name="protection_pq">Hybrid post-quantum</string>
+    <string name="protection_classic">X25519 (no post-quantum)</string>
+    <string name="protection_dns_tunnel">DNS through VPN</string>
+    <string name="protection_dns_system">system DNS</string>
+    <string name="protection_key_pinned">server key pinned</string>
+    <string name="protection_key_tofu">server key on trust (TOFU)</string>
+    <string name="protection_sep">%1$s · %2$s</string>
+    <string name="protection_mode_line">%1$s · %2$s · %3$s</string>
+    <!-- Warnings: things that narrow what the tunnel carries -->
+    <string name="protection_warn_lan">Local network stays outside the tunnel</string>
+    <string name="protection_warn_ipv6">IPv6 bypasses the tunnel</string>
+    <string name="protection_warn_excluded">%1$d route(s) excluded from the tunnel</string>
+    <string name="protection_warn_no_key">Without a pinned key the first connection is trusted blindly</string>
+
     <!-- ── Foreground-service notification ── -->
     <string name="notif_channel_name">VPN Service</string>
     <string name="notif_connecting">Connecting…</string>
     <string name="notif_reconnecting">Reconnecting… (attempt %1$d)</string>
     <string name="notif_connected">Connected: %1$s</string>
+    <!-- ── Protection detail sheet ──
+         Rows below the fold: the negotiated ones (DNS/MTU/streams/routes/lockdown) are
+         shown only while connected, because only then are they known. -->
+    <string name="detail_server">Server</string>
+    <string name="detail_transport">Transport</string>
+    <string name="detail_crypto">Encryption</string>
+    <string name="detail_server_key">Server key</string>
+    <string name="detail_dns">DNS</string>
+    <string name="detail_mtu">MTU</string>
+    <string name="detail_multipath">Multipath</string>
+    <string name="detail_streams">up to %1$d streams</string>
+    <string name="detail_pushed_routes">Pushed routes</string>
+    <string name="detail_lockdown">Block without VPN</string>
+    <string name="detail_routing">Routing</string>
+    <string name="detail_reconnect">Auto-reconnect</string>
+    <string name="detail_on">On</string>
+    <string name="detail_off">Off</string>
 </resources>

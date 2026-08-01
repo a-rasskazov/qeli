@@ -30,6 +30,25 @@ struct TunnelSnapshot: Codable, Equatable, Sendable {
     var profileID: UUID?
     var updatedAt = Date()
 
+    // ── negotiated facts the UI cannot derive from the profile ──
+    // The protection card states what is actually in force, and these are only known after
+    // the handshake: the server pushes DNS/MTU/routes/streams. Carried here rather than
+    // scraped out of the log — log lines are the documented error-catalog surface
+    // (docs/*/TROUBLESHOOTING.md), not a data channel. Mirrors the Android `live*` snapshot
+    // fields on VpnServiceImpl.
+
+    /// Resolver the server pushed; nil when it pushed none.
+    var pushedDNS: String?
+
+    /// MTU actually applied to the tunnel (explicit profile value or the pushed one).
+    var appliedMTU: Int?
+
+    /// Bonded streams the server allowed; 1 means single-stream.
+    var maxStreams: Int = 1
+
+    /// Routes the server pushed and this client applied.
+    var pushedRoutes: Int = 0
+
     var uptime: TimeInterval {
         connectedAt.map { max(0, Date().timeIntervalSince($0)) } ?? 0
     }

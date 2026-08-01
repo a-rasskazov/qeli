@@ -96,6 +96,35 @@ final class ParityHardeningTests: XCTestCase {
         }
     }
 
+    /// The protection card may only claim "all traffic is protected" when nothing narrows
+    /// what the tunnel carries. Mirrors ProtectionSummaryTest on Android — the two cards
+    /// must never disagree about the same profile.
+    func testProtectionSummaryNeverOverstates() throws {
+        let base = try VPNConfig(parsing: minimalINI("key = " + String(repeating: "aa", count: 32)))
+        XCTAssertTrue(ProtectionSummary(config: base).carriesEverything)
+
+        for narrowing in ["allow_lan = true", "allow_ipv6_leak = true",
+                          "exclude = 192.168.0.0/16", "gateway = false"] {
+            let config = try VPNConfig(parsing: minimalINI(
+                "key = " + String(repeating: "aa", count: 32) + "\n" + narrowing))
+            XCTAssertFalse(
+                ProtectionSummary(config: config).carriesEverything,
+                "\(narrowing) must stop the card claiming everything"
+            )
+        }
+    }
+
+    /// `plain` is the only mode without the hybrid handshake; obfs and reality-tls wrap the
+    /// SAME PQ ClientHello, so claiming post-quantum for them is correct.
+    func testPostQuantumIsClaimedForEveryModeExceptPlain() throws {
+        for mode in ["fake-tls", "obfs", "reality-tls"] {
+            let config = try VPNConfig(parsing: minimalINI("mode = \(mode)\nobfs_key = k"))
+            XCTAssertTrue(ProtectionSummary(config: config).postQuantum, mode)
+        }
+        let plain = try VPNConfig(parsing: minimalINI("mode = plain"))
+        XCTAssertFalse(ProtectionSummary(config: plain).postQuantum)
+    }
+
     /// A reality-tls profile with no pinned key must stay EDITABLE — the connect-time
     /// precondition in `TunnelManager` is what refuses it, so parsing and saving such a
     /// profile has to keep working while the user is still filling it in.

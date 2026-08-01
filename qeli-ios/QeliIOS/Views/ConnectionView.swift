@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ConnectionView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var showingProtectionDetails = false
 
     var body: some View {
         ScrollView {
@@ -10,6 +11,7 @@ struct ConnectionView: View {
                 connectionCard
                 activeProfileCard
                 if model.tunnelSnapshot.phase == .connected { statisticsCard }
+                protectionCard
                 if let error = model.tunnelSnapshot.error, !error.isEmpty {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
@@ -107,6 +109,140 @@ struct ConnectionView: View {
                 statistic("↑ UPLOAD", formatBytes(model.tunnelSnapshot.bytesUploaded), color: QeliTheme.primary)
             }
             .qeliCard()
+        }
+    }
+
+    /// What the active profile actually protects.
+    ///
+    /// Mirrors the Android card decision for decision (both read `ProtectionSummary`), with
+    /// two platform differences that are real rather than cosmetic: per-app routing needs
+    /// MDM on iOS, and there is no Always-On switch an app may offer — VPN On Demand in
+    /// Settings is the closest equivalent. Both are stated, not hidden.
+    @ViewBuilder
+    private var protectionCard: some View {
+        let config = model.activeProfile.flatMap { try? VPNConfig(parsing: $0.configText) }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("PROTECTION")
+                    .font(.system(size: 11, weight: .semibold))
+                    .kerning(0.8)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let config {
+                let summary = ProtectionSummary(config: config)
+                let live = model.tunnelSnapshot.phase == .connected
+                Text(headline(summary, live: live))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(live && summary.carriesEverything ? QeliTheme.connected : .primary)
+                Text("\(Text(summary.postQuantum ? "Hybrid post-quantum" : "X25519 (no post-quantum)")) · \(Text(summary.dnsThroughTunnel ? "DNS through VPN" : "system DNS"))")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("\(config.wireMode) · \(config.protocolName.uppercased())\(config.quicEnabled ? " / QUIC" : "") · \(Text(summary.keyPinned ? "server key pinned" : "server key on trust (TOFU)"))")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let warning = summary.warnings.first {
+                    Text(warningText(warning, count: summary.excludedRouteCount))
+                        .font(.caption)
+                        .foregroundStyle(QeliTheme.connecting)
+                }
+            } else {
+                Text(model.activeProfile == nil ? "No profile selected" : "Profile config is invalid")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .qeliCard()
+        .contentShape(Rectangle())
+        .onTapGesture { if config != nil { showingProtectionDetails = true } }
+        .sheet(isPresented: $showingProtectionDetails) {
+            if let config { protectionDetails(config) }
+        }
+    }
+
+    /// The full picture behind the card. Negotiated rows (DNS, MTU, streams, pushed routes)
+    /// come from the tunnel snapshot and are simply omitted while disconnected — never
+    /// guessed from the profile.
+    private func protectionDetails(_ config: VPNConfig) -> some View {
+        let summary = ProtectionSummary(config: config)
+        let snapshot = model.tunnelSnapshot
+        let live = snapshot.phase == .connected
+        return NavigationStack {
+            List {
+                detailRow("Server", "\(config.serverAddress):\(config.port)")
+                detailRow(
+                    "Transport",
+                    "\(config.wireMode) / \(config.protocolName.uppercased())\(config.quicEnabled ? " + QUIC" : "")"
+                )
+                detailRow("Encryption", summary.postQuantum
+                    ? String(localized: "Hybrid post-quantum") : String(localized: "X25519 (no post-quantum)"))
+                detailRow("Server key", summary.keyPinned
+                    ? String(localized: "server key pinned") : String(localized: "server key on trust (TOFU)"))
+                if live {
+                    if let dns = snapshot.pushedDNS ?? config.dnsServers.first {
+                        detailRow("DNS", dns)
+                    }
+                    if let mtu = snapshot.appliedMTU {
+                        detailRow("MTU", config.mtu > 0 ? "\(mtu)" : "\(mtu) (auto)")
+                    }
+                    if snapshot.maxStreams > 1 {
+                        detailRow("Multipath", String(
+                            format: String(localized: "up to %lld streams"), snapshot.maxStreams))
+                    }
+                    if snapshot.pushedRoutes > 0 {
+                        detailRow("Pushed routes", "\(snapshot.pushedRoutes)")
+                    }
+                }
+                detailRow("Routing", routingText(summary))
+                detailRow("Auto-reconnect", config.reconnectEnabled
+                    ? String(localized: "On") : String(localized: "Off"))
+            }
+            .navigationTitle("PROTECTION")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Close") { showingProtectionDetails = false }
+                }
+            }
+        }
+    }
+
+    private func detailRow(_ label: LocalizedStringKey, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).multilineTextAlignment(.trailing)
+        }
+        .font(.callout)
+    }
+
+    private func routingText(_ summary: ProtectionSummary) -> String {
+        switch summary.scope {
+        case .all: return String(localized: "All apps (default)")
+        case .onlySelected: return String(localized: "Only selected apps are protected")
+        case .allExcept: return String(localized: "All apps except the selected ones are protected")
+        case .splitRoutes: return String(localized: "Split tunnel — only selected routes")
+        }
+    }
+
+    private func headline(_ summary: ProtectionSummary, live: Bool) -> LocalizedStringKey {
+        guard live else { return "Will be used on connect" }
+        switch summary.scope {
+        case .onlySelected: return "Only selected apps are protected"
+        case .allExcept: return "All apps except the selected ones are protected"
+        case .splitRoutes: return "Split tunnel — only selected routes"
+        case .all:
+            // Full scope but something is carved out — the warning line says what, so the
+            // headline must not claim "everything".
+            return summary.carriesEverything ? "All traffic is protected" : "Split tunnel — only selected routes"
+        }
+    }
+
+    private func warningText(_ warning: ProtectionWarning, count: Int) -> LocalizedStringKey {
+        switch warning {
+        case .lanOutside: return "Local network stays outside the tunnel"
+        case .ipv6Outside: return "IPv6 bypasses the tunnel"
+        case .excludedRoutes: return "\(count) route(s) excluded from the tunnel"
+        case .noPinnedKey: return "Without a pinned key the first connection is trusted blindly"
         }
     }
 

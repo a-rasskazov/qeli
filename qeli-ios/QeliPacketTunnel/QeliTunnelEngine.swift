@@ -759,6 +759,12 @@ final class QeliTunnelEngine: @unchecked Sendable {
             snapshot.bytesDownloaded = 0
             snapshot.uploadBytesPerSecond = 0
             snapshot.downloadBytesPerSecond = 0
+            // Negotiated values for the protection card — published here because this is the
+            // moment they become true, and taken from the session rather than re-derived.
+            snapshot.pushedDNS = session.pushedDNS.first
+            snapshot.appliedMTU = session.mtu > 0 ? session.mtu : nil
+            snapshot.maxStreams = session.maxStreams
+            snapshot.pushedRoutes = session.pushedRoutes.count
             sampledUpload = 0
             sampledDownload = 0
             lastStatsDate = Date()

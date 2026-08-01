@@ -10,6 +10,12 @@
   tunnel gateway rather than the public endpoint.
 - English / Russian UI with an in-app language picker. English is the default on every
   device, matching Android — the app does not follow the system locale.
+- Protection card on the connection screen, driven by the shared `ProtectionSummary`
+  decisions so both clients describe the same profile identically: scope, wire mode and
+  transport, hybrid-PQ vs plain X25519, DNS, pinned key vs TOFU, and a warning line for
+  anything that narrows the tunnel. Tapping it opens the detail sheet, which adds the
+  negotiated values (pushed DNS, applied MTU, bonded streams, pushed routes) from the
+  tunnel snapshot while connected.
 - INI, JSON, file, clipboard, QR and `qeli://` deep-link import.
 - Share link, QR generation and system share sheet.
 - Encrypted-at-rest profile store and Android-compatible backup encryption.
@@ -61,6 +67,13 @@
    approval for the final bundle identifiers.
 
 ## iOS restrictions (not implementable as a normal consumer app)
+
+- The protection card carries no Apps / Always-on buttons. Android puts two there; on iOS
+  per-app routing needs MDM (below) and no app may offer an Always-On switch — VPN On
+  Demand in Settings is the closest equivalent, so the card states the routing scope and
+  leaves the controls where they actually live. The system lockdown row is Android-only for
+  the same reason: `VpnService.isLockdownEnabled` has no iOS counterpart a Packet Tunnel
+  Provider can read.
 
 - Per-app routing rules for arbitrary installed applications require MDM-managed apps;
   iOS also does not expose an installed-app enumeration API to a consumer VPN app.

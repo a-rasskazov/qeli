@@ -218,6 +218,42 @@ class VpnServiceImpl : VpnService() {
         @Volatile
         @JvmField
         var liveBytesDown: Long = 0L
+
+        // ── negotiated facts the UI cannot derive from the profile ──
+        // The protection card states what is actually in force, and these are only known
+        // after the handshake: the server pushes DNS/MTU/routes/streams, and the system
+        // owns the lockdown switch. Published as snapshot fields (same pattern as liveIp)
+        // rather than parsed out of the log — log lines are the documented error-catalog
+        // surface (docs/*/TROUBLESHOOTING.md), not a data channel.
+        /** Resolver the server pushed, empty when it pushed none. */
+        @Volatile
+        @JvmField
+        var liveDns: String = ""
+
+        /** MTU actually applied to the TUN (explicit profile value or the pushed one). */
+        @Volatile
+        @JvmField
+        var liveMtu: Int = 0
+
+        /** Bonded streams the server allowed; 1 means single-stream. */
+        @Volatile
+        @JvmField
+        var liveStreams: Int = 1
+
+        /** Routes the server pushed and this client applied. */
+        @Volatile
+        @JvmField
+        var liveRoutes: Int = 0
+
+        /**
+         * System "Always-on VPN" with "Block connections without VPN".
+         *
+         * Only a running VpnService can read this (API 30+), which is exactly why the card
+         * could not state it before: from the Activity it is simply not observable.
+         */
+        @Volatile
+        @JvmField
+        var liveLockdown: Boolean = false
     }
 
     // ── lifecycle ────────────────────────────────────────────────────────────
@@ -728,6 +764,13 @@ class VpnServiceImpl : VpnService() {
         // reset in startVpn() on the next explicit Connect.
         liveIp = ""
         liveConnectedAt = 0L
+        // Clear the negotiated snapshot too, or the protection card keeps showing the dead
+        // session's DNS/MTU/streams as if they were still in force.
+        liveDns = ""
+        liveMtu = 0
+        liveStreams = 1
+        liveRoutes = 0
+        liveLockdown = false
         liveBytesUp = 0L
         liveBytesDown = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1306,6 +1349,16 @@ class VpnServiceImpl : VpnService() {
         val nRoutes = try {
             if (session.routesJson.isBlank()) 0 else JSONArray(session.routesJson).length()
         } catch (e: Exception) { 0 }
+        // Publish the negotiated values for the protection card. Same numbers the log line
+        // below prints — taken from the session directly, so the UI never has to read them
+        // back out of text.
+        liveDns = session.dnsIp
+        liveMtu = effectiveMtu(config.mtu, session.pushedMtu)
+        liveStreams = session.maxStreams
+        liveRoutes = nRoutes
+        liveLockdown = try {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isLockdownEnabled
+        } catch (_: Exception) { false }
         broadcastLog(
             "server push: ip=${session.clientIp}/${session.prefix} " +
                 "mtu=${if (session.pushedMtu > 0) session.pushedMtu.toString() else "-"} " +

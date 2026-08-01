@@ -32,6 +32,9 @@ import com.google.android.material.tabs.TabLayout
 import com.qeli.databinding.ActivityMainBinding
 import com.qeli.databinding.ItemProfileBinding
 import com.qeli.databinding.DialogConfigEditorBinding
+import com.qeli.model.ProtectionScope
+import com.qeli.model.ProtectionSummary
+import com.qeli.model.ProtectionWarning
 import com.qeli.model.VpnConfig
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -260,6 +263,19 @@ sni = www.microsoft.com
         updateThemeIcon()
         binding.btnTheme.setOnClickListener { QeliApp.setDark(this, !QeliApp.isDark(this)) }
         binding.btnSettings.setOnClickListener { showSettingsDialog() }
+
+        // Reuses the existing per-app picker rather than a second entry point for the same
+        // setting; it edits the ACTIVE profile, which is what the card describes.
+        binding.protectionCard.setOnClickListener { showProtectionDetails() }
+        binding.btnProtectionApps.setOnClickListener { showAppsDialog(activeIndex) }
+        // Always-on + "block connections without VPN" is a SYSTEM setting an app cannot flip
+        // (or even read from here), so the button only takes the user to the right screen.
+        binding.btnProtectionAlwaysOn.setOnClickListener {
+            try { startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }
+            catch (e: Exception) {
+                Toast.makeText(this, e.message ?: "", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         binding.tvVersion.text = getString(R.string.version_label, appVersion())
         binding.tvVersion.setOnClickListener { showUpdatesDialog() }
@@ -782,6 +798,153 @@ sni = www.microsoft.com
         binding.tvActiveProfile.text = p?.name ?: "—"
         val ms = reach[activeIndex]
         applyReach(binding.activeReachDot, binding.tvActiveReach, p, ms)
+        renderProtection()
+    }
+
+    /**
+     * The full picture behind the protection card.
+     *
+     * Values negotiated with the server (DNS, MTU, bonded streams, pushed routes) and the
+     * system lockdown state are only known while a tunnel is up, so they are shown from the
+     * service snapshot and simply omitted when disconnected — never guessed from the
+     * profile, and never scraped out of the log.
+     */
+    private fun showProtectionDetails() {
+        val profile = current() ?: return
+        val cfg = try { VpnConfig.parse(profile.text) } catch (_: Exception) {
+            Toast.makeText(this, getString(R.string.protection_invalid), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val s = ProtectionSummary.of(cfg)
+        val live = isConnected
+        val rows = mutableListOf<Pair<Int, String>>()
+        rows += R.string.detail_server to "${cfg.serverAddress}:${cfg.port}"
+        rows += R.string.detail_transport to
+            "${cfg.wireMode} / ${cfg.protocol.uppercase()}${if (cfg.quicEnabled) " + QUIC" else ""}"
+        rows += R.string.detail_crypto to
+            getString(if (s.postQuantum) R.string.protection_pq else R.string.protection_classic)
+        rows += R.string.detail_server_key to
+            getString(if (s.keyPinned) R.string.protection_key_pinned else R.string.protection_key_tofu)
+        if (live) {
+            rows += R.string.detail_dns to (VpnServiceImpl.liveDns.ifEmpty {
+                cfg.dnsServers.joinToString(", ").ifEmpty { getString(R.string.protection_dns_system) }
+            })
+            if (VpnServiceImpl.liveMtu > 0) {
+                rows += R.string.detail_mtu to
+                    "${VpnServiceImpl.liveMtu}${if (cfg.mtu > 0) "" else " (auto)"}"
+            }
+            if (VpnServiceImpl.liveStreams > 1) {
+                rows += R.string.detail_multipath to
+                    getString(R.string.detail_streams, VpnServiceImpl.liveStreams)
+            }
+            if (VpnServiceImpl.liveRoutes > 0) {
+                rows += R.string.detail_pushed_routes to VpnServiceImpl.liveRoutes.toString()
+            }
+            rows += R.string.detail_lockdown to getString(
+                if (VpnServiceImpl.liveLockdown) R.string.detail_on else R.string.detail_off
+            )
+        }
+        rows += R.string.detail_routing to when (s.scope) {
+            ProtectionScope.ALL -> getString(R.string.per_app_all)
+            ProtectionScope.ONLY_SELECTED -> getString(R.string.protection_selected_apps, s.appCount)
+            ProtectionScope.ALL_EXCEPT -> getString(R.string.protection_except_apps, s.appCount)
+            ProtectionScope.SPLIT_ROUTES -> getString(R.string.protection_split)
+        }
+        rows += R.string.detail_reconnect to getString(
+            if (cfg.reconnectEnabled) R.string.detail_on else R.string.detail_off
+        )
+
+        val d = resources.displayMetrics.density
+        fun dp(v: Int) = (v * d).toInt()
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        for ((labelRes, value) in rows) {
+            box.addView(android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                setPadding(0, dp(5), 0, dp(5))
+                addView(android.widget.TextView(this@MainActivity).apply {
+                    text = getString(labelRes)
+                    setTextColor(getColor(R.color.text_secondary))
+                    textSize = 13f
+                    layoutParams = android.widget.LinearLayout.LayoutParams(0, -2, 1f)
+                })
+                addView(android.widget.TextView(this@MainActivity).apply {
+                    text = value
+                    setTextColor(getColor(R.color.text_primary))
+                    textSize = 13f
+                })
+            })
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.protection)
+            .setView(android.widget.ScrollView(this).apply { addView(box) })
+            .setPositiveButton(R.string.close, null)
+            .show()
+    }
+
+    /**
+     * Fill the protection card from the ACTIVE profile.
+     *
+     * The card makes security claims, so it states only what [ProtectionSummary] can derive
+     * from the config, and everything that narrows the tunnel gets its own warning line
+     * instead of being folded into a reassuring headline. While disconnected the wording is
+     * future tense — the profile describes what *will* apply, not what is in force.
+     */
+    private fun renderProtection() {
+        val profile = current()
+        val cfg = profile?.let { try { VpnConfig.parse(it.text) } catch (_: Exception) { null } }
+        if (cfg == null) {
+            binding.tvProtectionHeadline.text =
+                getString(if (profile == null) R.string.protection_no_profile else R.string.protection_invalid)
+            binding.tvProtectionCrypto.visibility = View.GONE
+            binding.tvProtectionMode.visibility = View.GONE
+            binding.tvProtectionWarning.visibility = View.GONE
+            return
+        }
+        binding.tvProtectionCrypto.visibility = View.VISIBLE
+        binding.tvProtectionMode.visibility = View.VISIBLE
+
+        val s = ProtectionSummary.of(cfg)
+        val live = isConnected
+        binding.tvProtectionHeadline.text = when {
+            !live -> getString(R.string.protection_idle)
+            s.scope == ProtectionScope.ONLY_SELECTED -> getString(R.string.protection_selected_apps, s.appCount)
+            s.scope == ProtectionScope.ALL_EXCEPT -> getString(R.string.protection_except_apps, s.appCount)
+            s.scope == ProtectionScope.SPLIT_ROUTES -> getString(R.string.protection_split)
+            s.carriesEverything -> getString(R.string.protection_all_traffic)
+            // Full scope but something is carved out — the warning line below says what,
+            // so the headline must not claim "everything".
+            else -> getString(R.string.protection_split)
+        }
+        binding.tvProtectionHeadline.setTextColor(
+            getColor(if (live && s.carriesEverything) R.color.status_connected else R.color.text_primary)
+        )
+        binding.tvProtectionCrypto.text = getString(
+            R.string.protection_sep,
+            getString(if (s.postQuantum) R.string.protection_pq else R.string.protection_classic),
+            getString(if (s.dnsThroughTunnel) R.string.protection_dns_tunnel else R.string.protection_dns_system),
+        )
+        binding.tvProtectionMode.text = getString(
+            R.string.protection_mode_line,
+            cfg.wireMode,
+            cfg.protocol.uppercase() + if (cfg.quicEnabled) " / QUIC" else "",
+            getString(if (s.keyPinned) R.string.protection_key_pinned else R.string.protection_key_tofu),
+        )
+        // One line, highest-impact first: what leaves the tunnel matters more than how the
+        // peer was trusted.
+        val warning = s.warnings.firstOrNull()?.let {
+            when (it) {
+                ProtectionWarning.LAN_OUTSIDE -> getString(R.string.protection_warn_lan)
+                ProtectionWarning.IPV6_OUTSIDE -> getString(R.string.protection_warn_ipv6)
+                ProtectionWarning.EXCLUDED_ROUTES ->
+                    getString(R.string.protection_warn_excluded, s.excludedRouteCount)
+                ProtectionWarning.NO_PINNED_KEY -> getString(R.string.protection_warn_no_key)
+            }
+        }
+        binding.tvProtectionWarning.text = warning ?: ""
+        binding.tvProtectionWarning.visibility = if (warning != null) View.VISIBLE else View.GONE
     }
 
     private fun renderProfileList() {
@@ -1364,6 +1527,8 @@ sni = www.microsoft.com
         // dimming — so the list has to be redrawn whenever we cross that boundary, or the
         // lock stays visible after a disconnect (and invisible after a connect).
         if (wasLocked != (isConnected || isConnecting)) renderProfileList()
+        // The protection card is worded in the present tense only while connected.
+        renderProtection()
     }
 
     /** Live speed readout from the service's per-second stats broadcast. */

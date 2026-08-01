@@ -164,6 +164,52 @@
     <string name="log_scroll_off">Прокрутка</string>
     <string name="clear">Очистить</string>
 
+    <!-- ── Карточка «Защита» ──
+         Правило формулировок: не преувеличивать. Строка вправе утверждать только то, что
+         реально следует из профиля (и из снимка туннеля, когда подключено); всё, что
+         сужает туннель, выносится в отдельное предупреждение, а не прячется в заголовке. -->
+    <string name="protection">Защита</string>
+    <string name="chevron">›</string>
+    <string name="protection_apps">Приложения</string>
+    <string name="protection_always_on">Always-on</string>
+    <string name="protection_all_traffic">Весь трафик защищён</string>
+    <string name="protection_selected_apps">Защищено приложений: %1$d</string>
+    <string name="protection_except_apps">Защищены все приложения, кроме %1$d</string>
+    <string name="protection_split">Раздельный туннель — только выбранные маршруты</string>
+    <string name="protection_idle">Будет использовано при подключении</string>
+    <string name="protection_no_profile">Профиль не выбран</string>
+    <string name="protection_invalid">Конфиг профиля некорректен</string>
+    <string name="protection_pq">Гибридное постквантовое</string>
+    <string name="protection_classic">X25519 (без постквантового)</string>
+    <string name="protection_dns_tunnel">DNS через VPN</string>
+    <string name="protection_dns_system">системный DNS</string>
+    <string name="protection_key_pinned">ключ сервера запинен</string>
+    <string name="protection_key_tofu">ключ сервера на доверии (TOFU)</string>
+    <string name="protection_sep">%1$s · %2$s</string>
+    <string name="protection_mode_line">%1$s · %2$s · %3$s</string>
+    <string name="protection_warn_lan">Локальная сеть остаётся вне туннеля</string>
+    <string name="protection_warn_ipv6">IPv6 идёт мимо туннеля</string>
+    <string name="protection_warn_excluded">Маршрутов исключено из туннеля: %1$d</string>
+    <string name="protection_warn_no_key">Без запиненного ключа первое соединение доверяется на слово</string>
+
+    <!-- ── Подробности защиты ──
+         Согласованные значения (DNS/MTU/потоки/маршруты/блокировка) показываются только
+         при активном подключении — до него они попросту неизвестны. -->
+    <string name="detail_server">Сервер</string>
+    <string name="detail_transport">Транспорт</string>
+    <string name="detail_crypto">Шифрование</string>
+    <string name="detail_server_key">Ключ сервера</string>
+    <string name="detail_dns">DNS</string>
+    <string name="detail_mtu">MTU</string>
+    <string name="detail_multipath">Multipath</string>
+    <string name="detail_streams">до %1$d потоков</string>
+    <string name="detail_pushed_routes">Маршрутов от сервера</string>
+    <string name="detail_lockdown">Блокировать без VPN</string>
+    <string name="detail_routing">Маршрутизация</string>
+    <string name="detail_reconnect">Автопереподключение</string>
+    <string name="detail_on">Включено</string>
+    <string name="detail_off">Выключено</string>
+
     <!-- ── Уведомление фонового сервиса ── -->
     <string name="notif_channel_name">Сервис VPN</string>
     <string name="notif_connecting">Подключение…</string>
