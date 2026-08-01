@@ -1084,13 +1084,19 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             }
         }
         if p.dhcp.enabled {
-            if let Some((host, port)) = split_listen_spec(&p.dhcp.listen) {
-                profile_endpoints.push((
-                    host,
-                    port,
-                    "udp".to_string(),
-                    format!("dhcp {}", p.dhcp.listen.trim()),
-                ));
+            // Mirror the runtime's own normalisation: `run_profile` appends `:67` when the
+            // value carries no port. Reading the raw string instead meant a bare
+            // `dhcp.listen = 10.0.0.1` produced no endpoint at all, so the very collision this
+            // map exists to catch — two profiles on the DHCP default — slipped through
+            // whenever the operator wrote the address without a port.
+            // (Audit 2026-08-01, §2.)
+            let spec = if p.dhcp.listen.contains(':') {
+                p.dhcp.listen.trim().to_string()
+            } else {
+                format!("{}:67", p.dhcp.listen.trim())
+            };
+            if let Some((host, port)) = split_listen_spec(&spec) {
+                profile_endpoints.push((host, port, "udp".to_string(), format!("dhcp {spec}")));
             }
         }
         for (host, port, transport, label) in profile_endpoints {
@@ -2918,7 +2924,10 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
         // server's networks keeps its real source IPs (site-to-site). NAT above already
         // does this, hence the else. Server-originated traffic to a client_subnet needs
         // only the route and works regardless (#13).
-        nat::enable_routing(&pcfg.name, &ifname, pcfg.tun.mtu);
+        // Fails the profile rather than logging: `forward_private` promises transit routing,
+        // and a profile that cannot route it serves clients whose packets vanish.
+        nat::enable_routing(&pcfg.name, &ifname, pcfg.tun.mtu)
+            .map_err(|e| anyhow::anyhow!("profile '{}': {e}", pcfg.name))?;
     }
 
     // post_up hook: after this profile's TUN + NAT are up. Honoured ONLY from a
@@ -3718,14 +3727,23 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
             pool_end,
             profile.pool.clone(),
         ));
-        log::info!(
-            "DHCP server for profile '{}' starting on {}",
-            name,
-            dhcp_listen
-        );
+        // BIND FIRST, before the profile is allowed to claim it serves DHCP. This used to be
+        // spawn-and-forget with the bind inside the task, so a taken port, a bad address or a
+        // refused `set_broadcast` left the profile "running" while every client connected and
+        // never got a lease — the cause a single ERROR line in the journal. Same treatment as
+        // the DNS proxy. (Audit 2026-08-01, §2.)
+        let dhcp_socket = match dhcp::DhcpServer::bind(&dhcp_listen).await {
+            Ok(s) => s,
+            Err(e) => anyhow::bail!(
+                "profile '{}': {e}. Clients of this profile would get no lease at all. Free the \
+                 port (`ss -lunp | grep ':67 '`) or set dhcp.enabled = false.",
+                name
+            ),
+        };
+        log::info!("DHCP server for profile '{}' starting on {}", name, dhcp_listen);
         let name_dhcp = name.clone();
         tokio::spawn(async move {
-            if let Err(e) = dhcp_server.run(&dhcp_listen).await {
+            if let Err(e) = dhcp_server.run(&dhcp_listen, dhcp_socket).await {
                 log::error!("DHCP server error on profile '{}': {}", name_dhcp, e);
             }
         });
@@ -4328,6 +4346,13 @@ pool.cidr = 10.1.0.0/24
                 "two DHCP servers on the 0.0.0.0:67 default",
                 profile("a", "4443", 0, "dhcp.enabled = true\n")
                     + &profile("b", "5443", 1, "dhcp.enabled = true\n"),
+            ),
+            (
+                // The runtime appends `:67` to a bare address, so reading the raw string let
+                // this exact collision through whenever the port was omitted.
+                "two DHCP servers on one address written WITHOUT a port",
+                profile("a", "4443", 0, "dhcp.enabled = true\ndhcp.listen = 10.9.0.1\n")
+                    + &profile("b", "5443", 1, "dhcp.enabled = true\ndhcp.listen = 10.9.0.1\n"),
             ),
         ] {
             let err = validate_profiles(&cfg(&text))

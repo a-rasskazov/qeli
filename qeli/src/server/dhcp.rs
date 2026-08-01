@@ -106,8 +106,14 @@ impl DhcpServer {
         }
     }
 
-    pub async fn run(self: Arc<Self>, bind_addr: &str) -> anyhow::Result<()> {
-        log::info!("DHCP run() starting, binding to {}", bind_addr);
+    /// Bind the DHCP socket, SEPARATELY from serving on it.
+    ///
+    /// The bind used to happen inside the detached serve task, so a taken port, a bad address
+    /// or a refused `set_broadcast` surfaced as one log line while the profile came up and was
+    /// counted as running — clients then connected and never got a lease, with the cause buried
+    /// in the journal. Binding here lets the caller fail the profile BEFORE it claims to serve
+    /// DHCP. Same split as the DNS proxy, for the same reason. (Audit 2026-08-01, §2.)
+    pub async fn bind(bind_addr: &str) -> anyhow::Result<UdpSocket> {
         // DHCP is unauthenticated; a listen on a non-private (or wildcard) address
         // exposes the pool to anyone who can reach the port. Warn loudly so an
         // operator who did not intend a public DHCP surface notices at startup.
@@ -122,8 +128,16 @@ impl DhcpServer {
                 );
             }
         }
-        let socket = UdpSocket::bind(bind_addr).await?;
-        socket.set_broadcast(true)?;
+        let socket = UdpSocket::bind(bind_addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("DHCP cannot bind {bind_addr}: {e}"))?;
+        socket
+            .set_broadcast(true)
+            .map_err(|e| anyhow::anyhow!("DHCP cannot enable broadcast on {bind_addr}: {e}"))?;
+        Ok(socket)
+    }
+
+    pub async fn run(self: Arc<Self>, bind_addr: &str, socket: UdpSocket) -> anyhow::Result<()> {
         log::info!("DHCP server bound to {}, starting recv loop", bind_addr);
 
         let mut buf = vec![0u8; 1500];

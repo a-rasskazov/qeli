@@ -331,15 +331,26 @@ fn forward_policy(path: &str) -> Option<String> {
 /// enough); this is only for third-party transit. Best-effort: a host whose FORWARD policy
 /// is ACCEPT already routes. Rules carry the same `qeli-nat:<profile>` tag, so
 /// [`cleanup`]/[`cleanup_all`] remove them too.
-pub fn enable_routing(profile: &str, tun: &str, mtu: i32) {
-    enable_ip_forward();
+pub fn enable_routing(profile: &str, tun: &str, mtu: i32) -> anyhow::Result<()> {
+    // Same invariant as `setup`, for the same reason: `forward_private` promises the server
+    // ROUTES transit traffic, and without `ip_forward` the kernel drops every transit packet
+    // whatever the rules say. This used to be ignored entirely — the function returned `()`
+    // and logged success unconditionally — so a profile came up "routing" while nothing was
+    // forwarded. (Audit 2026-08-01, §5.)
+    if !enable_ip_forward() {
+        anyhow::bail!(
+            "routing.forward_private = true but net.ipv4.ip_forward could not be enabled — the \
+             kernel would not route anything between the tunnel and your networks. Enable it on \
+             the host (`sysctl -w net.ipv4.ip_forward=1`), or unset routing.forward_private"
+        );
+    }
     let path = match iptables_path() {
         Some(p) => p,
         None => {
             log::info!(
                 "Profile '{profile}': forward_private set but iptables is absent — relying on the host FORWARD policy for routing"
             );
-            return;
+            return Ok(());
         }
     };
     let mss = (mtu - 40).max(536).to_string();
@@ -387,6 +398,7 @@ pub fn enable_routing(profile: &str, tun: &str, mtu: i32) {
         )
     };
     // MSS-clamp forwarded TCP (PMTU black-hole guard), then permit tun<->anywhere routing.
+    let mut unapplied = false;
     for (table, chain, args) in [mss_rule("-o"), mss_rule("-i"), accept("-i"), accept("-o")] {
         let mut argv = vec![
             "-t".to_string(),
@@ -394,13 +406,41 @@ pub fn enable_routing(profile: &str, tun: &str, mtu: i32) {
             "-A".to_string(),
             chain.to_string(),
         ];
-        argv.extend(args);
+        argv.extend(args.clone());
         let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let _ = ipt(&path, &refs); // best-effort; nft-mixed hosts already route on ACCEPT policy
+        let _ = ipt(&path, &refs); // exit code is unreliable on nft-incompatible chains
+        // VERIFY instead of assuming. The whole set was applied with `let _ =` and then
+        // reported as success, so a host that refused every rule still logged "FORWARD ACCEPT
+        // for tun0" — the operator had no way to tell routing from silence.
+        if !rule_present(&path, table, chain, &args) {
+            unapplied = true;
+        }
+    }
+    if unapplied {
+        // Survivable or not depends on the host's FORWARD POLICY, exactly as in `setup`: with
+        // ACCEPT the missing rules change nothing (which is why this path is best-effort at
+        // all), with DROP the chain discards the very transit these rules exist to permit.
+        match forward_policy(&path) {
+            Some(policy) if policy.eq_ignore_ascii_case("DROP") => {
+                cleanup_with(&path, profile); // roll back the partial set
+                anyhow::bail!(
+                    "routing.forward_private = true, but the FORWARD rules could not be applied \
+                     (host has a mixed legacy/nft filter table) AND the FORWARD policy is DROP \
+                     — transit through {tun} would be dropped. Permit it yourself, fix the \
+                     iptables backend, or unset routing.forward_private"
+                );
+            }
+            _ => log::warn!(
+                "Profile '{profile}': forward_private — FORWARD rules could not be applied \
+                 (mixed legacy/nft filter table). The FORWARD policy is not DROP, so transit \
+                 still routes; if you tighten it later, permit {tun} yourself."
+            ),
+        }
     }
     log::info!(
         "Profile '{profile}': forward_private — ip_forward + FORWARD ACCEPT for {tun} (routing, no NAT)"
     );
+    Ok(())
 }
 
 /// Redirect in-tunnel DNS from the standard port 53 to where the proxy actually listens.
