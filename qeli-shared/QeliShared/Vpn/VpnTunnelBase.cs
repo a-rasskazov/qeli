@@ -1355,6 +1355,21 @@ public abstract class VpnTunnelBase
             .Distinct().OrderByDescending(m => m).ToArray();
     }
 
+    /// <summary>Stop refining once the bracket is this narrow — chasing the last few dozen
+    /// bytes is not worth a round trip, and the threshold also bounds the loop for a wide
+    /// gap. Same value in Rust, Kotlin and Swift.</summary>
+    internal const int MtuRefineStepBytes = 256;
+
+    /// <summary>Hard cap on refinement probes, so a pathological bracket cannot stretch the
+    /// handshake.</summary>
+    internal const int MtuRefineMaxProbes = 5;
+
+    /// <summary>Next size to try between a rung known to WORK (<paramref name="lo"/>) and one
+    /// known to FAIL (<paramref name="hi"/>), or -1 when the bracket is narrow enough to stop.
+    /// Split out of the probe loop so the search is testable without a socket.</summary>
+    internal static int MtuRefineStep(int lo, int hi) =>
+        hi - lo <= MtuRefineStepBytes ? -1 : lo + (hi - lo) / 2;
+
     private int ProbeUdpMtu(UdpTransport t, int ceiling)
     {
         const int RecOverhead = 48; // qeli UDP record + margin, so a probe certifies a real packet
@@ -1366,28 +1381,55 @@ public abstract class VpnTunnelBase
         // clear. A random 16-bit start means the attacker must guess the id too. Mirrors the
         // Rust client.
         ushort id = (ushort)RandomNumberGenerator.GetInt32(0, ushort.MaxValue + 1);
-        int found = -1;
-        foreach (int m in ladder)
+
+        // One rung: send up to twice, accept only an ACK echoing this id AND this size.
+        // Matching BOTH echoed fields is what stops a stale or forged ACK for a different rung
+        // from pinning the client to an MTU the path cannot carry. (Audit 2026-07-30.)
+        bool TryMtu(int m)
         {
             id++;
             int outerSize = m + RecOverhead;
             var probe = UdpFrag.MtuProbeDatagram(id, outerSize);
-            if (probe == null) continue;
-            bool acked = false;
-            for (int attempt = 0; attempt < 2 && !acked; attempt++)
+            if (probe == null) return false;
+            for (int attempt = 0; attempt < 2; attempt++)
             {
                 try { t.Send(probe, longHeader: false); }
-                catch { break; } // WSAEMSGSIZE: the local link is smaller than this probe → step down
+                catch { return false; } // WSAEMSGSIZE: the local link is smaller than this probe
                 var payload = t.RecvRawPayload(220);
-                // Match BOTH echoed fields, like the Rust and iOS clients. The id alone left
-                // the ACK confirming only "some probe arrived", not "the probe of THIS size
-                // arrived" — the single fact the rung is being accepted on. (Audit 2026-07-30.)
                 if (payload != null && UdpFrag.IsMtuProbeAck(payload)
                     && UdpFrag.ParseMtuProbe(payload) is (ushort ackId, ushort ackSize)
                     && ackId == id && ackSize == outerSize)
-                    acked = true;
+                    return true;
             }
-            if (acked) { found = m; break; }
+            return false;
+        }
+
+        // Coarse pass: walk the rungs high to low, keep the first that answers, and remember
+        // the lowest that did NOT — that pair brackets the path's real MTU.
+        int found = -1;
+        int failedAbove = -1;
+        foreach (int m in ladder)
+        {
+            if (TryMtu(m)) { found = m; break; }
+            failedAbove = m;
+        }
+
+        // Refinement: the coarse pass certifies the best rung that FITS, not the path's
+        // maximum. With rungs at 9000 and 6000 an 8999-byte path was pinned to 6000 and threw
+        // away a third of every frame — the ladder can only land on its own numbers, so adding
+        // rungs moves the loss around instead of removing it. Binary-search the bracket; `lo`
+        // has always been proven to work, so a refinement that finds nothing better still
+        // returns the coarse result. (Audit 2026-08-01, §8.)
+        if (found > 0 && failedAbove > found)
+        {
+            int lo = found, hi = failedAbove;
+            for (int i = 0; i < MtuRefineMaxProbes; i++)
+            {
+                int mid = MtuRefineStep(lo, hi);
+                if (mid < 0) break;
+                if (TryMtu(mid)) lo = mid; else hi = mid;
+            }
+            found = lo;
         }
         // Keep DF on success (packets <= the discovered MTU never fragment); allow
         // fragmentation again on a miss so behaviour is unchanged when probes are dropped.

@@ -133,6 +133,38 @@ final class UDPDataPlaneTests: XCTestCase {
             [1_400, 1_360, 1_320, 1_280, 1_200, 1_280 - overhead])
     }
 
+    /// Refinement finds the path's REAL MTU, not just the best rung that fits.
+    ///
+    /// A ladder can only ever land on its own numbers, so adding rungs moves the loss around
+    /// instead of removing it: with rungs at 9000 and 6000 an 8999-byte path was pinned to 6000
+    /// and threw away a third of every frame. This drives the same search the probe loop runs,
+    /// against a simulated path. (Audit 2026-08-01, §8.)
+    func testRefinementConvergesOnTheRealPathMTU() {
+        // `real` is what the path actually carries; a probe succeeds iff it fits.
+        func search(_ lo0: Int, _ hi0: Int, real: Int) -> (result: Int, probes: Int) {
+            var lo = lo0, hi = hi0, probes = 0
+            for _ in 0..<UDPPathMTUProbePolicy.refineMaxProbes {
+                guard let mid = UDPPathMTUProbePolicy.refineStep(lo: lo, hi: hi) else { break }
+                probes += 1
+                if mid <= real { lo = mid } else { hi = mid }
+            }
+            return (lo, probes)
+        }
+
+        for (lo0, hi0, real) in [(6_000, 9_000, 8_999), (4_000, 6_000, 5_500), (1_500, 2_500, 2_000)] {
+            let (got, probes) = search(lo0, hi0, real: real)
+            XCTAssertLessThanOrEqual(got, real, "must never certify above the path")
+            XCTAssertLessThanOrEqual(real - got, UDPPathMTUProbePolicy.refineStepBytes,
+                                     "left \(real - got) bytes on the table")
+            XCTAssertGreaterThan(got, lo0, "refinement must beat the coarse rung \(lo0)")
+            XCTAssertLessThanOrEqual(probes, UDPPathMTUProbePolicy.refineMaxProbes)
+        }
+
+        // A path barely above the rung must not be made worse, and a narrow bracket must stop.
+        XCTAssertNil(UDPPathMTUProbePolicy.refineStep(lo: 6_000, hi: 6_200))
+        XCTAssertEqual(search(6_000, 9_000, real: 6_001).result, 6_000)
+    }
+
     private func tlsRecord(body: Data) -> Data {
         var record = Data([0x16, 0x03, 0x03, UInt8((body.count >> 8) & 0xff), UInt8(body.count & 0xff)])
         record.append(body)

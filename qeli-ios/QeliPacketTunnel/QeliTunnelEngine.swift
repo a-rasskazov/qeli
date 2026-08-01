@@ -612,10 +612,10 @@ final class QeliTunnelEngine: @unchecked Sendable {
             throw UDPPathMTUProbeError.noResult(ceiling: ceiling)
         }
 
-        for candidate in policy.candidates {
+        // One candidate: send up to twice, accept only an ACK echoing this id AND this size.
+        func tryMTU(_ candidate: Int) async throws -> Bool {
             let probeID = try Self.secureRandomProbeID()
             let outerSize = policy.outerProbeSize(for: candidate)
-
             for _ in 0..<2 {
                 do {
                     try await records.sendMTUProbe(id: probeID, outerSize: outerSize)
@@ -623,7 +623,7 @@ final class QeliTunnelEngine: @unchecked Sendable {
                     throw CancellationError()
                 } catch {
                     guard Self.isDatagramTooLarge(error) else { throw error }
-                    break // EMSGSIZE/DF is a negative probe result; step down.
+                    return false // EMSGSIZE/DF is a negative probe result.
                 }
                 if try await waitForMTUProbeAck(
                     records: records,
@@ -632,14 +632,41 @@ final class QeliTunnelEngine: @unchecked Sendable {
                     outerSize: outerSize,
                     timeoutMilliseconds: 220
                 ) {
-                    sharedStore.appendLog(
-                        "UDP path-MTU probe: tunnel MTU \(candidate) (ceiling \(ceiling))"
-                    )
-                    return candidate
+                    return true
                 }
             }
+            return false
         }
-        throw UDPPathMTUProbeError.noResult(ceiling: ceiling)
+
+        // Coarse pass: walk the rungs high to low, keep the first that answers, and remember
+        // the lowest that did NOT — that pair brackets the path's real MTU.
+        var found: Int?
+        var failedAbove: Int?
+        for candidate in policy.candidates {
+            if try await tryMTU(candidate) {
+                found = candidate
+                break
+            }
+            failedAbove = candidate
+        }
+        guard var lo = found else {
+            throw UDPPathMTUProbeError.noResult(ceiling: ceiling)
+        }
+
+        // Refinement: the coarse pass certifies the best rung that FITS, not the path's
+        // maximum. With rungs at 9000 and 6000 an 8999-byte path was pinned to 6000 and threw
+        // away a third of every frame — a ladder can only land on its own numbers, so adding
+        // rungs moves the loss around instead of removing it. Binary-search the bracket; `lo`
+        // has always been proven to work, so a refinement that finds nothing better still
+        // returns the coarse result. (Audit 2026-08-01, §8.)
+        if var hi = failedAbove, hi > lo {
+            for _ in 0..<UDPPathMTUProbePolicy.refineMaxProbes {
+                guard let mid = UDPPathMTUProbePolicy.refineStep(lo: lo, hi: hi) else { break }
+                if try await tryMTU(mid) { lo = mid } else { hi = mid }
+            }
+        }
+        sharedStore.appendLog("UDP path-MTU probe: tunnel MTU \(lo) (ceiling \(ceiling))")
+        return lo
     }
 
     private func waitForMTUProbeAck(

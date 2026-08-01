@@ -180,6 +180,38 @@ public static class WireConformance
             .SequenceEqual(new[] { 1400, 1360, 1320, 1280, 1200, 1280 - jumboOverhead });
         check("mtu-ladder: a normal ceiling gains no extra rungs", normalUnchanged);
 
+        // Refinement finds the path's REAL MTU, not just the best rung that fits. A ladder can
+        // only land on its own numbers, so adding rungs moves the loss around instead of
+        // removing it: with rungs at 9000 and 6000 an 8999-byte path was pinned to 6000.
+        // Same search as the probe loop, driven against a simulated path.
+        // (Audit 2026-08-01, §8.)
+        static (int Result, int Probes) Search(int lo, int hi, int real)
+        {
+            int probes = 0;
+            for (int i = 0; i < Vpn.VpnTunnelBase.MtuRefineMaxProbes; i++)
+            {
+                int mid = Vpn.VpnTunnelBase.MtuRefineStep(lo, hi);
+                if (mid < 0) break;
+                probes++;
+                if (mid <= real) lo = mid; else hi = mid;
+            }
+            return (lo, probes);
+        }
+        bool converges = true, neverOver = true, bounded = true;
+        foreach (var (lo0, hi0, real) in new[] { (6000, 9000, 8999), (4000, 6000, 5500), (1500, 2500, 2000) })
+        {
+            var (got, probes) = Search(lo0, hi0, real);
+            neverOver &= got <= real;
+            converges &= real - got <= Vpn.VpnTunnelBase.MtuRefineStepBytes && got > lo0;
+            bounded &= probes <= Vpn.VpnTunnelBase.MtuRefineMaxProbes;
+        }
+        // A path barely above the rung must not be made worse, and a narrow bracket must stop.
+        var (atRung, _) = Search(6000, 9000, 6001);
+        check("mtu-refine: converges to within one step of the real path MTU", converges);
+        check("mtu-refine: never certifies above what the path carries", neverOver && atRung == 6000);
+        check("mtu-refine: probe budget is bounded", bounded && Vpn.VpnTunnelBase.MtuRefineStep(6000, 6200) < 0);
+        normalUnchanged &= converges && neverOver && bounded;
+
         return floorFits && descending && nonEmpty && tiny.Length > 0
             && hasMiddle && jumboUseful && normalUnchanged;
     }

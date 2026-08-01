@@ -2574,48 +2574,99 @@ async fn probe_udp_mtu(
     // to a too-large MTU (a DoS on fake-tls-UDP-without-obfs, where the probe rides in the
     // clear). A random 16-bit start means the attacker must also guess the id.
     let mut probe_id: u16 = rand::rng().random();
-    let mut found: Option<i32> = None;
-    'ladder: for m in ladder {
-        probe_id = probe_id.wrapping_add(1);
-        let probe_size = (m as usize + REC_OVERHEAD) as u16;
-        let probe = match mtu_probe_datagram(probe_id, m as usize + REC_OVERHEAD) {
-            Some(p) => p,
-            None => continue,
-        };
-        let pkt = if quic_enabled {
-            let w = wrap_quic_short(&probe, connection_id, *quic_pn);
-            *quic_pn = quic_pn.wrapping_add(1);
-            w
-        } else {
-            probe
-        };
-        for _ in 0..2u8 {
-            // EMSGSIZE = the local link is smaller than this probe → size fails, step down.
-            if socket.send(&pkt).await.is_err() {
-                continue 'ladder;
-            }
-            match tokio::time::timeout(Duration::from_millis(220), socket.recv(&mut buf)).await {
-                Ok(Ok(n)) if n > 0 => {
-                    let payload = if quic_enabled {
-                        unwrap_quic(&buf[..n])
-                            .map(|p| p.payload)
-                            .unwrap_or_default()
+
+    // One rung: send up to twice, accept only an ACK echoing this id AND this size.
+    //
+    // Requiring the echoed SIZE as well as the id is what stops a stale or forged ACK for a
+    // different rung from pinning the client to an MTU the path cannot carry.
+    macro_rules! try_mtu {
+        ($m:expr) => {{
+            let m: i32 = $m;
+            probe_id = probe_id.wrapping_add(1);
+            let probe_size = (m as usize + REC_OVERHEAD) as u16;
+            match mtu_probe_datagram(probe_id, m as usize + REC_OVERHEAD) {
+                None => false,
+                Some(probe) => {
+                    let pkt = if quic_enabled {
+                        let w = wrap_quic_short(&probe, connection_id, *quic_pn);
+                        *quic_pn = quic_pn.wrapping_add(1);
+                        w
                     } else {
-                        buf[..n].to_vec()
+                        probe
                     };
-                    // Require BOTH the id AND the echoed size to match what we sent — not
-                    // just the id. A stale/forged ACK for a different rung (or a guessed id)
-                    // is rejected, so the client can't be pushed onto the wrong MTU.
-                    if is_mtu_probe_ack(&payload)
-                        && parse_mtu_probe(&payload) == Some((probe_id, probe_size))
-                    {
-                        found = Some(m);
-                        break 'ladder;
+                    let mut ok = false;
+                    for _ in 0..2u8 {
+                        // EMSGSIZE = the local link is smaller than this probe → size fails.
+                        if socket.send(&pkt).await.is_err() {
+                            break;
+                        }
+                        match tokio::time::timeout(
+                            Duration::from_millis(220),
+                            socket.recv(&mut buf),
+                        )
+                        .await
+                        {
+                            Ok(Ok(n)) if n > 0 => {
+                                let payload = if quic_enabled {
+                                    unwrap_quic(&buf[..n]).map(|p| p.payload).unwrap_or_default()
+                                } else {
+                                    buf[..n].to_vec()
+                                };
+                                if is_mtu_probe_ack(&payload)
+                                    && parse_mtu_probe(&payload) == Some((probe_id, probe_size))
+                                {
+                                    ok = true;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
+                    ok
                 }
-                _ => {}
+            }
+        }};
+    }
+
+    // Coarse pass: walk the rungs high to low and keep the first that answers, remembering the
+    // lowest rung that did NOT — that pair brackets the path's real MTU.
+    let mut found: Option<i32> = None;
+    let mut failed_above: Option<i32> = None;
+    for m in ladder {
+        if try_mtu!(m) {
+            found = Some(m);
+            break;
+        }
+        failed_above = Some(m);
+    }
+
+    // Refinement: the coarse pass certifies the best rung that FITS, which is not the path's
+    // maximum. With rungs at 9000 and 6000 a 8999-byte path was pinned to 6000 and threw away
+    // a third of every frame — the ladder can only ever land on one of its own numbers, so no
+    // amount of adding rungs fixes this in general, it just moves the loss around.
+    //
+    // Binary-search the open interval between the rung that answered and the lowest one that
+    // did not. Each step is one probe, so the cost is bounded by the iteration cap rather than
+    // by the size of the gap, and the invariant is simple: `lo` has always been proven to work,
+    // so a refinement that finds nothing better still returns the coarse result. STEP is the
+    // point of diminishing returns — chasing the last few dozen bytes is not worth a round
+    // trip, and stopping on it also bounds the loop for a huge gap. (Audit 2026-08-01, §8.)
+    if let (Some(lo0), Some(hi0)) = (found, failed_above) {
+        let (mut lo, mut hi) = (lo0, hi0);
+        for _ in 0..MTU_REFINE_MAX_PROBES {
+            let Some(mid) = mtu_refine_step(lo, hi) else {
+                break;
+            };
+            if try_mtu!(mid) {
+                lo = mid;
+            } else {
+                hi = mid;
             }
         }
+        if lo > lo0 {
+            log::debug!("path-MTU probe: refined {lo0} -> {lo} (upper bound {hi0})");
+        }
+        found = Some(lo);
     }
     // Keep DF for the data plane on success (packets ≤ the discovered MTU never
     // fragment); restore fragmentation-allowed on a miss so behaviour is unchanged.
@@ -2628,6 +2679,26 @@ async fn probe_udp_mtu(
         },
     );
     found
+}
+
+/// Stop refining once the bracket is this narrow. Chasing the last few dozen bytes is not
+/// worth a round trip, and the threshold also bounds the loop for a very wide gap.
+pub(crate) const MTU_REFINE_STEP: i32 = 256;
+
+/// Hard cap on refinement probes, so a pathological bracket cannot stretch the handshake.
+pub(crate) const MTU_REFINE_MAX_PROBES: u8 = 5;
+
+/// Next size to try between a rung known to WORK (`lo`) and one known to FAIL (`hi`), or
+/// `None` when the bracket is narrow enough to stop.
+///
+/// Split out of the probe loop so the search itself is testable without a socket: the loop
+/// contributes only "send and wait", and everything that decides *which* size to ask about
+/// lives here.
+pub(crate) fn mtu_refine_step(lo: i32, hi: i32) -> Option<i32> {
+    if hi - lo <= MTU_REFINE_STEP {
+        return None;
+    }
+    Some(lo + (hi - lo) / 2)
 }
 
 /// Rungs of the path-MTU ladder, in TUNNEL (inner) MTU units, highest first.
@@ -2731,6 +2802,54 @@ mod mtu_ladder_tests {
             ladder.windows(2).all(|w| w[0] > w[1]),
             "ladder must descend: {ladder:?}"
         );
+    }
+
+    /// Refinement finds the path's real MTU, not just the best rung that fits.
+    ///
+    /// The ladder can only ever land on one of its own numbers, so adding rungs moves the loss
+    /// around instead of removing it: with rungs at 9000 and 6000 an 8999-byte path was pinned
+    /// to 6000 and threw away a third of every frame. This drives the same search the probe
+    /// loop runs, against a simulated path, and asserts it converges from below.
+    /// (Audit 2026-08-01, §8.)
+    #[test]
+    fn refinement_converges_on_the_real_path_mtu() {
+        use super::{mtu_refine_step, MTU_REFINE_MAX_PROBES, MTU_REFINE_STEP};
+
+        // `real` is what the path actually carries; a probe succeeds iff it fits.
+        fn search(mut lo: i32, mut hi: i32, real: i32) -> (i32, u8) {
+            let mut probes = 0u8;
+            for _ in 0..MTU_REFINE_MAX_PROBES {
+                let Some(mid) = mtu_refine_step(lo, hi) else {
+                    break;
+                };
+                probes += 1;
+                if mid <= real {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            (lo, probes)
+        }
+
+        for (lo0, hi0, real) in [(6000, 9000, 8999), (4000, 6000, 5500), (1500, 2500, 2000)] {
+            let (got, probes) = search(lo0, hi0, real);
+            assert!(got <= real, "must never certify above the path: {got} > {real}");
+            assert!(
+                real - got <= MTU_REFINE_STEP,
+                "left {} bytes on the table (lo0={lo0} hi0={hi0} real={real} got={got})",
+                real - got
+            );
+            assert!(got > lo0, "refinement must beat the coarse rung {lo0}, got {got}");
+            assert!(probes <= MTU_REFINE_MAX_PROBES, "probe budget exceeded");
+        }
+
+        // A path that carries barely more than the rung must not be made WORSE, and must not
+        // burn probes on a gap that is already narrow.
+        assert_eq!(mtu_refine_step(6000, 6200), None, "a narrow bracket stops immediately");
+        let (got, probes) = search(6000, 9000, 6001);
+        assert_eq!(got, 6000, "a path at the rung stays at the rung");
+        assert!(probes <= MTU_REFINE_MAX_PROBES);
     }
 
     /// ...and a normal 1500-class path must be probed exactly as before, so the jumbo rungs

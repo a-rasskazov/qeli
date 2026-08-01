@@ -78,6 +78,25 @@ struct UDPPathMTUProbePolicy: Equatable, Sendable {
             .sorted(by: >)
     }
 
+    /// Stop refining once the bracket is this narrow — chasing the last few dozen bytes is not
+    /// worth a round trip, and the threshold also bounds the loop for a wide gap. Same value in
+    /// Rust, C# and Kotlin.
+    static let refineStepBytes = 256
+
+    /// Hard cap on refinement probes, so a pathological bracket cannot stretch the handshake.
+    static let refineMaxProbes = 5
+
+    /// Next size to try between a rung known to WORK (`lo`) and one known to FAIL (`hi`), or
+    /// `nil` when the bracket is narrow enough to stop.
+    ///
+    /// The coarse ladder certifies the best rung that FITS, not the path's maximum: with rungs
+    /// at 9000 and 6000 an 8999-byte path was pinned to 6000 and threw away a third of every
+    /// frame. A ladder can only ever land on its own numbers, so adding rungs moves the loss
+    /// around instead of removing it — the bracket has to be searched. (Audit 2026-08-01, §8.)
+    static func refineStep(lo: Int, hi: Int) -> Int? {
+        hi - lo <= refineStepBytes ? nil : lo + (hi - lo) / 2
+    }
+
     func outerProbeSize(for tunnelMTU: Int) -> Int {
         let (value, overflow) = tunnelMTU.addingReportingOverflow(Self.recordOverhead)
         return overflow ? Int.max : value

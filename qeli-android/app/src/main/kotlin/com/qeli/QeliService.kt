@@ -2045,22 +2045,48 @@ class VpnServiceImpl : VpnService() {
         // to a too-large MTU — a DoS on fake-tls-UDP-without-obfs, where the probe rides in the
         // clear. A random 16-bit start means the attacker must guess the id too. Mirrors Rust.
         var id = SecureRandom().nextInt(0x10000)
-        loop@ for (m in ladder) {
+
+        // One rung: send up to twice, accept only an ACK echoing this id AND this size.
+        // Matching BOTH echoed fields is what stops a stale or forged ACK for a different rung
+        // from pinning the client to an MTU the path cannot carry. (Audit 2026-07-30.)
+        fun tryMtu(m: Int): Boolean {
             id = (id + 1) and 0xFFFF
             val outerSize = m + recOverhead
-            val probe = UdpFrag.mtuProbeDatagram(id, outerSize) ?: continue
-            var attempt = 0
-            while (attempt < 2) {
-                attempt++
+            val probe = UdpFrag.mtuProbeDatagram(id, outerSize) ?: return false
+            repeat(2) {
                 try { t.send(probe, longHeader = false) }
-                catch (e: Exception) { continue@loop }   // EMSGSIZE: link < probe → step down
+                catch (e: Exception) { return false }   // EMSGSIZE: link < probe
                 val payload = t.recvRawPayload(220)
-                // Match BOTH echoed fields, like the Rust and iOS clients. The id alone left
-                // the ACK confirming only "some probe arrived", not "the probe of THIS size
-                // arrived" — the single fact the rung is being accepted on. (Audit 2026-07-30.)
                 if (payload != null && UdpFrag.isMtuProbeAck(payload)
-                    && UdpFrag.parseMtuProbe(payload) == Pair(id, outerSize)) { found = m; break@loop }
+                    && UdpFrag.parseMtuProbe(payload) == Pair(id, outerSize)) return true
             }
+            return false
+        }
+
+        // Coarse pass: walk the rungs high to low, keep the first that answers, and remember
+        // the lowest that did NOT — that pair brackets the path's real MTU.
+        var failedAbove = -1
+        for (m in ladder) {
+            if (tryMtu(m)) { found = m; break }
+            failedAbove = m
+        }
+
+        // Refinement: the coarse pass certifies the best rung that FITS, not the path's
+        // maximum. With rungs at 9000 and 6000 an 8999-byte path was pinned to 6000 and threw
+        // away a third of every frame — a ladder can only land on its own numbers, so adding
+        // rungs moves the loss around instead of removing it. Binary-search the bracket; `lo`
+        // has always been proven to work, so a refinement that finds nothing better still
+        // returns the coarse result. (Audit 2026-08-01, §8.)
+        if (found > 0 && failedAbove > found) {
+            var lo = found
+            var hi = failedAbove
+            // A plain loop, not `repeat`: `return@repeat` continues to the NEXT iteration, so a
+            // narrow bracket would spin out the whole budget instead of stopping.
+            for (i in 0 until MtuLadder.REFINE_MAX_PROBES) {
+                val mid = MtuLadder.refineStep(lo, hi) ?: break
+                if (tryMtu(mid)) lo = mid else hi = mid
+            }
+            found = lo
         }
         // Keep DF on success (packets <= the MTU never fragment); clear it on a miss so a
         // network that drops our probes behaves exactly as before (fragmentation allowed).

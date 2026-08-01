@@ -280,6 +280,42 @@ class WireConformanceTest {
     }
 
     /**
+     * Refinement finds the path's REAL MTU, not just the best rung that fits.
+     *
+     * A ladder can only ever land on its own numbers, so adding rungs moves the loss around
+     * instead of removing it: with rungs at 9000 and 6000 an 8999-byte path was pinned to 6000
+     * and threw away a third of every frame. This drives the same search the probe loop runs,
+     * against a simulated path. (Audit 2026-08-01, §8.)
+     */
+    @Test
+    fun `refinement converges on the real path mtu`() {
+        // `real` is what the path actually carries; a probe succeeds iff it fits.
+        fun search(lo0: Int, hi0: Int, real: Int): Pair<Int, Int> {
+            var lo = lo0
+            var hi = hi0
+            var probes = 0
+            for (i in 0 until MtuLadder.REFINE_MAX_PROBES) {
+                val mid = MtuLadder.refineStep(lo, hi) ?: break
+                probes++
+                if (mid <= real) lo = mid else hi = mid
+            }
+            return Pair(lo, probes)
+        }
+
+        for ((lo0, hi0, real) in listOf(Triple(6000, 9000, 8999), Triple(4000, 6000, 5500), Triple(1500, 2500, 2000))) {
+            val (got, probes) = search(lo0, hi0, real)
+            assertTrue("must never certify above the path: $got > $real", got <= real)
+            assertTrue("left ${real - got} bytes on the table", real - got <= MtuLadder.REFINE_STEP)
+            assertTrue("refinement must beat the coarse rung $lo0, got $got", got > lo0)
+            assertTrue("probe budget exceeded", probes <= MtuLadder.REFINE_MAX_PROBES)
+        }
+
+        // A path barely above the rung must not be made worse, and a narrow bracket must stop.
+        assertEquals(null, MtuLadder.refineStep(6000, 6200))
+        assertEquals(6000, search(6000, 9000, 6001).first)
+    }
+
+    /**
      * The exact bytes of the in-tunnel MTU report, pinned identically in the Rust, C# and Swift
      * ports. A port that drifts on byte order or the magic makes the server read a nonsense MTU.
      */

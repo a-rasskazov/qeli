@@ -23,6 +23,28 @@ object MtuLadder {
      * fell back to the pushed MTU with fragmentation switched back on.
      * (Audit 2026-07-29, #12.)
      */
+    /**
+     * Stop refining once the bracket is this narrow — chasing the last few dozen bytes is not
+     * worth a round trip, and the threshold also bounds the loop for a wide gap. Same value in
+     * Rust, C# and Swift.
+     */
+    const val REFINE_STEP = 256
+
+    /** Hard cap on refinement probes, so a pathological bracket cannot stretch the handshake. */
+    const val REFINE_MAX_PROBES = 5
+
+    /**
+     * Next size to try between a rung known to WORK ([lo]) and one known to FAIL ([hi]), or
+     * `null` when the bracket is narrow enough to stop.
+     *
+     * The coarse ladder certifies the best rung that FITS, not the path's maximum: with rungs
+     * at 9000 and 6000 an 8999-byte path was pinned to 6000 and threw away a third of every
+     * frame. A ladder can only ever land on its own numbers, so adding rungs moves the loss
+     * around instead of removing it — the bracket has to be searched.
+     * (Audit 2026-08-01, §8.)
+     */
+    fun refineStep(lo: Int, hi: Int): Int? = if (hi - lo <= REFINE_STEP) null else lo + (hi - lo) / 2
+
     fun rungs(ceiling: Int, outerOverhead: Int): List<Int> {
         val floor = (PATH_FLOOR - outerOverhead).coerceIn(576, maxOf(ceiling, 576))
         // The jumbo rungs (12000..1500) exist because the ceiling stopped being an Ethernet
