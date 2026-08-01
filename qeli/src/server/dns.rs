@@ -44,6 +44,57 @@ fn skip_name(msg: &[u8], mut pos: usize) -> Option<usize> {
     None
 }
 
+/// Subtract `age` seconds from every resource record's TTL, in place, saturating at zero.
+///
+/// Walks ANSWER + AUTHORITY + ADDITIONAL, because all three carry cacheable records and a stub
+/// resolver honours the TTLs it sees in each. The OPT pseudo-record (type 41) is SKIPPED: its
+/// TTL field is not a lifetime at all but the extended RCODE and EDNS flags, so decrementing it
+/// would corrupt the answer's error code and DO bit rather than age anything.
+///
+/// A malformed message stops the walk where it stops — the records already adjusted stay
+/// adjusted, which is strictly better than serving the whole thing with stale lifetimes, and no
+/// index is ever written without having been bounds-checked first.
+fn decrement_ttls(msg: &mut [u8], age: u32) {
+    if age == 0 || msg.len() < 12 {
+        return;
+    }
+    let counts = [
+        u16::from_be_bytes([msg[6], msg[7]]) as usize,  // ANCOUNT
+        u16::from_be_bytes([msg[8], msg[9]]) as usize,  // NSCOUNT
+        u16::from_be_bytes([msg[10], msg[11]]) as usize, // ARCOUNT
+    ];
+    let qdcount = u16::from_be_bytes([msg[4], msg[5]]) as usize;
+    let mut pos = 12usize;
+    for _ in 0..qdcount {
+        pos = match skip_name(msg, pos).and_then(|p| p.checked_add(4)) {
+            Some(p) => p,
+            None => return,
+        };
+    }
+    for count in counts {
+        for _ in 0..count {
+            let after_name = match skip_name(msg, pos) {
+                Some(p) => p,
+                None => return,
+            };
+            if after_name + 10 > msg.len() {
+                return;
+            }
+            let rtype = u16::from_be_bytes([msg[after_name], msg[after_name + 1]]);
+            let rdlen = u16::from_be_bytes([msg[after_name + 8], msg[after_name + 9]]) as usize;
+            if rtype != 41 {
+                let t = after_name + 4;
+                let ttl = u32::from_be_bytes([msg[t], msg[t + 1], msg[t + 2], msg[t + 3]]);
+                msg[t..t + 4].copy_from_slice(&ttl.saturating_sub(age).to_be_bytes());
+            }
+            pos = match after_name.checked_add(10).and_then(|p| p.checked_add(rdlen)) {
+                Some(p) => p,
+                None => return,
+            };
+        }
+    }
+}
+
 /// Smallest TTL across the ANSWER section, or `None` when the message carries no answers
 /// (NXDOMAIN / NODATA) or is malformed.
 ///
@@ -143,42 +194,51 @@ pub async fn run_dns_proxy_tcp(
         let pref = pref.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            // One deadline for the whole exchange, so a client that connects and then stalls
-            // cannot hold a slot open.
-            let deadline = Duration::from_secs(cfg.timeout_secs.max(1));
-            let exchange = async {
-                // RFC 7766 allows several queries per connection; serve until the peer closes.
-                loop {
-                    let mut len_buf = [0u8; 2];
-                    if stream.read_exact(&mut len_buf).await.is_err() {
-                        return; // clean close or a broken peer — either way, done
-                    }
-                    let qlen = u16::from_be_bytes(len_buf) as usize;
-                    if qlen < 12 {
-                        return; // shorter than a DNS header
-                    }
-                    let mut query = vec![0u8; qlen];
-                    if stream.read_exact(&mut query).await.is_err() {
-                        return;
-                    }
-                    let Some(resp) = resolve(cache.clone(), cfg.clone(), pref.clone(), &query).await
-                    else {
-                        return;
-                    };
-                    // Over TCP the answer goes out WHOLE — no size limit and no TC; that is the
-                    // entire point of the client having retried here.
-                    let Ok(len) = u16::try_from(resp.len()) else {
-                        return;
-                    };
-                    let mut framed = Vec::with_capacity(2 + resp.len());
-                    framed.extend_from_slice(&len.to_be_bytes());
-                    framed.extend_from_slice(&resp);
-                    if stream.write_all(&framed).await.is_err() {
-                        return;
-                    }
+            // The timeout bounds IDLE time, not the connection.
+            //
+            // It used to wrap the whole exchange, so a perfectly healthy persistent connection
+            // — which is the entire point of RFC 7766 — was cut off `timeout_secs` after
+            // accept, mid-query, however busy it was. What needs bounding is a peer that
+            // connects and then says nothing; a peer that keeps asking questions is a peer the
+            // service exists for. Applying it per read gives that, and still releases the
+            // in-flight slot from a stalled client. (Audit 2026-08-01, §10.)
+            let idle = Duration::from_secs(cfg.timeout_secs.max(1));
+            // RFC 7766 allows several queries per connection; serve until the peer closes.
+            loop {
+                let mut len_buf = [0u8; 2];
+                match tokio::time::timeout(idle, stream.read_exact(&mut len_buf)).await {
+                    Ok(Ok(_)) => {}
+                    // Clean close, broken peer or an idle timeout — either way, done.
+                    _ => return,
                 }
-            };
-            let _ = tokio::time::timeout(deadline, exchange).await;
+                let qlen = u16::from_be_bytes(len_buf) as usize;
+                if qlen < 12 {
+                    return; // shorter than a DNS header
+                }
+                let mut query = vec![0u8; qlen];
+                // The BODY gets its own deadline too: a peer that announces a length and then
+                // dribbles could otherwise hold the slot indefinitely between reads.
+                match tokio::time::timeout(idle, stream.read_exact(&mut query)).await {
+                    Ok(Ok(_)) => {}
+                    _ => return,
+                }
+                let Some(resp) = resolve(cache.clone(), cfg.clone(), pref.clone(), &query).await
+                else {
+                    return;
+                };
+                // Over TCP the answer goes out WHOLE — no size limit and no TC; that is the
+                // entire point of the client having retried here.
+                let Ok(len) = u16::try_from(resp.len()) else {
+                    return;
+                };
+                let mut framed = Vec::with_capacity(2 + resp.len());
+                framed.extend_from_slice(&len.to_be_bytes());
+                framed.extend_from_slice(&resp);
+                match tokio::time::timeout(idle, stream.write_all(&framed)).await {
+                    Ok(Ok(())) => {}
+                    _ => return,
+                }
+            }
         });
     }
 }
@@ -208,7 +268,13 @@ pub async fn run_dns_proxy(
     // FORMERRs or answers the wrong question. The reply path was already widened for exactly
     // this reason (S-14); the query path was left at an Ethernet-sized guess.
     // (Audit 2026-08-01, §10.)
-    let mut buf = vec![0u8; 4096];
+    // The full UDP payload maximum, not a guess at what clients "should" send. `recv_from`
+    // discards whatever does not fit, silently, so any bound below 65535 turns a legal
+    // datagram — a DNS UPDATE, a large TSIG, an EDNS0 query from a client that advertised
+    // room for it — into a truncated message forwarded upstream as if it were whole. This is
+    // ONE buffer for the whole accept loop, so the ceiling costs 64 KiB per profile, once.
+    // (Audit 2026-08-01, §10.)
+    let mut buf = vec![0u8; 65_535];
     loop {
         let (n, src) = match socket.recv_from(&mut buf).await {
             Ok(v) => v,
@@ -371,18 +437,28 @@ async fn resolve(
             .get(&cache_key)
             .and_then(|(resp, time, entry_ttl)| {
                 // Per-entry lifetime from the record, not the global network timeout. (S-14)
-                if time.elapsed() < *entry_ttl {
-                    Some(resp.clone())
+                let age = time.elapsed();
+                if age < *entry_ttl {
+                    Some((resp.clone(), age.as_secs()))
                 } else {
                     None
                 }
             })
     };
-    if let Some(mut response) = cached {
+    if let Some((mut response, age_secs)) = cached {
         if response.len() >= 2 {
             response[0] = query_txid[0];
             response[1] = query_txid[1];
         }
+        // Age the record TTLs by how long the answer has sat here.
+        //
+        // Only the transaction ID used to be rewritten, so a reply served one second before its
+        // cache entry expired still claimed the FULL original TTL. Downstream resolvers and
+        // stub clients cache on that number, which turns a 60-second record into up to 120
+        // seconds of staleness — and the error compounds through every layer that caches. RFC
+        // 2181 §5.2: a cached record is served with the remaining lifetime, not the original.
+        // (Audit 2026-08-01, §10.)
+        decrement_ttls(&mut response, age_secs.min(u32::MAX as u64) as u32);
         return Some(response);
     }
 
@@ -412,8 +488,8 @@ async fn resolve(
     for attempt in 0..upstreams.len() {
         let idx = (start + attempt) % upstreams.len();
         let upstream_addr = format!("{}:53", upstreams[idx]);
-        let upstream_ip = match upstream_addr.parse::<SocketAddr>() {
-            Ok(sa) => sa.ip(),
+        let upstream_sa = match upstream_addr.parse::<SocketAddr>() {
+            Ok(sa) => sa,
             Err(_) => continue,
         };
         if force_tcp {
@@ -452,7 +528,12 @@ async fn resolve(
             }
             match tokio::time::timeout(remaining, upstream_sock.recv_from(&mut resp_buf)).await {
                 Ok(Ok((m, from))) => {
-                    if from.ip() != upstream_ip {
+                    // Compare the FULL socket address, not just the IP. A reply is only ours
+                    // if it came back from the port we sent to; accepting any port on the
+                    // right host lets anything else on that machine — or anything that can
+                    // spoof its address — answer for the resolver, and the txid below is only
+                    // 16 bits of defence.
+                    if from != upstream_sa {
                         continue; // not from the queried resolver — ignore
                     }
                     if m < 12 || resp_buf[0] != query_txid[0] || resp_buf[1] != query_txid[1] {
@@ -466,7 +547,7 @@ async fn resolve(
                     if resp_buf[2] & 0x02 != 0 {
                         log::debug!(
                             "DNS: truncated reply from {} — retrying over TCP",
-                            upstream_ip
+                            upstream_sa
                         );
                         if let Some(full) = query_tcp(&upstream_addr, &query, ttl).await {
                             response = Some(full);
@@ -484,7 +565,7 @@ async fn resolve(
                     if m == resp_buf.len() {
                         log::debug!(
                             "DNS: reply from {} exactly filled the {}-byte buffer — may have                              been cut off, retrying over TCP",
-                            upstream_ip,
+                            upstream_sa,
                             resp_buf.len()
                         );
                         if let Some(full) = query_tcp(&upstream_addr, &query, ttl).await {
@@ -632,9 +713,20 @@ fn apply_udp_size_limit(query: &[u8], resp: Vec<u8>) -> Vec<u8> {
     let q_end = question_section_end(query).unwrap_or(12).min(query.len());
     let mut out = Vec::with_capacity(q_end);
     out.extend_from_slice(&query[..q_end]);
+    // The FLAGS come from the real answer, not from the query.
+    //
+    // Building them from the query and forcing NOERROR discarded what the resolver actually
+    // said: an oversized NXDOMAIN went out as NOERROR+TC, and RA (recursion available), AA and
+    // AD were lost with it. A stub that trusts the truncated header — many do, before deciding
+    // whether the TCP retry is even worth it — was told the wrong thing about the answer it
+    // was about to fetch. Copy bytes 2..4 from the response and set TC on top; only QR is
+    // forced, because a response is what this is. (Audit 2026-08-01, §10.)
+    if resp.len() >= 4 {
+        out[2] = resp[2];
+        out[3] = resp[3];
+    }
     out[2] |= 0x80; // QR: this is a response
     out[2] |= 0x02; // TC: truncated — ask again over TCP
-    out[3] &= 0xF0; // RCODE = NOERROR; the truncation itself is not an error
     // QDCOUNT is left alone on purpose — the question IS carried, and a resolver matches the
     // truncated reply to its outstanding query by it.
     out[6..8].copy_from_slice(&0u16.to_be_bytes()); // ANCOUNT
@@ -852,7 +944,7 @@ mod tests {
         assert_eq!(&out[0..2], &q[0..2], "the txid must match the query");
         assert_eq!(out[2] & 0x80, 0x80, "QR must say this is a response");
         assert_eq!(out[2] & 0x02, 0x02, "TC must be set");
-        assert_eq!(out[3] & 0x0F, 0, "RCODE must stay NOERROR");
+        assert_eq!(out[3] & 0x0F, 0, "a NOERROR answer stays NOERROR");
         assert_eq!(
             u16::from_be_bytes([out[4], out[5]]),
             1,
@@ -873,5 +965,86 @@ mod tests {
         let roomy = query(Some(4096));
         assert!(big.len() <= 4096);
         assert_eq!(apply_udp_size_limit(&roomy, big.clone()), big);
+    }
+
+    /// The truncated reply must carry the ANSWER's flags, not the query's.
+    ///
+    /// They were rebuilt from the query with RCODE forced to NOERROR, so an oversized NXDOMAIN
+    /// went out as NOERROR+TC and RA/AA/AD were lost with it — a stub that reads the truncated
+    /// header before deciding whether the TCP retry is worth it was told the wrong thing.
+    /// (Audit 2026-08-01, §10.)
+    #[test]
+    fn a_truncated_reply_keeps_the_answers_rcode_and_flags() {
+        let q = query(Some(512));
+        let mut big = response(&[300; 40], true);
+        assert!(big.len() > 512);
+        big[2] = 0x85; // QR + AA + RD
+        big[3] = 0x83; // RA + NXDOMAIN (rcode 3)
+
+        let out = apply_udp_size_limit(&q, big);
+        assert_eq!(out[3] & 0x0F, 3, "NXDOMAIN must survive truncation");
+        assert_eq!(out[3] & 0x80, 0x80, "RA must survive");
+        assert_eq!(out[2] & 0x04, 0x04, "AA must survive");
+        assert_eq!(out[2] & 0x80, 0x80, "QR is forced — this IS a response");
+        assert_eq!(out[2] & 0x02, 0x02, "TC must be set");
+    }
+
+    /// A cached answer must be served with the REMAINING lifetime.
+    ///
+    /// Only the transaction ID used to be rewritten, so a reply served a second before its
+    /// cache entry expired still claimed the full original TTL — and every layer that caches
+    /// on that number compounds the staleness (RFC 2181 §5.2). The OPT pseudo-record is the
+    /// exception: its "TTL" is the extended RCODE and flags, so ageing it would corrupt the
+    /// answer rather than expire it. (Audit 2026-08-01, §10.)
+    #[test]
+    fn cached_answers_are_served_with_the_remaining_ttl() {
+        fn ttls_of(msg: &[u8]) -> Vec<u32> {
+            let qd = u16::from_be_bytes([msg[4], msg[5]]) as usize;
+            let an = u16::from_be_bytes([msg[6], msg[7]]) as usize;
+            let mut pos = 12;
+            for _ in 0..qd {
+                pos = skip_name(msg, pos).unwrap() + 4;
+            }
+            let mut out = Vec::new();
+            for _ in 0..an {
+                let p = skip_name(msg, pos).unwrap();
+                out.push(u32::from_be_bytes([msg[p + 4], msg[p + 5], msg[p + 6], msg[p + 7]]));
+                pos = p + 10 + u16::from_be_bytes([msg[p + 8], msg[p + 9]]) as usize;
+            }
+            out
+        }
+
+        let mut msg = response(&[300, 60], true);
+        decrement_ttls(&mut msg, 45);
+        assert_eq!(ttls_of(&msg), vec![255, 15], "TTLs must age by the time cached");
+
+        // Saturating, never wrapping: an entry older than its record reads as 0, not as ~4e9.
+        let mut expired = response(&[10], true);
+        decrement_ttls(&mut expired, 5_000);
+        assert_eq!(ttls_of(&expired), vec![0]);
+
+        // Zero age is a no-op, and a malformed message must not panic.
+        let untouched = response(&[300], true);
+        let mut same = untouched.clone();
+        decrement_ttls(&mut same, 0);
+        assert_eq!(same, untouched);
+        for cut in 0..untouched.len() {
+            let mut t = untouched[..cut].to_vec();
+            decrement_ttls(&mut t, 10);
+        }
+
+        // An OPT record's TTL field carries the extended RCODE and flags — ageing it would
+        // corrupt the answer. Append one and check it comes back byte-for-byte.
+        let mut with_opt = response(&[300], true);
+        with_opt[11] = 1; // ARCOUNT = 1
+        let opt_at = with_opt.len();
+        // NAME(1: root) TYPE(2: 41) CLASS(2: 4096 payload) TTL(4: ext-rcode+flags) RDLEN(2)
+        with_opt.extend_from_slice(&[0, 0, 41, 0x10, 0, 0x80, 0, 0, 0, 0, 0]);
+        decrement_ttls(&mut with_opt, 100);
+        assert_eq!(
+            &with_opt[opt_at + 5..opt_at + 9],
+            &[0x80, 0, 0, 0],
+            "the OPT record's flags must not be decremented"
+        );
     }
 }
