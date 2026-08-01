@@ -8,7 +8,7 @@ Nothing in review or CI could have caught that. This file records what the curre
 binaries were actually built from, so the question has an answer.
 
 source-digest : 3ebde8eb3727a2595d16b0ab4789ef314caaa9e8001e4a4641748703b62952b4
-base-commit   : fd8c9dcc0eb77a6952574749b86bf8220ba3f306
+base-commit   : 205c2c220ea0087fb080631c14931a003e710eb2
 dirty-sources : 0 file(s) modified vs base-commit at build time
 built-on      : lab .10 (win/mac), lab .11 (android)
 toolchain     : rustc 1.96.0

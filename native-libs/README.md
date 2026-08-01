@@ -56,7 +56,21 @@ RUSTFLAGS="-C link-arg=-Wl,-headerpad_max_install_names" \
   cargo zigbuild --release --lib --target universal2-apple-darwin
 # -> target/universal2-apple-darwin/release/libqeli.dylib  (headerpad нужен для rcodesign)
 ```
-Win+Mac разом: `scripts/build_native_libs_p4.py`.
+Win+Mac разом: `scripts/build_native_libs_p4.py` — он же **забирает** обе библиотеки в
+дерево (в `native-libs/` и в ту копию, которую потребляет сборка). Раньше не забирал:
+скрипт печатал «pull with the next step», а никакого следующего шага не существовало, и
+ни один другой скрипт эти два файла не копирует. Поэтому пересборка оставляла свежие
+ядра на .10, а в репозитории — старые, после чего `provenance.py --update` записывал
+текущий digest исходников против бинарников, которые из них не собирались, — ровно та
+ложь, ради предотвращения которой [PROVENANCE](PROVENANCE) и заведён, причём невидимая в
+ревью: все контрольные суммы сходятся друг с другом, просто не с исходниками. Так через
+дерево прошло **три** коммита «rebuild the FFI cores» со старыми win/mac ядрами (Android
+свою `.so` забирал всегда). После сборки:
+
+```
+bash native-libs/verify.sh --update
+python native-libs/provenance.py --update
+```
 
 ### wintun.dll
 Сторонняя, скачивается с https://www.wintun.net (WireGuard). Не пересобираем.
