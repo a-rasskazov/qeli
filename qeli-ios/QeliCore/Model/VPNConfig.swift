@@ -46,7 +46,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// still open here. Only a name NOTHING understands is a typo.
     static let knownINIKeys: Set<String> = [
         // Read by this port.
-        "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "exclude", "forward",
+        // `allow_lan`, `apps` and `apps_mode` are read AND written a few lines below — leaving
+        // them out made this port reject a profile it had exported itself, and every profile
+        // carrying per-app tunnelling or allow-LAN from Android. An unknown-key check is only
+        // as good as its list: a missing entry does not degrade to "ignored", it rejects the
+        // whole config.
+        "allow_ipv6_leak", "allow_lan", "apps", "apps_mode",
+        "awg", "bind_static", "dev", "dev_node", "dns", "exclude", "forward",
         "front", "gateway", "heartbeat", "heartbeat_interval", "heartbeat_jitter",
         "heartbeat_size", "include", "jc", "jmax", "jmin", "key", "kill_switch", "local",
         "lport", "metric", "mode", "mtu", "mtu_probe", "name", "obfs_key", "padding",

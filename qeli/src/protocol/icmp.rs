@@ -478,7 +478,7 @@ mod tests {
         let base = tcp_packet(1400, false);
         let opts: [u8; 12] = [
             0x94, 0x04, 0x00, 0x00, // Router Alert — copied
-            0x07, 0x07, 0x04, 0, 0, 0, 0, // Record Route — not copied
+            0x07, 0x07, 0x04, 0, 0, 0, 0,    // Record Route — not copied
             0x00, // EOL pad to 12 bytes
         ];
         let ihl = IPV4_HDR_LEN + opts.len();
@@ -501,8 +501,15 @@ mod tests {
         let later_ihl = ((frags[1][0] & 0x0F) as usize) * 4;
         assert!(later_ihl < ihl, "the non-copied option must be dropped");
         let later_opts = &frags[1][IPV4_HDR_LEN..later_ihl];
-        assert_eq!(&later_opts[..4], &[0x94, 0x04, 0x00, 0x00], "Router Alert is copied");
-        assert!(!later_opts.contains(&0x07), "Record Route must not be copied");
+        assert_eq!(
+            &later_opts[..4],
+            &[0x94, 0x04, 0x00, 0x00],
+            "Router Alert is copied"
+        );
+        assert!(
+            !later_opts.contains(&0x07),
+            "Record Route must not be copied"
+        );
 
         // Every fragment must still be a valid, in-budget datagram.
         for f in &frags {
@@ -520,7 +527,11 @@ mod tests {
             assert_eq!(off, out.len(), "fragment offsets must be contiguous");
             out.extend_from_slice(&f[fi..]);
         }
-        assert_eq!(out, pkt[ihl..], "the reassembled payload must match the original");
+        assert_eq!(
+            out,
+            pkt[ihl..],
+            "the reassembled payload must match the original"
+        );
     }
 
     /// A datagram that is ALREADY a fragment keeps its place: offsets continue from where it

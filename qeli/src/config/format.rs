@@ -792,17 +792,29 @@ kill_switch = true
         assert_eq!(s.get("server"), Some("a:443"));
         let bad = doc.bad_values();
         assert_eq!(bad.len(), 1, "one finding for one duplicated key: {bad:?}");
-        assert!(bad[0].contains("server"), "the finding must name the key: {}", bad[0]);
+        assert!(
+            bad[0].contains("server"),
+            "the finding must name the key: {}",
+            bad[0]
+        );
 
         // Reported ONCE however many times the key is read.
         let _ = s.get("server");
         let _ = s.get("server");
-        assert_eq!(doc.bad_values().len(), 1, "one finding per key, not per read");
+        assert_eq!(
+            doc.bad_values().len(),
+            1,
+            "one finding per key, not per read"
+        );
 
         // A key that is only WRITTEN once must stay silent, or the check above would pass
         // against a parser that flagged everything.
         assert_eq!(s.get("mtu"), Some("1400"));
-        assert_eq!(doc.bad_values().len(), 1, "a unique key must not be reported");
+        assert_eq!(
+            doc.bad_values().len(),
+            1,
+            "a unique key must not be reported"
+        );
     }
 
     /// Keys that are legitimately repeated are read through `all()`/`list()`, which do NOT

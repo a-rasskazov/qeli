@@ -409,9 +409,9 @@ pub fn enable_routing(profile: &str, tun: &str, mtu: i32) -> anyhow::Result<()> 
         argv.extend(args.clone());
         let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
         let _ = ipt(&path, &refs); // exit code is unreliable on nft-incompatible chains
-        // VERIFY instead of assuming. The whole set was applied with `let _ =` and then
-        // reported as success, so a host that refused every rule still logged "FORWARD ACCEPT
-        // for tun0" — the operator had no way to tell routing from silence.
+                                   // VERIFY instead of assuming. The whole set was applied with `let _ =` and then
+                                   // reported as success, so a host that refused every rule still logged "FORWARD ACCEPT
+                                   // for tun0" — the operator had no way to tell routing from silence.
         if !rule_present(&path, table, chain, &args) {
             unapplied = true;
         }

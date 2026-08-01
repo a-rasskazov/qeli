@@ -878,8 +878,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
     // cosmetic clash: `run_profile` starts with `TunInterface::delete(&tun.name)`, so the
     // second profile DELETES the first one's live interface and both then write into whatever
     // survives. (Audit 2026-08-01, §4.)
-    let mut tun_names: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut tun_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for p in &config.profiles {
         // Disabled profiles are not bound/served, so their config is not validated
         // here — this lets an operator turn off a profile that would otherwise fail
@@ -1877,29 +1876,29 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         let post_down_done = post_down_done.clone();
         let hook_state = state.clone();
         async move {
-        // A profile task ending on its own is unexpected while the worker is still meant to be
-        // serving — surface it instead of swallowing it. Log only (no auto-restart): respawning
-        // here could loop forever.
-        //
-        // Awaited CONCURRENTLY. These used to be awaited in spawn order, and a healthy profile
-        // never returns — so the first `await` parked forever and any LATER profile stopping
-        // went unreported for as long as the first kept serving. Same defect as the per-listener
-        // join inside `run_profile`, one level up. (Audit 2026-07-30, #6.)
-        while let Some(joined) = profile_set.join_next().await {
-            match joined {
-                Ok(pname) => {
-                    log::warn!("Profile '{}' task ended unexpectedly", pname);
-                    // `post_down` is the counterpart of `post_up`, and it used to run ONLY when
-                    // the whole worker exited — so a profile that died after its `post_up` left
-                    // that hook's changes to the host in place for as long as any OTHER profile
-                    // kept the worker alive. Pairing it with the profile's own end is what makes
-                    // the two hooks symmetric. (Audit 2026-08-01, §5.)
-                    run_post_down(&hook_state, &pname, &post_down_done).await;
+            // A profile task ending on its own is unexpected while the worker is still meant to be
+            // serving — surface it instead of swallowing it. Log only (no auto-restart): respawning
+            // here could loop forever.
+            //
+            // Awaited CONCURRENTLY. These used to be awaited in spawn order, and a healthy profile
+            // never returns — so the first `await` parked forever and any LATER profile stopping
+            // went unreported for as long as the first kept serving. Same defect as the per-listener
+            // join inside `run_profile`, one level up. (Audit 2026-07-30, #6.)
+            while let Some(joined) = profile_set.join_next().await {
+                match joined {
+                    Ok(pname) => {
+                        log::warn!("Profile '{}' task ended unexpectedly", pname);
+                        // `post_down` is the counterpart of `post_up`, and it used to run ONLY when
+                        // the whole worker exited — so a profile that died after its `post_up` left
+                        // that hook's changes to the host in place for as long as any OTHER profile
+                        // kept the worker alive. Pairing it with the profile's own end is what makes
+                        // the two hooks symmetric. (Audit 2026-08-01, §5.)
+                        run_post_down(&hook_state, &pname, &post_down_done).await;
+                    }
+                    // A panic loses the name with the task — report it rather than drop it.
+                    Err(e) => log::warn!("A profile task ended unexpectedly: {}", e),
                 }
-                // A panic loses the name with the task — report it rather than drop it.
-                Err(e) => log::warn!("A profile task ended unexpectedly: {}", e),
             }
-        }
         }
     };
     tokio::pin!(profiles_done);
@@ -2546,7 +2545,11 @@ mod listen_addr_tests {
         // `run_profile` parked forever, the teardown guard never ran, and the server counted a
         // profile as healthy while the endpoint its clients were handed refused connections.
         // The caller now aborts the survivors and fails the profile. (Audit 2026-08-01, §5.)
-        assert_eq!(set.len(), 1, "the healthy listener has not finished on its own");
+        assert_eq!(
+            set.len(),
+            1,
+            "the healthy listener has not finished on its own"
+        );
         set.abort_all();
         while tokio::time::timeout(std::time::Duration::from_secs(5), set.join_next())
             .await
@@ -2716,7 +2719,9 @@ impl Drop for ProfileTeardown {
             // Order matters: the flag goes up FIRST, so a thread that has not reached its
             // blocking call yet sees it on its own and never parks. The signal is only for the
             // ones already inside a syscall.
-            threads.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            threads
+                .stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
 
             // Signalling is RETRIED rather than done once, and waiting is BOUNDED.
             //
@@ -3262,12 +3267,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                                 }
                                 continue;
                             }
-                            log::error!(
-                                "TUN read error q{} on profile '{}': {}",
-                                qi,
-                                name_r,
-                                err
-                            );
+                            log::error!("TUN read error q{} on profile '{}': {}", qi, name_r, err);
                             break;
                         }
                         if n == 0 {
@@ -3516,62 +3516,66 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                         if packet.is_empty() {
                             continue;
                         }
-                    // TAP prepends an Ethernet header (dst = gateway_mac; src = a MAC
-                    // derived from the client src-IP for ARP attribution); TUN writes the
-                    // raw IP packet as-is.
-                    let tap_frame = if is_tap_writer {
-                        let src_ip_mac = if packet.len() >= 16 {
-                            [0x02u8, 0x00, packet[12], packet[13], packet[14], packet[15]]
+                        // TAP prepends an Ethernet header (dst = gateway_mac; src = a MAC
+                        // derived from the client src-IP for ARP attribution); TUN writes the
+                        // raw IP packet as-is.
+                        let tap_frame = if is_tap_writer {
+                            let src_ip_mac = if packet.len() >= 16 {
+                                [0x02u8, 0x00, packet[12], packet[13], packet[14], packet[15]]
+                            } else {
+                                [0x02, 0x00, 0x00, 0x00, 0x00, 0x02]
+                            };
+                            Some(prepend_ethernet_header(&packet, &gw_mac, &src_ip_mac))
                         } else {
-                            [0x02, 0x00, 0x00, 0x00, 0x00, 0x02]
+                            None
                         };
-                        Some(prepend_ethernet_header(&packet, &gw_mac, &src_ip_mac))
-                    } else {
-                        None
-                    };
-                    let buf: &[u8] = tap_frame.as_deref().unwrap_or(&packet);
-                    loop {
-                        let n = unsafe {
-                            libc::write(writer_fd, buf.as_ptr() as *const libc::c_void, buf.len())
-                        };
-                        if n >= 0 {
-                            break;
-                        }
-                        let err = std::io::Error::last_os_error();
-                        match err.raw_os_error() {
-                            // Interrupted — retry the same buffer, UNLESS the interruption was
-                            // the teardown signal aimed at exactly this case.
-                            Some(libc::EINTR) => {
-                                if stop_w.load(std::sync::atomic::Ordering::Relaxed) {
-                                    break 'writer;
-                                }
-                                continue;
-                            }
-                            // NB: on Linux EAGAIN == EWOULDBLOCK (same value) — listing one.
-                            Some(libc::ENOBUFS) | Some(libc::EAGAIN) => {
-                                // TX queue full — drop this packet like a congested link.
-                                log::debug!(
-                                    "TUN writer q{} '{}': dropped packet ({})",
-                                    qi,
-                                    name_w,
-                                    err
-                                );
+                        let buf: &[u8] = tap_frame.as_deref().unwrap_or(&packet);
+                        loop {
+                            let n = unsafe {
+                                libc::write(
+                                    writer_fd,
+                                    buf.as_ptr() as *const libc::c_void,
+                                    buf.len(),
+                                )
+                            };
+                            if n >= 0 {
                                 break;
                             }
-                            _ => {
-                                // Bad fd / device gone — stop the writer rather than silently
-                                // discarding every future packet on a dead descriptor.
-                                log::warn!(
-                                    "TUN writer q{} '{}': fatal write error ({}) — stopping",
-                                    qi,
-                                    name_w,
-                                    err
-                                );
-                                break 'writer;
+                            let err = std::io::Error::last_os_error();
+                            match err.raw_os_error() {
+                                // Interrupted — retry the same buffer, UNLESS the interruption was
+                                // the teardown signal aimed at exactly this case.
+                                Some(libc::EINTR) => {
+                                    if stop_w.load(std::sync::atomic::Ordering::Relaxed) {
+                                        break 'writer;
+                                    }
+                                    continue;
+                                }
+                                // NB: on Linux EAGAIN == EWOULDBLOCK (same value) — listing one.
+                                Some(libc::ENOBUFS) | Some(libc::EAGAIN) => {
+                                    // TX queue full — drop this packet like a congested link.
+                                    log::debug!(
+                                        "TUN writer q{} '{}': dropped packet ({})",
+                                        qi,
+                                        name_w,
+                                        err
+                                    );
+                                    break;
+                                }
+                                _ => {
+                                    // Bad fd / device gone — stop the writer rather than silently
+                                    // discarding every future packet on a dead descriptor.
+                                    log::warn!(
+                                        "TUN writer q{} '{}': fatal write error ({}) — stopping",
+                                        qi,
+                                        name_w,
+                                        err
+                                    );
+                                    break 'writer;
+                                }
                             }
                         }
                     }
-                }
                     // Closed HERE, by the thread that owns it. Together with the reader's own
                     // close this is what finally lets a non-persistent TUN device go away.
                     unsafe {
@@ -3682,8 +3686,7 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
             let pref_tcp = dns_pref.clone();
             let name_tcp = name.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    dns::run_dns_proxy_tcp(cfg_tcp, dns_tcp, cache_tcp, pref_tcp).await
+                if let Err(e) = dns::run_dns_proxy_tcp(cfg_tcp, dns_tcp, cache_tcp, pref_tcp).await
                 {
                     log::error!("Profile '{name_tcp}': DNS proxy (tcp) stopped: {e}");
                 }
@@ -3763,7 +3766,11 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                 name
             ),
         };
-        log::info!("DHCP server for profile '{}' starting on {}", name, dhcp_listen);
+        log::info!(
+            "DHCP server for profile '{}' starting on {}",
+            name,
+            dhcp_listen
+        );
         let name_dhcp = name.clone();
         tokio::spawn(async move {
             if let Err(e) = dhcp_server.run(&dhcp_listen, dhcp_socket).await {
@@ -4281,8 +4288,9 @@ pool.cidr = 10.1.0.0/24
             &["10.0.0.1:8443", "10.0.0.1:9443"],
         )))
         .expect("extra listeners on free ports must validate");
-        validate_profiles(&cfg(&(profile("a", "10.0.0.1", "4443", 0, &[])
-            + &profile("b", "10.0.0.2", "4443", 1, &[]))))
+        validate_profiles(&cfg(
+            &(profile("a", "10.0.0.1", "4443", 0, &[]) + &profile("b", "10.0.0.2", "4443", 1, &[]))
+        ))
         .expect("different concrete addresses on one port must validate");
 
         for (label, text) in [
@@ -4292,7 +4300,13 @@ pool.cidr = 10.1.0.0/24
             ),
             (
                 "two listen entries on one endpoint",
-                profile("a", "10.0.0.1", "4443", 0, &["10.0.0.1:8443", "10.0.0.1:8443"]),
+                profile(
+                    "a",
+                    "10.0.0.1",
+                    "4443",
+                    0,
+                    &["10.0.0.1:8443", "10.0.0.1:8443"],
+                ),
             ),
             (
                 "one profile's listen over another's primary",
@@ -4301,13 +4315,11 @@ pool.cidr = 10.1.0.0/24
             ),
             (
                 "wildcard over a concrete address",
-                profile("a", "10.0.0.1", "4443", 0, &[])
-                    + &profile("b", "0.0.0.0", "4443", 1, &[]),
+                profile("a", "10.0.0.1", "4443", 0, &[]) + &profile("b", "0.0.0.0", "4443", 1, &[]),
             ),
             (
                 "concrete address under an existing wildcard",
-                profile("a", "0.0.0.0", "4443", 0, &[])
-                    + &profile("b", "10.0.0.1", "4443", 1, &[]),
+                profile("a", "0.0.0.0", "4443", 0, &[]) + &profile("b", "10.0.0.1", "4443", 1, &[]),
             ),
         ] {
             let err = validate_profiles(&cfg(&text))
@@ -4351,9 +4363,19 @@ pool.cidr = 10.1.0.0/24
 
         // Control: a panel on its own port, and per-profile services on distinct addresses.
         validate_profiles(&cfg(&(web("8443")
-            + &profile("a", "4443", 0, "dns.enabled = true\ndns.listen = 10.0.0.1\n")
-            + &profile("b", "5443", 1, "dns.enabled = true\ndns.listen = 10.1.0.1\n"))))
-            .expect("distinct ports and resolver addresses must validate");
+            + &profile(
+                "a",
+                "4443",
+                0,
+                "dns.enabled = true\ndns.listen = 10.0.0.1\n",
+            )
+            + &profile(
+                "b",
+                "5443",
+                1,
+                "dns.enabled = true\ndns.listen = 10.1.0.1\n",
+            ))))
+        .expect("distinct ports and resolver addresses must validate");
 
         for (label, text) in [
             (
@@ -4362,8 +4384,17 @@ pool.cidr = 10.1.0.0/24
             ),
             (
                 "two resolvers on one address",
-                profile("a", "4443", 0, "dns.enabled = true\ndns.listen = 10.9.0.1\n")
-                    + &profile("b", "5443", 1, "dns.enabled = true\ndns.listen = 10.9.0.1\n"),
+                profile(
+                    "a",
+                    "4443",
+                    0,
+                    "dns.enabled = true\ndns.listen = 10.9.0.1\n",
+                ) + &profile(
+                    "b",
+                    "5443",
+                    1,
+                    "dns.enabled = true\ndns.listen = 10.9.0.1\n",
+                ),
             ),
             (
                 "two DHCP servers on the 0.0.0.0:67 default",
@@ -4374,8 +4405,17 @@ pool.cidr = 10.1.0.0/24
                 // The runtime appends `:67` to a bare address, so reading the raw string let
                 // this exact collision through whenever the port was omitted.
                 "two DHCP servers on one address written WITHOUT a port",
-                profile("a", "4443", 0, "dhcp.enabled = true\ndhcp.listen = 10.9.0.1\n")
-                    + &profile("b", "5443", 1, "dhcp.enabled = true\ndhcp.listen = 10.9.0.1\n"),
+                profile(
+                    "a",
+                    "4443",
+                    0,
+                    "dhcp.enabled = true\ndhcp.listen = 10.9.0.1\n",
+                ) + &profile(
+                    "b",
+                    "5443",
+                    1,
+                    "dhcp.enabled = true\ndhcp.listen = 10.9.0.1\n",
+                ),
             ),
         ] {
             let err = validate_profiles(&cfg(&text))

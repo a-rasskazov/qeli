@@ -684,10 +684,8 @@ mod tests {
     /// (Audit 2026-08-01, §12.)
     #[test]
     fn replies_are_addressed_per_rfc_2131() {
-        let bcast = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(Ipv4Addr::BROADCAST),
-            DHCP_CLIENT_PORT,
-        );
+        let bcast =
+            std::net::SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::BROADCAST), DHCP_CLIENT_PORT);
 
         // A fresh DISCOVER: no ciaddr, no giaddr — broadcast.
         assert_eq!(DhcpServer::reply_destination(&dhcp_base()), bcast);

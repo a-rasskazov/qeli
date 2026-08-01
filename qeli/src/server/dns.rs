@@ -59,8 +59,8 @@ fn decrement_ttls(msg: &mut [u8], age: u32) {
         return;
     }
     let counts = [
-        u16::from_be_bytes([msg[6], msg[7]]) as usize,  // ANCOUNT
-        u16::from_be_bytes([msg[8], msg[9]]) as usize,  // NSCOUNT
+        u16::from_be_bytes([msg[6], msg[7]]) as usize, // ANCOUNT
+        u16::from_be_bytes([msg[8], msg[9]]) as usize, // NSCOUNT
         u16::from_be_bytes([msg[10], msg[11]]) as usize, // ARCOUNT
     ];
     let qdcount = u16::from_be_bytes([msg[4], msg[5]]) as usize;
@@ -87,7 +87,10 @@ fn decrement_ttls(msg: &mut [u8], age: u32) {
                 let ttl = u32::from_be_bytes([msg[t], msg[t + 1], msg[t + 2], msg[t + 3]]);
                 msg[t..t + 4].copy_from_slice(&ttl.saturating_sub(age).to_be_bytes());
             }
-            pos = match after_name.checked_add(10).and_then(|p| p.checked_add(rdlen)) {
+            pos = match after_name
+                .checked_add(10)
+                .and_then(|p| p.checked_add(rdlen))
+            {
                 Some(p) => p,
                 None => return,
             };
@@ -662,7 +665,10 @@ fn advertised_udp_size(query: &[u8]) -> usize {
             return (class as usize).clamp(FLOOR, 65_535);
         }
         let rdlen = u16::from_be_bytes([query[after_name + 8], query[after_name + 9]]) as usize;
-        pos = match after_name.checked_add(10).and_then(|p| p.checked_add(rdlen)) {
+        pos = match after_name
+            .checked_add(10)
+            .and_then(|p| p.checked_add(rdlen))
+        {
             Some(p) => p,
             None => return FLOOR,
         };
@@ -727,8 +733,8 @@ fn apply_udp_size_limit(query: &[u8], resp: Vec<u8>) -> Vec<u8> {
     }
     out[2] |= 0x80; // QR: this is a response
     out[2] |= 0x02; // TC: truncated — ask again over TCP
-    // QDCOUNT is left alone on purpose — the question IS carried, and a resolver matches the
-    // truncated reply to its outstanding query by it.
+                    // QDCOUNT is left alone on purpose — the question IS carried, and a resolver matches the
+                    // truncated reply to its outstanding query by it.
     out[6..8].copy_from_slice(&0u16.to_be_bytes()); // ANCOUNT
     out[8..10].copy_from_slice(&0u16.to_be_bytes()); // NSCOUNT
     out[10..12].copy_from_slice(&0u16.to_be_bytes()); // ARCOUNT (the OPT is dropped with it)
@@ -940,7 +946,10 @@ mod tests {
         let big = response(&[300; 40], true);
         assert!(big.len() > 512);
         let out = apply_udp_size_limit(&q, big);
-        assert!(out.len() <= 512, "the reply must fit what the client advertised");
+        assert!(
+            out.len() <= 512,
+            "the reply must fit what the client advertised"
+        );
         assert_eq!(&out[0..2], &q[0..2], "the txid must match the query");
         assert_eq!(out[2] & 0x80, 0x80, "QR must say this is a response");
         assert_eq!(out[2] & 0x02, 0x02, "TC must be set");
@@ -1008,7 +1017,12 @@ mod tests {
             let mut out = Vec::new();
             for _ in 0..an {
                 let p = skip_name(msg, pos).unwrap();
-                out.push(u32::from_be_bytes([msg[p + 4], msg[p + 5], msg[p + 6], msg[p + 7]]));
+                out.push(u32::from_be_bytes([
+                    msg[p + 4],
+                    msg[p + 5],
+                    msg[p + 6],
+                    msg[p + 7],
+                ]));
                 pos = p + 10 + u16::from_be_bytes([msg[p + 8], msg[p + 9]]) as usize;
             }
             out
@@ -1016,7 +1030,11 @@ mod tests {
 
         let mut msg = response(&[300, 60], true);
         decrement_ttls(&mut msg, 45);
-        assert_eq!(ttls_of(&msg), vec![255, 15], "TTLs must age by the time cached");
+        assert_eq!(
+            ttls_of(&msg),
+            vec![255, 15],
+            "TTLs must age by the time cached"
+        );
 
         // Saturating, never wrapping: an entry older than its record reads as 0, not as ~4e9.
         let mut expired = response(&[10], true);

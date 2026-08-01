@@ -356,8 +356,10 @@ mod tests {
     #[test]
     fn allocating_from_a_sub_range_stays_in_it_and_does_not_deadlock() {
         let mut pool = IpPool::new(&pool_config("10.8.0.0/24")).unwrap();
-        let (lo, hi) = (u32_from_ip("10.8.0.100".parse().unwrap()),
-                        u32_from_ip("10.8.0.102".parse().unwrap()));
+        let (lo, hi) = (
+            u32_from_ip("10.8.0.100".parse().unwrap()),
+            u32_from_ip("10.8.0.102".parse().unwrap()),
+        );
 
         // The VPN side takes the low addresses first, exactly as it does in practice.
         assert_eq!(pool.allocate("vpn-user").unwrap().to_string(), "10.8.0.2");
@@ -381,14 +383,23 @@ mod tests {
 
         // Idempotent for a key that already holds an in-window address (a repeated
         // DHCPREQUEST must keep its lease, not consume another address).
-        assert_eq!(pool.allocate_in_range("aa", lo, hi).unwrap().to_string(), "10.8.0.100");
+        assert_eq!(
+            pool.allocate_in_range("aa", lo, hi).unwrap().to_string(),
+            "10.8.0.100"
+        );
 
         // Releasing one frees it for the next caller — the loop that used to spin.
         pool.release("bb");
-        assert_eq!(pool.allocate_in_range("ee", lo, hi).unwrap().to_string(), "10.8.0.101");
+        assert_eq!(
+            pool.allocate_in_range("ee", lo, hi).unwrap().to_string(),
+            "10.8.0.101"
+        );
 
         // The VPN side is untouched by any of it.
-        assert_eq!(pool.get_ip_by_username("vpn-user").unwrap().to_string(), "10.8.0.2");
+        assert_eq!(
+            pool.get_ip_by_username("vpn-user").unwrap().to_string(),
+            "10.8.0.2"
+        );
     }
 
     /// `pool.reservation.<user>` must be ASSIGNABLE to its owner. Regression guard: the

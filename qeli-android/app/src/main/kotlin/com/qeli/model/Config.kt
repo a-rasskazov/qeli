@@ -648,6 +648,11 @@ data class VpnConfig(
             // through, never a typo. A profile written for the CLI must open here.
             "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
             "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+            // Per-app tunnelling, written by THIS port a few lines above. `apps` is emitted
+            // once per selected package, and the round-trip guard walks single-valued keys,
+            // so a repeated key slipped past it — and an exported profile then failed to
+            // re-import here with "unknown key(s): apps, apps_mode".
+            "apps", "apps_mode",
         )
 
         /**

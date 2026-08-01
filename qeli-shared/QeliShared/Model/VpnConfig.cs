@@ -194,6 +194,13 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // untouched, never a typo. A profile written for the CLI must open here.
         "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
         "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+        // Understood by the MOBILE ports only (per-app tunnelling, allow-LAN). Desktop has no
+        // per-app split, so `ToIni` never writes them — which is exactly why
+        // `RoundTripKeysAreAllKnown` could not catch their absence: it only checks that what
+        // this port WRITES is accepted back. A key another port writes is not a typo, and
+        // omitting it does not degrade to "ignored" — it rejects the whole profile, so a
+        // config exported from Android or iOS would not open here at all.
+        "allow_lan", "apps", "apps_mode",
     };
 
     /// <summary>`[qeli]` keys no qeli client understands — i.e. misspellings. The setting they

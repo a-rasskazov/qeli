@@ -2608,7 +2608,9 @@ async fn probe_udp_mtu(
                         {
                             Ok(Ok(n)) if n > 0 => {
                                 let payload = if quic_enabled {
-                                    unwrap_quic(&buf[..n]).map(|p| p.payload).unwrap_or_default()
+                                    unwrap_quic(&buf[..n])
+                                        .map(|p| p.payload)
+                                        .unwrap_or_default()
                                 } else {
                                     buf[..n].to_vec()
                                 };
@@ -2724,10 +2726,12 @@ fn mtu_probe_ladder(ceiling: i32, outer_overhead: usize) -> Vec<i32> {
     // needs a binary search between the highest failing rung and the best passing one — worth
     // doing, and deliberately not smuggled in here, since it changes the probe's control flow
     // in all four ports. (Audit 2026-08-01, §8.)
-    let mut ladder: Vec<i32> = [ceiling, 12000, 9000, 6000, 4000, 2500, 2000, 1500, 1360, 1320, 1280, 1200, floor]
-        .into_iter()
-        .filter(|&m| (floor..=ceiling).contains(&m))
-        .collect();
+    let mut ladder: Vec<i32> = [
+        ceiling, 12000, 9000, 6000, 4000, 2500, 2000, 1500, 1360, 1320, 1280, 1200, floor,
+    ]
+    .into_iter()
+    .filter(|&m| (floor..=ceiling).contains(&m))
+    .collect();
     ladder.sort_unstable_by(|a, b| b.cmp(a));
     ladder.dedup();
     ladder
@@ -2834,19 +2838,29 @@ mod mtu_ladder_tests {
 
         for (lo0, hi0, real) in [(6000, 9000, 8999), (4000, 6000, 5500), (1500, 2500, 2000)] {
             let (got, probes) = search(lo0, hi0, real);
-            assert!(got <= real, "must never certify above the path: {got} > {real}");
+            assert!(
+                got <= real,
+                "must never certify above the path: {got} > {real}"
+            );
             assert!(
                 real - got <= MTU_REFINE_STEP,
                 "left {} bytes on the table (lo0={lo0} hi0={hi0} real={real} got={got})",
                 real - got
             );
-            assert!(got > lo0, "refinement must beat the coarse rung {lo0}, got {got}");
+            assert!(
+                got > lo0,
+                "refinement must beat the coarse rung {lo0}, got {got}"
+            );
             assert!(probes <= MTU_REFINE_MAX_PROBES, "probe budget exceeded");
         }
 
         // A path that carries barely more than the rung must not be made WORSE, and must not
         // burn probes on a gap that is already narrow.
-        assert_eq!(mtu_refine_step(6000, 6200), None, "a narrow bracket stops immediately");
+        assert_eq!(
+            mtu_refine_step(6000, 6200),
+            None,
+            "a narrow bracket stops immediately"
+        );
         let (got, probes) = search(6000, 9000, 6001);
         assert_eq!(got, 6000, "a path at the rung stays at the rung");
         assert!(probes <= MTU_REFINE_MAX_PROBES);
