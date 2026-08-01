@@ -707,7 +707,10 @@ profiles, no `gmt_unix_time`, no arbitrary extension composition.
   `actions/cache` (coverage accumulates), crash reproducer uploaded as an artifact.
   Plus `fuzz-smoke` (30 s per push, build-break check). Public repo → free Actions.
   (Harness was added in 0.7.2.)
-- 🔵 **FFI panic-safety: build the cdylib with `panic = "unwind"`.** The realtls core
+- 🔵 **FFI panic-safety: build the cdylib with `panic = "unwind"`.** ⚠️ This item is a
+  **blocker** for the [TRANSPORT-CORE.md](TRANSPORT-CORE.md) initiative (TC-0.1): widening
+  the FFI surface to the whole transport turns an inert `catch_unwind` from a theoretical
+  risk into a practical one. The realtls core
   (`libqeli.so`/`.dll`/`.dylib`) is built `cargo build --release --lib`, and
   `[profile.release]` sets `panic = "abort"` → the existing `catch_unwind` guards in
   `protocol/realtls/ffi.rs` are **inert** (abort doesn't unwind): a panic in an FFI
@@ -775,9 +778,12 @@ follows was deliberately deferred.
   measuring rather than reasoning about the data path. Additive in both directions: a client
   that sends no report leaves the server on the profile MTU exactly as before.
 
-  Still open: fragmentation refuses IPv4 headers carrying OPTIONS (copy-on-fragment is
-  per-option; those fall back to a drop), and IPv6 needs an ICMPv6 Packet Too Big sibling when
-  IPv6 forwarding lands.
+  IPv4 headers carrying OPTIONS now fragment too (2026-08-01): each option's "copied" bit
+  decides whether it travels into the later fragments (RFC 791 §3.1) — Router Alert is copied,
+  Record Route and timestamps stay on the first fragment alone. Such a packet used to be
+  dropped outright, i.e. a black hole on exactly the path where the sender had asked for
+  fragmentation. Still open: IPv6 needs an ICMPv6 Packet Too Big sibling when IPv6 forwarding
+  lands.
 - 🔵 **`nonce_seed` under resume/roaming** — see the ⚠️ constraint in "Roaming — seamless
   network change" above: settle it IN THE RESUME DESIGN (re-derive the key per resume, or an
   epoch in the nonce), not afterwards.

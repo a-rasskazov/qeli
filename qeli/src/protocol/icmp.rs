@@ -81,6 +81,61 @@ pub fn has_df(pkt: &[u8]) -> bool {
     pkt.len() >= IPV4_HDR_LEN && (pkt[0] >> 4) == 4 && (pkt[6] & 0x40) != 0
 }
 
+/// The IPv4 header a NON-FIRST fragment should carry: the fixed 20 bytes plus only those
+/// options whose "copied" flag (the option type's high bit) is set, padded with EOL to a
+/// 4-byte boundary so IHL stays expressible.
+///
+/// RFC 791 §3.1 splits options into two classes for exactly this reason. Something like Record
+/// Route or Timestamp is meaningful only where it was recorded, so it belongs on the first
+/// fragment alone; Router Alert must be seen by every hop and is copied. Getting this wrong is
+/// not cosmetic — a router that copies a Record Route into all fragments produces a datagram
+/// whose reassembled options differ from what was sent.
+///
+/// Returns `None` on a malformed option list: a length byte of 0 or 1 for a multi-byte option,
+/// or one that runs past the header. Refusing there is right — the packet is already invalid,
+/// and guessing a repair would forward something the sender never wrote.
+fn later_fragment_header(hdr: &[u8]) -> Option<Vec<u8>> {
+    if hdr.len() < IPV4_HDR_LEN {
+        return None;
+    }
+    let mut out = hdr[..IPV4_HDR_LEN].to_vec();
+    let mut i = IPV4_HDR_LEN;
+    while i < hdr.len() {
+        let opt = hdr[i];
+        let kind = opt & 0x1F;
+        let copied = opt & 0x80 != 0;
+        // EOL ends the list; NOP is a single padding byte.
+        if kind == 0 {
+            break;
+        }
+        if kind == 1 {
+            if copied {
+                out.push(opt);
+            }
+            i += 1;
+            continue;
+        }
+        // Every other option is type-length-value, with the length covering type and length.
+        let len = *hdr.get(i + 1)? as usize;
+        if len < 2 || i + len > hdr.len() {
+            return None;
+        }
+        if copied {
+            out.extend_from_slice(&hdr[i..i + len]);
+        }
+        i += len;
+    }
+    // IHL counts 32-bit words, so pad with EOL until the header is a whole number of them.
+    while !out.len().is_multiple_of(4) {
+        out.push(0);
+    }
+    if out.len() > 60 {
+        return None; // IHL maxes out at 15 words
+    }
+    out[0] = (out[0] & 0xF0) | ((out.len() / 4) as u8);
+    Some(out)
+}
+
 /// Split an oversized IPv4 datagram into fragments that each fit `mtu` (RFC 791 §3.2).
 ///
 /// The other half of being a router. With DF set we answer [`frag_needed`] and drop; without
@@ -94,19 +149,28 @@ pub fn has_df(pkt: &[u8]) -> bool {
 ///   * DF is set — fragmenting then would violate the sender's explicit instruction;
 ///   * it already fits `mtu`;
 ///   * `mtu` leaves no room for even one 8-byte payload unit;
-///   * the header carries OPTIONS. Each option decides via its high bit whether it is copied
-///     into later fragments, and getting that wrong corrupts the packet. Options are
-///     vanishingly rare on forwarded traffic, so refusing is safer than a half-right
-///     implementation. (Audit 2026-07-30, #10.)
+///   * the option list is malformed (a length that runs past the header, or a zero length).
+///
+/// Options ARE handled, per RFC 791 §3.1: each option's high bit says whether it is copied
+/// into every fragment or only the first, so the first fragment keeps the header verbatim and
+/// later fragments carry just the copied options, padded to a 4-byte boundary. This used to
+/// refuse outright — "safer than a half-right implementation" — which meant an oversized
+/// non-DF packet with any option at all (Record Route, a timestamp, router alert) was dropped
+/// instead of forwarded, silently, on exactly the path where the sender had said it wanted
+/// fragmentation. (Audit 2026-07-30 #10; options implemented 2026-08-01, §P3.)
 pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
     if pkt.len() < IPV4_HDR_LEN || (pkt[0] >> 4) != 4 || has_df(pkt) {
         return None;
     }
     let ihl = ((pkt[0] & 0x0F) as usize) * 4;
-    // Options make copy-on-fragment semantics per-option; refuse rather than guess.
-    if ihl != IPV4_HDR_LEN || ihl > pkt.len() {
+    if ihl < IPV4_HDR_LEN || ihl > pkt.len() {
         return None;
     }
+    // Header for fragments AFTER the first: only options whose copied bit is set survive.
+    // Built up front so a malformed option list refuses the whole packet rather than being
+    // discovered halfway through emitting fragments.
+    let later_hdr = later_fragment_header(&pkt[..ihl])?;
+    let later_ihl = later_hdr.len();
     let total_len = u16::from_be_bytes([pkt[2], pkt[3]]) as usize;
     // Trust the wire length, not the header's claim — they disagree on a truncated read.
     let payload = &pkt[ihl..total_len.clamp(ihl, pkt.len())];
@@ -122,8 +186,11 @@ pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
         return None;
     }
     // Every fragment but the last must carry a multiple of 8 bytes (the offset field counts
-    // 8-byte units), so round the per-fragment payload DOWN.
-    let per_frag = (mtu.saturating_sub(ihl)) & !7usize;
+    // 8-byte units), so round the per-fragment payload DOWN. Sized against the LARGER of the
+    // two headers: the first fragment keeps every option, later ones only the copied ones, and
+    // using one budget for both keeps the offset arithmetic in whole units.
+    let hdr_budget = ihl.max(later_ihl);
+    let per_frag = (mtu.saturating_sub(hdr_budget)) & !7usize;
     if per_frag == 0 {
         return None;
     }
@@ -141,9 +208,15 @@ pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
         // MF stays set on the final piece when the ORIGINAL was itself a non-final fragment.
         let more = !is_last || orig_mf;
 
-        let mut frag = Vec::with_capacity(ihl + take);
-        frag.extend_from_slice(&pkt[..ihl]);
-        frag[2..4].copy_from_slice(&((ihl + take) as u16).to_be_bytes());
+        // The FIRST fragment carries the header as it arrived; later ones carry only the
+        // options marked copied (RFC 791 §3.1), which is what makes a Record Route or a
+        // timestamp option behave the way the sender expects.
+        let hdr: &[u8] = if sent == 0 { &pkt[..ihl] } else { &later_hdr };
+        let this_ihl = hdr.len();
+
+        let mut frag = Vec::with_capacity(this_ihl + take);
+        frag.extend_from_slice(hdr);
+        frag[2..4].copy_from_slice(&((this_ihl + take) as u16).to_be_bytes());
         let offset_units = base_offset + sent / 8;
         let mut ff = (offset_units as u16) & 0x1FFF;
         if more {
@@ -153,7 +226,7 @@ pub fn fragment_ipv4(pkt: &[u8], mtu: usize) -> Option<Vec<Vec<u8>>> {
         // Header changed, so the header checksum must be recomputed over the header alone.
         frag[10] = 0;
         frag[11] = 0;
-        let ck = checksum(&frag[..ihl]);
+        let ck = checksum(&frag[..this_ihl]);
         frag[10..12].copy_from_slice(&ck.to_be_bytes());
         frag.extend_from_slice(&payload[sent..sent + take]);
         out.push(frag);
@@ -340,16 +413,78 @@ mod tests {
         let mut v6 = vec![0u8; 1400];
         v6[0] = 0x60;
         assert!(fragment_ipv4(&v6, router_mtu).is_none());
-        // Header claims options — copy-on-fragment is per-option, so refuse.
-        let mut opts = tcp_packet(1400, false);
-        opts[0] = 0x46; // IHL 6
-        assert!(fragment_ipv4(&opts, router_mtu).is_none());
+        // A header claiming options that are not really there (IHL 6 over a 20-byte header
+        // whose bytes 20..24 are the TCP ports) is malformed — bytes 20/21 read as an option
+        // type and a nonsense length. Refusing is right; guessing a repair would forward
+        // something the sender never wrote.
+        let mut lying = tcp_packet(1400, false);
+        lying[0] = 0x46; // IHL 6, but the option bytes are actually TCP ports
+        assert!(fragment_ipv4(&lying, router_mtu).is_none());
 
         // A malformed header claiming no payload must refuse, not report success with zero
         // fragments — the caller would then forward nothing AND count no drop.
         let mut empty = tcp_packet(1400, false);
         empty[2..4].copy_from_slice(&(IPV4_HDR_LEN as u16).to_be_bytes());
         assert!(fragment_ipv4(&empty, router_mtu).is_none());
+    }
+
+    /// A header with OPTIONS fragments, and the copied bit decides which options travel.
+    ///
+    /// This used to refuse outright, so an oversized non-DF packet carrying any option at all
+    /// was dropped rather than forwarded — silently, on exactly the path where the sender had
+    /// said it wanted fragmentation. RFC 791 §3.1: the first fragment keeps the header as it
+    /// arrived, later fragments carry only options whose type has the high bit set.
+    /// (Audit 2026-08-01, §P3.)
+    #[test]
+    fn options_are_copied_per_their_copied_bit() {
+        // Build a 1400-byte-payload packet whose header carries two options:
+        // Router Alert (0x94, copied, 4 bytes) and Record Route (0x07, NOT copied, 8 bytes).
+        let base = tcp_packet(1400, false);
+        let opts: [u8; 12] = [
+            0x94, 0x04, 0x00, 0x00, // Router Alert — copied
+            0x07, 0x07, 0x04, 0, 0, 0, 0, // Record Route — not copied
+            0x00, // EOL pad to 12 bytes
+        ];
+        let ihl = IPV4_HDR_LEN + opts.len();
+        let mut pkt = Vec::with_capacity(ihl + 1400);
+        pkt.extend_from_slice(&base[..IPV4_HDR_LEN]);
+        pkt.extend_from_slice(&opts);
+        pkt.extend_from_slice(&base[IPV4_HDR_LEN..]);
+        pkt[0] = 0x40 | ((ihl / 4) as u8);
+        pkt[2..4].copy_from_slice(&((ihl + 1400) as u16).to_be_bytes());
+
+        let frags = fragment_ipv4(&pkt, 576).expect("a packet with options must fragment");
+        assert!(frags.len() > 1);
+
+        // First fragment: the header exactly as it arrived, options and all.
+        let first_ihl = ((frags[0][0] & 0x0F) as usize) * 4;
+        assert_eq!(first_ihl, ihl, "the first fragment keeps every option");
+        assert_eq!(&frags[0][IPV4_HDR_LEN..first_ihl], &opts[..]);
+
+        // Later fragments: Router Alert survives, Record Route does not.
+        let later_ihl = ((frags[1][0] & 0x0F) as usize) * 4;
+        assert!(later_ihl < ihl, "the non-copied option must be dropped");
+        let later_opts = &frags[1][IPV4_HDR_LEN..later_ihl];
+        assert_eq!(&later_opts[..4], &[0x94, 0x04, 0x00, 0x00], "Router Alert is copied");
+        assert!(!later_opts.contains(&0x07), "Record Route must not be copied");
+
+        // Every fragment must still be a valid, in-budget datagram.
+        for f in &frags {
+            let fi = ((f[0] & 0x0F) as usize) * 4;
+            assert!(f.len() <= 576, "fragment overruns the MTU: {}", f.len());
+            assert_eq!(checksum(&f[..fi]), 0, "header checksum must verify");
+            assert_eq!(u16::from_be_bytes([f[2], f[3]]) as usize, f.len());
+        }
+
+        // ...and the payload reassembles byte-for-byte, in order and without gaps.
+        let mut out = Vec::new();
+        for f in &frags {
+            let fi = ((f[0] & 0x0F) as usize) * 4;
+            let off = ((u16::from_be_bytes([f[6], f[7]]) & 0x1FFF) as usize) * 8;
+            assert_eq!(off, out.len(), "fragment offsets must be contiguous");
+            out.extend_from_slice(&f[fi..]);
+        }
+        assert_eq!(out, pkt[ihl..], "the reassembled payload must match the original");
     }
 
     /// A datagram that is ALREADY a fragment keeps its place: offsets continue from where it
