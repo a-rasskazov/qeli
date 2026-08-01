@@ -1771,12 +1771,18 @@ Beyond pinning / H-1 (above), the `[auth]` section carries:
 | Key | Default | Purpose |
 |---|---|---|
 | `users_file` | `/etc/qeli/users.conf` | path to the standalone user database (when there are no inline `[user:*]`) |
-| `password_hash` | `argon2id` | password hashing scheme (only argon2id is supported) |
-| `token_ttl_secs` | `86400` | auth/session token lifetime (seconds) |
 | `brute_force.enabled` | `true` | master switch for **VPN-auth** rate-limiting; `false` = off entirely |
 | `brute_force.max_attempts` | `5` | failed-attempt threshold before lockout (per source IP); allowed `1..=10000` |
 | `brute_force.window_secs` | `300` | window for counting failures (seconds); allowed `1..=86400` (24h) |
 | `brute_force.lockout_secs` | `900` | lockout duration after the threshold is exceeded (seconds); allowed `1..=2592000` (30d) |
+
+> **Removed from here: `password_hash` and `token_ttl_secs`.** Both are listed in `RETIRED_KEYS`
+> (`config/mod.rs`) and are not honoured; `qeli check-config` names them as stale (rather than
+> as typos), and an ordinary server start simply ignores them. The hashing
+> scheme is not configurable (always argon2id) and the token lifetime is set in code. The docs
+> described them as live, so a config written from this table earned a warning about keys that
+> no longer exist. Not to be confused with `password_hash` under `[web]` and `[user:*]`, which
+> are real and documented in their own sections. (Audit 2026-08-01, §12.)
 
 > **The bounds are hard, and are checked even when `enabled = false` (since 0.7.13).** An
 > out-of-range config is **rejected at load** instead of being accepted silently. Zeros were
@@ -1930,7 +1936,7 @@ defaults".
 | `perf.tcp.nodelay` | `true` | `TCP_NODELAY` (disable Nagle) |
 | `perf.tcp.keepalive_secs` | `60` | TCP keepalive |
 | `perf.tcp.send_buffer_size` / `recv_buffer_size` | `262144` | socket buffer sizes|
-| `perf.tun.read_buffer_size` / `write_buffer_size` | `65535` | TUN-pump buffers |
+| `perf.tun.read_buffer_size` | `65535` | TUN read-buffer size, **per queue**. Must be at least `tun.mtu` (plus 14 bytes of Ethernet header for TAP) and at most 1 MiB; out-of-range values are **rejected at load**. `0` is not "auto" — it makes the read return EOF immediately and stops the data plane |
 | `perf.connection.max_clients` | `128` | total sessions per profile (all users; see "Connection limits") |
 | `perf.connection.handshake_timeout_secs` | `10` | handshake timeout |
 | `perf.connection.idle_timeout_secs` | `300` | idle timeout (`0` = never idle-drop) |

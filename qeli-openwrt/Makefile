@@ -26,8 +26,15 @@ PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 # The value is the sha256 of the tarball OpenWrt itself produces from the checkout
 # above, so it cannot be computed without the SDK.
 #
-# TODO(release 0.7.13): replace the placeholder with the real hash. Produce it with,
-# from the OpenWrt buildroot after adding this package:
+# AT TAG TIME, together with PKG_SOURCE_VERSION above: replace the placeholder with the
+# real hash. Both are release-cut steps by nature — the SHA does not exist until the
+# release commit is made, and the hash is of a tarball produced FROM that commit — so a
+# development tree legitimately carries the placeholder and a stale SHA, and
+# `release_preflight.py` failing on this line is the reminder working, not a defect.
+# (This note used to be dated "TODO(release 0.7.13)" while PKG_VERSION already said
+# 0.7.14, which read like a forgotten task rather than a standing procedure.)
+#
+# Produce the hash from the OpenWrt buildroot after adding this package:
 #     make package/qeli/download V=s
 #     sha256sum dl/$(PKG_NAME)-$(PKG_VERSION).tar.xz
 # (or `make package/qeli/check FIXUP=1`, which rewrites the line in place). The

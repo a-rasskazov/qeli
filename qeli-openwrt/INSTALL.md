@@ -34,11 +34,18 @@ ls -l /dev/net/tun        # must exist (kmod-tun provides it)
    > `build/build_openwrt.py` is a **maintainer-internal** helper (it cross-builds on a
    > private lab host over SSH) — don't run it yourself; use the release binary here, or
    > build from source via the SDK (section B).
+   >
+   > This step used to `scp` out of `qeli-openwrt/dist/`, which is a **local build output
+   > directory and is gitignored** — so it does not exist in a fresh checkout at all, and in
+   > a maintainer's tree it holds whatever was built last (it was still carrying 0.7.13
+   > binaries during 0.7.14). Take the binary from the Release you downloaded. Maintainers:
+   > the published set for a version lives in `release/dist/v<version>/`, and that path is
+   > version-explicit precisely so it cannot go quietly stale. (Audit 2026-08-01, §7.)
 
    ```sh
-   # from your PC:
-   scp qeli-openwrt/dist/qeli-client-openwrt-aarch64 root@192.168.1.1:/usr/bin/qeli-client
-   # and the integration files:
+   # from your PC, from wherever you saved the download:
+   scp qeli-client-openwrt-aarch64 root@192.168.1.1:/usr/bin/qeli-client
+   # and the integration files, from a checkout of this repo:
    scp qeli-openwrt/files/qeli.init   root@192.168.1.1:/etc/init.d/qeli
    scp qeli-openwrt/files/qeli.config root@192.168.1.1:/etc/config/qeli
    scp qeli-openwrt/files/qeli.firewall.uci-defaults root@192.168.1.1:/etc/uci-defaults/99-qeli-firewall
