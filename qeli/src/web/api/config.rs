@@ -673,10 +673,24 @@ pub async fn put_config_raw(
     };
 
     // Validate by parsing — catches INI syntax errors and invalid/missing values.
-    let parsed = match crate::config::parse_server_config(&raw) {
-        Ok(c) => c,
+    //
+    // Findings are FATAL here, unlike at server startup, and the difference is what refusing
+    // costs. Aborting a start over a long-standing typo takes a working server down on
+    // upgrade, so the boot path only warns. Refusing a SAVE costs nothing: the operator is
+    // looking at the very text that is wrong and gets told which key, with the running config
+    // untouched. Accepting it silently is how `web.tls = ture` — or a key written twice — got
+    // written to disk and then read as its default. (Audit 2026-08-01, §3.)
+    let (parsed, findings) = match crate::config::parse_server_config_reporting(&raw) {
+        Ok(v) => v,
         Err(e) => return Ok(Json(super::err_json(format!("invalid config: {}", e)))),
     };
+    if !findings.is_empty() {
+        return Ok(Json(super::err_json(format!(
+            "{} problem(s) whose defaults would be substituted silently: {}",
+            findings.len(),
+            findings.join("; ")
+        ))));
+    }
 
     if let Some(ref log_file) = parsed.logging.file {
         if let Err(e) = validate_path_field(log_file, ALLOWED_LOG_DIRS) {

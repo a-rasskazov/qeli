@@ -1521,6 +1521,32 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                     p.name,
                     p.dns.listen
                 ),
+                // A loopback address is bindable HERE and meaningless THERE. This value is
+                // pushed to clients as their resolver, and `127.0.0.1` inside the tunnel means
+                // the CLIENT's own loopback — so every lookup goes to whatever is (or is not)
+                // listening on the client machine, and the profile's resolver is never asked.
+                // It binds cleanly on the server, which is exactly why it was worth catching
+                // here rather than leaving to fail as "DNS just doesn't work".
+                // (Audit 2026-08-01, §P2.)
+                Ok(ip) if ip.is_loopback() => anyhow::bail!(
+                    "profile '{}': dns.listen = {} is a loopback address — clients are handed \
+                     this as their resolver, and inside the tunnel it points at their OWN \
+                     loopback, not at this server. Use the profile's tun address ({}).",
+                    p.name,
+                    p.dns.listen,
+                    p.tun.address
+                ),
+                // The proxy binds IPv4 and builds every upstream target with `format!("{}:53")`,
+                // which produces `2001:db8::1:53` for a v6 literal and fails to parse — the same
+                // trap already documented for `dns.upstream`. The TUN is IPv4-only besides.
+                Ok(ip) if ip.is_ipv6() => anyhow::bail!(
+                    "profile '{}': dns.listen = {} is IPv6 — the in-tunnel resolver and the TUN \
+                     are IPv4-only (IPv6 is tracked for 0.8.0). Use the profile's tun address \
+                     ({}).",
+                    p.name,
+                    p.dns.listen,
+                    p.tun.address
+                ),
                 Ok(_) => {}
                 Err(_) => anyhow::bail!(
                     "profile '{}': dns.listen = '{}' is not an IP address",
@@ -1762,7 +1788,17 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())
         .map_err(|e| anyhow::anyhow!("failed to install SIGTERM handler: {}", e))?;
 
-    let profiles_done = async move {
+    // Profiles whose `post_down` has already run, so the sweep at worker exit does not run it
+    // a SECOND time for a profile that stopped early. Shared because the two places that can
+    // trigger the hook — a profile ending on its own, and the worker shutting down — are in
+    // different scopes.
+    let post_down_done: Arc<Mutex<std::collections::HashSet<String>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
+
+    let profiles_done = {
+        let post_down_done = post_down_done.clone();
+        let hook_state = state.clone();
+        async move {
         // A profile task ending on its own is unexpected while the worker is still meant to be
         // serving — surface it instead of swallowing it. Log only (no auto-restart): respawning
         // here could loop forever.
@@ -1773,10 +1809,19 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         // join inside `run_profile`, one level up. (Audit 2026-07-30, #6.)
         while let Some(joined) = profile_set.join_next().await {
             match joined {
-                Ok(pname) => log::warn!("Profile '{}' task ended unexpectedly", pname),
+                Ok(pname) => {
+                    log::warn!("Profile '{}' task ended unexpectedly", pname);
+                    // `post_down` is the counterpart of `post_up`, and it used to run ONLY when
+                    // the whole worker exited — so a profile that died after its `post_up` left
+                    // that hook's changes to the host in place for as long as any OTHER profile
+                    // kept the worker alive. Pairing it with the profile's own end is what makes
+                    // the two hooks symmetric. (Audit 2026-08-01, §5.)
+                    run_post_down(&hook_state, &pname, &post_down_done).await;
+                }
                 // A panic loses the name with the task — report it rather than drop it.
                 Err(e) => log::warn!("A profile task ended unexpectedly: {}", e),
             }
+        }
         }
     };
     tokio::pin!(profiles_done);
@@ -1804,12 +1849,6 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
 
     // Tear down the host NAT rules we installed (the next start also cleans stale
     // rules, so a SIGKILL that skips this is recovered then) and run post_down.
-    let hooks_ok = {
-        let p = state.config_path.lock().await.clone();
-        p.as_deref()
-            .map(|p| crate::hooks::config_is_trusted(p).is_ok())
-            .unwrap_or(false)
-    };
     for pcfg in &state.config.profiles {
         // Unconditional, not `if nat.enabled`. `routing.forward_private` installs rules
         // through `nat::enable_routing` under the SAME `qeli-nat:<profile>` tag — mangle
@@ -1822,18 +1861,10 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         // covers a profile whose NAT was toggled off while running.
         // (Audit 2026-07-27, B6.)
         nat::cleanup(&pcfg.name);
-        if hooks_ok && !pcfg.routing.post_down.is_empty() {
-            crate::hooks::run(
-                &format!("post_down:{}", pcfg.name),
-                &pcfg.routing.post_down,
-                &[
-                    ("QELI_PROFILE", pcfg.name.clone()),
-                    ("QELI_TUN", pcfg.tun.name.clone()),
-                    ("QELI_POOL", pcfg.pool.cidr.clone()),
-                ],
-            )
-            .await;
-        }
+        // Skips any profile whose hook already ran when that profile ended on its own — the
+        // interlock lives in `run_post_down`, so a shutdown racing a dying profile cannot fire
+        // the hook twice.
+        run_post_down(&state, &pcfg.name, &post_down_done).await;
     }
 
     log::info!("Server shutdown complete");
@@ -2034,14 +2065,28 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     });
 
     // Web panel — the always-up control plane.
-    if state.config.web.enabled {
+    //
+    // The outcome is AWAITED (briefly) rather than assumed. This used to be spawn-and-forget,
+    // and the status line below then said "panel on" regardless — an operator was told the
+    // control plane was up while the port refused connections. (Audit 2026-08-01, §P2.)
+    let panel_state = if state.config.web.enabled {
         let web_state = state.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            web::start(web_state).await;
+            web::start(web_state, Some(tx)).await;
         });
+        // Bounded: a panel that has not reported either way within a few seconds is not
+        // something to hold the whole worker on. Timing out reports the honest "unknown"
+        // rather than inventing success.
+        match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+            Ok(Ok(true)) => "on",
+            Ok(Ok(false)) | Ok(Err(_)) => "FAILED TO START",
+            Err(_) => "starting (not confirmed)",
+        }
     } else {
         log::warn!("web.enabled is false — the supervisor has no panel to serve");
-    }
+        "off"
+    };
 
     // Dashboard metrics sampler (host /proc + tunnel aggregate, 1 Hz). Only useful
     // with the panel up, so gate it on web.enabled like the panel itself.
@@ -2063,25 +2108,21 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // systemd: publish the running version as the `systemctl status` Status: line, so the
     // service "knows" and shows its version (needs NotifyAccess=main in the unit; no-op
     // otherwise). Also log it plainly so it lands in the journal regardless of systemd.
+    // `panel_state` is what the panel ACTUALLY did, not what the config asked for. These two
+    // lines are where an operator looks to see the service is healthy, and they used to print
+    // "panel on" from `web.enabled` alone — a config field, which says nothing about whether
+    // anything bound. (Audit 2026-08-01, §P2.)
     log::info!(
         "qeli v{} — control plane up ({} profile(s), panel {})",
         env!("CARGO_PKG_VERSION"),
         state.config.profiles.len(),
-        if state.config.web.enabled {
-            "on"
-        } else {
-            "off"
-        }
+        panel_state
     );
     sd_notify(&format!(
         "STATUS=qeli v{} — {} profile(s), panel {}\n",
         env!("CARGO_PKG_VERSION"),
         state.config.profiles.len(),
-        if state.config.web.enabled {
-            "on"
-        } else {
-            "off"
-        }
+        panel_state
     ));
 
     // Notify (Tier-3): announce that the control plane is up (no-op if disabled).
@@ -2249,11 +2290,27 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
         }
     };
 
+    // Findings are FATAL here, unlike at startup — and the difference is not inconsistency,
+    // it is what refusing costs. Aborting a start over a long-standing typo takes a working
+    // server down on upgrade, so the boot path warns. A reload that refuses simply keeps the
+    // configuration already running: nothing stops, nobody is disconnected, and the operator
+    // gets a log line naming the key. There is no reason to apply a config we can see is
+    // ambiguous when declining is free. (Audit 2026-08-01, §3.)
     let new_config: ServerConfig = match std::fs::read_to_string(&cfg_path)
         .map_err(|e| anyhow::anyhow!("{}", e))
-        .and_then(|s| crate::config::parse_server_config(&s))
+        .and_then(|s| crate::config::parse_server_config_reporting(&s))
     {
-        Ok(c) => c,
+        Ok((c, findings)) if findings.is_empty() => c,
+        Ok((_, findings)) => {
+            log::error!(
+                "SIGHUP: refusing to apply '{}' — {} problem(s) whose defaults would be \
+                 substituted silently; keeping the running config:\n  {}",
+                cfg_path,
+                findings.len(),
+                findings.join("\n  ")
+            );
+            return;
+        }
         Err(e) => {
             log::error!(
                 "SIGHUP: failed to re-read config '{}': {} — keeping current config",
@@ -2654,6 +2711,54 @@ impl Drop for ProfileTeardown {
         });
         log::info!("Profile '{}': torn down (TUN, NAT, registry)", self.profile);
     }
+}
+
+/// Run a profile's `post_down` hook exactly once, whoever gets there first.
+///
+/// Two things can end a profile — the profile's own task returning, and the worker shutting
+/// down — and both must leave the hook run, but only once. The `done` set is the interlock;
+/// it is checked and inserted under one lock so a shutdown racing a dying profile cannot run
+/// the hook twice.
+///
+/// Honoured ONLY from a config the hook layer considers trusted, exactly like `post_up`: the
+/// panel and the API never write these fields, and running a command out of an untrusted file
+/// would be remote code execution.
+async fn run_post_down(
+    state: &Arc<ServerState>,
+    profile: &str,
+    done: &Arc<Mutex<std::collections::HashSet<String>>>,
+) {
+    let Some(pcfg) = state.config.profiles.iter().find(|p| p.name == profile) else {
+        return;
+    };
+    if pcfg.routing.post_down.is_empty() {
+        return;
+    }
+    {
+        let mut d = done.lock().await;
+        if !d.insert(profile.to_string()) {
+            return; // already run for this profile
+        }
+    }
+    let trusted = {
+        let p = state.config_path.lock().await.clone();
+        p.as_deref()
+            .map(|p| crate::hooks::config_is_trusted(p).is_ok())
+            .unwrap_or(false)
+    };
+    if !trusted {
+        return;
+    }
+    crate::hooks::run(
+        &format!("post_down:{profile}"),
+        &pcfg.routing.post_down,
+        &[
+            ("QELI_PROFILE", pcfg.name.clone()),
+            ("QELI_TUN", pcfg.tun.name.clone()),
+            ("QELI_POOL", pcfg.pool.cidr.clone()),
+        ],
+    )
+    .await;
 }
 
 async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Result<()> {

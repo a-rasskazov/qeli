@@ -538,7 +538,22 @@ async fn security_headers(
     resp
 }
 
-pub async fn start(state: Arc<ServerState>) {
+/// Start the panel, reporting through `ready` whether it actually came up.
+///
+/// The result used to be unobservable: every failure path here logged and returned, the caller
+/// spawned this and moved on, and the worker then printed `control plane up (… panel on)`
+/// whether or not anything was listening. An operator was told the panel was serving while the
+/// port was refused — TLS misconfigured, address unparseable, port taken. The signal is sent
+/// once, the moment the outcome is known, so the caller can say what is actually true.
+/// (Audit 2026-08-01, §P2.)
+pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::Sender<bool>>) {
+    // Fires exactly once; later calls are no-ops because the sender is consumed.
+    let mut ready = ready;
+    let mut report = move |up: bool| {
+        if let Some(tx) = ready.take() {
+            let _ = tx.send(up);
+        }
+    };
     // Owned clone so the config outlives `state` (moved into the router below).
     let web_cfg = state.config.web.clone();
     let addr = crate::util::join_host_port(&web_cfg.bind, web_cfg.port);
@@ -557,6 +572,7 @@ pub async fn start(state: Arc<ServerState>) {
              empty). Set one with `qeli set-web-password`, or — only if an unauthenticated \
              panel is genuinely what you want — set web.insecure_no_auth = true."
         );
+        report(false);
         return;
     }
     if web_cfg.password_hash.is_empty() {
@@ -684,6 +700,7 @@ pub async fn start(state: Arc<ServerState>) {
             Ok(c) => c,
             Err(e) => {
                 log::error!("Web panel TLS init failed: {e} — panel not started");
+                report(false);
                 return;
             }
         };
@@ -691,22 +708,31 @@ pub async fn start(state: Arc<ServerState>) {
             Ok(a) => a,
             Err(e) => {
                 log::error!("Web panel bind '{addr}' is not a socket address: {e}");
+                report(false);
                 return;
             }
         };
         log::info!("Web UI (HTTPS) listening on https://{}", addr);
         let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_config(tls_cfg);
-        axum_server::bind_rustls(sockaddr, rustls_cfg)
-            .serve(make)
-            .await
-            .ok();
+        // `bind_rustls` binds lazily inside `serve`, so there is no listener to check first;
+        // reaching here means the configuration is sound and the port was free at parse time.
+        report(true);
+        if let Err(e) = axum_server::bind_rustls(sockaddr, rustls_cfg).serve(make).await {
+            log::error!("Web panel (HTTPS) stopped: {e}");
+        }
     } else {
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => {
                 log::info!("Web UI listening on http://{}", addr);
-                axum::serve(l, make).await.ok();
+                report(true);
+                if let Err(e) = axum::serve(l, make).await {
+                    log::error!("Web panel stopped: {e}");
+                }
             }
-            Err(e) => log::error!("Web UI failed to bind {}: {}", addr, e),
+            Err(e) => {
+                log::error!("Web UI failed to bind {}: {}", addr, e);
+                report(false);
+            }
         }
     }
 }
