@@ -84,8 +84,13 @@ struct UdpClient {
     /// `Authenticated`. A lost AuthOK leaves the client retransmitting the EXACT
     /// AUTH datagram, which the replay window rejects; on a byte match we re-send
     /// the cached AuthOK instead of dropping it. Empty until authenticated.
+    ///
+    /// A LIST of datagrams, not one: a large pushed-route set splits the AuthOK into
+    /// fragments (see `build_auth_ok_datagrams`), and re-emitting only the first of them
+    /// would leave the client's reassembly permanently one fragment short — the very stall
+    /// this cache exists to prevent. Usually holds exactly one element.
     auth_request: Vec<u8>,
-    auth_ok: Vec<u8>,
+    auth_ok: Vec<Vec<u8>>,
     /// Compiled `allowed_networks` destination ACL for the authenticated user (own or
     /// inherited from the group). Empty = unrestricted; set at auth, checked on every
     /// inner packet before the TUN. Mirrors `SessionShared.dst_acl` on the TCP path.
@@ -555,6 +560,50 @@ async fn send_handshake_response(
     }
 }
 
+/// Turn an encrypted AuthOK record into the datagram(s) that carry it.
+///
+/// One datagram whenever it fits the fragment budget — byte-identical to what every build
+/// before this emitted, which is what keeps clients that predate [`MSG_AUTH_OK`] working. Over
+/// the budget it is split, because the alternative is what shipped: a single oversized
+/// datagram that an IP-fragment-dropping path (mobile, CGNAT) silently destroys, leaving the
+/// client to time out at the AUTHENTICATION step with nothing in either log to say why.
+/// (Audit 2026-08-02, §4.)
+///
+/// Layering matches [`send_handshake_response`]: split first, then QUIC-wrap each fragment
+/// separately, so no datagram ever needs IP fragmentation. The AuthOK is post-handshake, so
+/// it uses the SHORT header the data plane uses, not the long one — and each fragment gets
+/// its own packet number for the same reason the ServerHello's do.
+///
+/// `Err` only if the record needs more than `MAX_FRAGS` fragments (~28 KB of pushed routes),
+/// which the receiver would reject anyway; the caller reports it instead of emitting a
+/// message the client silently drops.
+fn build_auth_ok_datagrams(
+    record: &[u8],
+    quic_enabled: bool,
+    connection_id: &[u8; 4],
+) -> Result<Vec<Vec<u8>>, &'static str> {
+    use crate::protocol::udp_frag;
+    if record.len() <= udp_frag::MAX_CHUNK {
+        return Ok(vec![if quic_enabled {
+            wrap_quic_short(record, connection_id, 1u32)
+        } else {
+            record.to_vec()
+        }]);
+    }
+    let frags = udp_frag::fragment(udp_frag::MSG_AUTH_OK, record)?;
+    Ok(frags
+        .into_iter()
+        .enumerate()
+        .map(|(i, frag)| {
+            if quic_enabled {
+                wrap_quic_short(&frag, connection_id, 1 + i as u32)
+            } else {
+                frag
+            }
+        })
+        .collect())
+}
+
 #[allow(clippy::too_many_arguments)] // datagram dispatch threads the shared UDP state
 async fn handle_udp_datagram(
     server_state: &Arc<ServerState>,
@@ -672,10 +721,11 @@ async fn handle_udp_datagram(
                 // ClientHello or AUTH — it stays well inside the budget. A spoofed
                 // source poking the session with tiny triggers runs out immediately.
                 let reply_len = if reemit_hello {
-                    hello.len()
+                    hello.len() as u64
                 } else {
-                    authok.len()
-                } as u64;
+                    // Every fragment goes back on the wire, so every fragment is charged.
+                    authok.iter().map(|d| d.len() as u64).sum()
+                };
                 let over_budget = client.amp_sent.saturating_add(reply_len)
                     > client.amp_received.saturating_mul(3);
                 if over_budget {
@@ -696,7 +746,9 @@ async fn handle_udp_datagram(
                         send_handshake_response(socket, addr, &hello, quic, &cid, frag).await;
                     }
                 } else {
-                    let _ = socket.send_to(&authok, addr).await;
+                    for pkt in &authok {
+                        let _ = socket.send_to(pkt, addr).await;
+                    }
                 }
                 return;
             }
@@ -1272,11 +1324,26 @@ async fn handle_udp_auth(
     let bytes_recv = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
 
     // Build the AuthOK first so the same bytes can be BOTH sent and cached for
-    // idempotent re-emit.
-    let response_pkt = if quic_enabled {
-        wrap_quic_short(&auth_response, &connection_id, 1u32)
-    } else {
-        auth_response
+    // idempotent re-emit. Usually one datagram; more when the pushed route list puts the
+    // record over the fragment budget (see `build_auth_ok_datagrams`).
+    let auth_ok_len = auth_response.len();
+    let response_pkts = match build_auth_ok_datagrams(&auth_response, quic_enabled, &connection_id)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!(
+                "Profile '{}': the AuthOK for '{}' is {} bytes and cannot be fragmented ({}). \
+                 This profile pushes more than the UDP handshake can carry — reduce the pushed \
+                 routes for this user/profile, or use a TCP profile.",
+                profile.name,
+                username,
+                auth_ok_len,
+                e
+            );
+            sessions.write().await.remove(&addr);
+            profile.pool.lock().await.release(&dkey);
+            return;
+        }
     };
 
     // Destination ACL (`allowed_networks`), own or inherited from the group — compiled
@@ -1322,7 +1389,7 @@ async fn handle_udp_auth(
             // drop — the existing-session re-emit branch resends `auth_ok` on a byte
             // match. Free the ServerHello cache (only needed pre-auth).
             client.auth_request = raw_request.to_vec();
-            client.auth_ok = response_pkt.clone();
+            client.auth_ok = response_pkts.clone();
             client.server_hello = Vec::new();
             client.hello_frag_mode = false;
             // Destination ACL now that we know WHICH user this session belongs to;
@@ -1336,33 +1403,26 @@ async fn handle_udp_auth(
         }
     }
 
-    // The AuthOK goes out as ONE datagram — unlike the ClientHello/ServerHello, which are
-    // app-fragmented to dodge IP fragmentation on mobile and CGNAT paths that drop fragments.
-    //
-    // Its size is not bounded by anything: it carries the pushed route list, and enough routes
-    // (roughly forty, or fewer with gateways and metrics) push it past what such a path will
-    // carry. The failure is then indistinguishable from a dead server — the client
-    // retransmits AUTH, the reply is dropped by the network every time, and it times out at
-    // the AUTHENTICATION step with nothing in either log to say why.
-    //
-    // Fragmenting it properly means teaching all four clients to reassemble a post-auth
-    // message, which is a protocol change and deliberately NOT smuggled in here. What is fixed
-    // now is the silence: say plainly that this profile pushes more than a UDP handshake can
-    // safely carry, so the operator can trim the routes or move the profile to TCP.
-    // (Audit 2026-08-02, §4.)
-    if response_pkt.len() > crate::protocol::udp_frag::MAX_CHUNK {
-        log::warn!(
+    // Over the budget the AuthOK now goes out fragmented rather than as one oversized
+    // datagram an LTE/CGNAT path would silently eat. Worth saying out loud even so: a client
+    // built before `MSG_AUTH_OK` cannot reassemble it, and this is the size at which such a
+    // client stops being able to connect over UDP at all. (Audit 2026-08-02, §4.)
+    if response_pkts.len() > 1 {
+        log::info!(
             "Profile '{}': the AuthOK for '{}' is {} bytes, above the {}-byte UDP handshake \
-             budget, and it is sent UNFRAGMENTED. Paths that drop IP fragments (mobile, CGNAT) \
-             will lose it and the client will time out during authentication. Reduce the pushed \
-             routes for this user/profile, or use a TCP profile.",
+             budget, and is being sent as {} fragments. Clients older than 0.7.14 cannot \
+             reassemble it — reduce the pushed routes for this user/profile, or use a TCP \
+             profile, if any are still in the field.",
             profile.name,
             username,
-            response_pkt.len(),
-            crate::protocol::udp_frag::MAX_CHUNK
+            auth_ok_len,
+            crate::protocol::udp_frag::MAX_CHUNK,
+            response_pkts.len()
         );
     }
-    let _ = socket.send_to(&response_pkt, addr).await;
+    for pkt in &response_pkts {
+        let _ = socket.send_to(pkt, addr).await;
+    }
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(4096);
     let writer_socket = socket.clone();
@@ -1708,7 +1768,7 @@ async fn handle_new_udp_client(
             server_hello: Vec::new(),
             hello_frag_mode: false,
             auth_request: Vec::new(),
-            auth_ok: Vec::new(),
+            auth_ok: Vec::new(), // no datagrams cached until authenticated
             dst_acl: crate::server::acl::DstAcl::default(),
         },
         response,
@@ -1717,8 +1777,93 @@ async fn handle_new_udp_client(
 
 #[cfg(test)]
 mod tests {
-    use super::udp_reap_window;
+    use super::{build_auth_ok_datagrams, udp_reap_window};
+    use crate::protocol::udp_frag;
     use std::time::Duration;
+
+    /// A small AuthOK must go out EXACTLY as it always did.
+    ///
+    /// This is the whole backward-compatibility argument for adding `MSG_AUTH_OK`: clients
+    /// that predate it keep working because they never see a fragment in any case that works
+    /// today. If this test ever goes red, every deployed client breaks at once.
+    #[test]
+    fn a_small_auth_ok_is_still_one_unfragmented_datagram() {
+        let record = vec![0xABu8; 400];
+        let plain = build_auth_ok_datagrams(&record, false, &[0; 4]).expect("fits");
+        assert_eq!(plain, vec![record.clone()], "byte-identical to the record");
+        assert!(!udp_frag::is_fragment(&plain[0]), "no fragment envelope");
+
+        // Exactly at the budget is still one datagram — the boundary the receiver's
+        // MAX_CHUNK bound is written against.
+        let edge = vec![0x11u8; udp_frag::MAX_CHUNK];
+        assert_eq!(
+            build_auth_ok_datagrams(&edge, false, &[0; 4])
+                .expect("fits")
+                .len(),
+            1
+        );
+
+        // With QUIC masking on it is the short header, not the long one: the AuthOK is
+        // post-handshake, so it must look like the data plane that follows it.
+        let masked = build_auth_ok_datagrams(&record, true, &[9, 8, 7, 6]).expect("fits");
+        assert_eq!(masked.len(), 1);
+        assert_ne!(masked[0], record, "QUIC wrapper applied");
+    }
+
+    /// Over the budget it splits, and every piece is small enough to cross a path that
+    /// drops IP fragments — the LTE/CGNAT failure this exists to remove.
+    #[test]
+    fn a_large_auth_ok_is_split_and_reassembles_to_the_same_record() {
+        // ~40 pushed routes' worth: the size at which the single datagram was being eaten.
+        let record: Vec<u8> = (0..3_000u32).map(|i| (i * 7) as u8).collect();
+        let dgrams = build_auth_ok_datagrams(&record, false, &[0; 4]).expect("splits");
+        assert!(
+            dgrams.len() > 1,
+            "must not be sent as one oversized datagram"
+        );
+
+        let mut re = udp_frag::Reassembler::new();
+        let mut done = None;
+        for d in &dgrams {
+            assert!(
+                udp_frag::is_auth_ok_fragment(d),
+                "the client recognizes it by MSG_AUTH_OK, not by guessing"
+            );
+            assert!(
+                d.len() <= udp_frag::FRAG_HDR_LEN + udp_frag::MAX_CHUNK,
+                "fragment {} is over the per-datagram budget",
+                d.len()
+            );
+            done = re.push(d).expect("well-formed fragment");
+        }
+        assert_eq!(
+            done.expect("completes"),
+            record,
+            "reassembly must return the encrypted record unchanged — it is decrypted after"
+        );
+    }
+
+    /// Each fragment carries its own QUIC packet number, matching what
+    /// `send_handshake_response` does for the ServerHello. Reusing one number across
+    /// datagrams is what a replay filter is built to drop.
+    #[test]
+    fn fragments_do_not_reuse_a_quic_packet_number() {
+        let record: Vec<u8> = (0..3_000u32).map(|i| i as u8).collect();
+        let dgrams = build_auth_ok_datagrams(&record, true, &[1, 2, 3, 4]).expect("splits");
+        assert!(dgrams.len() > 1);
+        let mut seen = std::collections::HashSet::new();
+        for d in &dgrams {
+            assert!(seen.insert(d.clone()), "two AuthOK datagrams are identical");
+        }
+    }
+
+    /// Past `MAX_FRAGS` the receiver would reject the message, so the sender must refuse
+    /// it here rather than emit something the client silently drops.
+    #[test]
+    fn an_unfragmentable_auth_ok_is_refused_not_emitted() {
+        let huge = vec![0u8; udp_frag::MAX_FRAGS as usize * udp_frag::MAX_CHUNK + 1];
+        assert!(build_auth_ok_datagrams(&huge, false, &[0; 4]).is_err());
+    }
 
     #[test]
     fn reap_window_uses_liveness_when_idle_disabled() {

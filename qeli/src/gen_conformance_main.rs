@@ -836,7 +836,7 @@ fn build_quic() -> String {
 fn build_udp_frag() -> String {
     use qeli::protocol::udp_frag::{
         fragment, mtu_probe_ack_datagram, Reassembler, FRAG_MAGIC, MAX_CHUNK, MAX_CHUNK_ACCEPT,
-        MAX_FRAGS, MSG_CLIENT_HELLO, MSG_JUNK, MSG_MTU_PROBE, MSG_SERVER_HELLO,
+        MAX_FRAGS, MSG_AUTH_OK, MSG_CLIENT_HELLO, MSG_JUNK, MSG_MTU_PROBE, MSG_SERVER_HELLO,
     };
 
     /// Deterministic message body: byte i = (i * 31 + 7) mod 256 — non-repeating enough that
@@ -899,6 +899,13 @@ fn build_udp_frag() -> String {
     "rejects every handshake from a pre-#14 peer, so both values are pinned here and a port must",
     "match both.",
     "",
+    "MSG IDS: 1 ClientHello, 2 ServerHello, 3 junk decoy, 4 MTU probe, 5 probe ACK, 6 AuthOK.",
+    "The AuthOK (`msg_auth_ok`) is the one whose size is not fixed — it carries the pushed route",
+    "list. It is fragmented ONLY when it exceeds max_chunk, so a peer that predates msg_id 6 is",
+    "unaffected in every case that works today; the only case where it meets fragments is the",
+    "one where the network was already destroying its unfragmented reply. Its chunks are the",
+    "finished AEAD record, not plaintext: reassemble first, decrypt after.",
+    "",
     "NOT PINNED HERE: junk decoys and MTU probes carry RANDOM bodies by design, so their bytes",
     "cannot be fixed. Their framing is covered by `classify`, and the deterministic probe ACK",
     "is pinned in full.",
@@ -912,7 +919,7 @@ fn build_udp_frag() -> String {
   "max_chunk": "#,
     );
     s.push_str(&format!(
-        "{MAX_CHUNK},\n  \"max_chunk_accept\": {MAX_CHUNK_ACCEPT},\n  \"max_frags\": {MAX_FRAGS},\n"
+        "{MAX_CHUNK},\n  \"max_chunk_accept\": {MAX_CHUNK_ACCEPT},\n  \"max_frags\": {MAX_FRAGS},\n  \"msg_auth_ok\": {MSG_AUTH_OK},\n"
     ));
     s.push_str(
         "  \"platforms\": [\"rust\", \"csharp\", \"kotlin\", \"swift\"],\n  \"fragment\": [\n",
@@ -945,6 +952,19 @@ fn build_udp_frag() -> String {
                   off-by-one, and the shape most likely to be mis-sliced.",
             msg_id: MSG_SERVER_HELLO,
             len: MAX_CHUNK + 1,
+        },
+        FragCase {
+            name: "auth-ok-fragmented",
+            why: "msg_id 6 is the AuthOK, the one message here whose size is not fixed — it \
+                  carries the pushed route list, so a profile pushing enough routes puts it \
+                  past what a fragment-dropping path (mobile, CGNAT) will deliver. The server \
+                  splits it ONLY above MAX_CHUNK, so a client that predates msg_id 6 sees no \
+                  change in any case that works today; below the budget the AuthOK is still \
+                  the single UNFRAMED datagram it always was — which is why there is no \
+                  `fragment` case for the small size, and why a port must NOT start framing \
+                  small AuthOKs to be tidy.",
+            msg_id: MSG_AUTH_OK,
+            len: MAX_CHUNK * 2 + 40,
         },
         FragCase {
             name: "too-large-to-fragment",
@@ -1132,6 +1152,15 @@ fn build_udp_frag() -> String {
             ack.clone(),
         ),
         (
+            "auth-ok-fragment",
+            "The AuthOK, msg_id 6 — fragment 0 of 2. Unambiguous against a real record in \
+             either framing: TLS framing opens 0x17 0x03 0x03, and raw framing opens with a \
+             u16 payload length bounded by MAX_RECORD_SIZE (0x4124), so its high byte is at \
+             most 0x41 and 0xF0 is unreachable both ways. Same property that lets a server \
+             tell a fragmented ClientHello from a legacy single-datagram one.",
+            frag(MSG_AUTH_OK, 0, 2, b"\xde\xad\xbe\xef"),
+        ),
+        (
             "tls-record-not-a-fragment",
             "A real TLS record opener (0x16 0x03) must NOT look like a fragment — that is the \
              whole reason the magic was chosen as it was.",
@@ -1146,17 +1175,20 @@ fn build_udp_frag() -> String {
 
     for (i, (name, why, d)) in classify.iter().enumerate() {
         let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
-        use qeli::protocol::udp_frag::{is_fragment, is_junk, is_mtu_probe, is_mtu_probe_ack};
+        use qeli::protocol::udp_frag::{
+            is_auth_ok_fragment, is_fragment, is_junk, is_mtu_probe, is_mtu_probe_ack,
+        };
         s.push_str("    {\n");
         s.push_str(&format!("      \"name\": \"{name}\",\n"));
         s.push_str(&format!("      \"why\": \"{why}\",\n"));
         s.push_str(&format!("      \"datagram\": \"{}\",\n", hex(d)));
         s.push_str(&format!(
-            "      \"expect\": {{ \"is_fragment\": {}, \"is_junk\": {}, \"is_mtu_probe\": {}, \"is_mtu_probe_ack\": {} }}\n",
+            "      \"expect\": {{ \"is_fragment\": {}, \"is_junk\": {}, \"is_mtu_probe\": {}, \"is_mtu_probe_ack\": {}, \"is_auth_ok\": {} }}\n",
             is_fragment(d),
             is_junk(d),
             is_mtu_probe(d),
-            is_mtu_probe_ack(d)
+            is_mtu_probe_ack(d),
+            is_auth_ok_fragment(d)
         ));
         s.push_str(if i + 1 == classify.len() {
             "    }\n"

@@ -3407,6 +3407,16 @@ async fn connect_and_run_udp(
     // already-authenticated session — so that case still falls through to the deadline
     // and a fresh-port reconnect, which redoes the whole handshake cleanly.
     let mut auth_sends = 0u32;
+    // Reassembly state for a FRAGMENTED AuthOK. A server whose pushed-route list puts the
+    // AuthOK over the fragment budget splits it rather than emitting one oversized datagram
+    // that an LTE/CGNAT path silently eats (see `udp_frag::MSG_AUTH_OK`); below the budget it
+    // still arrives as the single datagram it always was, and this stays untouched.
+    //
+    // Scoped to this loop because this is the only place an AuthOK is expected — not because
+    // the check would be unsafe elsewhere. A real record can never be mistaken for a
+    // fragment in either framing (see `udp_frag::MSG_AUTH_OK`).
+    let mut auth_ok_frags = crate::protocol::udp_frag::Reassembler::new();
+    let mut auth_ok_frag_seen = false;
     let auth_response = 'auth: loop {
         let wire = if quic_enabled {
             quic_pn += 1;
@@ -3445,6 +3455,38 @@ async fn connect_and_run_udp(
             } else {
                 recv_buf[..n3].to_vec()
             };
+            // A fragmented AuthOK: collect the pieces, then decrypt the reassembled record.
+            // Checked BEFORE decrypt because a lone fragment is not a valid AEAD record and
+            // would otherwise be discarded as a stray datagram, one per fragment, forever.
+            if crate::protocol::udp_frag::is_auth_ok_fragment(&raw) {
+                if !auth_ok_frag_seen {
+                    auth_ok_frag_seen = true;
+                    log::debug!("UDP: AuthOK is arriving fragmented (large pushed-route set)");
+                }
+                match auth_ok_frags.push(&raw) {
+                    Ok(Some(record)) => match client_rx.decrypt_packet(&record) {
+                        Ok(resp) => break 'auth resp,
+                        // Reassembled but undecryptable: fragments from a stale attempt got
+                        // mixed with this one. Start over rather than staying wedged on a
+                        // reassembler that can never complete correctly.
+                        Err(e) => {
+                            log::debug!(
+                                "UDP: reassembled AuthOK failed to decrypt ({e}) — resetting"
+                            );
+                            auth_ok_frags = crate::protocol::udp_frag::Reassembler::new();
+                            continue;
+                        }
+                    },
+                    Ok(None) => continue, // more fragments needed
+                    Err(e) => {
+                        // Malformed or inconsistent — drop the partial and keep waiting, the
+                        // same way a stray datagram is ignored below.
+                        log::debug!("UDP: bad AuthOK fragment ({e}) — resetting reassembly");
+                        auth_ok_frags = crate::protocol::udp_frag::Reassembler::new();
+                        continue;
+                    }
+                }
+            }
             match client_rx.decrypt_packet(&raw) {
                 Ok(resp) => break 'auth resp,
                 Err(_) => continue, // cover / stray datagram — keep waiting

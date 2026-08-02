@@ -280,13 +280,20 @@ mod load_tests {
         assert_eq!(db.users[0].max_sessions, 3);
 
         for (label, body) in [
-            ("max_sessions", "[user:alice]\npassword_hash = x\nmax_sessions = ten\n"),
-            ("data_limit_gb", "[user:alice]\npassword_hash = x\ndata_limit_gb = 50G\n"),
+            (
+                "max_sessions",
+                "[user:alice]\npassword_hash = x\nmax_sessions = ten\n",
+            ),
+            (
+                "data_limit_gb",
+                "[user:alice]\npassword_hash = x\ndata_limit_gb = 50G\n",
+            ),
         ] {
             let bad = dir.join(format!("bad-{label}.conf"));
             std::fs::write(&bad, body).unwrap();
-            let err = UsersDb::load(&bad)
-                .expect_err(&format!("{label}: an unreadable limit must refuse the load"));
+            let err = UsersDb::load(&bad).expect_err(&format!(
+                "{label}: an unreadable limit must refuse the load"
+            ));
             assert!(
                 err.to_string().contains(label),
                 "{label}: the error must name the key: {err}"

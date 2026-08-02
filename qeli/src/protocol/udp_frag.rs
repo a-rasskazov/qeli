@@ -102,6 +102,35 @@ pub const MSG_MTU_PROBE: u8 = 4;
 /// Path-MTU probe **ACK** (server→client): a tiny datagram echoing the probe's
 /// `[id(2 LE)][outer_size(2 LE)]`, confirming the big probe arrived intact.
 pub const MSG_MTU_PROBE_ACK: u8 = 5;
+/// The **AuthOK** (server→client), fragmented for the same reason as the ServerHello.
+///
+/// Unlike the two handshake messages, this one has no fixed size: it carries the pushed
+/// route list, so a profile pushing enough routes puts it past what a fragment-dropping path
+/// (mobile, CGNAT) will carry. The failure was indistinguishable from a dead server — the
+/// client retransmits AUTH, the network eats the reply every time, and it times out at the
+/// AUTHENTICATION step with nothing in either log. (Audit 2026-08-02, §4.)
+///
+/// Two things make adding this SAFE on a wire that already has deployed clients:
+///
+/// 1. **The server fragments only when the message exceeds [`MAX_CHUNK`].** At or below it,
+///    the AuthOK goes out as the single datagram it always was, byte for byte. So a client
+///    that does not know this id sees no change in any case that works today; the only case
+///    where it sees fragments is the case where the network was already destroying its
+///    unfragmented reply.
+/// 2. **The payload is the finished AEAD record, not plaintext.** Fragmentation happens
+///    strictly below the session cipher and above the QUIC mask — same layering as the
+///    ServerHello — so nothing about the crypto, the transcript or the replay window moves.
+///
+/// There is no ambiguity against a real record, in either framing: TLS framing opens
+/// `0x17 0x03 0x03`, and raw framing opens with a u16 payload length bounded by
+/// [`crate::protocol::packet::MAX_RECORD_SIZE`] (0x4124), so its high byte is at most 0x41 —
+/// `0xF0` is unreachable both ways. That is the same property [`is_fragment`] already relies
+/// on to tell a fragmented ClientHello from a legacy single-datagram one.
+///
+/// Receivers still test for this id only where an AuthOK is actually expected. Not for
+/// safety — the paragraph above is what makes it safe — but because nothing else should ever
+/// produce one, so a narrow check is a narrow surface.
+pub const MSG_AUTH_OK: u8 = 6;
 
 /// Probe/ACK body after the 6-byte fragment header: `id(2) + outer_size(2)`.
 pub const PROBE_BODY_LEN: usize = 4;
@@ -173,6 +202,12 @@ pub fn mtu_probe_ack_datagram(id: u16, outer_size: u16) -> Vec<u8> {
 #[inline]
 pub fn is_junk(d: &[u8]) -> bool {
     is_fragment(d) && d[3] == MSG_JUNK
+}
+
+/// True if `d` (after obfs/QUIC unwrap) is a fragment of the AuthOK ([`MSG_AUTH_OK`]).
+#[inline]
+pub fn is_auth_ok_fragment(d: &[u8]) -> bool {
+    is_fragment(d) && d[3] == MSG_AUTH_OK
 }
 
 /// Build ONE junk decoy datagram: a single-fragment [`MSG_JUNK`] message with `len`
@@ -356,6 +391,13 @@ mod tests {
             Some(MAX_FRAGS as u64),
             "the fixture was generated for a different MAX_FRAGS than this build uses"
         );
+        assert_eq!(
+            fx["msg_auth_ok"].as_u64(),
+            Some(MSG_AUTH_OK as u64),
+            "the AuthOK message id must be identical in all four ports — a port using a \
+             different number silently fails to reassemble a large AuthOK, which looks like a \
+             dead server rather than a version mismatch"
+        );
 
         // ── fragment ────────────────────────────────────────────────────────────
         for c in fx["fragment"].as_array().expect("no `fragment` section") {
@@ -462,6 +504,11 @@ mod tests {
                 is_mtu_probe_ack(&d),
                 e["is_mtu_probe_ack"].as_bool().unwrap(),
                 "case {name}: is_mtu_probe_ack"
+            );
+            assert_eq!(
+                is_auth_ok_fragment(&d),
+                e["is_auth_ok"].as_bool().unwrap(),
+                "case {name}: is_auth_ok_fragment"
             );
         }
     }
