@@ -1141,8 +1141,8 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 | `proto` | `tcp` | ✓ | ✓ | ✓ | ✓ | ✓ | transport: `tcp` / `udp` |
 | `keepalive` | `60` | ✓ | — | — | — | — | TCP keepalive probe interval (s). Hardcoded on in the GUIs |
 | `tcp_nodelay` | `true` | ✓ | — | — | — | — | disable Nagle's algorithm. Hardcoded on in the GUIs |
-| `recv_buffer_size` | `4194304` | ✓ | — | — | — | — | `SO_RCVBUF` on the UDP socket. UDP has no autotuning → the 208 KB kernel default drops packets. `0` = leave alone |
-| `send_buffer_size` | `0` | ✓ | — | — | — | — | `SO_SNDBUF` on the UDP socket. `0` = leave alone: a full send buffer never loses data |
+| `recv_buffer_size` | `4194304` | ✓\* | — | — | — | — | `SO_RCVBUF` on the UDP socket, **Linux only** (parsed but not applied on Windows/macOS). UDP has no autotuning → the 208 KB kernel default drops packets. `0` = leave alone. The dashes do not mean "tiny buffer": Win/mac/Android raise it to 2 MB themselves, just not from this key |
+| `send_buffer_size` | `0` | ✓\* | — | — | — | — | `SO_SNDBUF` on the UDP socket, **Linux only**. `0` = leave alone: a full send buffer never loses data |
 
 **Authentication**
 
