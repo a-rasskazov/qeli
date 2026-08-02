@@ -19,7 +19,7 @@ PKG_RELEASE:=1
 # cutting a version.
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/litvinovtd/qeli.git
-PKG_SOURCE_VERSION:=5b2bc683127842124b421ee8dc3e692336e16ca2
+PKG_SOURCE_VERSION:=a198136f8b02d39cac5631276b8aac36a38258a9
 PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
 # OpenWrt REQUIRES a hash for a git source: without PKG_MIRROR_HASH the generated
 # tarball is accepted unverified, so the build trusts whatever github.com serves.
