@@ -128,6 +128,11 @@ final class WireConformanceTests: XCTestCase {
                        "fixture maxChunkAccept vs this build")
         XCTAssertEqual(fx["max_frags"] as? Int, UDPFragmentation.maxFragments,
                        "fixture maxFragments vs this build")
+        // The AuthOK id must be identical in all four ports. A port using a different number
+        // does not fail loudly — it simply never reassembles a large AuthOK, which on the
+        // phone presents as a dead server rather than a version mismatch.
+        XCTAssertEqual(fx["msg_auth_ok"] as? Int, Int(UDPFragmentation.authOK),
+                       "fixture authOK vs this build")
 
         // ── fragment ────────────────────────────────────────────────────────────
         let frags = fx["fragment"] as? [[String: Any]] ?? []
@@ -195,6 +200,7 @@ final class WireConformanceTests: XCTestCase {
             XCTAssertEqual(UDPFragmentation.isJunk(d), e["is_junk"]!, "case \(name): is_junk")
             XCTAssertEqual(UDPFragmentation.isMTUProbe(d), e["is_mtu_probe"]!, "case \(name): is_mtu_probe")
             XCTAssertEqual(UDPFragmentation.isMTUProbeAck(d), e["is_mtu_probe_ack"]!, "case \(name): is_mtu_probe_ack")
+            XCTAssertEqual(UDPFragmentation.isAuthOKFragment(d), e["is_auth_ok"]!, "case \(name): is_auth_ok")
         }
     }
 

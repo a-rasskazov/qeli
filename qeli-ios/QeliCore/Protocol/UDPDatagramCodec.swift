@@ -124,6 +124,11 @@ final class UDPDatagramCodec: @unchecked Sendable {
         }
 
         return try receiveLock.withLock {
+            // Any fragmented message: the ServerHello, and since 0.7.14 also a large AuthOK
+            // (msg_id 6), which a big pushed-route set puts over the fragment budget.
+            // Deliberately keyed on isFragment rather than a specific message id — a real
+            // record can never carry the magic in either framing (see
+            // `UDPFragmentation.authOK`), so this stays correct on the data plane too.
             if UDPFragmentation.isFragment(payload) {
                 do {
                     guard let full = try reassembler.push(payload) else { return .fragmentPending }

@@ -389,6 +389,11 @@ public static class WireConformance
                 r.GetProperty("max_chunk_accept").GetInt32() == UdpFrag.MaxChunkAccept);
             check("udp-frag: fixture MaxFrags matches this build",
                 r.GetProperty("max_frags").GetInt32() == UdpFrag.MaxFrags);
+            // The AuthOK id must be identical in all four ports. A port using a different
+            // number does not fail loudly — it simply never reassembles a large AuthOK, which
+            // presents as a dead server rather than a version mismatch.
+            check("udp-frag: fixture MsgAuthOk matches this build",
+                r.GetProperty("msg_auth_ok").GetInt32() == UdpFrag.MsgAuthOk);
             check("udp-frag: a legacy 1200-byte chunk still reassembles", LegacyChunkAccepted());
 
             int n = 0;
@@ -458,7 +463,8 @@ public static class WireConformance
                 bool ok = UdpFrag.IsFragment(d) == e.GetProperty("is_fragment").GetBoolean()
                        && UdpFrag.IsJunk(d) == e.GetProperty("is_junk").GetBoolean()
                        && UdpFrag.IsMtuProbe(d) == e.GetProperty("is_mtu_probe").GetBoolean()
-                       && UdpFrag.IsMtuProbeAck(d) == e.GetProperty("is_mtu_probe_ack").GetBoolean();
+                       && UdpFrag.IsMtuProbeAck(d) == e.GetProperty("is_mtu_probe_ack").GetBoolean()
+                       && UdpFrag.IsAuthOkFragment(d) == e.GetProperty("is_auth_ok").GetBoolean();
                 check($"udp-frag[{name}]: classification", ok);
             }
 

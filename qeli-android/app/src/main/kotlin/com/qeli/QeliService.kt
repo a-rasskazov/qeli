@@ -1744,8 +1744,12 @@ class VpnServiceImpl : VpnService() {
                 if (obfsKey != null) raw = ObfsStream.datagramOpen(obfsKey, raw!!)
                 val payload = if (raw == null) null else if (quic) Quic.unwrapPayload(raw) else raw
                 if (payload == null) continue   // malformed datagram — drop
-                // Reassemble a fragmented handshake message; non-fragment payloads
-                // (data / auth-ok) pass through unchanged.
+                // Reassemble a fragmented handshake message: the ServerHello, and since
+                // 0.7.14 also a large AuthOK (msg_id 6), which a big pushed-route set puts
+                // over the fragment budget. Deliberately keyed on isFragment rather than on a
+                // specific msgId — a real record can never carry the magic in either framing
+                // (see UdpFrag.MSG_AUTH_OK), so this stays correct on the data plane too.
+                // Everything else passes through unchanged.
                 if (UdpFrag.isFragment(payload)) {
                     if (re == null) re = UdpFrag.Reassembler()
                     val full = try { re.push(payload) } catch (e: Exception) { re = null; continue }

@@ -47,6 +47,29 @@ enum UDPFragmentation {
     static let junk: UInt8 = 3
     static let mtuProbe: UInt8 = 4
     static let mtuProbeAck: UInt8 = 5
+
+    /// The **AuthOK** (server→client), fragmented for the same reason as the ServerHello.
+    ///
+    /// Unlike the two handshake messages this one has no fixed size: it carries the pushed
+    /// route list, so a profile pushing enough routes puts it past what a fragment-dropping
+    /// path (mobile, CGNAT) will carry — which is exactly the network this client runs on. The
+    /// failure was indistinguishable from a dead server: the client retransmits AUTH, the
+    /// network eats the reply every time, and it times out at the AUTHENTICATION step with
+    /// nothing in either log to say why. (Audit 2026-08-02, §4.)
+    ///
+    /// The server fragments ONLY above ``maxChunk``; at or below it the AuthOK is still the
+    /// single datagram it always was, byte for byte. So this changes nothing in any case that
+    /// works today — fragments appear only where the reply was already being destroyed.
+    ///
+    /// The payload is the finished AEAD record, not plaintext: reassemble first, decrypt
+    /// after. Nothing about the session cipher, the transcript or the replay window moves.
+    ///
+    /// There is no ambiguity against a real record, in either framing: TLS framing opens
+    /// `0x17 0x03 0x03`, and raw framing opens with a UInt16 payload length bounded by
+    /// MAX_RECORD_SIZE (0x4124), so its high byte is at most 0x41 — `0xF0` is unreachable both
+    /// ways. Same property ``isFragment(_:)`` already relies on to tell a fragmented
+    /// ClientHello from a legacy single-datagram one.
+    static let authOK: UInt8 = 6
     static let probeBodyLength = 4
 
     static func isFragment(_ data: Data) -> Bool {
@@ -54,6 +77,8 @@ enum UDPFragmentation {
     }
 
     static func isJunk(_ data: Data) -> Bool { isFragment(data) && data[3] == junk }
+    /// True if `data` (after obfs/QUIC unwrap) is a fragment of the AuthOK.
+    static func isAuthOKFragment(_ data: Data) -> Bool { isFragment(data) && data[3] == authOK }
     static func isMTUProbe(_ data: Data) -> Bool {
         isFragment(data) && data[3] == mtuProbe && data.count >= headerLength + probeBodyLength
     }

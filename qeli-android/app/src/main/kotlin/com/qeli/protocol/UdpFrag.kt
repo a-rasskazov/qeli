@@ -72,6 +72,33 @@ object UdpFrag {
     // The server echoes a tiny MSG_MTU_PROBE_ACK. Recognized before the reassembler.
     const val MSG_MTU_PROBE: Byte = 4
     const val MSG_MTU_PROBE_ACK: Byte = 5
+
+    /**
+     * The **AuthOK** (server->client), fragmented for the same reason as the ServerHello.
+     *
+     * Unlike the two handshake messages this one has no fixed size: it carries the pushed
+     * route list, so a profile pushing enough routes puts it past what a fragment-dropping
+     * path (mobile, CGNAT) will carry — which is exactly the network this client runs on.
+     * The failure was indistinguishable from a dead server: the client retransmits AUTH, the
+     * network eats the reply every time, and it times out at the AUTHENTICATION step with
+     * nothing in either log to say why. (Audit 2026-08-02, §4.)
+     *
+     * The server fragments ONLY above [MAX_CHUNK]; at or below it the AuthOK is still the
+     * single datagram it always was, byte for byte. So this changes nothing in any case that
+     * works today — the only case where fragments appear is the one where the reply was
+     * already being destroyed.
+     *
+     * The payload is the finished AEAD record, not plaintext: reassemble first, decrypt
+     * after. Nothing about the session cipher, the transcript or the replay window moves.
+     *
+     * There is no ambiguity against a real record, in either framing: TLS framing opens
+     * 0x17 0x03 0x03, and raw framing opens with a u16 payload length bounded by
+     * MAX_RECORD_SIZE (0x4124), so its high byte is at most 0x41 — 0xF0 is unreachable both
+     * ways. That is the same property [isFragment] already relies on to tell a fragmented
+     * ClientHello from a legacy single-datagram one, which is why `fill()` can classify every
+     * datagram it receives without risking a data record.
+     */
+    const val MSG_AUTH_OK: Byte = 6
     const val PROBE_BODY_LEN = 4     // id(2) + outerSize(2)
 
     fun isFragment(d: ByteArray): Boolean =
@@ -79,6 +106,9 @@ object UdpFrag {
 
     /** True if [d] (after obfs/QUIC unwrap) is an AWG junk decoy datagram. */
     fun isJunk(d: ByteArray): Boolean = isFragment(d) && d[3] == MSG_JUNK
+
+    /** True if [d] (after obfs/QUIC unwrap) is a fragment of the AuthOK. */
+    fun isAuthOkFragment(d: ByteArray): Boolean = isFragment(d) && d[3] == MSG_AUTH_OK
 
     /** True if [d] (after unwrap) is a path-MTU probe. */
     fun isMtuProbe(d: ByteArray): Boolean =

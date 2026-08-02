@@ -76,6 +76,33 @@ public static class UdpFrag
     // The server echoes a tiny MsgMtuProbeAck. Recognized before the reassembler.
     public const byte MsgMtuProbe = 4;
     public const byte MsgMtuProbeAck = 5;
+    /// <summary>
+    /// The <b>AuthOK</b> (server-&gt;client), fragmented for the same reason as the ServerHello.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the two handshake messages this one has no fixed size: it carries the pushed
+    /// route list, so a profile pushing enough routes puts it past what a fragment-dropping
+    /// path (mobile, CGNAT) will carry. The failure was indistinguishable from a dead server:
+    /// the client retransmits AUTH, the network eats the reply every time, and it times out at
+    /// the AUTHENTICATION step with nothing in either log to say why. (Audit 2026-08-02, §4.)
+    /// <para>
+    /// The server fragments ONLY above <see cref="MaxChunk"/>; at or below it the AuthOK is
+    /// still the single datagram it always was, byte for byte. So this changes nothing in any
+    /// case that works today — fragments appear only where the reply was already destroyed.
+    /// </para>
+    /// <para>
+    /// The payload is the finished AEAD record, not plaintext: reassemble first, decrypt
+    /// after. Nothing about the session cipher, the transcript or the replay window moves.
+    /// </para>
+    /// <para>
+    /// There is no ambiguity against a real record, in either framing: TLS framing opens
+    /// <c>0x17 0x03 0x03</c>, and raw framing opens with a u16 payload length bounded by
+    /// MAX_RECORD_SIZE (0x4124), so its high byte is at most 0x41 — <c>0xF0</c> is unreachable
+    /// both ways. Same property <see cref="IsFragment"/> already relies on to tell a
+    /// fragmented ClientHello from a legacy single-datagram one.
+    /// </para>
+    /// </remarks>
+    public const byte MsgAuthOk = 6;
     public const int ProbeBodyLen = 4; // id(2) + outerSize(2)
 
     public static bool IsFragment(byte[] d) =>
@@ -83,6 +110,9 @@ public static class UdpFrag
 
     /// <summary>True if <paramref name="d"/> (after obfs/QUIC unwrap) is an AWG junk decoy.</summary>
     public static bool IsJunk(byte[] d) => IsFragment(d) && d[3] == MsgJunk;
+
+    /// <summary>True if <paramref name="d"/> (after unwrap) is a fragment of the AuthOK.</summary>
+    public static bool IsAuthOkFragment(byte[] d) => IsFragment(d) && d[3] == MsgAuthOk;
 
     /// <summary>True if <paramref name="d"/> (after unwrap) is a path-MTU probe.</summary>
     public static bool IsMtuProbe(byte[] d) =>

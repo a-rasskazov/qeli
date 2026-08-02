@@ -143,6 +143,14 @@ class WireConformanceTest {
             fx.getInt("max_chunk_accept"),
         )
         assertEquals("fixture MAX_FRAGS vs this build", UdpFrag.MAX_FRAGS, fx.getInt("max_frags"))
+        // The AuthOK id must be identical in all four ports. A port using a different number
+        // does not fail loudly — it simply never reassembles a large AuthOK, which on the
+        // phone looks like a dead server rather than a version mismatch.
+        assertEquals(
+            "fixture MSG_AUTH_OK vs this build",
+            UdpFrag.MSG_AUTH_OK,
+            fx.getInt("msg_auth_ok").toByte(),
+        )
 
         // ── fragment ────────────────────────────────────────────────────────────
         val frags = fx.getJSONArray("fragment")
@@ -221,6 +229,7 @@ class WireConformanceTest {
             assertEquals("case $name: is_junk", e.getBoolean("is_junk"), UdpFrag.isJunk(d))
             assertEquals("case $name: is_mtu_probe", e.getBoolean("is_mtu_probe"), UdpFrag.isMtuProbe(d))
             assertEquals("case $name: is_mtu_probe_ack", e.getBoolean("is_mtu_probe_ack"), UdpFrag.isMtuProbeAck(d))
+            assertEquals("case $name: is_auth_ok", e.getBoolean("is_auth_ok"), UdpFrag.isAuthOkFragment(d))
         }
     }
 

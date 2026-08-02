@@ -796,8 +796,12 @@ public abstract class VpnTunnelBase
                 if (raw == null) continue;     // malformed obfs frame — skip
                 var payload = _quic ? Quic.UnwrapPayload(raw) : raw;
                 if (payload == null) continue;
-                // The fragmented ServerHello arrives as several datagrams — reassemble
-                // before handing records up. Non-fragment payloads (data / auth-ok) pass through.
+                // A fragmented handshake message arrives as several datagrams — reassemble
+                // before handing records up. That is the ServerHello, and since 0.7.14 also a
+                // large AuthOK (msg_id 6), which a big pushed-route set puts over the budget.
+                // Deliberately keyed on IsFragment rather than on a specific msg_id: a real
+                // record can never carry the magic in either framing (see UdpFrag.MsgAuthOk),
+                // so this stays correct on the data plane too. Everything else passes through.
                 if (UdpFrag.IsFragment(payload))
                 {
                     re ??= new UdpFrag.Reassembler();
