@@ -729,6 +729,20 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
                 return;
             }
         };
+        // A std listener is BLOCKING; tokio requires a non-blocking one and neither
+        // `TcpListener::from_std` nor axum-server sets the flag — `from_tcp_rustls` goes
+        // straight to `Server::from_listener(TcpListener::from_std(l)?)`. Handing it a
+        // blocking fd wedges the accept loop inside the runtime: the kernel keeps completing
+        // handshakes into the backlog, so the port looks open and the log says "listening",
+        // while nothing ever reads the ClientHello and every TLS handshake times out. That
+        // was the 0.7.14 panel outage (thread parked in `inet_csk_accept`, connections
+        // sitting with an unread Recv-Q). The HTTP branch below is immune because it binds
+        // through tokio, which returns a non-blocking socket already.
+        if let Err(e) = listener.set_nonblocking(true) {
+            log::error!("Web UI could not set the listener non-blocking on {addr}: {e}");
+            report(false);
+            return;
+        }
         let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_config(tls_cfg);
         let server = match axum_server::from_tcp_rustls(listener, rustls_cfg) {
             Ok(s) => s,
