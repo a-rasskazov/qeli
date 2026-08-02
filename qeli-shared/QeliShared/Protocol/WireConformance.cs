@@ -154,14 +154,27 @@ public static class WireConformance
         {
             everyNumericRecorded &= Ini($"{key} = abc").UnparsedNumericKeys.Contains(key);
         }
-        // ...while a value that is merely OUT OF RANGE still falls back silently. That is a
-        // documented clamp, not a mistake, and conflating the two would start rejecting
-        // configs that have always been accepted.
+        // ...and so is a value that is merely OUT OF RANGE.
+        //
+        // This check used to assert the opposite — that out-of-range falls back SILENTLY —
+        // on the grounds that it was "a documented clamp, not a mistake". It is not a clamp:
+        // a clamp pins the value to the nearest bound, whereas this jumps to the DEFAULT,
+        // which is somewhere else entirely. `lport = 99999` became 0 (bind anywhere) and a
+        // negative heartbeat became 15 s: the setting the operator wrote, replaced by an
+        // unrelated one, with nothing said. Validate()'s message has always read "unparseable
+        // or out-of-range" — only the list was never filled. (Audit 2026-08-02, §11.)
         var outOfRange = Ini("lport = 99999", "heartbeat_interval = -5");
-        bool rangeStillSilent = outOfRange.UnparsedNumericKeys.Count == 0
-            && outOfRange.LocalPort == 0 && outOfRange.HeartbeatIntervalMs == 15000;
+        bool rangedRecorded = outOfRange.UnparsedNumericKeys.Contains("lport")
+            && outOfRange.UnparsedNumericKeys.Contains("heartbeat_interval");
+        bool rangeRefused = false;
+        try { outOfRange.Validate(); }
+        catch (ArgumentException e) { rangeRefused = e.Message.Contains("lport"); }
+        // An ABSENT key must stay silent — the recording is about values that were written.
+        bool absentStaysQuiet = Ini().UnparsedNumericKeys.Count == 0;
         check("ini-nums: every numeric field records an unreadable value", everyNumericRecorded);
-        check("ini-nums: out-of-range still falls back silently", rangeStillSilent);
+        check("ini-nums: out-of-range is recorded, not silently defaulted", rangedRecorded);
+        check("ini-nums: out-of-range is refused by Validate", rangeRefused);
+        check("ini-nums: an absent numeric key records nothing", absentStaysQuiet);
 
         // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
         // change silently keeps its default — `gatway = true` left the tunnel split with

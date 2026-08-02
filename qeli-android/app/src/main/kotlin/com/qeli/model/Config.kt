@@ -132,6 +132,22 @@ data class VpnConfig(
     val loggingFile: String? = null,
     val loggingTimeFormat: String? = null,
     /**
+     * `[qeli]` keys this port ACCEPTS but does not model — the Rust-client-only settings in
+     * [KNOWN_INI_KEYS] (`post_up`, `allow_unpinned_tofu`, `exit_node`, `gateway_nat`, …).
+     *
+     * Accepting them without keeping them made import-then-save LOSSY in the worst possible
+     * direction: a desktop `client.conf` opened here and re-saved came back missing its
+     * post-up/post-down hooks, its TOFU setting and its routing policy. The keys were on the
+     * allowlist precisely so such a profile would open, and then the profile was quietly
+     * gutted by the act of opening it. Exactly the failure the `[logging]` passthrough above
+     * already exists to prevent — this is the same fix for the rest of them.
+     *
+     * Stored verbatim (original key spelling and value) and re-emitted by [toIni] after the
+     * keys this port does model, so a round trip is byte-stable for everything it does not
+     * understand. (Audit 2026-08-02, §7.)
+     */
+    val carriedKeys: Map<String, String> = emptyMap(),
+    /**
      * Keys whose boolean value was neither true-ish nor false-ish — `gateway = ture`.
      *
      * Carried instead of being resolved at parse time because the ORIGINAL STRING IS LOST once
@@ -238,6 +254,13 @@ data class VpnConfig(
             "unparseable number for ${unparsedNumericKeys.joinToString(", ")} — the default " +
                 "would have been used instead"
         }
+
+        // The fallback for this one is the WIDEST setting, so a typo does not narrow the
+        // tunnel, it opens it: `apps_mode = includ` would have tunnelled every app while the
+        // user believed only a few were selected. (Audit 2026-08-02, §10.)
+        require(appsMode in setOf("all", "include", "exclude")) {
+            "apps_mode must be all, include or exclude — got '$appsMode'"
+        }
         fun scalar(name: String, v: String?) {
             val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
             throw IllegalArgumentException(
@@ -255,6 +278,10 @@ data class VpnConfig(
         for (v in apps) scalar("apps", v)
         scalar("logging.level", loggingLevel); scalar("logging.file", loggingFile)
         scalar("logging.time_format", loggingTimeFormat)
+        // Carried keys are written back verbatim, so they get the same INI-forgery gate as
+        // everything else this port emits — a `post_up` with an embedded newline would
+        // otherwise inject arbitrary config lines on save.
+        for ((k, v) in carriedKeys) scalar(k, v)
 
         require(serverAddress.isNotEmpty()) { "'server' has empty host" }
         require(port in 1..65535) { "'server' port out of range: $port" }
@@ -410,6 +437,11 @@ data class VpnConfig(
         if (shapingMaxSize != 1024) append("shaping_max_size = ").append(shapingMaxSize).append('\n')
         if (shapingStealth) append("shaping_stealth = true\n")
         if (shapingStealthRateMbps != 2) append("shaping_stealth_mbps = ").append(shapingStealthRateMbps).append('\n')
+        // Re-emit the keys this port accepts but does not model, verbatim and in a stable
+        // order. Without this, opening a CLI profile here and saving it deleted its hooks
+        // (`post_up`/`post_down`), its TOFU setting and its routing policy — silently, and as
+        // a side effect of merely opening it. (Audit 2026-08-02, §7.)
+        for ((k, v) in carriedKeys.toSortedMap()) append(k).append(" = ").append(v).append('\n')
         // Re-emit [logging] verbatim so a desktop/router client.conf survives a mobile save.
         if (!loggingLevel.isNullOrEmpty() || !loggingFile.isNullOrEmpty() || !loggingTimeFormat.isNullOrEmpty()) {
             append("\n[logging]\n")
@@ -609,9 +641,11 @@ data class VpnConfig(
                 // off-set is ON" reading meant `mtu_probe = ture` silently enabled probing
                 // and was never recorded as a typo. (Audit 2026-07-31.)
                 mtuProbe = boolAt("mtu_probe", true),
-                // Per-app split tunnel (Android extra). Only "include"/"exclude" are honoured;
-                // anything else (or a missing key) falls back to "all" = every app tunnelled.
-                appsMode = q["apps_mode"]?.trim()?.lowercase()?.takeIf { it == "include" || it == "exclude" } ?: "all",
+                // Per-app split tunnel (Android extra). Kept RAW, not coerced: [validate]
+                // refuses an unknown value. Coercing here silently turned `apps_mode = includ`
+                // into "all" — the WIDEST setting — so a typo broadened the tunnel to every
+                // app instead of failing. A missing key is still "all". (Audit 2026-08-02, §10.)
+                appsMode = q["apps_mode"]?.trim()?.lowercase() ?: "all",
                 apps = q["apps"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 // Local overrides for the normally server-pushed knobs. Key names match iOS.
                 paddingEnabled = boolAt("padding", true),
@@ -637,13 +671,41 @@ data class VpnConfig(
                 unparsedBooleanKeys = badBools.toList(),
                 duplicateKeys = dupKeys.toList(),
                 unparsedNumericKeys = badNums.toList(),
-                unknownKeys = q.keys.filter { it.lowercase() !in KNOWN_INI_KEYS }.sorted()
+                unknownKeys = q.keys.filter { it.lowercase() !in KNOWN_INI_KEYS }.sorted(),
+                // Accepted but not modelled — kept so saving does not delete them.
+                carriedKeys = q.filterKeys { it.lowercase() in CARRIED_INI_KEYS }
             )
         }
 
         /** Minimal line-oriented INI parser (mirrors qeli/src/config/format.rs):
          *  `[section]` / `[kind:instance]`, `key = value`, full-line `;`/`#`
          *  comments, surrounding double-quotes stripped. */
+        /**
+         * Keys this port ACCEPTS but does not model — read into [carriedKeys] and written
+         * back verbatim, so opening and saving a CLI profile does not strip them.
+         *
+         * They are on the allowlist because a desktop profile carrying them must open here;
+         * they are in THIS list because accepting a key without keeping it is how the
+         * open-and-save round trip silently deleted hooks and security settings.
+         * (Audit 2026-08-02, §7.)
+         *
+         * Declared BEFORE [KNOWN_INI_KEYS], which folds it in — a companion object's property
+         * initializers run in declaration order, so the other way round leaves it null.
+         */
+        private val CARRIED_INI_KEYS = setOf(
+            // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
+            // "Что пушем НЕ передаётся" lists these as client file-only keys.
+            "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
+            "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+            // Socket buffers, Linux-only in the Rust client. This port sizes its own receive
+            // buffer with a fixed 2 MB and reads neither key — but a client.conf carrying
+            // them is a valid CLI profile, and rejecting it as "likely misspelled" is exactly
+            // the false alarm this list exists to prevent. `password_file` /
+            // `password_command` are the same case: real Rust client keys for headless
+            // setups, meaningless on a phone, never a typo. (Audit 2026-08-02, §7.)
+            "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
+        )
+
         /**
          * Every `[qeli]` key any qeli client understands — the union across the four ports,
          * NOT just the ones this one reads.
@@ -668,15 +730,10 @@ data class VpnConfig(
             "shaping", "shaping_budget", "shaping_gap_max", "shaping_gap_mean",
             "shaping_gap_min", "shaping_max_size", "shaping_min_size", "shaping_stealth",
             "shaping_stealth_mbps", "sni", "timeout", "user",
-            // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
-            // "Что пушем НЕ передаётся" lists these as client file-only keys. Carried
-            // through, never a typo. A profile written for the CLI must open here.
-            "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
-            "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
-            // Per-app tunnelling, written by THIS port a few lines above. `apps` is emitted
-            // once per selected package, and the round-trip guard walks single-valued keys,
-            // so a repeated key slipped past it — and an exported profile then failed to
-            // re-import here with "unknown key(s): apps, apps_mode".
+            // Per-app tunnelling, written by THIS port. `apps` is emitted once per selected
+            // package, and the round-trip guard walks single-valued keys, so a repeated key
+            // slipped past it — and an exported profile then failed to re-import here with
+            // "unknown key(s): apps, apps_mode".
             "apps", "apps_mode",
             // Also written by this port, and missed for the same reason in reverse: `toIni`
             // emits it only when it is ON (`if (allowLan)`), so a round-trip built from a
@@ -684,7 +741,7 @@ data class VpnConfig(
             // with LAN bypass enabled failed to re-import into the app that wrote it.
             // (Audit 2026-08-02, §2.)
             "allow_lan",
-        )
+        ) + CARRIED_INI_KEYS
 
         /**
          * An INI integer, recording the key when the value is present but not a number.

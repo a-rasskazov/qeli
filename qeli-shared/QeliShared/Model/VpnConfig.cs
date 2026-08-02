@@ -205,6 +205,11 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // untouched, never a typo. A profile written for the CLI must open here.
         "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
         "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+        // Socket buffers (Linux-only in the Rust client) and the headless password sources.
+        // This port reads none of them — it sizes its own receive buffer with a fixed 2 MB —
+        // but a client.conf carrying them is a valid CLI profile, and rejecting it as "likely
+        // misspelled" is the false alarm this list exists to prevent. (Audit 2026-08-02, §7.)
+        "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
         // Understood by the MOBILE ports only (per-app tunnelling, allow-LAN). Desktop has no
         // per-app split, so `ToIni` never writes them — which is exactly why
         // `RoundTripKeysAreAllKnown` could not catch their absence: it only checks that what
@@ -699,19 +704,29 @@ public sealed class VpnConfig : INotifyPropertyChanged
             return dflt;
         }
         int NumAt(string key, int dflt) => (int)Math.Clamp(LongAt(key, dflt), int.MinValue, int.MaxValue);
-        // Range checks stay SEPARATE from readability, and both stay as they were: a value out
-        // of range still falls back silently (that is a documented clamp, not a mistake), while
-        // a value that is not a number at all is recorded. Conflating them would either start
-        // rejecting configs that have always been accepted, or keep hiding real typos.
+        // Out of range is recorded, exactly like unparseable — the Validate() message already
+        // says "unparseable OR out-of-range", so this list was simply never being filled.
+        //
+        // The previous note here called the silent fallback "a documented clamp, not a
+        // mistake". It is not a clamp: a clamp would pin the value to the nearest bound,
+        // whereas this jumps to the DEFAULT, which is somewhere else entirely. `lport = 99999`
+        // became 0 (bind anywhere), a negative heartbeat became 15 s — the setting the user
+        // wrote silently replaced by an unrelated one. The `server` port a few lines below had
+        // already been fixed this way and the rest were left behind; the C# selftest then
+        // pinned the silent behaviour as correct. (Audit 2026-08-02, §11.)
         int RangedNum(string key, int dflt, int lo, int hi)
         {
             int v = NumAt(key, dflt);
-            return v >= lo && v <= hi ? v : dflt;
+            if (v >= lo && v <= hi) return v;
+            if (Get(key).Length > 0 && !badNums.Contains(key)) badNums.Add(key);
+            return dflt;
         }
         long RangedLong(string key, long dflt, long lo, long hi)
         {
             long v = LongAt(key, dflt);
-            return v >= lo && v <= hi ? v : dflt;
+            if (v >= lo && v <= hi) return v;
+            if (Get(key).Length > 0 && !badNums.Contains(key)) badNums.Add(key);
+            return dflt;
         }
         var iniPad = CheckedPadding(NumAt("padding_min", 0), NumAt("padding_max", 255));
         string host = "127.0.0.1";

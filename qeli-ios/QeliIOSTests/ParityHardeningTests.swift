@@ -115,6 +115,25 @@ final class ParityHardeningTests: XCTestCase {
     }
 
     /// `plain` is the only mode without the hybrid handshake; obfs and reality-tls wrap the
+    /// The GLOBAL LAN toggle narrows the tunnel just as the per-profile one does.
+    ///
+    /// `TunnelManager` sets `excludeLocalNetworks` from `config.allowLAN || settings.allowLAN`,
+    /// but the card read only the profile field — so with the app-wide switch on it announced
+    /// "all traffic is protected" while RFC1918, link-local and multicast went past the VPN.
+    /// A card that makes security claims has to err in the SAFE direction, and this erred the
+    /// other way. Mirror of the Android test. (Audit 2026-08-02, §13.)
+    func testTheGlobalLANToggleAlsoStopsItClaimingEverything() throws {
+        let config = try VPNConfig(parsing: minimalINI("key = " + String(repeating: "aa", count: 32)))
+
+        let global = ProtectionSummary(config: config, globalAllowLAN: true)
+        XCTAssertFalse(global.carriesEverything, "the global toggle must count")
+        XCTAssertTrue(global.warnings.contains(.lanOutside))
+
+        // ...and with it off a clean profile still claims everything — otherwise this would
+        // pass against a summary that simply always warns.
+        XCTAssertTrue(ProtectionSummary(config: config, globalAllowLAN: false).carriesEverything)
+    }
+
     /// `apps_mode` is REPORTED on iOS, never applied — `NEAppRule` needs an MDM-managed
     /// configuration, so every app goes through the tunnel whatever the profile says.
     ///

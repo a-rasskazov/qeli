@@ -26,6 +26,62 @@ import org.junit.Test
  */
 class ConfigImportRangesTest {
 
+    /**
+     * A CLI profile opened here and saved must come back with its Rust-only settings intact.
+     *
+     * These keys are on the allowlist precisely so such a profile OPENS — and then saving it
+     * deleted them, because nothing stored them. Hooks (`post_up`/`post_down`), the TOFU
+     * setting and the routing policy vanished as a side effect of opening the file, which is
+     * worse than refusing it would have been. (Audit 2026-08-02, §7.)
+     */
+    @Test
+    fun `rust-only keys survive an import and re-export`() {
+        val source = """
+            [qeli]
+            server = vpn.example.com:443
+            user = alice
+            pass = s3cret
+            post_up = /etc/qeli/up.sh
+            post_down = /etc/qeli/down.sh
+            allow_unpinned_tofu = true
+            gateway_nat = true
+            exit_node = 10.9.0.7
+            keepalive = 25
+            recv_buffer_size = 8388608
+            password_file = /etc/qeli/secret
+        """.trimIndent()
+
+        val first = VpnConfig.fromIni(source)
+        val reExported = VpnConfig.fromIni(first.toIni())
+
+        for ((key, want) in mapOf(
+            "post_up" to "/etc/qeli/up.sh",
+            "post_down" to "/etc/qeli/down.sh",
+            "allow_unpinned_tofu" to "true",
+            "gateway_nat" to "true",
+            "exit_node" to "10.9.0.7",
+            "keepalive" to "25",
+            "recv_buffer_size" to "8388608",
+            "password_file" to "/etc/qeli/secret",
+        )) {
+            assertEquals("$key must survive the round trip", want, reExported.carriedKeys[key])
+        }
+
+        // And they must not have become "unknown" on the way back in — that would refuse the
+        // very profile this port just wrote.
+        assertTrue("re-import found: ${reExported.unknownKeys}", reExported.unknownKeys.isEmpty())
+    }
+
+    /** A profile that never carried them must not grow empty lines for them. */
+    @Test
+    fun `a profile without rust-only keys stays clean`() {
+        val plain = VpnConfig.fromIni(
+            "[qeli]\nserver = vpn.example.com:443\nuser = alice\npass = s3cret\n"
+        )
+        assertTrue(plain.carriedKeys.isEmpty())
+        assertFalse(plain.toIni().contains("post_up"))
+    }
+
     private fun ini(vararg extra: String) = buildString {
         append("[qeli]\n")
         append("server = vpn.example.com:443\n")

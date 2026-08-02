@@ -78,7 +78,14 @@ struct ProtectionSummary: Equatable, Sendable {
         scope == .all && warnings.allSatisfy { $0 == .noPinnedKey || $0 == .perAppNotApplied }
     }
 
-    init(config: VPNConfig) {
+    /// - Parameter globalAllowLAN: the app-wide "Allow local network access" setting.
+    ///   `TunnelManager` and `QeliTunnelEngine` both carve the private ranges out on
+    ///   `config.allowLAN || settings.allowLAN`, so the card has to read the same pair. It
+    ///   used to read only the profile field, and with the app-wide switch on it announced
+    ///   "all traffic is protected" while RFC1918, link-local and multicast went past the
+    ///   VPN — the card erring in the UNSAFE direction, which is the one thing it may never
+    ///   do. Mirrors the same fix on Android. (Audit 2026-08-02, §13.)
+    init(config: VPNConfig, globalAllowLAN: Bool = false) {
         // `apps_mode` is REPORTED, not applied, on this platform.
         //
         // Consumer iOS cannot install per-app rules: `NEAppRule` requires a managed
@@ -105,7 +112,7 @@ struct ProtectionSummary: Equatable, Sendable {
         keyPinned = !(config.serverPublicKeyHex ?? "").isEmpty
 
         var found: [ProtectionWarning] = []
-        if config.allowLAN { found.append(.lanOutside) }
+        if config.allowLAN || globalAllowLAN { found.append(.lanOutside) }
         if config.allowIPv6Leak { found.append(.ipv6Outside) }
         if !config.excludeRoutes.isEmpty { found.append(.excludedRoutes) }
         if (config.serverPublicKeyHex ?? "").isEmpty { found.append(.noPinnedKey) }

@@ -64,6 +64,11 @@ struct VPNConfig: Codable, Equatable, Sendable {
         // Rust-client only. Carried through, never a typo.
         "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
         "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+        // Socket buffers (Linux-only in the Rust client) and the headless password sources.
+        // This port reads none of them, but a client.conf carrying them is a valid CLI
+        // profile — rejecting it as "likely misspelled" is the false alarm this list exists
+        // to prevent. (Audit 2026-08-02, §7.)
+        "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
     ]
 
     /// Accepted tunnel-MTU range. The ceiling is derived, in Rust, from the record format
@@ -125,6 +130,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
     var paddingEnabled = true
     var paddingMin = 0
     var paddingMax = 255
+
+    /// Largest `padding_max` that can be encoded, mirroring the Rust client's cap.
+    ///
+    /// Padding rides on EVERY record, so this bounds the record, not a one-off. It applies to
+    /// both a local profile (`validate()`) and a server-pushed value (`clampPushedObfuscation`)
+    /// — the local one used to go unchecked, and applies FIRST. (Audit 2026-08-02, §9.)
+    static let paddingMaxCeiling = 1_400
     var heartbeatEnabled = true
     var heartbeatIntervalMilliseconds = 15_000
     var heartbeatDataSize = 16
@@ -197,9 +209,9 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// likely misconfigured than hostile, and refusing to connect would be a worse
     /// outcome than shaping slightly differently than asked. (Audit 2026-07-27, C10.)
     mutating func clampPushedObfuscation() {
-        // Padding must leave room inside one record; 1400 mirrors the Rust client's cap.
-        paddingMin = min(max(paddingMin, 0), 1_400)
-        paddingMax = min(max(paddingMax, paddingMin), 1_400)
+        // Padding must leave room inside one record; the ceiling mirrors the Rust client's.
+        paddingMin = min(max(paddingMin, 0), Self.paddingMaxCeiling)
+        paddingMax = min(max(paddingMax, paddingMin), Self.paddingMaxCeiling)
 
         shapingGapMeanMilliseconds = min(max(shapingGapMeanMilliseconds, 1), 60_000)
         shapingGapMinMilliseconds = min(max(shapingGapMinMilliseconds, 0), 60_000)
@@ -311,6 +323,25 @@ struct VPNConfig: Codable, Equatable, Sendable {
         }
         guard paddingMin >= 0, paddingMax >= paddingMin else {
             throw VPNConfigError.invalid("padding range is invalid")
+        }
+        // Padding is added to EVERY record, so an unbounded maximum is not a large-packet
+        // setting — it is a record that cannot be encoded. A server-pushed value is clamped
+        // on arrival, but the local profile is applied first: `padding_max = 65535` produced
+        // `recordTooLarge` during AUTH or on the first data records, i.e. a tunnel that
+        // connects and then dies, from a number the config editor accepted. The ceiling
+        // matches the other ports. (Audit 2026-08-02, §9.)
+        guard paddingMax <= Self.paddingMaxCeiling else {
+            throw VPNConfigError.invalid(
+                "padding_max must be at most \(Self.paddingMaxCeiling) — padding rides on every "
+                    + "record, and a larger value cannot be encoded")
+        }
+        // A misspelled `apps_mode` must not resolve to the WIDEST setting in silence.
+        // Handled like `proto` and `mode` above: the raw value is kept and refused here,
+        // rather than coerced at parse time where the original is lost and `apps_mode =
+        // includ` quietly tunnels every app. (Audit 2026-08-02, §10.)
+        guard ["all", "include", "exclude"].contains(appsMode.lowercased()) else {
+            throw VPNConfigError.invalid(
+                "apps_mode must be all, include or exclude — got '\(appsMode)'")
         }
     }
 
@@ -435,8 +466,11 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.shapingStealth = boolAt("shaping_stealth", default: false)
         config.shapingStealthRateMbps = numAt("shaping_stealth_mbps", default: 2)
 
-        let mode = qeli["apps_mode"]?.lowercased() ?? "all"
-        config.appsMode = ["include", "exclude"].contains(mode) ? mode : "all"
+        // Kept RAW, not coerced: `validate()` refuses an unknown value, the same way it does
+        // for `proto` and `mode`. Coercing here silently turned `apps_mode = includ` into
+        // "all" — the widest setting — so a typo broadened the tunnel instead of failing.
+        // (Audit 2026-08-02, §10.)
+        config.appsMode = qeli["apps_mode"]?.lowercased() ?? "all"
         config.apps = list(qeli["apps"])
         config.unparsedBooleanKeys = badBools
         config.duplicateKeys = dupKeys
