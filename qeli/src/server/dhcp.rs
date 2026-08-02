@@ -469,8 +469,14 @@ impl DhcpServer {
                     // or nothing, so a client re-requesting the address it already had keeps
                     // it; anything else falls through to the windowed dynamic path below,
                     // which is where the shared allocator is consulted at all.
+                    // `allocate_fixed_unclaimed`, NOT `allocate_fixed`. The latter EVICTS the
+                    // current holder and leaves it to the caller to tear that session down —
+                    // authority the static-IP path has and DHCP does not. A client naming an
+                    // address in Option 50 would otherwise take it straight off a live VPN
+                    // session, which kept using the same IP: two peers on one address.
+                    // (Audit 2026-08-02, §1.)
                     if pool.get_ip_by_username(&mac_str).is_none()
-                        && pool.allocate_fixed(&mac_str, pref).is_some()
+                        && pool.allocate_fixed_unclaimed(&mac_str, pref).is_some()
                     {
                         leases[idx] = Some(DhcpLease {
                             ip: pref,

@@ -251,6 +251,33 @@ impl IpPool {
         None
     }
 
+    /// Assign a SPECIFIC address to `key` only if NOBODY else holds it — never by eviction.
+    ///
+    /// [`Self::allocate_fixed`] exists for the static-IP path, where a user's configured
+    /// address always wins and the CALLER evicts the previous holder's session first. DHCP has
+    /// no such authority and no such caller: a client simply names an address in Option 50, and
+    /// that address may well belong to a live VPN session or to another user's
+    /// `pool.reservation`. Handing it over there rewrote `user_allocations` while the VPN peer
+    /// carried on using the same IP — two clients on one address, traffic routed to whichever
+    /// the session map happened to name, and the address freed for reuse the moment either one
+    /// disconnected.
+    ///
+    /// Idempotent for a key that already holds the address, so a repeated DHCPREQUEST keeps its
+    /// lease. `None` means "someone else has it" and the caller falls back to dynamic
+    /// allocation. (Audit 2026-08-02, §1.)
+    pub fn allocate_fixed_unclaimed(&mut self, key: &str, ip: Ipv4Addr) -> Option<Ipv4Addr> {
+        let ip_val = u32_from_ip(ip);
+        if let Some(holder) = self.user_allocations.iter().find(|(_, v)| **v == ip_val) {
+            return (holder.0 == key).then_some(ip_from_u32(ip_val));
+        }
+        // A reservation belongs to its owner even while unused: hand it out here and the owner
+        // finds their fixed address taken the next time they connect.
+        if self.reserved.contains(&ip_val) {
+            return None;
+        }
+        self.allocate_fixed(key, ip)
+    }
+
     /// Assign a SPECIFIC in-range address to `key`, stealing it from any current holder
     /// (variant-b static IP: a user's fixed address always wins — the caller evicts the
     /// holder's session, then this reassigns the address). Idempotent for the same key.
@@ -400,6 +427,46 @@ mod tests {
             pool.get_ip_by_username("vpn-user").unwrap().to_string(),
             "10.8.0.2"
         );
+    }
+
+    /// A named address must NOT be taken off whoever already holds it.
+    ///
+    /// `allocate_fixed` evicts the current holder and leaves tearing that session down to the
+    /// caller — authority the static-IP path has and DHCP does not. Wiring DHCP's Option 50
+    /// straight into it meant a client could name the address of a live VPN session and be
+    /// ACKed onto it, while the VPN peer carried on using the same IP: two clients on one
+    /// address, and it freed for reuse as soon as either disconnected.
+    /// (Audit 2026-08-02, §1.)
+    #[test]
+    fn a_requested_address_is_never_stolen_from_its_holder() {
+        let mut cfg = pool_config("10.8.0.0/24");
+        cfg.static_reservations
+            .insert("reserved-user".into(), "10.8.0.50".into());
+        let mut pool = IpPool::new(&cfg).unwrap();
+
+        let taken: Ipv4Addr = "10.8.0.2".parse().unwrap();
+        assert_eq!(pool.allocate("vpn-user").unwrap(), taken);
+
+        // Someone else's live address: refused, and the holder keeps it.
+        assert_eq!(pool.allocate_fixed_unclaimed("aa:bb", taken), None);
+        assert_eq!(pool.get_ip_by_username("vpn-user").unwrap(), taken);
+
+        // Another user's RESERVATION, even though nobody is using it right now: refused, or
+        // its owner would find it gone the next time they connect.
+        let reserved: Ipv4Addr = "10.8.0.50".parse().unwrap();
+        assert_eq!(pool.allocate_fixed_unclaimed("aa:bb", reserved), None);
+
+        // A free address is granted, and asking again is idempotent rather than a second
+        // allocation — a repeated DHCPREQUEST must keep its lease.
+        let free: Ipv4Addr = "10.8.0.77".parse().unwrap();
+        assert_eq!(pool.allocate_fixed_unclaimed("aa:bb", free), Some(free));
+        assert_eq!(pool.allocate_fixed_unclaimed("aa:bb", free), Some(free));
+        assert_eq!(pool.get_ip_by_username("aa:bb").unwrap(), free);
+
+        // The static-IP path keeps its eviction powers — that contract is unchanged, and the
+        // caller there really does evict the previous holder's session.
+        assert_eq!(pool.allocate_fixed("static-user", taken), Some(taken));
+        assert_eq!(pool.get_ip_by_username("vpn-user"), None);
     }
 
     /// `pool.reservation.<user>` must be ASSIGNABLE to its owner. Regression guard: the

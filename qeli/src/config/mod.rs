@@ -28,6 +28,15 @@ pub const GUI_ONLY_CLIENT_KEYS: &[&str] = &[
     "metric",
     "persist_tun",
     "route_file",
+    // Mobile-only, and the mirror image of the GUI ports' own allowlists: Android and iOS
+    // WRITE these into a shared profile, so a config exported from a phone was reported by
+    // `check-config --client` as three unknown keys — the same false alarm this list exists to
+    // prevent, just pointing the other way. `allow_lan` carves the RFC1918 ranges out of a
+    // full tunnel; `apps`/`apps_mode` are per-app tunnelling, which has no desktop equivalent.
+    // (Audit 2026-08-02, §2.)
+    "allow_lan",
+    "apps",
+    "apps_mode",
 ];
 
 /// Keys that USED to exist. A config carrying one is stale rather than misspelled, and the

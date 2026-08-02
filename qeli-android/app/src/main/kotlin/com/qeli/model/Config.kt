@@ -653,6 +653,12 @@ data class VpnConfig(
             // so a repeated key slipped past it — and an exported profile then failed to
             // re-import here with "unknown key(s): apps, apps_mode".
             "apps", "apps_mode",
+            // Also written by this port, and missed for the same reason in reverse: `toIni`
+            // emits it only when it is ON (`if (allowLan)`), so a round-trip built from a
+            // default config never produced the line and the guard never saw it. A profile
+            // with LAN bypass enabled failed to re-import into the app that wrote it.
+            // (Audit 2026-08-02, §2.)
+            "allow_lan",
         )
 
         /**

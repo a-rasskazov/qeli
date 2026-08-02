@@ -207,8 +207,27 @@ class ConfigImportRangesTest {
 
         // The strongest guard against a wrong list: everything this port WRITES must be
         // something it accepts back, or the client would refuse its own saved profile.
-        val full = VpnConfig.fromIni(ini("mtu = 1400", "quic = true", "front = none"))
-        assertTrue(VpnConfig.fromIni(full.toIni()).unknownKeys.isEmpty())
+        //
+        // Built with the OPTIONAL keys turned ON. A round-trip from a default config emits
+        // only the unconditional lines, so `allow_lan` — written under `if (allowLan)` — never
+        // appeared and its absence from the known-key list went unnoticed until a user with
+        // LAN bypass could not re-import their own profile. Anything emitted conditionally
+        // has to be exercised here or this guard is weaker than it looks.
+        // (Audit 2026-08-02, §2.)
+        val full = VpnConfig.fromIni(
+            // `apps` is ONE comma-separated line, which is what `toIni` writes — repeating the
+            // key would be a genuine ambiguity and `validate()` is right to refuse it.
+            ini("mtu = 1400", "quic = true", "front = none", "allow_lan = true",
+                "apps_mode = include", "apps = com.example.one, com.example.two",
+                "kill_switch = true", "route_local = true", "shaping = true")
+        )
+        val reimported = VpnConfig.fromIni(full.toIni())
+        assertTrue("round-trip must not produce unknown keys: ${reimported.unknownKeys}",
+            reimported.unknownKeys.isEmpty())
+        // ...and the values must survive, or the guard would pass on a lossy writer.
+        assertTrue(reimported.allowLan)
+        assertEquals("include", reimported.appsMode)
+        assertEquals(listOf("com.example.one", "com.example.two"), reimported.apps)
     }
 
     /**
