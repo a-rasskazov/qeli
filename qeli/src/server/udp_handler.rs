@@ -1336,6 +1336,32 @@ async fn handle_udp_auth(
         }
     }
 
+    // The AuthOK goes out as ONE datagram — unlike the ClientHello/ServerHello, which are
+    // app-fragmented to dodge IP fragmentation on mobile and CGNAT paths that drop fragments.
+    //
+    // Its size is not bounded by anything: it carries the pushed route list, and enough routes
+    // (roughly forty, or fewer with gateways and metrics) push it past what such a path will
+    // carry. The failure is then indistinguishable from a dead server — the client
+    // retransmits AUTH, the reply is dropped by the network every time, and it times out at
+    // the AUTHENTICATION step with nothing in either log to say why.
+    //
+    // Fragmenting it properly means teaching all four clients to reassemble a post-auth
+    // message, which is a protocol change and deliberately NOT smuggled in here. What is fixed
+    // now is the silence: say plainly that this profile pushes more than a UDP handshake can
+    // safely carry, so the operator can trim the routes or move the profile to TCP.
+    // (Audit 2026-08-02, §4.)
+    if response_pkt.len() > crate::protocol::udp_frag::MAX_CHUNK {
+        log::warn!(
+            "Profile '{}': the AuthOK for '{}' is {} bytes, above the {}-byte UDP handshake \
+             budget, and it is sent UNFRAGMENTED. Paths that drop IP fragments (mobile, CGNAT) \
+             will lose it and the client will time out during authentication. Reduce the pushed \
+             routes for this user/profile, or use a TCP profile.",
+            profile.name,
+            username,
+            response_pkt.len(),
+            crate::protocol::udp_frag::MAX_CHUNK
+        );
+    }
     let _ = socket.send_to(&response_pkt, addr).await;
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(4096);
