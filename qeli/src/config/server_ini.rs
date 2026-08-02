@@ -641,6 +641,8 @@ fn profile_to(p: &ProfileConfig) -> Section {
     put(&mut s, "perf.tcp.keepalive_secs", pf.tcp.keepalive_secs);
     put(&mut s, "perf.tcp.send_buffer_size", pf.tcp.send_buffer_size);
     put(&mut s, "perf.tcp.recv_buffer_size", pf.tcp.recv_buffer_size);
+    put(&mut s, "perf.udp.send_buffer_size", pf.udp.send_buffer_size);
+    put(&mut s, "perf.udp.recv_buffer_size", pf.udp.recv_buffer_size);
     put(&mut s, "perf.tun.read_buffer_size", pf.tun.read_buffer_size);
     put(
         &mut s,
@@ -887,6 +889,8 @@ fn profile_from(s: &Section) -> ProfileConfig {
     pf.tcp.keepalive_secs = s.parse_or("perf.tcp.keepalive_secs", bp.tcp.keepalive_secs);
     pf.tcp.send_buffer_size = s.parse_or("perf.tcp.send_buffer_size", bp.tcp.send_buffer_size);
     pf.tcp.recv_buffer_size = s.parse_or("perf.tcp.recv_buffer_size", bp.tcp.recv_buffer_size);
+    pf.udp.send_buffer_size = s.parse_or("perf.udp.send_buffer_size", bp.udp.send_buffer_size);
+    pf.udp.recv_buffer_size = s.parse_or("perf.udp.recv_buffer_size", bp.udp.recv_buffer_size);
     pf.tun.read_buffer_size = s.parse_or("perf.tun.read_buffer_size", bp.tun.read_buffer_size);
     pf.connection.max_clients =
         s.parse_or("perf.connection.max_clients", bp.connection.max_clients);

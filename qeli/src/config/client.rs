@@ -744,6 +744,36 @@ impl ClientConfig {
         if self.server.port == 0 {
             anyhow::bail!("'server' port must be 1..65535, got 0");
         }
+
+        // Credentials must leave the AUTH message inside one datagram on UDP.
+        //
+        // The AUTH goes out UNFRAGMENTED, unlike the ClientHello beside it and the AuthOK
+        // coming back — its size was always small, so nobody bounded it. But nothing bounded
+        // the credentials either, and they are what it carries: a long generated token used
+        // as a password pushes the record past `MAX_CHUNK`, the datagram then needs IP
+        // fragmentation, and a mobile or CGNAT path drops it. The symptom is an endless
+        // handshake timeout that reproduces only on those networks — indistinguishable from a
+        // dead server, with nothing in either log.
+        //
+        // Refusing here turns that into a config error naming the field. The budget is
+        // enormous compared to any real credential (a 64-char password uses ~6 % of it), so
+        // this rejects no legitimate profile. TCP has no such limit, but the bound is applied
+        // to both: a profile is routinely moved between transports, and silently working on
+        // one while hanging on the other is precisely the failure being removed here.
+        // (Audit 2026-08-02, §3.)
+        let cred_len =
+            self.auth.username.len() + self.auth.password.as_deref().map_or(0, str::len) + 1; // the ':' separator
+        const AUTH_OVERHEAD: usize = 32 + 17; // proof + optional [0x00 device_id]
+        let cred_budget = crate::protocol::udp_frag::MAX_CHUNK - AUTH_OVERHEAD;
+        if cred_len > cred_budget {
+            anyhow::bail!(
+                "'user' + 'pass' are {} bytes, over the {} the UDP AUTH datagram can carry — \
+                 the handshake would be dropped by any path that discards IP fragments \
+                 (mobile, CGNAT) and would look like an unreachable server. Shorten them.",
+                cred_len,
+                cred_budget
+            );
+        }
         // An IPv6 endpoint parses and round-trips, but no core can USE it: the Rust client
         // builds `host:port` unbracketed and binds an IPv4 UDP socket, and the desktop creates
         // InterNetwork sockets and discards AAAA. Accepting it produced a confusing failure at
@@ -1035,6 +1065,58 @@ fn is_cidr(s: &str) -> bool {
     match ip {
         std::net::IpAddr::V4(_) => pfx <= 32,
         std::net::IpAddr::V6(_) => pfx <= 128,
+    }
+}
+
+#[cfg(test)]
+mod auth_size_tests {
+    use super::*;
+
+    fn cfg_with(user: &str, pass: &str) -> ClientConfig {
+        let ini = format!("[qeli]\nserver = vpn.example.com:443\nuser = {user}\npass = {pass}\n");
+        let doc = crate::config::format::IniDoc::parse(&ini).expect("valid INI");
+        ClientConfig::from_ini(&doc).expect("parses")
+    }
+
+    /// Credentials that do not fit one datagram are refused at load, not discovered as a
+    /// handshake that hangs only on mobile networks.
+    ///
+    /// The AUTH message is sent UNFRAGMENTED while everything around it is fragmented, and
+    /// its size is the credentials. Past the budget the datagram needs IP fragmentation,
+    /// which mobile and CGNAT paths drop — so the client retransmits into a void and times
+    /// out looking exactly like an unreachable server. (Audit 2026-08-02, §3.)
+    #[test]
+    fn credentials_too_large_for_one_datagram_are_refused() {
+        let budget = crate::protocol::udp_frag::MAX_CHUNK - (32 + 17);
+
+        // A realistic credential is nowhere near the bound — this must not become a
+        // limit anyone trips over legitimately.
+        let ordinary = cfg_with("alice", &"x".repeat(64));
+        assert!(
+            ordinary.validate().is_ok(),
+            "a 64-char password must be fine"
+        );
+
+        let over = cfg_with("alice", &"x".repeat(budget));
+        let err = over
+            .validate()
+            .expect_err("credentials past the budget must be refused")
+            .to_string();
+        assert!(
+            err.contains("user"),
+            "the error must name the fields: {err}"
+        );
+        assert!(
+            err.contains("fragment"),
+            "the error must say WHY it matters: {err}"
+        );
+
+        // Exactly at the bound still loads: the check is a ceiling, not an off-by-one.
+        let exact = cfg_with("a", &"x".repeat(budget - 3));
+        assert!(
+            exact.validate().is_ok(),
+            "the boundary itself must be valid"
+        );
     }
 }
 

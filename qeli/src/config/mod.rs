@@ -413,6 +413,45 @@ pub struct TcpConfig {
     pub recv_buffer_size: u32,
 }
 
+/// Socket buffers for a UDP listener. Separate from [`TcpConfig`] because the two need
+/// opposite defaults, not because the knobs differ.
+///
+/// TCP autotunes between the `tcp_rmem` bounds, so a fixed size is a hint at most. **UDP has
+/// no autotuning at all**: the socket keeps whatever `net.core.rmem_default` was at creation
+/// — 208 KB on a stock kernel, only tens of milliseconds of traffic at tunnel speeds. One
+/// scheduling stall and the kernel drops datagrams, and every dropped datagram is a lost TCP
+/// segment *inside* somebody's tunnel, so their connection halves its window.
+///
+/// The server used to set neither, relying on the installer to raise `net.core.rmem_max` —
+/// which does nothing on its own, because `rmem_max` is a CEILING for explicit requests, not
+/// a default. A container, a hand-started binary or a pre-existing install therefore ran on
+/// the 208 KB default no matter what the installer wrote. (Audit 2026-08-02, §14.)
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct UdpPerfConfig {
+    /// `SO_SNDBUF`. `0` leaves the kernel value alone — an undersized send buffer only
+    /// applies backpressure, it never loses data, and pinning a size here would *lower* it
+    /// on a host tuned for exactly this workload.
+    #[serde(default)]
+    pub send_buffer_size: u32,
+    /// `SO_RCVBUF`. A real default rather than "leave it alone", for the reason above.
+    /// `0` opts back out to the kernel value.
+    #[serde(default = "default_udp_recv_buffer")]
+    pub recv_buffer_size: u32,
+}
+
+impl Default for UdpPerfConfig {
+    fn default() -> Self {
+        UdpPerfConfig {
+            send_buffer_size: 0,
+            recv_buffer_size: default_udp_recv_buffer(),
+        }
+    }
+}
+
+fn default_udp_recv_buffer() -> u32 {
+    4 * 1024 * 1024
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct TunPerfConfig {
     #[serde(default = "default_tun_buf")]

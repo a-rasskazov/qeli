@@ -126,13 +126,36 @@ struct UdpClient {
     /// and future, instead of re-deriving the bound at each of them.
     amp_received: u64,
     amp_sent: u64,
+    /// AuthOK re-emits already granted to this session, bounded by [`MAX_AUTH_OK_REEMITS`].
+    ///
+    /// The 3× byte budget above guards the UNVERIFIED path, where a 6-byte datagram carrying
+    /// the fragment magic could pull a whole ServerHello out of us. It is the wrong instrument
+    /// once the session is `Authenticated`, and actively harmful there: a profile with a large
+    /// pushed-route set makes the AuthOK several KB, so re-sending it needs more budget than
+    /// the client's ~350-byte AUTH retransmits can earn inside the handshake deadline. The
+    /// recovery path would then be denied on exactly the profiles fragmentation was added for.
+    ///
+    /// An authenticated peer has already proven return-routability — it completed the PQ
+    /// handshake and authenticated from this address — so reflection to a spoofed source is not
+    /// the risk here. What remains is an on-path attacker replaying the observed AUTH to make
+    /// us re-send; a small count cap bounds that to a handful of datagrams per session, which
+    /// is all the legitimate path ever needs. (Audit 2026-08-02, §4.)
+    auth_ok_reemits: u8,
 }
+
+/// How many times one session may have its AuthOK re-sent. The client retransmits AUTH on a
+/// ~1 s jittered timer inside a 10 s handshake deadline, so the legitimate path needs a few at
+/// most; past that the reply is not being lost, it is being milked.
+const MAX_AUTH_OK_REEMITS: u8 = 5;
 
 /// Bind one `SO_REUSEPORT` UDP socket. Several of these on the same address let the
 /// kernel flow-hash incoming datagrams across them, so multiple workers can decrypt
 /// on separate cores. Each flow (client) sticks to one socket → one worker, so its
 /// session stays on a single thread.
-pub fn bind_reuseport(addr: &str) -> anyhow::Result<UdpSocket> {
+pub fn bind_reuseport(
+    addr: &str,
+    perf: &crate::config::UdpPerfConfig,
+) -> anyhow::Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
     let sa: SocketAddr = addr.parse()?;
     let domain = if sa.is_ipv4() {
@@ -144,6 +167,48 @@ pub fn bind_reuseport(addr: &str) -> anyhow::Result<UdpSocket> {
     sock.set_reuse_address(true)?;
     sock.set_reuse_port(true)?;
     sock.set_nonblocking(true)?;
+
+    // Size the buffers BEFORE bind, while nothing can arrive yet.
+    //
+    // Relying on `net.core.rmem_default` was the bug: the installer raises `rmem_max`, which
+    // is only a CEILING for explicit requests and changes no socket by itself. A container, a
+    // hand-started binary or an existing install therefore ran on the 208 KB default however
+    // the installer was configured. (Audit 2026-08-02, §14.)
+    //
+    // Best-effort in both directions: a refusal degrades throughput, never correctness, so it
+    // must not fail the bind. The kernel also silently HALVES nothing but clamps to
+    // `rmem_max`, so the granted size is read back and logged — without that, a clamped buffer
+    // is indistinguishable from a working one when reading a throughput report.
+    if perf.recv_buffer_size > 0 {
+        if let Err(e) = sock.set_recv_buffer_size(perf.recv_buffer_size as usize) {
+            log::warn!("UDP {addr}: SO_RCVBUF could not be set ({e}); using the kernel default");
+        }
+    }
+    if perf.send_buffer_size > 0 {
+        if let Err(e) = sock.set_send_buffer_size(perf.send_buffer_size as usize) {
+            log::warn!("UDP {addr}: SO_SNDBUF could not be set ({e}); using the kernel default");
+        }
+    }
+    if perf.recv_buffer_size > 0 {
+        // Linux reports twice what it granted (bookkeeping overhead), hence the /2 — it is
+        // the number to compare against the request, not the raw readback.
+        if let Ok(granted) = sock.recv_buffer_size() {
+            let effective = granted / 2;
+            if effective < perf.recv_buffer_size as usize {
+                log::warn!(
+                    "UDP {}: asked for a {} KB receive buffer, the kernel granted {} KB — \
+                     raise net.core.rmem_max to lift the cap, or datagrams will be dropped \
+                     under load",
+                    addr,
+                    perf.recv_buffer_size / 1024,
+                    effective / 1024
+                );
+            } else {
+                log::info!("UDP {}: receive buffer {} KB", addr, effective / 1024);
+            }
+        }
+    }
+
     sock.bind(&sa.into())?;
     Ok(UdpSocket::from_std(sock.into())?)
 }
@@ -560,6 +625,17 @@ async fn send_handshake_response(
     }
 }
 
+/// First QUIC packet number the DATA plane may use.
+///
+/// The handshake numbers positionally: ServerHello is 0, the AuthOK is 1, so the session
+/// starts at 2. A fragmented AuthOK consumes 1..=N instead of just 1, and the session counter
+/// is pushed past them at auth time — this constant is the floor it starts from, and the
+/// arithmetic tying the two together is pinned by `the_data_plane_never_reuses_an_authok_pn`.
+const UDP_SESSION_FIRST_PN: u32 = 2;
+
+/// Packet number of the FIRST AuthOK fragment; the rest follow it consecutively.
+const AUTH_OK_FIRST_PN: u32 = 1;
+
 /// Turn an encrypted AuthOK record into the datagram(s) that carry it.
 ///
 /// One datagram whenever it fits the fragment budget — byte-identical to what every build
@@ -585,7 +661,7 @@ fn build_auth_ok_datagrams(
     use crate::protocol::udp_frag;
     if record.len() <= udp_frag::MAX_CHUNK {
         return Ok(vec![if quic_enabled {
-            wrap_quic_short(record, connection_id, 1u32)
+            wrap_quic_short(record, connection_id, AUTH_OK_FIRST_PN)
         } else {
             record.to_vec()
         }]);
@@ -596,7 +672,7 @@ fn build_auth_ok_datagrams(
         .enumerate()
         .map(|(i, frag)| {
             if quic_enabled {
-                wrap_quic_short(&frag, connection_id, 1 + i as u32)
+                wrap_quic_short(&frag, connection_id, AUTH_OK_FIRST_PN + i as u32)
             } else {
                 frag
             }
@@ -716,28 +792,48 @@ async fn handle_udp_datagram(
                 let quic = client.quic_enabled;
                 let frag = client.hello_frag_mode;
                 let authok = client.auth_ok.clone();
-                // Cumulative 3× bound. A real client retransmits because it lost a
-                // reply, so it has already sent (and keeps sending) a full-size
-                // ClientHello or AUTH — it stays well inside the budget. A spoofed
-                // source poking the session with tiny triggers runs out immediately.
-                let reply_len = if reemit_hello {
+                // Every fragment goes back on the wire, so every fragment is charged.
+                let reply_len: u64 = if reemit_hello {
                     hello.len() as u64
                 } else {
-                    // Every fragment goes back on the wire, so every fragment is charged.
                     authok.iter().map(|d| d.len() as u64).sum()
                 };
-                let over_budget = client.amp_sent.saturating_add(reply_len)
-                    > client.amp_received.saturating_mul(3);
-                if over_budget {
+                // Two different instruments, because the two paths carry different risk.
+                //
+                // ServerHello (half-open, source UNVERIFIED): the cumulative 3× bound. The
+                // trigger can be a 6-byte datagram, so without it this is a ~500× reflector
+                // for a spoofed source — the exact property the initial check exists to deny.
+                //
+                // AuthOK (session AUTHENTICATED): a count cap instead. Return-routability is
+                // already proven here, and the byte bound actively breaks the recovery path
+                // for a large pushed-route set — several KB of AuthOK cannot be earned back
+                // by ~350-byte AUTH retransmits inside the handshake deadline, so the client
+                // would sit there re-asking for a reply it is never allowed to receive.
+                // (Audit 2026-08-02, §4.)
+                if reemit_hello {
+                    let over_budget = client.amp_sent.saturating_add(reply_len)
+                        > client.amp_received.saturating_mul(3);
+                    if over_budget {
+                        log::debug!(
+                            "UDP {}: suppressing handshake re-emit — would exceed the 3x \
+                             anti-amplification budget (sent {}B + {}B vs received {}B)",
+                            addr,
+                            client.amp_sent,
+                            reply_len,
+                            client.amp_received
+                        );
+                        return;
+                    }
+                } else if client.auth_ok_reemits >= MAX_AUTH_OK_REEMITS {
                     log::debug!(
-                        "UDP {}: suppressing handshake re-emit — would exceed the 3x \
-                         anti-amplification budget (sent {}B + {}B vs received {}B)",
+                        "UDP {}: suppressing AuthOK re-emit — already re-sent {} times, which \
+                         is past what a lost reply needs",
                         addr,
-                        client.amp_sent,
-                        reply_len,
-                        client.amp_received
+                        client.auth_ok_reemits
                     );
                     return;
+                } else {
+                    client.auth_ok_reemits = client.auth_ok_reemits.saturating_add(1);
                 }
                 client.amp_sent = client.amp_sent.saturating_add(reply_len);
                 drop(sessions_guard);
@@ -1345,6 +1441,22 @@ async fn handle_udp_auth(
             return;
         }
     };
+    // Reserve the packet numbers the AuthOK just consumed.
+    //
+    // The wire convention is positional: ServerHello is 0, AuthOK is 1, and the session
+    // counter therefore starts at 2. Fragmenting the AuthOK broke that arithmetic — N
+    // fragments take 1..=N, so with two or more the data plane's first packet reused PN 2
+    // (and beyond). Nothing rejects it today, because the QUIC wrapper is a mask rather
+    // than a protocol and no client replay-filters it; but a duplicate packet number is a
+    // lie about the wire, and it would fail the moment anything started checking.
+    //
+    // `fetch_max` rather than `store`: the counter is shared with the writer task and the
+    // MTU-probe reply path, so it may only ever move FORWARD. For the single-datagram case
+    // this is `max(2, 2)` — the pre-existing behaviour, byte for byte.
+    writer_pn.fetch_max(
+        AUTH_OK_FIRST_PN + response_pkts.len() as u32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Destination ACL (`allowed_networks`), own or inherited from the group — compiled
     // once here (before the session goes Authenticated) so the data path can check it
@@ -1419,6 +1531,14 @@ async fn handle_udp_auth(
             crate::protocol::udp_frag::MAX_CHUNK,
             response_pkts.len()
         );
+    }
+    // Charge what actually goes on the wire. This send used to be invisible to the budget,
+    // so `amp_sent` described a server that had replied with the ServerHello and nothing
+    // since — every later decision was made against a history missing its largest entry.
+    // (Audit 2026-08-02, §4.)
+    let sent_now: u64 = response_pkts.iter().map(|d| d.len() as u64).sum();
+    if let Some(client) = sessions.write().await.get_mut(&addr) {
+        client.amp_sent = client.amp_sent.saturating_add(sent_now);
     }
     for pkt in &response_pkts {
         let _ = socket.send_to(pkt, addr).await;
@@ -1747,12 +1867,13 @@ async fn handle_new_udp_client(
             // starts already accounted for rather than with a free allowance.
             amp_received: initial_packet.len() as u64,
             amp_sent: response.len() as u64,
+            auth_ok_reemits: 0,
             last_activity: now,
             bytes_recv: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             created_at: now,
             connection_id,
             quic_enabled: quic_detected,
-            packet_counter: Arc::new(std::sync::atomic::AtomicU32::new(2)),
+            packet_counter: Arc::new(std::sync::atomic::AtomicU32::new(UDP_SESSION_FIRST_PN)),
             ephemeral_shared: shared.0,
             static_shared: static_shared.0,
             transcript_hash,
@@ -1777,7 +1898,7 @@ async fn handle_new_udp_client(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_auth_ok_datagrams, udp_reap_window};
+    use super::{build_auth_ok_datagrams, udp_reap_window, AUTH_OK_FIRST_PN, UDP_SESSION_FIRST_PN};
     use crate::protocol::udp_frag;
     use std::time::Duration;
 
@@ -1843,18 +1964,63 @@ mod tests {
         );
     }
 
-    /// Each fragment carries its own QUIC packet number, matching what
-    /// `send_handshake_response` does for the ServerHello. Reusing one number across
-    /// datagrams is what a replay filter is built to drop.
+    /// No packet number may be issued twice — not between fragments, and not between the
+    /// fragments and the DATA plane that follows them.
+    ///
+    /// The wire numbers positionally: ServerHello 0, AuthOK 1, session from
+    /// [`UDP_SESSION_FIRST_PN`]. Fragmenting the AuthOK broke that arithmetic, because N
+    /// fragments consume 1..=N and the session counter still started at 2 — so with two or
+    /// more fragments the first data packet reused PN 2. The earlier version of this test
+    /// compared the fragments only WITH EACH OTHER and was green throughout.
+    /// (Audit 2026-08-02, §8.)
     #[test]
-    fn fragments_do_not_reuse_a_quic_packet_number() {
-        let record: Vec<u8> = (0..3_000u32).map(|i| i as u8).collect();
-        let dgrams = build_auth_ok_datagrams(&record, true, &[1, 2, 3, 4]).expect("splits");
-        assert!(dgrams.len() > 1);
-        let mut seen = std::collections::HashSet::new();
-        for d in &dgrams {
-            assert!(seen.insert(d.clone()), "two AuthOK datagrams are identical");
+    fn the_data_plane_never_reuses_an_authok_pn() {
+        use crate::protocol::quic::unwrap_quic;
+        let cid = [1u8, 2, 3, 4];
+
+        for record_len in [400usize, 3_000, 9_000] {
+            let record: Vec<u8> = (0..record_len).map(|i| (i * 7) as u8).collect();
+            let dgrams = build_auth_ok_datagrams(&record, true, &cid).expect("builds");
+
+            let pns: Vec<u32> = dgrams
+                .iter()
+                .map(|d| unwrap_quic(d).expect("QUIC-wrapped").packet_number)
+                .collect();
+            let expected: Vec<u32> = (0..dgrams.len() as u32)
+                .map(|i| AUTH_OK_FIRST_PN + i)
+                .collect();
+            assert_eq!(
+                pns, expected,
+                "{record_len}B: fragments must number consecutively"
+            );
+
+            // What the auth path reserves, and the invariant that makes it correct.
+            let reserved = AUTH_OK_FIRST_PN + dgrams.len() as u32;
+            assert!(
+                pns.iter().all(|&pn| pn < reserved),
+                "{record_len}B: the reservation must clear every fragment's PN"
+            );
+            // The session counter only moves forward (`fetch_max`), so the first data packet
+            // takes max(UDP_SESSION_FIRST_PN, reserved) — which must clear the fragments too.
+            let first_data_pn = reserved.max(UDP_SESSION_FIRST_PN);
+            assert!(
+                !pns.contains(&first_data_pn),
+                "{record_len}B: the data plane's first PN collides with a fragment"
+            );
         }
+
+        // The single-datagram case must be untouched: PN 1, session still starts at 2.
+        let small = build_auth_ok_datagrams(&[0xAB; 400], true, &cid).expect("fits");
+        assert_eq!(small.len(), 1);
+        assert_eq!(
+            unwrap_quic(&small[0]).unwrap().packet_number,
+            AUTH_OK_FIRST_PN
+        );
+        assert_eq!(
+            AUTH_OK_FIRST_PN + small.len() as u32,
+            UDP_SESSION_FIRST_PN,
+            "the reservation must be a no-op for an unfragmented AuthOK"
+        );
     }
 
     /// Past `MAX_FRAGS` the receiver would reject the message, so the sender must refuse

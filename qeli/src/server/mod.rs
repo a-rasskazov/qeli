@@ -1699,9 +1699,36 @@ pub fn load_users_db(config: &ServerConfig) -> anyhow::Result<UsersDb> {
     let mut db = match UsersDb::load(&config.auth.users_file) {
         Ok(db) => db,
         Err(e) => {
+            // A MISSING file is ordinary: a fresh install whose users all live inline, or a
+            // server whose panel has not written one yet. Anything else — corrupt, truncated,
+            // unreadable, a limit that will not parse — is refused even when inline entries
+            // could cover for it.
+            //
+            // This used to fall through to an EMPTY database on any error whatsoever, without
+            // so much as a log line, as long as one inline user existed. The server then came
+            // up serving the inline set alone: every account, group, bandwidth cap and quota
+            // in the file was gone, and the only visible symptom was users being unable to log
+            // in — with a config that still listed them. Silently serving a DIFFERENT
+            // access-control list than the one on disk is the worst available outcome here.
+            // (Audit 2026-08-02, §5.)
+            let missing = e
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
+            if !missing {
+                return Err(e.context(format!(
+                    "users file '{}' exists but could not be loaded; refusing to run on a \
+                     partial access-control list (inline [user:*] entries do NOT substitute \
+                     for it)",
+                    config.auth.users_file
+                )));
+            }
             if !has_inline {
                 return Err(e);
             }
+            log::info!(
+                "users: no users file at '{}' — serving the inline [user:*] entries only",
+                config.auth.users_file
+            );
             UsersDb::default()
         }
     };
@@ -1735,27 +1762,45 @@ pub fn load_users_db(config: &ServerConfig) -> anyhow::Result<UsersDb> {
     Ok(db)
 }
 
-/// Log any config values that were PRESENT but not understood (so they fell back to a
-/// default). `check-config` reports these and exits non-zero, but a real start went
-/// through the same parser and said nothing — so `kill_switch = ture` silently disabled
-/// the kill-switch on a live server, exactly the case the check exists for. We warn rather
-/// than refuse: aborting a start over a long-standing typo would take a working server down
-/// on upgrade. The operator sees it in the journal at boot. (S-15 / unsafe defaults)
-fn warn_bad_config_values(bad: &[String]) {
-    for msg in bad {
-        log::warn!(
-            "config: {} — a security default may not be what you intended; run \
-             `qeli check-config` to review",
-            msg
-        );
+/// Refuse to start on config values that were PRESENT but not understood.
+///
+/// These fall back to a default, and the default is frequently the PERMISSIVE end of the
+/// setting: `kill_switch = ture` reads as false and disables the kill switch, an unparseable
+/// limit reads as 0 and means "no limit". So the running policy silently differs from the
+/// written one, in the direction that removes protection, on the file the operator believes
+/// describes their server.
+///
+/// This used to warn and continue. The argument for that was upgrade safety — refusing would
+/// take a working server down over a long-standing typo — but it trades a loud failure the
+/// operator sees immediately for a quiet one they may never see, and it left the start path
+/// disagreeing with `check-config` and the reload path, which both refuse. A server that will
+/// not start is a five-minute fix; a server that has been silently running without its kill
+/// switch is not. (Audit 2026-08-02, §6.)
+///
+/// Operationally: the message names every offending key, and `qeli check-config` gives the
+/// same list without touching the running service, so an upgrade can be checked before it is
+/// applied.
+fn reject_bad_config_values(bad: &[String]) -> anyhow::Result<()> {
+    if bad.is_empty() {
+        return Ok(());
     }
+    for msg in bad {
+        log::error!("config: {msg}");
+    }
+    anyhow::bail!(
+        "{} config value(s) are present but unreadable, listed above. Each falls back to a \
+         default that may be more permissive than what you wrote, so the server refuses to \
+         start rather than enforce a policy you did not choose. Fix them, or run \
+         `qeli check-config` to review.",
+        bad.len()
+    )
 }
 
 pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let config_content = std::fs::read_to_string(cfg_path)?;
     let (config, bad_values): (ServerConfig, Vec<String>) =
         crate::config::parse_server_config_reporting(&config_content)?;
-    warn_bad_config_values(&bad_values);
+    reject_bad_config_values(&bad_values)?;
 
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
@@ -2117,7 +2162,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let config_content = std::fs::read_to_string(cfg_path)?;
     let (config, bad_values): (ServerConfig, Vec<String>) =
         crate::config::parse_server_config_reporting(&config_content)?;
-    warn_bad_config_values(&bad_values);
+    reject_bad_config_values(&bad_values)?;
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
     }
@@ -2134,7 +2179,11 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // its own copy and hot-reloads it on SIGHUP after the panel edits the file.
     // Same union-load (file + inline, file wins) the worker uses, so the panel
     // shows exactly what the data plane authenticates against.
-    let users_db = Arc::new(RwLock::new(load_users_db(&config).unwrap_or_default()));
+    // `?`, not `unwrap_or_default()`: swallowing the error showed the operator an EMPTY user
+    // list in the panel and let them "fix" it by re-creating accounts — writing a fresh file
+    // over the one that failed to load. The supervisor must fail the same way the worker
+    // does. (Audit 2026-08-02, §5.)
+    let users_db = Arc::new(RwLock::new(load_users_db(&config)?));
 
     // Supervisor (web panel) — governs admin-login brute-force: `[web] brute_force`,
     // a policy independent of the VPN-auth one the worker enforces above.
@@ -4058,7 +4107,8 @@ async fn run_profile(state: Arc<ServerState>, pcfg: ProfileConfig) -> anyhow::Re
                     );
                     let mut handles = Vec::with_capacity(workers);
                     for wid in 0..workers {
-                        let socket = udp_handler::bind_reuseport(&bind_addr)?;
+                        let socket =
+                            udp_handler::bind_reuseport(&bind_addr, &profile.config.performance.udp)?;
                         let udp_state = state.clone();
                         let udp_profile = profile.clone();
                         let tun_tx_udp = in_txs[wid % in_txs.len()].clone();

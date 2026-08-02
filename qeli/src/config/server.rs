@@ -670,6 +670,8 @@ pub struct ServerPerformanceConfig {
     #[serde(default)]
     pub tcp: TcpConfig,
     #[serde(default)]
+    pub udp: UdpPerfConfig,
+    #[serde(default)]
     pub tun: TunPerfConfig,
     #[serde(default)]
     pub connection: ConnectionConfig,

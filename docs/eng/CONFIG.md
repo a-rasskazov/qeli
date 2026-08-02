@@ -1986,6 +1986,8 @@ defaults".
 | `perf.tcp.nodelay` | `true` | `TCP_NODELAY` (disable Nagle) |
 | `perf.tcp.keepalive_secs` | `60` | TCP keepalive |
 | `perf.tcp.send_buffer_size` / `recv_buffer_size` | `262144` | socket buffer sizes|
+| `perf.udp.recv_buffer_size` | `4194304` | `SO_RCVBUF` on the UDP listener. Separate from `perf.tcp.*` because the two need **opposite defaults**: TCP autotunes between the `tcp_rmem` bounds, UDP has no autotuning at all — the socket keeps `net.core.rmem_default` (208 KB on a stock kernel) and one scheduling stall drops datagrams. `0` = leave alone. The kernel clamps the request to `net.core.rmem_max`; the size actually granted is logged at startup, with a warning if it is below what was asked |
+| `perf.udp.send_buffer_size` | `0` | `SO_SNDBUF` on the UDP listener. `0` = leave alone: a full send buffer applies backpressure rather than losing data, and an explicit size would only **lower** it on a host whose `wmem_default` was raised on purpose |
 | `perf.tun.read_buffer_size` | `65535` | TUN read-buffer size, **per queue**. Must be at least `tun.mtu` (plus 14 bytes of Ethernet header for TAP) and at most 1 MiB; out-of-range values are **rejected at load**. `0` is not "auto" — it makes the read return EOF immediately and stops the data plane |
 | `perf.connection.max_clients` | `128` | total sessions per profile (all users; see "Connection limits") |
 | `perf.connection.handshake_timeout_secs` | `10` | handshake timeout |
