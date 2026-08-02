@@ -105,7 +105,25 @@ impl UsersDb {
         let content = std::fs::read_to_string(path.as_ref())?;
         // The users file is flat INI: `[user:<name>]` / `[group:<name>]`.
         let doc = crate::config::format::IniDoc::parse(&content)?;
-        Ok(UsersDb::from_ini(&doc))
+        let db = UsersDb::from_ini(&doc);
+        // Values that were PRESENT but unreadable are refused here, not shrugged off.
+        //
+        // This file is the access-control list, and its numbers are LIMITS whose disabled
+        // value is zero: `max_sessions = ten` and `data_limit_gb = 50G` both fall back to 0,
+        // which does not mean "default" — it means NO LIMIT. So a typo quietly removes the
+        // very restriction it was written to impose, on the one file where that matters most.
+        // The findings were already recorded by `parse_or`; nothing looked at them.
+        // (Audit 2026-08-02, §5.)
+        let bad = doc.bad_values();
+        if !bad.is_empty() {
+            anyhow::bail!(
+                "{} unreadable value(s) in the users database — limits would silently become \
+                 unlimited:\n  {}",
+                bad.len(),
+                bad.join("\n  ")
+            );
+        }
+        Ok(db)
     }
 
     pub fn find_user(&self, username: &str) -> Option<&UserEntry> {
@@ -233,6 +251,61 @@ impl UserEntry {
             }
         }
         0
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+
+    /// An unreadable LIMIT must refuse the load, not fall back to "no limit".
+    ///
+    /// The disabled value for these fields is zero, so `max_sessions = ten` and
+    /// `data_limit_gb = 50G` both land on 0 — which does not mean "default", it means
+    /// UNLIMITED. A typo therefore removes the very restriction it was written to impose, on
+    /// the one file where that matters most. (Audit 2026-08-02, §5.)
+    #[test]
+    fn an_unreadable_limit_refuses_the_load() {
+        let dir = std::env::temp_dir().join("qeli-users-load-test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let good = dir.join("good.conf");
+        std::fs::write(
+            &good,
+            "[user:alice]\npassword_hash = x\nmax_sessions = 3\ndata_limit_gb = 50\n",
+        )
+        .unwrap();
+        let db = UsersDb::load(&good).expect("a sound file must load");
+        assert_eq!(db.users.len(), 1);
+        assert_eq!(db.users[0].max_sessions, 3);
+
+        for (label, body) in [
+            ("max_sessions", "[user:alice]\npassword_hash = x\nmax_sessions = ten\n"),
+            ("data_limit_gb", "[user:alice]\npassword_hash = x\ndata_limit_gb = 50G\n"),
+        ] {
+            let bad = dir.join(format!("bad-{label}.conf"));
+            std::fs::write(&bad, body).unwrap();
+            let err = UsersDb::load(&bad)
+                .expect_err(&format!("{label}: an unreadable limit must refuse the load"));
+            assert!(
+                err.to_string().contains(label),
+                "{label}: the error must name the key: {err}"
+            );
+            let _ = std::fs::remove_file(&bad);
+        }
+
+        // A MISSING file is a different thing entirely — the caller turns that into an empty
+        // database on first run, so it must surface as an io error rather than as a parse one.
+        let missing = dir.join("does-not-exist.conf");
+        let _ = std::fs::remove_file(&missing);
+        let err = UsersDb::load(&missing).expect_err("a missing file must error");
+        assert!(
+            err.downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound),
+            "a missing file must be NotFound, not a parse failure: {err}"
+        );
+
+        let _ = std::fs::remove_file(&good);
     }
 }
 

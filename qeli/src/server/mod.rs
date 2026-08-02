@@ -1766,10 +1766,34 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
 
     validate_profiles(&config)?;
 
-    let users_db = load_users_db(&config).unwrap_or_else(|_| {
-        log::warn!("users file not found, creating empty");
-        UsersDb::default()
-    });
+    // A MISSING users file and an UNREADABLE one are not the same thing, and collapsing them
+    // was doing real damage. Both landed here as "users file not found, creating empty" — so a
+    // file that exists but has one bad line started the server with ZERO accounts: every
+    // client refused, and the log said the file was absent. An absent file is the ordinary
+    // first-run state (`add-client` creates it); a present-but-broken one is a configuration
+    // error, and starting anyway means locking out everybody. The save path already draws this
+    // exact distinction (`UsersDb::save`, "not overwriting it with an empty database") — the
+    // load path did not. (Audit 2026-08-02, §5.)
+    let users_db = match load_users_db(&config) {
+        Ok(db) => db,
+        Err(e) => {
+            let path = std::path::Path::new(&config.auth.users_file);
+            if path.exists() {
+                anyhow::bail!(
+                    "users file '{}' exists but could not be read or parsed: {e}. Refusing to \
+                     start with an empty user database — every client would be rejected. Fix \
+                     the file, or move it aside to start fresh.",
+                    config.auth.users_file
+                );
+            }
+            log::warn!(
+                "users file '{}' does not exist yet — starting with an empty database (create \
+                 accounts with `qeli add-client`)",
+                config.auth.users_file
+            );
+            UsersDb::default()
+        }
+    };
     log::info!(
         "Loaded {} user(s) ({} inline in config, rest from '{}')",
         users_db.users.len(),
