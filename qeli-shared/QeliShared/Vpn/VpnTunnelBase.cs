@@ -1310,6 +1310,12 @@ public abstract class VpnTunnelBase
 
     protected static List<string> EffectiveDns(VpnConfig config, Session session)
     {
+        // `dns = off` / `dns = system` means LEAVE THE DEVICE RESOLVER ALONE, and it has to win
+        // over everything below — including the public fallback, which is what the mode used to
+        // collapse into: the profile asked us not to touch DNS and every lookup went to
+        // Cloudflare and Google instead. (Audit 2026-08-02, §3.)
+        if (config.DnsMode != "tunnel")
+            return new List<string>();
         if (config.DnsServers.Count > 0)
             return config.DnsServers.Where(s => !string.IsNullOrEmpty(s)).ToList();
         if (!string.IsNullOrEmpty(session.DnsIp))

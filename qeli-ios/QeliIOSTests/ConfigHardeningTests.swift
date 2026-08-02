@@ -16,6 +16,34 @@ final class ConfigHardeningTests: XCTestCase {
         return out
     }
 
+    /// `dns` is a MODE in the Rust client and a resolver LIST here — the same key, two meanings.
+    ///
+    /// Recognising the mode words was only half the job: they mapped to "no explicit
+    /// resolvers", and the engine treats that as "nothing chosen" and installs 1.1.1.1/8.8.8.8
+    /// on a full tunnel. So `dns = off` — which means LEAVE MY RESOLVER ALONE — sent every
+    /// lookup to Cloudflare and Google. The mode has to be kept and survive a round-trip.
+    /// (Audit 2026-08-02, §3.)
+    func testDNSModeSurvivesImportAndRoundTrip() throws {
+        for mode in ["off", "system"] {
+            let c = try VPNConfig.fromINI(ini("dns = \(mode)"))
+            XCTAssertEqual(c.dnsMode, mode)
+            XCTAssertTrue(c.dnsServers.isEmpty, "a mode is not a resolver list")
+            XCTAssertEqual(try VPNConfig.fromINI(c.toINI()).dnsMode, mode,
+                           "re-saving must not lose the mode")
+        }
+
+        // The list form is unchanged and defaults to the tunnel mode.
+        let list = try VPNConfig.fromINI(ini("dns = 10.0.0.1, 10.0.0.2"))
+        XCTAssertEqual(list.dnsMode, "tunnel")
+        XCTAssertEqual(list.dnsServers, ["10.0.0.1", "10.0.0.2"])
+        XCTAssertEqual(try VPNConfig.fromINI(list.toINI()).dnsServers, ["10.0.0.1", "10.0.0.2"])
+
+        // Absent: today's behaviour, the tunnel mode with no explicit servers.
+        let none = try VPNConfig.fromINI(ini())
+        XCTAssertEqual(none.dnsMode, "tunnel")
+        XCTAssertTrue(none.dnsServers.isEmpty)
+    }
+
     /// A misspelled key name must be refused — but a key another PORT owns must not be.
     ///
     /// Nothing reads a typo, so the setting it was meant to change silently keeps its default:

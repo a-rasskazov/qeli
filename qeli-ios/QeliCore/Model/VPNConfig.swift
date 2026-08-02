@@ -100,6 +100,16 @@ struct VPNConfig: Codable, Equatable, Sendable {
     var allowIPv6Leak = false
     var allowLAN = false
     var dnsServers: [String] = []
+    /// DNS handling mode, mirroring `dns.mode` in the Rust client: `tunnel` (default — install
+    /// resolvers reachable through the tunnel), `off` or `system` (leave the device resolver
+    /// alone).
+    ///
+    /// The flat INI spells the mode and the server list with the SAME key — `dns = off` versus
+    /// `dns = 1.1.1.1, 8.8.8.8` — so a shared desktop/router profile carries a value this port
+    /// used to discard. Discarding it was not neutral: with no explicit resolvers the engine
+    /// installs the public fallback on a full tunnel, so `off` produced exactly the behaviour
+    /// it asks to prevent. (Audit 2026-08-02, §3.)
+    var dnsMode: String = "tunnel"
 
     var wireMode = "fake-tls"
     var obfsKey = ""
@@ -376,6 +386,15 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.routeLocalNetworks = boolAt("route_local", default: false)
         config.allowIPv6Leak = boolAt("allow_ipv6_leak", default: false)
         config.allowLAN = boolAt("allow_lan", default: false)
+        // `dns` is a resolver LIST here and a MODE in the Rust/router client (`off` / `tunnel`
+        // / `system`). Recognising the mode words was only half the job: they were mapped to
+        // "no explicit resolvers", and the tunnel engine then treats that as "nothing chosen"
+        // and installs the public fallback on a full tunnel — so `dns = off`, which means LEAVE
+        // MY RESOLVER ALONE, sent every lookup to Cloudflare and Google instead. The mode is
+        // now KEPT and honoured at connect time. (Audit 2026-08-02, §3.)
+        if let raw = qeli["dns"], ["off", "system"].contains(raw.lowercased()) {
+            config.dnsMode = raw.lowercased()
+        }
         if let dns = qeli["dns"], !["off", "system", "tunnel"].contains(dns.lowercased()) {
             config.dnsServers = list(dns)
         }
@@ -512,6 +531,11 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.allowIPv6Leak = bool("allow_ipv6_leak", in: routing, default: false)
         config.allowLAN = bool("allow_lan", in: routing, default: false)
         config.dnsServers = strings("servers", in: dns)
+        // JSON keeps mode and servers apart, so it never had the flat INI's ambiguity — but
+        // the mode still has to survive the import.
+        if let m = (dns["mode"] as? String)?.lowercased(), ["off", "system"].contains(m) {
+            config.dnsMode = m
+        }
         config.wireMode = string("mode", in: obfuscation, default: "fake-tls")
         config.obfsKey = string("obfs_key", in: obfuscation)
         config.obfsFronting = string("fronting", in: obfuscation, default: "websocket")
@@ -661,7 +685,14 @@ struct VPNConfig: Codable, Equatable, Sendable {
         if routeLocalNetworks { lines.append("route_local = true") }
         if allowIPv6Leak { lines.append("allow_ipv6_leak = true") }
         if allowLAN { lines.append("allow_lan = true") }
-        if !dnsServers.isEmpty { lines.append("dns = \(dnsServers.joined(separator: ", "))") }
+        // One key, two meanings — mirroring the Rust client. A non-default MODE wins over the
+        // server list: `dns = off` must survive a save/load round-trip, or re-saving a profile
+        // would silently turn "leave my resolver alone" back into the public fallback.
+        if dnsMode != "tunnel" {
+            lines.append("dns = \(dnsMode)")
+        } else if !dnsServers.isEmpty {
+            lines.append("dns = \(dnsServers.joined(separator: ", "))")
+        }
         if !paddingEnabled { lines.append("padding = false") }
         if paddingMin != 0 { lines.append("padding_min = \(paddingMin)") }
         if paddingMax != 255 { lines.append("padding_max = \(paddingMax)") }

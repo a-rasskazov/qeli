@@ -128,6 +128,17 @@ public sealed class VpnConfig : INotifyPropertyChanged
     // The public-resolver fallback moved to connect time (SetupTun): explicit > server-pushed
     // > 1.1.1.1/8.8.8.8 (full-tunnel only). See the per-platform SetupTun DNS block.
     public List<string> DnsServers { get; init; } = new();
+
+    /// <summary>DNS handling mode, mirroring `dns.mode` in the Rust client: `tunnel` (default —
+    /// install resolvers reachable through the tunnel), `off` or `system` (leave the device
+    /// resolver alone).
+    ///
+    /// The flat INI spells the mode and the server list with the SAME key — `dns = off` versus
+    /// `dns = 1.1.1.1, 8.8.8.8` — so a shared desktop/router profile carries a value this port
+    /// used to discard. Discarding it was not neutral: with no explicit resolvers `SetupTun`
+    /// installs the public fallback on a full tunnel, so `off` produced exactly the behaviour
+    /// it asks to prevent. (Audit 2026-08-02, §3.)</summary>
+    public string DnsMode { get; init; } = "tunnel";
     // obfuscation
     public string WireMode { get; init; } = "fake-tls";  // "fake-tls" | "obfs" | "reality-tls" | "plain"
     public string ObfsKey { get; init; } = "";
@@ -289,7 +300,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         Mtu = Mtu, MtuProbe = MtuProbe, RoutingMode = RoutingMode, AddDefaultGateway = AddDefaultGateway,
         IncludeRoutes = IncludeRoutes, ExcludeRoutes = ExcludeRoutes, RouteLocalNetworks = RouteLocalNetworks,
         PersistTun = PersistTun, KillSwitch = KillSwitch, AllowIpv6Leak = AllowIpv6Leak, Forward = Forward,
-        DnsServers = DnsServers, WireMode = WireMode, ObfsKey = ObfsKey, ObfsFronting = ObfsFronting,
+        DnsServers = DnsServers, DnsMode = DnsMode, WireMode = WireMode, ObfsKey = ObfsKey, ObfsFronting = ObfsFronting,
         AwgEnabled = AwgEnabled, AwgJc = AwgJc, AwgJmin = AwgJmin, AwgJmax = AwgJmax,
         QuicEnabled = QuicEnabled, Sni = Sni,
         RealityShortId = RealityShortId,
@@ -331,7 +342,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         Sni = sni, QuicEnabled = quicEnabled,
         Username = username, Password = password, ServerPublicKeyHex = serverPublicKeyHex,
         RoutingMode = routingMode, AddDefaultGateway = addDefaultGateway, RouteLocalNetworks = routeLocalNetworks,
-        Mtu = mtu, DnsServers = dnsServers,
+        Mtu = mtu, DnsServers = dnsServers, DnsMode = DnsMode,
         PaddingEnabled = paddingEnabled, PaddingMin = paddingMin, PaddingMax = paddingMax,
         HeartbeatEnabled = heartbeatEnabled, HeartbeatIntervalMs = heartbeatIntervalMs, HeartbeatJitterMs = heartbeatJitterMs,
         Name = name,
@@ -472,7 +483,11 @@ public sealed class VpnConfig : INotifyPropertyChanged
         if (!string.IsNullOrEmpty(RouteFile)) sb.AppendLine($"route_file = {IniSafe(RouteFile)}");
         if (InterfaceMetric > 0) sb.AppendLine($"metric = {InterfaceMetric}");
         if (!string.IsNullOrEmpty(DevNode)) sb.AppendLine($"dev_node = {IniSafe(DevNode)}");
-        if (DnsServers.Count > 0) sb.AppendLine($"dns = {string.Join(", ", DnsServers.Select(IniSafe))}");
+        // One key, two meanings — mirroring the Rust client. A non-default MODE wins over the
+        // server list: `dns = off` must survive a save/load round-trip, or re-saving a profile
+        // would silently turn "leave my resolver alone" back into the public fallback.
+        if (DnsMode != "tunnel") sb.AppendLine($"dns = {DnsMode}");
+        else if (DnsServers.Count > 0) sb.AppendLine($"dns = {string.Join(", ", DnsServers.Select(IniSafe))}");
         if (Mtu > 0) sb.AppendLine($"mtu = {Mtu}");  // 0 = auto, omit
         if (!MtuProbe) sb.AppendLine("mtu_probe = false");  // default true, emit only when off
 
@@ -725,13 +740,21 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // Mirrors the Rust/Android `gateway` key — the only way to pick split-tunnel
         // via an imported INI / qeli:// link (the GUI routing dropdown is a separate path).
         bool fullTunnel = BoolAt("gateway", true);
-        // DNS: `dns = <ip,ip>` is the resolver list; tolerate the Rust/router MODE words
-        // (off/tunnel/system) by keeping the defaults instead of treating "off" as a resolver.
+        // DNS: `dns = <ip,ip>` is the resolver list here, but the SAME key is a MODE in the
+        // Rust/router client (`off` / `tunnel` / `system`).
+        //
+        // Recognising the mode words was only half the job: they were mapped to "no explicit
+        // resolvers", and SetupTun then treats that as "nothing chosen" and installs the public
+        // fallback on a full tunnel. So `dns = off` — which means LEAVE MY RESOLVER ALONE —
+        // sent every lookup to Cloudflare and Google instead. The mode is now KEPT and honoured
+        // at connect time. (Audit 2026-08-02, §3.)
         var dnsRaw = Get("dns");
-        List<string>? dnsList = (dnsRaw.Length == 0
-                || dnsRaw.Equals("off", StringComparison.OrdinalIgnoreCase)
+        string dnsMode = dnsRaw.Equals("off", StringComparison.OrdinalIgnoreCase)
                 || dnsRaw.Equals("tunnel", StringComparison.OrdinalIgnoreCase)
-                || dnsRaw.Equals("system", StringComparison.OrdinalIgnoreCase))
+                || dnsRaw.Equals("system", StringComparison.OrdinalIgnoreCase)
+            ? dnsRaw.ToLowerInvariant()
+            : "tunnel";
+        List<string>? dnsList = (dnsRaw.Length == 0 || dnsMode != "tunnel" || dnsRaw.Equals("tunnel", StringComparison.OrdinalIgnoreCase))
             ? null
             : dnsRaw.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
 
@@ -819,6 +842,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time
+            DnsMode = dnsMode,
         };
     }
 

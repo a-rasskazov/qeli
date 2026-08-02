@@ -238,11 +238,18 @@ final class QeliTunnelEngine: @unchecked Sendable {
             network.ipv6Settings = ipv6
         }
 
-        let dns = !effectiveConfig.dnsServers.isEmpty
-            ? effectiveConfig.dnsServers
-            : (!session.pushedDNS.isEmpty
-                ? session.pushedDNS
-                : (effectiveConfig.isFullTunnel ? ["1.1.1.1", "8.8.8.8"] : []))
+        // `dns = off` / `system` means LEAVE THE DEVICE RESOLVER ALONE, and it wins over
+        // everything below — the server push included, matching the Android and desktop ports.
+        // The mode used to collapse into "no explicit resolvers", which the fallback below then
+        // read as "nothing chosen": a profile asking us not to touch DNS sent every lookup to
+        // Cloudflare and Google. (Audit 2026-08-02, §3.)
+        let dns: [String] = effectiveConfig.dnsMode != "tunnel"
+            ? []
+            : (!effectiveConfig.dnsServers.isEmpty
+                ? effectiveConfig.dnsServers
+                : (!session.pushedDNS.isEmpty
+                    ? session.pushedDNS
+                    : (effectiveConfig.isFullTunnel ? ["1.1.1.1", "8.8.8.8"] : [])))
         if !dns.isEmpty { network.dnsSettings = NEDNSSettings(servers: dns) }
         let effectiveMTU = effectiveConfig.mtu > 0
             ? effectiveConfig.mtu

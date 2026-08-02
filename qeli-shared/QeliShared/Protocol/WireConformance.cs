@@ -199,6 +199,24 @@ public static class WireConformance
         check("ini-unknown: keys other ports own are NOT typos", foreignKeysAccepted);
         check("ini-unknown: everything ToIni writes is accepted back", roundTripClean);
 
+        // `dns` is a MODE in the Rust client and a resolver LIST here. Recognising the mode
+        // words was only half the job: they mapped to "no explicit resolvers", and EffectiveDns
+        // then installs 1.1.1.1/8.8.8.8 on a full tunnel — so `dns = off`, which means LEAVE MY
+        // RESOLVER ALONE, sent every lookup to Cloudflare and Google. (Audit 2026-08-02, §3.)
+        bool dnsModeKept = true, dnsModeRoundTrips = true;
+        foreach (var mode in new[] { "off", "system" })
+        {
+            var c = Ini($"dns = {mode}");
+            dnsModeKept &= c.DnsMode == mode && c.DnsServers.Count == 0;
+            dnsModeRoundTrips &= Model.VpnConfig.FromIni(c.ToIni()).DnsMode == mode;
+        }
+        var dnsList = Ini("dns = 10.0.0.1, 10.0.0.2");
+        bool dnsListUnchanged = dnsList.DnsMode == "tunnel" && dnsList.DnsServers.Count == 2
+            && Model.VpnConfig.FromIni(dnsList.ToIni()).DnsServers.Count == 2;
+        check("ini-dns: a mode word is kept as a mode, not dropped", dnsModeKept);
+        check("ini-dns: the mode survives a save/load round-trip", dnsModeRoundTrips);
+        check("ini-dns: the resolver-list form is unchanged", dnsListUnchanged);
+
         // The enum checks the desktop client had no equivalent of at all.
         bool enums = true;
         foreach (var (line, _) in new[] { ("proto = ucp", 0), ("mode = realty-tls", 0), ("front = webscoket", 0) })
