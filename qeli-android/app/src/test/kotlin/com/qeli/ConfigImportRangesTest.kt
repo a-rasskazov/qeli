@@ -180,6 +180,37 @@ class ConfigImportRangesTest {
     }
 
     /**
+     * `dns` is a MODE in the Rust client and a resolver LIST here — the same key, two meanings.
+     *
+     * Recognising the mode words was only half the job: they mapped to "no explicit resolvers",
+     * and the connect path treats that as "nothing chosen" and installs 1.1.1.1/8.8.8.8 on a
+     * full tunnel. So `dns = off` — which means LEAVE MY RESOLVER ALONE — sent every lookup to
+     * Cloudflare and Google, the exact opposite of the request. The mode has to be kept, and it
+     * has to survive a save/load round-trip. (Audit 2026-08-02, §3.)
+     */
+    @Test
+    fun `dns mode survives import and round-trip`() {
+        for (mode in listOf("off", "system")) {
+            val c = VpnConfig.fromIni(ini("dns = $mode"))
+            assertEquals(mode, c.dnsMode)
+            assertTrue("a mode is not a resolver list", c.dnsServers.isEmpty())
+            // Re-saving must not turn "leave my resolver alone" back into the fallback.
+            assertEquals(mode, VpnConfig.fromIni(c.toIni()).dnsMode)
+        }
+
+        // The list form is unchanged, and defaults to the tunnel mode.
+        val list = VpnConfig.fromIni(ini("dns = 10.0.0.1, 10.0.0.2"))
+        assertEquals("tunnel", list.dnsMode)
+        assertEquals(listOf("10.0.0.1", "10.0.0.2"), list.dnsServers)
+        assertEquals(listOf("10.0.0.1", "10.0.0.2"), VpnConfig.fromIni(list.toIni()).dnsServers)
+
+        // Absent: the tunnel mode with no explicit servers, i.e. today's behaviour.
+        val none = VpnConfig.fromIni(ini())
+        assertEquals("tunnel", none.dnsMode)
+        assertTrue(none.dnsServers.isEmpty())
+    }
+
+    /**
      * A misspelled key name must be refused — but a key another PORT owns must not be.
      *
      * Nothing reads a typo, so the setting it was meant to change silently keeps its default:

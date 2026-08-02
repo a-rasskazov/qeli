@@ -1286,6 +1286,15 @@ class VpnServiceImpl : VpnService() {
             // tunnel (a split tunnel leaves the system resolver alone). The public fallback
             // lives here, NOT as a config default, so a config without DNS stays clean.
             val dns = when {
+                // `dns = off` / `dns = system` means LEAVE THE DEVICE RESOLVER ALONE, and it
+                // has to win over everything below — including the public fallback, which is
+                // what the mode used to collapse into: the profile asked us not to touch DNS
+                // and every lookup went to Cloudflare and Google instead.
+                // (Audit 2026-08-02, §3.)
+                config.dnsMode != "tunnel" -> {
+                    broadcastLog("dns = ${config.dnsMode}: leaving the system resolver alone")
+                    emptyList()
+                }
                 config.dnsServers.isNotEmpty() -> config.dnsServers
                 session.dnsIp.isNotEmpty() -> listOf(session.dnsIp)
                 config.isFullTunnel -> listOf("1.1.1.1", "8.8.8.8")

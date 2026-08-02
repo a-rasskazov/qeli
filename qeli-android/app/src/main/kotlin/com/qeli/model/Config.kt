@@ -64,6 +64,18 @@ data class VpnConfig(
     // Empty by default so a config without DNS round-trips clean and the server-pushed
     // resolver is honoured; the 1.1.1.1/8.8.8.8 fallback moved to connect time (QeliService).
     val dnsServers: List<String> = emptyList(),
+    /**
+     * DNS handling mode, mirroring `dns.mode` in the Rust client: `tunnel` (default — install
+     * resolvers reachable through the tunnel), `off` or `system` (leave the device resolver
+     * alone).
+     *
+     * The flat INI spells the mode and the server list with the SAME key — `dns = off` versus
+     * `dns = 1.1.1.1, 8.8.8.8` — so a shared desktop/router profile carries a value this port
+     * used to discard. Discarding it was not neutral: with no explicit resolvers the connect
+     * path installs the public fallback on a full tunnel, so `off` produced exactly the
+     * behaviour it asks to prevent. (Audit 2026-08-02, §3.)
+     */
+    val dnsMode: String = "tunnel",
     // ── obfuscation ──
     val wireMode: String = "fake-tls",         // "fake-tls" | "obfs"
     val obfsKey: String = "",
@@ -357,7 +369,11 @@ data class VpnConfig(
         if (allowLan) append("allow_lan = true\n")  // LAN bypass (exclude RFC1918 from tunnel)
         if (includeRoutes.isNotEmpty()) append("include = ").append(includeRoutes.joinToString(", ")).append('\n')
         if (excludeRoutes.isNotEmpty()) append("exclude = ").append(excludeRoutes.joinToString(", ")).append('\n')
-        if (dnsServers.isNotEmpty()) append("dns = ").append(dnsServers.joinToString(", ")).append('\n')
+        // One key, two meanings — mirroring the Rust client. A non-default MODE wins over the
+        // server list: `dns = off` must survive a save/load round-trip, or re-saving a profile
+        // would silently turn "leave my resolver alone" back into the public fallback.
+        if (dnsMode != "tunnel") append("dns = ").append(dnsMode).append('\n')
+        else if (dnsServers.isNotEmpty()) append("dns = ").append(dnsServers.joinToString(", ")).append('\n')
         if (mtu > 0) append("mtu = ").append(mtu).append('\n')  // 0 = auto, omit
         if (!mtuProbe) append("mtu_probe = false\n")  // default true, emit only when off
         // Per-app split tunnel (Android extra). Emit only when active so default
@@ -523,11 +539,19 @@ data class VpnConfig(
             // routes). Mirrors the Rust client's `gateway` key — the only way to pick
             // split-tunnel via INI (there is no UI toggle).
             val fullTunnel = boolAt("gateway", true)
-            // DNS: `dns = <ip,ip>` is the Android resolver list. Tolerate the Rust/router
-            // MODE values (`off`/`tunnel`/`system`) by falling back to the defaults
-            // instead of adding a literal "off" as a resolver (which throws at establish).
+            // DNS: `dns = <ip,ip>` is the Android resolver list, but the SAME key is a MODE in
+            // the Rust/router client (`off` / `tunnel` / `system`, see config/client.rs).
+            //
+            // Recognising the mode words was only half the job: they were mapped to "no
+            // explicit resolvers", and the connect path then treats that as "nothing chosen"
+            // and installs the public fallback on a full tunnel. So `dns = off` — which in the
+            // Rust client means LEAVE MY RESOLVER ALONE — sent every lookup to Cloudflare and
+            // Google instead, the exact opposite of what was asked, with a privacy cost and no
+            // message. The mode is now KEPT, and honoured at connect time.
+            // (Audit 2026-08-02, §3.)
             val dnsRaw = q["dns"]?.trim()
-            val dns = if (dnsRaw.isNullOrEmpty() || dnsRaw.lowercase() in setOf("off", "tunnel", "system"))
+            val dnsModeParsed = dnsRaw?.lowercase()?.takeIf { it in setOf("off", "tunnel", "system") }
+            val dns = if (dnsRaw.isNullOrEmpty() || dnsModeParsed != null)
                 null
             else
                 dnsRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -575,6 +599,7 @@ data class VpnConfig(
                 includeRoutes = q["include"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 excludeRoutes = q["exclude"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
                 dnsServers = if (dns.isNullOrEmpty()) emptyList() else dns,
+                dnsMode = dnsModeParsed ?: "tunnel",
                 // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
                 mtu = checkedMtu(numAt("mtu", 0, badNums, q)),
                 // Same false-set as the Rust `bool_or` and the iOS client. The old test
@@ -802,6 +827,10 @@ data class VpnConfig(
                 // bypass silently off, while the iOS client honoured it.
                 allowLan = jbool(routing, "allow_lan", false),
                 dnsServers = dns.optStringList("servers"),
+                // JSON keeps mode and servers in separate fields, so it never had the flat
+                // INI's ambiguity — but the mode still has to survive the import.
+                dnsMode = dns.optString("mode", "tunnel").lowercase()
+                    .takeIf { it in setOf("off", "tunnel", "system") } ?: "tunnel",
                 wireMode = obf.optString("mode", "fake-tls"),
                 obfsKey = obf.optString("obfs_key", ""),
                 obfsFronting = obf.optString("fronting", "websocket"),
