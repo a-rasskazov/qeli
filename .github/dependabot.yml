@@ -1,43 +1,85 @@
 # Dependabot — automated dependency update PRs.
 # Security alerts/fixes are enabled separately (repo Settings > Security).
+#
+# TARGET BRANCH. Every block below sets `target-branch: dev` on purpose. The repo's default
+# branch is `main`, but `main` is the RELEASE branch — development lands on `dev` and only
+# reaches `main` when a version is cut. Left at the default, Dependabot aimed its PRs at
+# `main`, which by then trailed `dev` by ~90 commits: merging a bump there would have put
+# new dependencies on top of months-old code and guaranteed Cargo.lock / Gradle / workflow
+# conflicts at the next release merge. Aiming at `dev` puts each bump where it can actually
+# be built and tested.
 version: 2
 updates:
   # Rust core (server + CLI) — Cargo.toml lives in qeli/
   - package-ecosystem: "cargo"
     directory: "/qeli"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(cargo)"
+    ignore:
+      # aes-gcm is HELD at 0.10 deliberately — this is a measured performance pin, not
+      # neglect. 0.11 rewrote the per-packet hot path onto the InOut API, and reality-tls
+      # pays that twice (inner cipher + outer real-TLS record). Same-session A/B on the lab:
+      # upload -20.4%, download -7.9% versus 0.7.6, confirmed by a test revert and fixed in
+      # 42dab04 by rolling aes-gcm alone back to 0.10 (chacha20poly1305 stays on 0.11).
+      # reality-tls is what production serves on :443, so this is the flagship path.
+      # Dependabot re-proposed it as #80 twice; without this rule it will keep coming back
+      # and eventually be merged by someone who doesn't know the history.
+      # Revisit only with a fresh A/B measurement, not on version number alone.
+      - dependency-name: "aes-gcm"
 
   # Android client (Gradle, Kotlin DSL)
   - package-ecosystem: "gradle"
     directory: "/qeli-android"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(android)"
+    ignore:
+      # The Android Gradle Plugin is the toolchain that builds the RELEASE apk, and the
+      # lab that signs it runs a specific AGP/Gradle/compileSdk combination (currently
+      # AGP 9.2.x + Gradle 9.6.1 + compileSdk 37). An AGP minor can demand a newer Gradle,
+      # which breaks that machine rather than the code — and CI compiling is not proof the
+      # signing host still works. Take AGP deliberately, after a build on the lab.
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # Windows client (.NET / NuGet)
   - package-ecosystem: "nuget"
     directory: "/qeli-win/QeliWin"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(win)"
+    ignore:
+      # BouncyCastle is the data-plane AEAD (ChaCha20-Poly1305 in PacketCipher) for the
+      # desktop clients. There are no C# unit tests, so CI only proves it COMPILES — a
+      # behavioural change would surface as decrypt failures against a live server, not as
+      # a red build. Minor/major bumps need an actual tunnel test first.
+      - dependency-name: "BouncyCastle.Cryptography"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # macOS client (.NET / NuGet)
   - package-ecosystem: "nuget"
     directory: "/qeli-mac/QeliMac"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(mac)"
     ignore:
+      # Same reasoning as the Windows client — the macOS build shares QeliShared, whose
+      # PacketCipher is BouncyCastle-backed.
+      - dependency-name: "BouncyCastle.Cryptography"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # Avalonia is deliberately pinned to 11.3.x for current-macOS (Tahoe /
       # macOS 26) Cocoa-backend compatibility (see QeliMac.csproj). The 12.x major
       # changes the macOS backend and can't be validated by CI (which only compiles,
@@ -53,7 +95,22 @@ updates:
   # GitHub Actions workflows
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
     commit-message:
       prefix: "deps(ci)"
+    ignore:
+      # attest-build-provenance signs the release artifacts — if a major silently changes
+      # its inputs, the failure mode is a release published without valid provenance, which
+      # nothing in the normal CI run would catch. Majors go in with a test release, by hand.
+      - dependency-name: "actions/attest-build-provenance"
+        update-types: ["version-update:semver-major"]
+      # dtolnay/rust-toolchain has no versions — the REF picks the toolchain (`@stable`,
+      # `@nightly`, `@master`), and we pin each by SHA with the branch in a comment.
+      # Dependabot sees one action used three times and rewrites all of them to a single
+      # "latest" SHA, which was the stable branch's: that silently turns the nightly pins
+      # into stable and breaks `cargo +nightly fuzz` (fuzz-smoke, fuzz-nightly) plus the
+      # mipsel tier-3 cross-build, which needs nightly for -Zbuild-std. It proposed exactly
+      # that as #99. Bump these by hand, per ref.
+      - dependency-name: "dtolnay/rust-toolchain"
