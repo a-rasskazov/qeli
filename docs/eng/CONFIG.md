@@ -128,6 +128,18 @@ test), unlike the rest of this block.
 - `tcp_nodelay = <true|false>` (default `true`) — disable Nagle's algorithm on the carrier socket
   (send small packets immediately, lower latency). Set `false` to re-enable Nagle. Emitted only
   when non-default.
+- `recv_buffer_size = <bytes>` (default `4194304`) — `SO_RCVBUF` on the **UDP socket**
+  (`proto = udp`). Why this carries a real default instead of "leave it alone": unlike TCP, UDP
+  has **no buffer autotuning** — the socket keeps exactly `net.core.rmem_default` (208 KB on a
+  stock kernel), which at tunnel speeds is only tens of milliseconds of traffic. One scheduling
+  stall and the kernel silently drops datagrams, and each dropped datagram is a lost TCP segment
+  **inside** the tunnel, so the inner connection halves its window. `0` leaves the kernel value
+  alone. Emitted only when non-default.
+- `send_buffer_size = <bytes>` (default `0` — leave the kernel alone) — `SO_SNDBUF` on the UDP
+  socket. The default differs on purpose: an undersized send buffer does **not** lose data
+  (`sendto` just applies backpressure), so raising it rarely helps — while pinning an explicit
+  value would *lower* the buffer on a host whose `net.core.wmem_default` was raised for this very
+  workload.
 
 Example client profile using the new keys (Windows/macOS desktop, split-tunnel):
 
@@ -542,12 +554,29 @@ net.core.wmem_max=16777216
 net.ipv4.tcp_rmem=4096 131072 16777216
 net.ipv4.tcp_wmem=4096 65536 16777216
 net.ipv4.tcp_mtu_probing=1
+# UDP profiles — REQUIRED if you run any udp-* profile. Everything above reaches TCP
+# only: it autotunes its buffers between the tcp_rmem/tcp_wmem bounds. UDP has NO
+# autotuning — the socket gets exactly net.core.rmem_default, and qeli never calls
+# setsockopt(SO_RCVBUF), so rmem_max on its own means nothing to it.
+net.core.rmem_default=4194304
+net.core.wmem_default=4194304
+net.core.netdev_max_backlog=4000
 ```
 ```bash
 modprobe tcp_bbr && echo tcp_bbr > /etc/modules-load.d/qeli-bbr.conf   # load the module at boot
 sysctl --system                                                       # apply
 sysctl -n net.ipv4.tcp_congestion_control                             # check: should be bbr
+systemctl restart qeli.service                                        # UDP sockets take the buffer size at creation
+ss -ulnm | grep -A1 ':8449' | grep -o 'rb[0-9]*'                      # check: rb4194304, not rb212992
 ```
+
+> **Why this matters rather than being a nicety.** The default receive buffer is 208 KB,
+> which at tunnel speeds is only tens of milliseconds of traffic: one scheduling stall and
+> the kernel drops datagrams. Each dropped datagram is a lost TCP segment **inside** the
+> tunnel, so the inner connection halves its window. In production this cost 978 drops in a
+> single speedtest; raising it took that profile's uplink from 30 to 55 Mbit. Diagnose with
+> `netstat -su | grep 'receive buffer errors'` and the `d<N>` field in `ss -ulnm`. The
+> client needs the mirror-image fix — see below.
 
 ### 3. padding for reality-tls — better turned off
 
@@ -558,8 +587,27 @@ In a reality-tls profile: `obf.padding.enabled = false`.
 > Verified in production: BBR/buffers/mtu_probing + `vpn+` MSS-clamp 1240 +
 > `tun.mtu 1280` + padding off (2026-06-08), and the **outer TCP-port MSS** (443/8443/8444/8445)
 > **1340** — the reality/fake-tls LTE-handshake fix (2026-06-28). Script: `scripts/prod_tcp_tune.py`.
+> The UDP buffers (`rmem_default`/`wmem_default`) were added 2026-08-02: the 06-08 change
+> raised only `rmem_max`, so the UDP profiles silently stayed at 208 KB.
 > Rollback: remove `/etc/sysctl.d/99-qeli-perf.conf` + `/etc/modules-load.d/qeli-bbr.conf`
 > (`sysctl --system`), remove the mangle rules, restore `tun.mtu`/padding.
+
+### 4. UDP profiles: size the MTU together with the padding
+
+For `udp-*` compute the whole on-the-wire size, or packets start fragmenting and throughput
+halves while the tunnel still looks healthy:
+
+```
+tun.mtu + 48 (qeli record) + obf.padding.max_bytes + 9 (QUIC, if enabled) + 8 (UDP) + 20 (IP)  ≤  PMTU
+```
+
+At a 1500 PMTU a profile with `tun.mtu = 1380` and `padding.max_bytes = 400` reaches 1865
+bytes — **every** full-size packet fragments. A working pair for udp-quic is
+`tun.mtu = 1240` + `obf.padding.max_bytes = 80` (1405 total). Verify with
+`netstat -s | grep -i 'fragments created'`: it must not climb under load.
+
+> In production, removing the fragmentation alone took udp-quic from 22 to 30 Mbit; together
+> with the server and client buffers it reached **40+ down and 55 up**.
 
 ## Stream bonding — multipath (`obf.multipath.*`)
 
@@ -1093,6 +1141,8 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 | `proto` | `tcp` | ✓ | ✓ | ✓ | ✓ | ✓ | transport: `tcp` / `udp` |
 | `keepalive` | `60` | ✓ | — | — | — | — | TCP keepalive probe interval (s). Hardcoded on in the GUIs |
 | `tcp_nodelay` | `true` | ✓ | — | — | — | — | disable Nagle's algorithm. Hardcoded on in the GUIs |
+| `recv_buffer_size` | `4194304` | ✓ | — | — | — | — | `SO_RCVBUF` on the UDP socket. UDP has no autotuning → the 208 KB kernel default drops packets. `0` = leave alone |
+| `send_buffer_size` | `0` | ✓ | — | — | — | — | `SO_SNDBUF` on the UDP socket. `0` = leave alone: a full send buffer never loses data |
 
 **Authentication**
 

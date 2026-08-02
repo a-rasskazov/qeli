@@ -1135,6 +1135,15 @@ public abstract class VpnTunnelBase
         Log($"Connecting UDP {serverIp}:{config.Port}...");
         var sock = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         BindLocal(sock, config);  // OpenVPN local / lport
+        // Enlarge the receive buffer over the OS default. UDP gets no autotuning (unlike TCP),
+        // so the socket keeps whatever it was given; at tunnel speeds the default is only tens
+        // of milliseconds of traffic and a single scheduling stall makes the kernel drop
+        // datagrams. A dropped datagram is a lost TCP segment INSIDE the tunnel, which halves
+        // the inner connection's window — the same defect on the server side cost half the
+        // uplink until it was fixed. Best-effort: the OS may grant less, and a refusal must not
+        // break the connection. 2 MB is enough to absorb a stall without queueing so much that
+        // latency suffers under sustained overload.
+        try { sock.ReceiveBufferSize = 2 * 1024 * 1024; } catch (Exception e) { Log($"UDP: could not enlarge the receive buffer ({e.Message}); using the default"); }
         sock.Connect(serverIp, config.Port);
         sock.ReceiveTimeout = attemptMs;
         _udp = sock;

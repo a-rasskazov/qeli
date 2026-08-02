@@ -3080,6 +3080,24 @@ async fn connect_and_run_udp(
         ));
     }
     let raw_socket = UdpSocket::bind("0.0.0.0:0").await?;
+    // Size the socket buffers BEFORE any traffic. UDP gets no autotuning (unlike TCP), so
+    // the socket keeps net.core.rmem_default — 208 KB on a stock kernel, only tens of
+    // milliseconds of traffic at tunnel speeds. A stall then makes the kernel drop
+    // datagrams, and every dropped datagram is a lost TCP segment INSIDE the tunnel, which
+    // halves the inner connection's window. The receive side is what matters: an
+    // undersized send buffer only applies backpressure, it does not lose data.
+    //
+    // This also makes `performance.recv_buffer_size` / `send_buffer_size` mean something:
+    // both fields existed but were never applied anywhere on the client path.
+    // Both sizes carry their own "leave the kernel alone" default (0), and set_udp_buffers
+    // skips a 0, so this needs no special-casing here.
+    if let Err(e) = crate::transport::tcp::set_udp_buffers(
+        &raw_socket,
+        config.performance.send_buffer_size,
+        config.performance.recv_buffer_size,
+    ) {
+        log::warn!("UDP socket buffers could not be set ({e}) — throughput may suffer");
+    }
     raw_socket.connect(&addr).await?;
     if let Ok(p) = raw_socket.peer_addr() {
         note_connected_peer(p.ip());

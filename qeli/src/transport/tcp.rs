@@ -115,3 +115,52 @@ pub fn set_tcp_buffers(stream: &TcpStream, send: u32, recv: u32) -> std::io::Res
 pub fn set_tcp_buffers(_stream: &TcpStream, _send: u32, _recv: u32) -> std::io::Result<()> {
     Ok(())
 }
+
+/// Same as [`set_tcp_buffers`], for a UDP socket — and far more load-bearing there.
+///
+/// TCP autotunes its buffers between the `tcp_rmem`/`tcp_wmem` bounds, so leaving it alone
+/// is usually right. **UDP has no autotuning at all**: the socket keeps whatever
+/// `net.core.rmem_default` was at creation (208 KB on a stock kernel), which at tunnel
+/// speeds is only tens of milliseconds of traffic. One scheduling stall and the kernel
+/// silently drops datagrams — and each dropped datagram is a lost TCP segment *inside* the
+/// tunnel, so the inner connection halves its window. Measured on a live server, that cost
+/// half the achievable throughput until the buffer was raised.
+///
+/// `0` leaves the kernel default. Best-effort, exactly like the TCP version: a failure
+/// degrades throughput, never correctness.
+#[cfg(target_os = "linux")]
+pub fn set_udp_buffers(sock: &tokio::net::UdpSocket, send: u32, recv: u32) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let fd = sock.as_raw_fd();
+    for (opt, size) in [(libc::SO_SNDBUF, send), (libc::SO_RCVBUF, recv)] {
+        if size == 0 {
+            continue;
+        }
+        let val = size.min(libc::c_int::MAX as u32) as libc::c_int;
+        // SAFETY: fd is owned by `sock` and outlives the call; val is a valid c_int and the
+        // length matches its size.
+        unsafe {
+            if libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                opt,
+                &val as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&val) as libc::socklen_t,
+            ) != 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Non-Linux fallback — see [`set_udp_buffers`].
+#[cfg(not(target_os = "linux"))]
+pub fn set_udp_buffers(
+    _sock: &tokio::net::UdpSocket,
+    _send: u32,
+    _recv: u32,
+) -> std::io::Result<()> {
+    Ok(())
+}

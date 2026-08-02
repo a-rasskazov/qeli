@@ -2034,6 +2034,26 @@ class VpnServiceImpl : VpnService() {
         broadcastLog("Connecting UDP ${config.serverAddress}:${config.port}...")
         val sock = DatagramSocket()
         protectSocket("server UDP") { protect(sock) }
+        // Ask for a bigger receive buffer than the ~200 KB default. UDP has no autotuning:
+        // whatever the socket is given is what it gets, and at tunnel speeds that default is
+        // only tens of milliseconds of traffic — one GC pause or scheduling hiccup and the
+        // kernel drops datagrams. Every dropped datagram is a lost TCP segment INSIDE the
+        // tunnel, so the inner connection halves its window; that is what caps UDP throughput.
+        // The exact same defect on the server side cost half the uplink until it was fixed.
+        // Best-effort by design: the kernel clamps the request to net.core.rmem_max and may
+        // grant less, and a refusal must not break the connection — hence the catch. 2 MB, not
+        // more: the buffer only has to absorb a stall, and an oversized one would queue packets
+        // instead of dropping them, adding latency under sustained overload.
+        try {
+            val before = sock.receiveBufferSize
+            sock.receiveBufferSize = 2 * 1024 * 1024
+            // Log what the kernel ACTUALLY granted, not what we asked for — it silently
+            // clamps to net.core.rmem_max, and without this line a clamped buffer is
+            // indistinguishable from a working one when reading a throughput report.
+            broadcastLog("UDP recv buffer: ${before / 1024} KB -> ${sock.receiveBufferSize / 1024} KB")
+        } catch (e: Exception) {
+            broadcastLog("UDP: could not enlarge the receive buffer (${e.message}); using the default")
+        }
         sock.connect(InetSocketAddress(config.serverAddress, config.port))
         sock.soTimeout = config.connectionTimeoutSecs.toInt() * 1000
         transports.udp = sock

@@ -15,7 +15,7 @@ CONF = "/etc/qeli/server-maxobf.conf"
 BAK = "/etc/qeli/server-maxobf.conf.pretune"
 SYSCTL = "/etc/sysctl.d/99-qeli-perf.conf"
 
-SYSCTL_BODY = """# qeli reality-tls TCP:443 throughput tuning (reversible; delete this file + reboot/sysctl --system to revert)
+SYSCTL_BODY = """# qeli throughput tuning (reversible; delete this file + reboot/sysctl --system to revert)
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.core.rmem_max=16777216
@@ -23,6 +23,18 @@ net.core.wmem_max=16777216
 net.ipv4.tcp_rmem=4096 131072 16777216
 net.ipv4.tcp_wmem=4096 65536 16777216
 net.ipv4.tcp_mtu_probing=1
+# UDP profiles. Everything above only reaches TCP, which autotunes its buffers between
+# the tcp_rmem/tcp_wmem bounds. UDP has NO autotuning: the socket gets whatever
+# net.core.rmem_default says, and qeli never calls setsockopt(SO_RCVBUF) — so raising
+# rmem_max alone does nothing for it. The 208 KB default is only tens of milliseconds of
+# traffic at tunnel speeds, and each dropped datagram costs a TCP segment INSIDE the
+# tunnel (the inner connection then halves its window). Measured live: 978 drops in one
+# speedtest; raising this took that profile's uplink from 30 to 55 Mbit.
+# NOTE: qeli must be restarted after changing these — its UDP sockets take the buffer
+# size at creation time.
+net.core.rmem_default=4194304
+net.core.wmem_default=4194304
+net.core.netdev_max_backlog=4000
 """
 
 
@@ -61,7 +73,11 @@ print("=========== BEFORE ===========")
 print("[cc]", r("sysctl -n net.ipv4.tcp_congestion_control"),
       "| [qdisc]", r("sysctl -n net.core.default_qdisc"),
       "| [rmem_max]", r("sysctl -n net.core.rmem_max"),
+      "| [rmem_default]", r("sysctl -n net.core.rmem_default"),
       "| [mtu_probing]", r("sysctl -n net.ipv4.tcp_mtu_probing"))
+# rmem_default is what the UDP sockets actually get (no autotuning); `rb=` in `ss -ulnm`
+# is the proof it landed — rmem_max alone never shows up there.
+print("[udp socket rb]", r("ss -ulnm 2>/dev/null | grep -A1 -E ':(8448|8449|8450)' | grep -o 'rb[0-9]*' | sort -u | tr '\\n' ' '"))
 print("[reality-tls tun.mtu]", r(f"awk '/\\[profile:reality-tls\\]/{{f=1}} /^\\[profile:/&&!/reality-tls/{{f=0}} f&&/tun.mtu/' {CONF}"))
 print("[reality-tls padding]", r(f"awk '/\\[profile:reality-tls\\]/{{f=1}} /^\\[profile:/&&!/reality-tls/{{f=0}} f&&/obf.padding.enabled/' {CONF}"))
 
@@ -104,8 +120,11 @@ print("\n=========== AFTER ===========")
 print("[cc]", r("sysctl -n net.ipv4.tcp_congestion_control"),
       "| [qdisc]", r("sysctl -n net.core.default_qdisc"),
       "| [rmem_max]", r("sysctl -n net.core.rmem_max"),
+      "| [rmem_default]", r("sysctl -n net.core.rmem_default"),
       "| [wmem_max]", r("sysctl -n net.core.wmem_max"),
       "| [mtu_probing]", r("sysctl -n net.ipv4.tcp_mtu_probing"))
+print("[udp socket rb]", r("ss -ulnm 2>/dev/null | grep -A1 -E ':(8448|8449|8450)' | grep -o 'rb[0-9]*' | sort -u | tr '\\n' ' '"),
+      "(restart qeli if this still shows the old size — UDP buffers are set at socket creation)")
 print("[reality-tls tun.mtu]", r(f"awk '/\\[profile:reality-tls\\]/{{f=1}} /^\\[profile:/&&!/reality-tls/{{f=0}} f&&/tun.mtu/' {CONF}"))
 print("[reality-tls padding]", r(f"awk '/\\[profile:reality-tls\\]/{{f=1}} /^\\[profile:/&&!/reality-tls/{{f=0}} f&&/obf.padding.enabled/' {CONF}"))
 print("[qeli.service]", r("systemctl is-active qeli.service"), "| [:443]", r("ss -ltn | grep -q :443 && echo up || echo DOWN"))

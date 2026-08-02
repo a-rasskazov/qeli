@@ -362,10 +362,28 @@ through the tunnel, add `gateway_nat = true` under `[qeli]`. Drop the file in th
 | caps `NET_ADMIN`,`NET_RAW`,`NET_BIND_SERVICE` | create TUN, set routes/iptables, bind :443 | `--cap-add` (no `--privileged` needed) |
 | `net.ipv4.ip_forward=1` | **server NAT** (`routing.nat.enabled`) — internet egress | `--sysctl net.ipv4.ip_forward=1` |
 | `nf_nat` / `iptable_nat` kernel modules | **server NAT** MASQUERADE | host kernel (`modprobe iptable_nat`) — containers share the host kernel |
+| `net.core.rmem_default` ≥ 4 MB | **UDP profiles** — otherwise the socket sits at the 208 KB default and drops packets under load | **on the HOST**, not the container (see below) |
 
 A **client-only** container needs just `/dev/net/tun` + `NET_ADMIN` (no iptables,
 no ip_forward). NAT is opt-in (`routing.nat.enabled` in the server config); a
 server without NAT (e.g. behind a host that NATs) doesn't need iptables at all.
+
+**Running a `udp-*` profile in Docker — tune the host.** `net.core.rmem_default` and
+`net.core.wmem_default` are *not* network-namespaced, so `--sysctl` refuses them and the
+container inherits whatever the host has. UDP gets no buffer autotuning (unlike TCP), so on
+an untuned host the socket keeps the 208 KB default and starts dropping datagrams under
+load — and every dropped datagram is a lost TCP segment *inside* the tunnel, which halves
+the inner connection's window. Set it on the host once:
+
+```bash
+printf 'net.core.rmem_default=4194304\nnet.core.wmem_default=4194304\nnet.core.netdev_max_backlog=4000\n' \
+  | sudo tee /etc/sysctl.d/99-qeli-udp.conf
+sudo sysctl --system
+docker restart qeli-server        # UDP sockets take the buffer size at creation
+```
+
+Check it landed: `docker exec qeli-server ss -ulnm | grep -A1 ':8449' | grep -o 'rb[0-9]*'`
+should print `rb4194304`, not `rb212992`. TCP-only deployments can skip this.
 
 ---
 

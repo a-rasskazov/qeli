@@ -104,6 +104,9 @@ A single `qeli` binary plays both roles: `qeli server` and `qeli client`.
 > **What else it changes on the host** (not incidental details — know them up front):
 > - **System-wide network tuning**: writes `/etc/sysctl.d/99-qeli-perf.conf` and switches
 >   congestion control to **BBR** — this affects **all** TCP on the host, not just qeli.
+>   The same file raises the default socket buffers (`net.core.rmem_default`/`wmem_default`
+>   to 4 MB) — without it the UDP profiles drop packets, because UDP has no autotuning and
+>   would stay at 208 KB. Those are system-wide values too.
 > - **Loads the `tcp_bbr` module on every boot** via `/etc/modules-load.d/qeli-bbr.conf`.
 > - **Adds an MSS rule** (TCP profiles only — udp-quic skips it) in `mangle/OUTPUT` and
 >   tries to **persist the firewall**. With

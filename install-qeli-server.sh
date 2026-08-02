@@ -632,7 +632,7 @@ fi
 # systemd yet) — create them so the heredoc write below can't abort the run (set -e).
 mkdir -p /etc/sysctl.d /etc/modules-load.d
 cat > /etc/sysctl.d/99-qeli-perf.conf <<'SYSCTL'
-# qeli TCP throughput + PMTU tuning (reversible: delete this file + sysctl --system)
+# qeli throughput + PMTU tuning (reversible: delete this file + sysctl --system)
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.core.rmem_max=16777216
@@ -640,6 +640,17 @@ net.core.wmem_max=16777216
 net.ipv4.tcp_rmem=4096 131072 16777216
 net.ipv4.tcp_wmem=4096 65536 16777216
 net.ipv4.tcp_mtu_probing=1
+# UDP profiles. The four lines above only reach TCP: it autotunes its socket buffers
+# between the tcp_rmem/tcp_wmem bounds. UDP has NO autotuning — its socket simply gets
+# net.core.rmem_default, and qeli does not call setsockopt(SO_RCVBUF), so raising
+# rmem_max alone changes nothing for it. Left at the 208 KB default that is only tens of
+# milliseconds of traffic at tunnel speeds, and one scheduling stall makes the kernel
+# drop datagrams; each dropped datagram is a lost TCP segment INSIDE the tunnel, so the
+# inner connection halves its window. Measured on a live server: 978 drops in a single
+# speedtest, and raising this lifted that profile's uplink from 30 to 55 Mbit.
+net.core.rmem_default=4194304
+net.core.wmem_default=4194304
+net.core.netdev_max_backlog=4000
 SYSCTL
 modprobe tcp_bbr 2>/dev/null || true
 echo tcp_bbr > /etc/modules-load.d/qeli-bbr.conf 2>/dev/null || true

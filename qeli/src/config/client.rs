@@ -273,13 +273,28 @@ pub struct ClientObfuscationConfig {
     pub awg: crate::config::AwgConfig,
 }
 
+/// 4 MB: enough to absorb a scheduling stall at tunnel speeds without queueing so much
+/// that latency suffers under sustained overload.
+fn default_udp_recv_buffer() -> u32 {
+    4 * 1024 * 1024
+}
+
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct ClientPerformanceConfig {
     #[serde(default = "default_true")]
     pub tcp_nodelay: bool,
-    #[serde(default = "default_buffer_size")]
+    /// `SO_SNDBUF`. `0` (the default) leaves the kernel value alone — deliberately: an
+    /// undersized send buffer only applies backpressure, it never loses data, and pinning
+    /// an explicit size here would *lower* it on a host whose `net.core.wmem_default` was
+    /// raised for exactly this workload.
+    #[serde(default)]
     pub send_buffer_size: u32,
-    #[serde(default = "default_buffer_size")]
+    /// `SO_RCVBUF`. Unlike TCP, UDP has no buffer autotuning: the socket keeps whatever
+    /// `net.core.rmem_default` was at creation (208 KB on a stock kernel), which at tunnel
+    /// speeds is only tens of milliseconds of traffic — a stall then drops datagrams, and
+    /// each lost datagram costs a TCP segment *inside* the tunnel. Hence a real default
+    /// rather than "leave it alone". `0` opts back out to the kernel value.
+    #[serde(default = "default_udp_recv_buffer")]
     pub recv_buffer_size: u32,
     #[serde(default = "default_tun_buf")]
     pub tun_buffer_size: usize,
@@ -432,6 +447,14 @@ impl ClientConfig {
         // file (ghost keys): TCP keepalive probe interval and Nagle's-algorithm toggle.
         cfg.server.tcp_keepalive_secs = q.parse_or("keepalive", cfg.server.tcp_keepalive_secs);
         cfg.performance.tcp_nodelay = q.bool_or("tcp_nodelay", cfg.performance.tcp_nodelay);
+        // Socket buffers. Both fields existed in the model but nothing parsed them and
+        // nothing applied them — dead knobs. They now size the UDP socket (see
+        // client/mod.rs), where they matter most: UDP has no buffer autotuning, so an
+        // undersized receive buffer silently drops datagrams under load.
+        cfg.performance.recv_buffer_size =
+            q.parse_or("recv_buffer_size", cfg.performance.recv_buffer_size);
+        cfg.performance.send_buffer_size =
+            q.parse_or("send_buffer_size", cfg.performance.send_buffer_size);
 
         cfg.auth.username = q.get_or("user", "client").to_string();
         cfg.auth.password = q.get("pass").filter(|p| !p.is_empty()).map(str::to_string);
@@ -795,6 +818,20 @@ impl ClientConfig {
         }
         if !self.performance.tcp_nodelay {
             q.set("tcp_nodelay", "false");
+        }
+        // Emit only when they differ from their serde defaults, so a config written from
+        // defaults stays as sparse as it was before these keys became live.
+        if self.performance.recv_buffer_size != default_udp_recv_buffer() {
+            q.set(
+                "recv_buffer_size",
+                self.performance.recv_buffer_size.to_string(),
+            );
+        }
+        if self.performance.send_buffer_size != 0 {
+            q.set(
+                "send_buffer_size",
+                self.performance.send_buffer_size.to_string(),
+            );
         }
         q.set("mode", &self.obfuscation.mode);
         if let Some(sni) = &self.obfuscation.sni {
@@ -1283,6 +1320,57 @@ sni    = www.cloudflare.com
         assert!(
             back.routing.allow_ipv6_leak,
             "allow_ipv6_leak must round-trip through to_ini_string"
+        );
+    }
+
+    #[test]
+    fn udp_socket_buffer_keys_are_live_and_default_correctly() {
+        // recv_buffer_size / send_buffer_size existed in the model but nothing parsed or
+        // applied them. Two things must hold now, and neither is obvious from the type:
+        //
+        // 1. A config that never mentions them still gets the 4 MB receive default. The
+        //    struct derives Default, and #[derive(Default)] IGNORES serde attributes — it
+        //    would yield 0 (= leave the kernel's 208 KB alone, i.e. the bug we fixed). Only
+        //    the serde path via baseline() produces the real default, so pin it here: a
+        //    future refactor that swaps baseline() for Default::default() must fail loudly
+        //    rather than silently restore packet loss under load.
+        // 2. The send default is deliberately the OPPOSITE (0 = leave the kernel alone),
+        //    because pinning a value would LOWER the buffer on a tuned host.
+        let bare = ClientConfig::from_ini(&IniDoc::parse("[qeli]\nserver = h:443\n").unwrap())
+            .expect("minimal config parses");
+        assert_eq!(
+            bare.performance.recv_buffer_size,
+            4 * 1024 * 1024,
+            "an unset recv_buffer_size must default to 4 MB, not to the kernel value"
+        );
+        assert_eq!(
+            bare.performance.send_buffer_size, 0,
+            "send_buffer_size must default to 0 (leave the kernel alone)"
+        );
+        // Defaults stay out of the emitted file (it is a sparse format).
+        let sparse = bare.to_ini_string();
+        assert!(
+            !sparse.contains("recv_buffer_size") && !sparse.contains("send_buffer_size"),
+            "default buffer sizes must not be emitted"
+        );
+
+        // Explicit values parse and survive a round-trip.
+        let ini = "[qeli]\nserver = h:443\nrecv_buffer_size = 8388608\nsend_buffer_size = 262144\n";
+        let c = ClientConfig::from_ini(&IniDoc::parse(ini).unwrap()).unwrap();
+        assert_eq!(c.performance.recv_buffer_size, 8 * 1024 * 1024);
+        assert_eq!(c.performance.send_buffer_size, 262_144);
+        let back = ClientConfig::from_ini(&IniDoc::parse(&c.to_ini_string()).unwrap()).unwrap();
+        assert_eq!(back.performance.recv_buffer_size, 8 * 1024 * 1024);
+        assert_eq!(back.performance.send_buffer_size, 262_144);
+
+        // 0 must be honoured as an explicit opt-out, not confused with "unset".
+        let off = ClientConfig::from_ini(
+            &IniDoc::parse("[qeli]\nserver = h:443\nrecv_buffer_size = 0\n").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            off.performance.recv_buffer_size, 0,
+            "an explicit 0 must opt back out to the kernel default"
         );
     }
 
