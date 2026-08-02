@@ -115,6 +115,35 @@ final class ParityHardeningTests: XCTestCase {
     }
 
     /// `plain` is the only mode without the hybrid handshake; obfs and reality-tls wrap the
+    /// `apps_mode` is REPORTED on iOS, never applied — `NEAppRule` needs an MDM-managed
+    /// configuration, so every app goes through the tunnel whatever the profile says.
+    ///
+    /// The card used to map the mode straight onto the scope and announce "only the selected
+    /// apps are protected", confirming a restriction that is not in force: the user arranges
+    /// their traffic around that belief and the truth is the opposite. The scope now follows
+    /// the ROUTES — what this platform actually enforces — and the unapplied selection gets
+    /// its own warning. That warning must NOT clear `carriesEverything`, because an
+    /// unapplied per-app selection widens the tunnel rather than narrowing it.
+    /// (Audit 2026-08-02, §7.)
+    func testPerAppSelectionIsReportedAsUnappliedNotAsScope() throws {
+        for mode in ["include", "exclude"] {
+            let config = try VPNConfig(parsing: minimalINI(
+                "key = " + String(repeating: "aa", count: 32)
+                    + "\napps_mode = \(mode)\napps = com.example.a"))
+            let summary = ProtectionSummary(config: config)
+            XCTAssertEqual(summary.scope, .all, "\(mode) must not narrow the reported scope")
+            XCTAssertTrue(summary.warnings.contains(.perAppNotApplied), mode)
+            XCTAssertTrue(
+                summary.carriesEverything,
+                "an unapplied \(mode) selection widens the tunnel — the card must not claim less"
+            )
+        }
+
+        // The warning is specific to a request, not permanent furniture.
+        let plain = try VPNConfig(parsing: minimalINI("key = " + String(repeating: "aa", count: 32)))
+        XCTAssertFalse(ProtectionSummary(config: plain).warnings.contains(.perAppNotApplied))
+    }
+
     /// SAME PQ ClientHello, so claiming post-quantum for them is correct.
     func testPostQuantumIsClaimedForEveryModeExceptPlain() throws {
         for mode in ["fake-tls", "obfs", "reality-tls"] {

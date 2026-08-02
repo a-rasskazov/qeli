@@ -243,6 +243,9 @@ struct ConnectionView: View {
         case .ipv6Outside: return "IPv6 bypasses the tunnel"
         case .excludedRoutes: return "\(count) route(s) excluded from the tunnel"
         case .noPinnedKey: return "Without a pinned key the first connection is trusted blindly"
+        // Says which way it is wrong: the selection is IGNORED and everything is tunnelled,
+        // not "some apps are unprotected". (Audit 2026-08-02, §7.)
+        case .perAppNotApplied: return "Per-app selection needs MDM on iOS — every app is tunnelled"
         }
     }
 

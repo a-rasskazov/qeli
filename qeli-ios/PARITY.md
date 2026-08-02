@@ -77,6 +77,11 @@
 
 - Per-app routing rules for arbitrary installed applications require MDM-managed apps;
   iOS also does not expose an installed-app enumeration API to a consumer VPN app.
+  Because of that, a profile's `apps_mode` is **carried but not applied** here, and the
+  protection card says so rather than reporting the mode as the tunnel's scope: the scope
+  follows the routes (what the platform enforces) and the unapplied selection appears as a
+  warning. Android maps `apps_mode` to the scope directly, because there it is in force —
+  this is the one place the two cards deliberately read the same profile differently.
 - True Always-On VPN requires supervised MDM and Apple's IKEv2 Always On tunnel;
   Apple does not expose that enforcement mode to Qeli's custom Packet Tunnel Provider.
   VPN On Demand is the closest Qeli/consumer equivalent to Android boot auto-connect.

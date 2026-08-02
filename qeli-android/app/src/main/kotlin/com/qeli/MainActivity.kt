@@ -806,7 +806,7 @@ sni = www.microsoft.com
             Toast.makeText(this, getString(R.string.protection_invalid), Toast.LENGTH_SHORT).show()
             return
         }
-        val s = ProtectionSummary.of(cfg)
+        val s = ProtectionSummary.of(cfg, globalAllowLan())
         val live = isConnected
         val rows = mutableListOf<Pair<Int, String>>()
         rows += R.string.detail_server to "${cfg.serverAddress}:${cfg.port}"
@@ -903,6 +903,15 @@ sni = www.microsoft.com
     }
 
     /**
+     * The app-wide LAN-bypass toggle, which the tunnel ORs with the profile's own `allow_lan`
+     * (see QeliService). The protection card has to read the same pair, or it reports on a
+     * tunnel different from the one being built. (Audit 2026-08-02, §6.)
+     */
+    private fun globalAllowLan(): Boolean =
+        getSharedPreferences(PREFS_STATE, Context.MODE_PRIVATE)
+            .getBoolean(PREF_ALLOW_LAN, false)
+
+    /**
      * Fill the protection card from the ACTIVE profile.
      *
      * The card makes security claims, so it states only what [ProtectionSummary] can derive
@@ -924,7 +933,7 @@ sni = www.microsoft.com
         binding.tvProtectionCrypto.visibility = View.VISIBLE
         binding.tvProtectionMode.visibility = View.VISIBLE
 
-        val s = ProtectionSummary.of(cfg)
+        val s = ProtectionSummary.of(cfg, globalAllowLan())
         val live = isConnected
         binding.tvProtectionHeadline.text = when {
             !live -> getString(R.string.protection_idle)

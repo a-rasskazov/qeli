@@ -68,7 +68,16 @@ data class ProtectionSummary(
             warnings.none { it != ProtectionWarning.NO_PINNED_KEY }
 
     companion object {
-        fun of(config: VpnConfig): ProtectionSummary {
+        /**
+         * @param globalAllowLan the app-wide Settings toggle. It MUST be passed, because the
+         * tunnel carves the private ranges out on `config.allowLan || globalAllowLan`
+         * (QeliService) — reading only the profile field made the card claim "all traffic is
+         * protected" while RFC1918, link-local and multicast went past the VPN. A card that
+         * makes security claims has to be wrong in the SAFE direction, and this was wrong in
+         * the other one. (Audit 2026-08-02, §6.)
+         */
+        @JvmOverloads
+        fun of(config: VpnConfig, globalAllowLan: Boolean = false): ProtectionSummary {
             val apps = config.apps.size
             val scope = when {
                 config.appsMode.equals("include", ignoreCase = true) -> ProtectionScope.ONLY_SELECTED
@@ -77,7 +86,7 @@ data class ProtectionSummary(
                 else -> ProtectionScope.ALL
             }
             val warnings = buildList {
-                if (config.allowLan) add(ProtectionWarning.LAN_OUTSIDE)
+                if (config.allowLan || globalAllowLan) add(ProtectionWarning.LAN_OUTSIDE)
                 if (config.allowIpv6Leak) add(ProtectionWarning.IPV6_OUTSIDE)
                 if (config.excludeRoutes.isNotEmpty()) add(ProtectionWarning.EXCLUDED_ROUTES)
                 if (config.serverPublicKeyHex.isNullOrEmpty()) add(ProtectionWarning.NO_PINNED_KEY)

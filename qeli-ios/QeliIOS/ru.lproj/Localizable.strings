@@ -117,6 +117,7 @@
 "IPv6 bypasses the tunnel" = "IPv6 идёт мимо туннеля";
 "%lld route(s) excluded from the tunnel" = "Маршрутов исключено из туннеля: %lld";
 "Without a pinned key the first connection is trusted blindly" = "Без запиненного ключа первое соединение доверяется на слово";
+"Per-app selection needs MDM on iOS — every app is tunnelled" = "Выбор приложений на iOS требует MDM — в туннель идут все приложения";
 "Server" = "Сервер";
 "Transport" = "Транспорт";
 "Encryption" = "Шифрование";

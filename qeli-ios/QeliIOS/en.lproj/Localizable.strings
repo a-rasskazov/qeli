@@ -117,6 +117,7 @@
 "IPv6 bypasses the tunnel" = "IPv6 bypasses the tunnel";
 "%lld route(s) excluded from the tunnel" = "%lld route(s) excluded from the tunnel";
 "Without a pinned key the first connection is trusted blindly" = "Without a pinned key the first connection is trusted blindly";
+"Per-app selection needs MDM on iOS — every app is tunnelled" = "Per-app selection needs MDM on iOS — every app is tunnelled";
 "Server" = "Server";
 "Transport" = "Transport";
 "Encryption" = "Encryption";

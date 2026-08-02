@@ -52,6 +52,26 @@ class ProtectionSummaryTest {
         assertTrue(s.warnings.isEmpty())
     }
 
+    /**
+     * The GLOBAL LAN toggle narrows the tunnel just as the per-profile one does.
+     *
+     * QeliService carves the private ranges out on `config.allowLan || globalAllowLan`, but
+     * the card read only the profile field — so with the app-wide switch on it announced "all
+     * traffic is protected" while RFC1918, link-local and multicast went past the VPN. A card
+     * that makes security claims has to err in the SAFE direction, and this erred the other
+     * way. (Audit 2026-08-02, §6.)
+     */
+    @Test
+    fun `the global LAN toggle also stops it claiming everything`() {
+        val s = ProtectionSummary.of(cfg(), globalAllowLan = true)
+        assertFalse("the global toggle must count", s.carriesEverything)
+        assertTrue(s.warnings.contains(ProtectionWarning.LAN_OUTSIDE))
+
+        // ...and with it off, a clean profile still claims everything — otherwise this would
+        // pass against a summary that simply always warns.
+        assertTrue(ProtectionSummary.of(cfg(), globalAllowLan = false).carriesEverything)
+    }
+
     @Test
     fun `LAN bypass stops it claiming everything`() {
         val s = ProtectionSummary.of(cfg(lan = true))

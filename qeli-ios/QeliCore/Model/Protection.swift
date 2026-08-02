@@ -1,13 +1,24 @@
 import Foundation
 
 /// How much of the device's traffic the tunnel carries.
+///
+/// Structurally identical to the Android `ProtectionScope` so the two cards stay comparable
+/// case for case, but **iOS only ever produces `.all` and `.splitRoutes`** — see
+/// `.onlySelected` below. The unreachable cases are kept for that parity (and the UI keeps
+/// strings for them), NOT because this platform can reach them.
 enum ProtectionScope: Equatable, Sendable {
     /// Every app, every route.
     case all
-    /// Only the apps the user picked (`apps_mode = include`). iOS cannot enforce this
-    /// without MDM — the profile still carries it, so it is still reported honestly.
+    /// Only the apps the user picked (`apps_mode = include`).
+    ///
+    /// **Never produced on iOS.** Per-app rules need `NEAppRule`, which needs an MDM-managed
+    /// configuration, so the selection is not in force and reporting it as the scope would
+    /// confirm a restriction that does not exist. A profile carrying `apps_mode` gets
+    /// `ProtectionWarning.perAppNotApplied` instead. Do not wire this back up without a
+    /// managed configuration to back it. (Audit 2026-08-02, §7.)
     case onlySelected
     /// Every app except the ones the user picked (`apps_mode = exclude`).
+    /// **Never produced on iOS**, for the same reason as `.onlySelected`.
     case allExcept
     /// Split tunnel: only the configured/pushed routes go through the VPN.
     case splitRoutes
@@ -23,6 +34,10 @@ enum ProtectionWarning: Equatable, Sendable {
     case excludedRoutes
     /// No pinned server key: the first connection trusts whoever answers (TOFU).
     case noPinnedKey
+    /// The profile carries `apps_mode`, but iOS cannot apply per-app rules without MDM
+    /// (`NEAppRule` needs a managed configuration), so EVERY app goes through the tunnel
+    /// regardless of the selection. (Audit 2026-08-02, §7.)
+    case perAppNotApplied
 }
 
 /// What a profile actually protects, derived from the profile alone.
@@ -55,21 +70,29 @@ struct ProtectionSummary: Equatable, Sendable {
     ///
     /// `noPinnedKey` is excluded on purpose: pinning decides WHO the client is willing to
     /// talk to, not HOW MUCH traffic it carries. It still gets its own warning line.
+    /// `perAppNotApplied` is excluded for the opposite reason to `noPinnedKey`: an unapplied
+    /// per-app selection does not narrow what the tunnel carries, it WIDENS it — every app
+    /// goes through the VPN even though only some were picked. Counting it as a narrowing
+    /// would make the card claim less protection than there is. (Audit 2026-08-02, §7.)
     var carriesEverything: Bool {
-        scope == .all && warnings.allSatisfy { $0 == .noPinnedKey }
+        scope == .all && warnings.allSatisfy { $0 == .noPinnedKey || $0 == .perAppNotApplied }
     }
 
     init(config: VPNConfig) {
+        // `apps_mode` is REPORTED, not applied, on this platform.
+        //
+        // Consumer iOS cannot install per-app rules: `NEAppRule` requires a managed
+        // configuration, and `VPNConfig` says so itself. So a profile with
+        // `apps_mode = include` does NOT leave the unselected apps outside — every app goes
+        // through the tunnel. Mapping the mode straight onto the scope made the card confirm a
+        // restriction that is not in force: the user reads "only the selected apps are
+        // protected", arranges their traffic around that belief, and the truth is the
+        // opposite. The scope now follows the ROUTES, which is what this platform actually
+        // enforces, and the unapplied selection gets its own warning line instead of a
+        // headline. (Audit 2026-08-02, §7.)
         let mode = config.appsMode.lowercased()
-        if mode == "include" {
-            scope = .onlySelected
-        } else if mode == "exclude" {
-            scope = .allExcept
-        } else if !config.isFullTunnel {
-            scope = .splitRoutes
-        } else {
-            scope = .all
-        }
+        let perAppRequested = mode == "include" || mode == "exclude"
+        scope = config.isFullTunnel ? .all : .splitRoutes
         appCount = config.apps.count
         excludedRouteCount = config.excludeRoutes.count
         // Every mode runs the hybrid PQ ClientHello except `plain`, which uses a raw X25519
@@ -86,6 +109,10 @@ struct ProtectionSummary: Equatable, Sendable {
         if config.allowIPv6Leak { found.append(.ipv6Outside) }
         if !config.excludeRoutes.isEmpty { found.append(.excludedRoutes) }
         if (config.serverPublicKeyHex ?? "").isEmpty { found.append(.noPinnedKey) }
+        // Deliberately a warning and NOT part of `carriesEverything`: an unapplied per-app
+        // selection does not narrow the tunnel — it widens it beyond what the user asked for.
+        // The card must say so without claiming the tunnel protects less than it does.
+        if perAppRequested { found.append(.perAppNotApplied) }
         warnings = found
     }
 }
