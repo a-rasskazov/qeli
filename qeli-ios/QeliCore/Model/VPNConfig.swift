@@ -44,7 +44,10 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// `keepalive`, `post_up`, `exit_node` and friends are real Rust-client file-only settings
     /// (docs/ru/CONFIG.md, "Что пушем НЕ передаётся"), and a CLI profile carrying them must
     /// still open here. Only a name NOTHING understands is a typo.
-    static let knownINIKeys: Set<String> = [
+    // Set(...) around the literal, not just the `Set<String>` annotation: a contextual type
+    // does not propagate through a method call, so Swift types the literal as Array first and
+    // then cannot find `union` on it.
+    static let knownINIKeys: Set<String> = Set<String>([
         // Read by this port.
         // `allow_lan`, `apps` and `apps_mode` are read AND written a few lines below — leaving
         // them out made this port reject a profile it had exported itself, and every profile
@@ -61,7 +64,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
         "route_file", "route_local", "server", "shaping", "shaping_budget", "shaping_gap_max",
         "shaping_gap_mean", "shaping_gap_min", "shaping_max_size", "shaping_min_size",
         "shaping_stealth", "shaping_stealth_mbps", "sni", "timeout", "user",
-    ].union(carriedINIKeys)
+    ]).union(carriedINIKeys)
 
     /// Keys this port ACCEPTS but does not model — read into ``carriedKeys`` and written back
     /// verbatim, so opening and saving a CLI profile does not strip them.
