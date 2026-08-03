@@ -623,10 +623,9 @@ sni = www.microsoft.com
                     // New format stores `cfg` (INI). Legacy stored `json` (JSON) or
                     // an old multi-profile {address,port,...}. Normalize all to INI.
                     val stored = p.optString("cfg", "").ifBlank {
-                        p.optString("json", "").ifBlank { synthesizeJson(p) }
+                        p.optString("json", "").ifBlank { synthesizeIni(p) }
                     }
-                    val ini = toIniText(stored)
-                    profiles.add(Profile(p.optString("name", "profile"), ini))
+                    profiles.add(Profile(p.optString("name", "profile"), stored))
                 }
             } catch (e: Exception) { Log.e("VpnMain", "profiles load: ${e.message}") }
         }
@@ -634,18 +633,32 @@ sni = www.microsoft.com
         if (activeIndex !in profiles.indices) activeIndex = 0
     }
 
-    /** Normalize stored profile text to INI: convert legacy JSON, pass INI through. */
-    private fun toIniText(stored: String): String = try {
-        if (stored.trimStart().startsWith("{")) VpnConfig.fromJson(stored).toIni() else stored
-    } catch (_: Exception) { stored }
-
-    // legacy old-multi-profile entry -> a config json (then normalized to INI)
-    private fun synthesizeJson(p: JSONObject): String = JSONObject().apply {
-        put("name", p.optString("name", "profile"))
-        put("server", JSONObject().put("address", p.optString("address", "")).put("port", p.optInt("port", 443)))
-        put("auth", JSONObject().put("username", p.optString("username", "phone")))
-        put("routing", JSONObject().put("mode", "full-tunnel").put("add_default_gateway", true))
-    }.toString()
+    /**
+     * Legacy old-multi-profile entry (`{address,port,username}`) -> current flat-INI.
+     *
+     * Built through the model rather than by string concatenation so the key names come from
+     * `toIni` and cannot drift from what `fromIni` reads. It used to be assembled as JSON and
+     * handed to `VpnConfig.fromJson`; that parser is gone (see `VpnConfig.jsonRetired`), and
+     * routing here was only ever the full-tunnel default anyway.
+     *
+     * A profile still stored under the older `json` key is NOT converted — it is passed through
+     * as-is and `parse` reports the retired format by name, which is a legible instruction to
+     * re-export rather than a second parser kept alive for one migration.
+     */
+    private fun synthesizeIni(p: JSONObject): String = try {
+        VpnConfig(
+            serverAddress = p.optString("address", ""),
+            port = p.optInt("port", 443),
+            username = p.optString("username", "phone"),
+            // The old format never stored one; the user re-enters it. Empty, not a
+            // placeholder — a placeholder would look like a saved credential.
+            password = "",
+        ).toIni()
+    } catch (e: Exception) {
+        // toIni validates; an entry too broken to render is left for parse to report.
+        Log.e("VpnMain", "legacy profile migrate: ${e.message}")
+        ""
+    }
 
     private fun persist() {
         val arr = JSONArray()
@@ -754,7 +767,8 @@ sni = www.microsoft.com
         try {
             val text = contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() }
                 ?.trim() ?: throw IllegalStateException("Empty file")
-            // A file may hold a qeli:// link, a JSON config, or an INI config.
+            // A file may hold a qeli:// link or an INI config. A JSON one is refused by
+            // `parse` below, by name — see `VpnConfig.jsonRetired`.
             if (text.startsWith("qeli://")) { addProfileFromQeliUri(text); return }
             // `parse` only PARSES — fromIni never called validate(), so the comment that
             // used to sit here claiming otherwise was the whole bug: a raw INI file was stored
@@ -763,9 +777,10 @@ sni = www.microsoft.com
             // boundary where untrusted text enters, exactly as the qeli:// import already does.
             // (Audit 2026-07-29, #5.)
             val cfg = VpnConfig.parse(text).also { it.validate() }
-            val ini = if (text.trimStart().startsWith("{")) cfg.toIni() else text
-            val label = (commentLabel(text) ?: jsonName(text)).ifBlank { cfg.serverAddress }
-            profiles.add(Profile(label, ini)); activeIndex = activeAfterAdd()
+            // Stored verbatim: what parsed is already INI, so re-emitting it through `toIni`
+            // would only drop the author's comments and ordering for no gain.
+            val label = commentLabel(text).orEmpty().ifBlank { cfg.serverAddress }
+            profiles.add(Profile(label, text)); activeIndex = activeAfterAdd()
             persist(); renderProfileList(); renderActiveProfile(); pingActive()
             binding.tabs.getTabAt(0)?.select()
             appendLog("Imported \"$label\"")
@@ -778,9 +793,6 @@ sni = www.microsoft.com
     /** Leading `# label` comment line of an INI config, if present. */
     private fun commentLabel(text: String): String? =
         text.lineSequence().firstOrNull()?.trim()?.takeIf { it.startsWith("#") }?.removePrefix("#")?.trim()?.ifBlank { null }
-
-    private fun jsonName(text: String): String =
-        try { if (text.trimStart().startsWith("{")) JSONObject(text).optString("name", "") else "" } catch (_: Exception) { "" }
 
     // ── rendering ────────────────────────────────────────────────────────--
 

@@ -69,14 +69,23 @@ final class ProfileStore: @unchecked Sendable {
             let configText: String
             if let cfg = raw["cfg"] as? String, !cfg.isEmpty {
                 configText = cfg
-            } else if let json = raw["json"] as? String, !json.isEmpty {
-                configText = try VPNConfig(parsing: json).toINI(label: name)
+            } else if let stored = raw["json"] as? String, !stored.isEmpty {
+                // A profile written by an app version that stored the CONFIG as JSON. That
+                // format is retired, so `parsing:` refuses it and names it — the restore fails
+                // with "export the profile again" rather than with a syntax error. The BACKUP
+                // envelope around it is still JSON and is unaffected; only the config text is.
+                configText = try VPNConfig(parsing: stored).toINI(label: name)
             } else {
-                let legacy = try JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys])
-                guard let text = String(data: legacy, encoding: .utf8) else {
+                // Legacy old-multi-profile entry: the fields sit directly on the row. It used
+                // to be re-serialized to JSON and handed to the config parser purely to reuse
+                // it; built through the model instead, so the key names come from `toINI` and
+                // cannot drift from what the INI reader expects.
+                guard let address = (raw["address"] as? String).nonEmpty else {
                     throw ProfileStoreError.notQeliBackup
                 }
-                configText = try VPNConfig(parsing: text).toINI(label: name)
+                var legacy = VPNConfig(serverAddress: address, port: raw["port"] as? Int ?? 443)
+                legacy.username = (raw["username"] as? String).nonEmpty ?? "phone"
+                configText = try legacy.toINI(label: name)
             }
             _ = try VPNConfig(parsing: configText)
             return Profile(

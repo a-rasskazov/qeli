@@ -89,6 +89,10 @@ struct VPNConfig: Codable, Equatable, Sendable {
     static let mtuMin = 576
     static let mtuMax = 16638
 
+    /// Upper bound for both reconnect delays, in seconds (one day). Shared with the Kotlin and
+    /// C# ports; see the note at the parse site for why the desktop client cannot go higher.
+    static let reconnectDelaySecondsMax = 86_400
+
     var serverAddress: String
     var port: Int
     var protocolName: String = "tcp"
@@ -206,7 +210,23 @@ struct VPNConfig: Codable, Equatable, Sendable {
         if trimmed.hasPrefix("qeli://") {
             self = try Self.fromQeliURI(trimmed)
         } else if trimmed.hasPrefix("{") {
-            self = try Self.fromJSON(trimmed)
+            // JSON is RETIRED, and detected only so the message can say so.
+            //
+            // It was the original config format and stopped being written years ago; INI
+            // replaced it and every tool emits INI. What remained was a second, entirely
+            // parallel parser per client — with its own defaults, its own leniency and its
+            // own bugs. It kept accruing findings the INI path had already fixed (numbers
+            // silently defaulting, unknown keys dropped, types coerced) because hardening
+            // it meant doing every fix twice, in four languages, for a format nobody
+            // produces.
+            //
+            // Letting `{…}` fall through to fromINI instead would "work" but report a
+            // meaningless "missing [qeli]". Someone opening a genuinely old file deserves
+            // to be told what happened and what to do. (Retired 2026-08-02.)
+            throw VPNConfigError.invalid(
+                "this is a JSON profile, a format qeli no longer reads — export the profile "
+                    + "again from the server panel, or use its qeli:// link, to get the "
+                    + "current INI format")
         } else {
             self = try Self.fromINI(trimmed)
         }
@@ -458,6 +478,19 @@ struct VPNConfig: Codable, Equatable, Sendable {
             }
             return parsed
         }
+        /// ``numAt`` with a range, recording out-of-range exactly like unreadable.
+        ///
+        /// Falling back to the default on an out-of-range value is not a clamp — a clamp pins to
+        /// the nearest bound, this jumps somewhere else entirely — so it has to be reported, or
+        /// the setting the user wrote is silently replaced by an unrelated one. Mirrors the C#
+        /// `RangedLong` and the Kotlin `rangedLong`.
+        func rangedNum(_ key: String, default fallback: Int, _ lo: Int, _ hi: Int) -> Int {
+            let v = numAt(key, default: fallback)
+            if v >= lo && v <= hi { return v }
+            let present = !(qeli[key]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
+            if present && !badNums.contains(key) { badNums.append(key) }
+            return fallback
+        }
         var badBools: [String] = []
         func boolAt(_ key: String, default fallback: Bool) -> Bool {
             guard let raw = qeli[key]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else {
@@ -481,8 +514,14 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.connectionTimeoutSeconds = numAt("timeout", default: 30)
         config.reconnectEnabled = boolAt("reconnect", default: true)
         config.reconnectMaxRetries = numAt("reconnect_retries", default: -1)
-        config.reconnectBaseDelaySeconds = numAt("reconnect_base_delay", default: 1)
-        config.reconnectMaxDelaySeconds = numAt("reconnect_max_delay", default: 60)
+        // Bounded to a day, matching the other ports. On the desktop client the bound is not a
+        // matter of taste — its reconnect loop waits via `WaitHandle.WaitOne(Int32)`, so a
+        // delay past ~24.8 days truncates and can throw — and a profile is portable, so one
+        // bound everywhere beats three behaviours out of one file.
+        config.reconnectBaseDelaySeconds =
+            rangedNum("reconnect_base_delay", default: 1, 1, Self.reconnectDelaySecondsMax)
+        config.reconnectMaxDelaySeconds =
+            rangedNum("reconnect_max_delay", default: 60, 1, Self.reconnectDelaySecondsMax)
         config.username = qeli["user"].nonEmpty ?? "client"
         config.password = qeli["pass"] ?? ""
         config.serverPublicKeyHex = qeli["key"].nonEmpty
@@ -567,156 +606,6 @@ struct VPNConfig: Codable, Equatable, Sendable {
         return config
     }
 
-    static func fromJSON(_ text: String) throws -> VPNConfig {
-        guard let data = text.data(using: .utf8),
-              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw VPNConfigError.invalid("profile JSON is invalid")
-        }
-        func dict(_ key: String, in parent: [String: Any] = root) -> [String: Any] {
-            parent[key] as? [String: Any] ?? [:]
-        }
-        func string(_ key: String, in parent: [String: Any], default fallback: String = "") -> String {
-            parent[key] as? String ?? fallback
-        }
-        // Numbers had the same door left open, and only booleans were closed.
-        //
-        // `(parent[key] as? NSNumber)?.intValue ?? fallback` swallowed anything that is not an
-        // NSNumber and handed back the default, so `"port": "bad"` became 443 — a DIFFERENT
-        // SERVER — and an unreadable limit became whatever the default happens to be, in
-        // silence. That is exactly the failure the INI path was hardened against; the JSON
-        // importer reaches it through another door. Present-but-unreadable is recorded, absent
-        // is not. (Audit 2026-08-02, §6 of the follow-up.)
-        var badJSONNumbers: [String] = []
-        func int(_ key: String, in parent: [String: Any], default fallback: Int) -> Int {
-            guard let raw = parent[key], !(raw is NSNull) else { return fallback }
-            if let n = raw as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
-                // A FRACTIONAL number is not a small rounding matter: `intValue` truncates, so
-                // `"port": 443.9` became 443 and passed validation as a port the user never
-                // wrote. Same for an MTU, a timeout or a limit. Record it instead.
-                let d = n.doubleValue
-                if d == d.rounded(.towardZero) && d.isFinite {
-                    return n.intValue
-                }
-            }
-            // A JSON string holding digits is accepted: hand-written and
-            // exported-from-elsewhere profiles quote numbers, and rejecting those would refuse
-            // configs that have always worked.
-            if let s = raw as? String, let parsed = Int(s.trimmingCharacters(in: .whitespaces)) {
-                return parsed
-            }
-            badJSONNumbers.append(key)
-            return fallback
-        }
-        // `(as? NSNumber)?.boolValue` accepted ANY number — `2` read as true — and silently
-        // returned the default for a string or anything else: the same fail-open the INI path
-        // had, through a different door. A key PRESENT but unreadable is recorded; an absent one
-        // is not, which is what the default is for. (Audit 2026-08-01, §8.)
-        var badJSONBools: [String] = []
-        func bool(_ key: String, in parent: [String: Any], default fallback: Bool) -> Bool {
-            guard let raw = parent[key], !(raw is NSNull) else { return fallback }
-            if let n = raw as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() {
-                return n.boolValue
-            }
-            if let s = raw as? String {
-                switch s.trimmingCharacters(in: .whitespaces).lowercased() {
-                case "true", "1", "yes", "on": return true
-                case "false", "0", "no", "off": return false
-                default: break
-                }
-            }
-            badJSONBools.append(key)
-            return fallback
-        }
-        func strings(_ key: String, in parent: [String: Any]) -> [String] {
-            parent[key] as? [String] ?? []
-        }
-
-        let server = dict("server")
-        let reconnect = dict("reconnect", in: server)
-        let auth = dict("auth")
-        let tun = dict("tun")
-        let routing = dict("routing")
-        let dns = dict("dns")
-        let obfuscation = dict("obfuscation")
-        let padding = dict("padding", in: obfuscation)
-        let heartbeat = dict("heartbeat", in: obfuscation)
-        let quic = dict("quic", in: obfuscation)
-        let awg = dict("awg", in: obfuscation)
-        // Canonical name is `traffic_shaping` with `idle_gap_*` fields — what the Rust
-        // client, the server's AuthOK push and every exported profile use. This read
-        // `shaping` / `gap_*`, which matches nothing the rest of the project emits, so a
-        // canonical JSON profile imported here silently came back with shaping DEFAULTS: the
-        // feature looked configured and was not. The short spelling is still accepted so
-        // profiles written by older builds of this client keep loading.
-        // (Audit 2026-07-29, #8.)
-        let shaping: [String: Any] = {
-            let canonical = dict("traffic_shaping", in: obfuscation)
-            return canonical.isEmpty ? dict("shaping", in: obfuscation) : canonical
-        }()
-
-        var config = VPNConfig(
-            serverAddress: string("address", in: server, default: string("address", in: root, default: "127.0.0.1")),
-            port: int("port", in: server, default: int("port", in: root, default: 443))
-        )
-        config.protocolName = string("protocol", in: server, default: "tcp")
-        config.connectionTimeoutSeconds = int("connection_timeout_secs", in: server, default: 30)
-        config.reconnectEnabled = bool("enabled", in: reconnect, default: true)
-        config.reconnectMaxRetries = int("max_retries", in: reconnect, default: -1)
-        config.reconnectBaseDelaySeconds = int("base_delay_secs", in: reconnect, default: 1)
-        config.reconnectMaxDelaySeconds = int("max_delay_secs", in: reconnect, default: 60)
-        config.username = string("username", in: auth, default: string("username", in: root, default: "client"))
-        config.password = string("password", in: auth, default: string("password", in: root))
-        config.serverPublicKeyHex = string("server_public_key", in: auth).nonEmpty
-        config.bindStaticToSession = bool("bind_static_to_session", in: auth, default: true)
-        config.mtu = int("mtu", in: tun, default: 0)
-        config.routingMode = string("mode", in: routing, default: "full-tunnel")
-        config.addDefaultGateway = bool("add_default_gateway", in: routing, default: config.routingMode == "full-tunnel")
-        config.includeRoutes = strings("include", in: routing)
-        config.excludeRoutes = strings("exclude", in: routing)
-        config.routeLocalNetworks = bool("route_local_networks", in: routing, default: false)
-        config.allowIPv6Leak = bool("allow_ipv6_leak", in: routing, default: false)
-        config.allowLAN = bool("allow_lan", in: routing, default: false)
-        config.dnsServers = strings("servers", in: dns)
-        // JSON keeps mode and servers apart, so it never had the flat INI's ambiguity — but
-        // the mode still has to survive the import.
-        // Kept RAW, not filtered: `validate()` refuses an unknown value. Silently dropping it
-        // left `dnsMode` at "tunnel", so `"mode": "of"` sent every lookup through the tunnel
-        // when the user asked for the exact opposite — a typo choosing the other branch, which
-        // is the failure the INI path was hardened against. (Audit 2026-08-02, §6 of the
-        // follow-up.)
-        if let m = (dns["mode"] as? String)?.lowercased() {
-            config.dnsMode = m
-        }
-        config.wireMode = string("mode", in: obfuscation, default: "fake-tls")
-        config.obfsKey = string("obfs_key", in: obfuscation)
-        config.obfsFronting = string("fronting", in: obfuscation, default: "websocket")
-        config.sni = string("sni", in: obfuscation).nonEmpty
-        config.realityShortID = string("reality_short_id", in: obfuscation).nonEmpty
-        config.paddingEnabled = bool("enabled", in: padding, default: true)
-        config.paddingMin = int("min_bytes", in: padding, default: 0)
-        config.paddingMax = int("max_bytes", in: padding, default: 255)
-        config.heartbeatEnabled = bool("enabled", in: heartbeat, default: true)
-        config.heartbeatIntervalMilliseconds = int("interval_ms", in: heartbeat, default: 15_000)
-        config.heartbeatDataSize = int("data_size_bytes", in: heartbeat, default: 16)
-        config.heartbeatJitterMilliseconds = int("jitter_ms", in: heartbeat, default: 2_000)
-        config.quicEnabled = bool("enabled", in: quic, default: false)
-        config.awgEnabled = bool("enabled", in: awg, default: false)
-        config.awgJunkCount = int("jc", in: awg, default: 0)
-        config.awgJunkMin = int("jmin", in: awg, default: 40)
-        config.awgJunkMax = int("jmax", in: awg, default: 300)
-        config.shapingEnabled = bool("enabled", in: shaping, default: false)
-        config.shapingGapMeanMilliseconds = int("idle_gap_mean_ms", in: shaping, default: int("gap_mean_ms", in: shaping, default: 700))
-        config.shapingGapMinMilliseconds = int("idle_gap_min_ms", in: shaping, default: int("gap_min_ms", in: shaping, default: 40))
-        config.shapingGapMaxMilliseconds = int("idle_gap_max_ms", in: shaping, default: int("gap_max_ms", in: shaping, default: 6_000))
-        config.shapingBudgetBytesPerSecond = int("budget_bytes_per_sec", in: shaping, default: 16_384)
-        config.shapingMinSize = int("min_size", in: shaping, default: 64)
-        config.shapingMaxSize = int("max_size", in: shaping, default: 1_024)
-        config.shapingStealth = bool("stealth", in: shaping, default: false)
-        config.shapingStealthRateMbps = int("stealth_rate_mbps", in: shaping, default: 2)
-        config.unparsedBooleanKeys = badJSONBools
-        config.unparsedNumericKeys = badJSONNumbers
-        return config
-    }
 
     static func fromQeliURI(_ uri: String) throws -> VPNConfig {
         guard uri.hasPrefix("qeli://") else { throw VPNConfigError.invalid("not a qeli:// link") }

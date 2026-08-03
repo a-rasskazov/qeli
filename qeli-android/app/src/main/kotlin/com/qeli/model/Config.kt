@@ -1,13 +1,12 @@
 package com.qeli.model
 
 import com.qeli.protocol.UdpFrag
-import org.json.JSONObject
 import java.io.Serializable
 
 /**
  * Full qeli client configuration. Mirrors the relevant fields of the Rust
  * ClientConfig (qeli/src/config/client.rs). Built either from the simple
- * UI fields or by importing a JSON config via [fromJson].
+ * UI fields or by importing a flat-INI config via [fromIni] / [parse].
  */
 data class VpnConfig(
     // ── server ──
@@ -37,8 +36,8 @@ data class VpnConfig(
     val mtuProbe: Boolean = true,
     // ── routing ──
     // Default to full-tunnel: a VPN should carry ALL traffic so nothing leaks
-    // outside the encrypted path. Split-tunnel stays available via an imported
-    // JSON config (routing.mode = "split-tunnel").
+    // outside the encrypted path. No INI key sets this directly — `fromIni` derives it
+    // from `gateway`, and the UI writes it — so `validate` is where a bad value is caught.
     val routingMode: String = "full-tunnel",   // "full-tunnel" | "split-tunnel"
     val addDefaultGateway: Boolean = true,
     val includeRoutes: List<String> = emptyList(),
@@ -514,6 +513,16 @@ data class VpnConfig(
         // out-of-range padding_max is the same class of bug one layer down — every data
         // record then exceeds PacketCodec.MAX_RECORD_SIZE and the peer drops it. Same ranges
         // as the Rust client (qeli/src/config/client.rs) and the C# port.
+        /**
+         * Upper bound for both reconnect delays, in seconds (one day).
+         *
+         * Shared with the C# client, where it is not a matter of taste: that port's reconnect
+         * loop waits via `WaitHandle.WaitOne(Int)`, so a delay past ~24.8 days truncates on the
+         * cast and can land negative, throwing and killing the loop. Here the delay is a Long
+         * all the way down, but a profile is portable — one bound, one behaviour.
+         */
+        const val RECONNECT_DELAY_SECS_MAX = 86_400L
+
         const val MTU_MIN = 576
         /** Derived, in Rust, from the record format (protocol/packet.rs MAX_TUNNEL_MTU): a record holds nonce + counter + payload + padding-length + tag and must fit MAX_RECORD_SIZE, so anything larger the PEER REJECTS. Mirrored here as a literal; the four ports and the two UIs must all carry the same number, because raising it in one place only is worse than not raising it — see Audit 2026-08-01 §1. */
         const val MTU_MAX = 16638
@@ -522,7 +531,7 @@ data class VpnConfig(
         /** 0 (auto) or a plausible tunnel MTU. */
         fun mtuInRange(mtu: Int): Boolean = mtu == 0 || mtu in MTU_MIN..MTU_MAX
 
-        /** Explicit TUN MTU from a config FILE (flat-INI or JSON); 0 = auto. REJECTS, like
+        /** Explicit TUN MTU from a config FILE (flat-INI); 0 = auto. REJECTS, like
          *  the Rust `from_ini` and the C# `CheckedMtu`: a bad value in a file the user wrote
          *  by hand is a mistake worth surfacing at import (every import path already reports
          *  the message), not something to silently rewrite behind their back. */
@@ -559,9 +568,9 @@ data class VpnConfig(
         }
 
         /**
-         * Parse a profile config in EITHER format: flat-INI (starts with a
-         * section header / comment) or legacy JSON (starts with `{`). The app
-         * now stores INI; this keeps old JSON profiles working transparently.
+         * Parse a profile config, detecting the format by content: a qeli:// share
+         * link, or the flat-INI the app stores. A leading `{` is recognised only to
+         * name the retired JSON format — see [jsonRetired].
          */
         fun parse(text: String): VpnConfig =
             when {
@@ -569,9 +578,28 @@ data class VpnConfig(
                 // like pingActive/probe pass stored p.text (normally already INI), but a
                 // qeli:// here would otherwise fall into fromIni and fail "missing [qeli]".
                 text.trimStart().startsWith("qeli://") -> fromQeliUri(text.trim())
-                text.trimStart().startsWith("{") -> fromJson(text)
+                text.trimStart().startsWith("{") -> throw IllegalArgumentException(jsonRetired)
                 else -> fromIni(text)
             }
+
+        /**
+         * JSON is RETIRED, and detected only so the message can say so.
+         *
+         * It was the original config format and stopped being written years ago; INI
+         * replaced it and every tool emits INI. What remained was a second, entirely
+         * parallel parser per client — with its own defaults, its own leniency and its
+         * own bugs. It kept accruing findings the INI path had already fixed (numbers
+         * silently defaulting, unknown keys dropped, types coerced) because hardening it
+         * meant doing every fix twice, in four languages, for a format nobody produces.
+         *
+         * Letting `{…}` fall through to fromIni instead would "work" but report a
+         * meaningless "missing [qeli]". Someone opening a genuinely old file deserves to
+         * be told what happened and what to do. (Retired 2026-08-02.)
+         */
+        const val jsonRetired: String =
+            "this is a JSON profile, a format qeli no longer reads — export the profile " +
+                "again from the server panel, or use its qeli:// link, to get the current " +
+                "INI format"
 
         /**
          * Parse the flat-INI `[qeli]` client config (mirrors the Rust
@@ -642,8 +670,15 @@ data class VpnConfig(
                 connectionTimeoutSecs = longAt("timeout", 30L, badNums, q),
                 reconnectEnabled = boolAt("reconnect", true),
                 reconnectMaxRetries = numAt("reconnect_retries", -1, badNums, q),
-                reconnectBaseDelaySecs = longAt("reconnect_base_delay", 1L, badNums, q),
-                reconnectMaxDelaySecs = longAt("reconnect_max_delay", 60L, badNums, q),
+                // Bounded to a day, matching the C# client. Unbounded, `reconnect_base_delay`
+                // multiplied by 1000 in QeliService could overflow Long outright, and even
+                // short of that the value is not a backoff policy any more — the desktop port
+                // hits a harder cliff (its wait takes an Int), so one bound for both keeps a
+                // shared profile behaving the same on every client.
+                reconnectBaseDelaySecs =
+                    rangedLong("reconnect_base_delay", 1L, 1L, RECONNECT_DELAY_SECS_MAX, badNums, q),
+                reconnectMaxDelaySecs =
+                    rangedLong("reconnect_max_delay", 60L, 1L, RECONNECT_DELAY_SECS_MAX, badNums, q),
                 username = q["user"]?.ifBlank { null } ?: "client",
                 password = q["pass"] ?: "",
                 serverPublicKeyHex = q["key"]?.takeIf { it.isNotEmpty() },
@@ -871,6 +906,28 @@ data class VpnConfig(
             return raw.toLongOrNull() ?: run { bad.add(key); default }
         }
 
+        /**
+         * [longAt] with a range, recording out-of-range exactly like unreadable.
+         *
+         * Falling back to the default on an out-of-range value is not a clamp — a clamp pins to
+         * the nearest bound, this jumps somewhere else entirely — so it has to be reported, or
+         * the setting the user wrote is silently replaced by an unrelated one. Mirrors the C#
+         * `RangedLong`.
+         */
+        private fun rangedLong(
+            key: String,
+            default: Long,
+            lo: Long,
+            hi: Long,
+            bad: MutableList<String>,
+            q: Map<String, String>
+        ): Long {
+            val v = longAt(key, default, bad, q)
+            if (v in lo..hi) return v
+            if (!q[key].isNullOrBlank() && key !in bad) bad.add(key)
+            return default
+        }
+
         private fun numAt(
             key: String,
             default: Int,
@@ -914,155 +971,6 @@ data class VpnConfig(
             return out
         }
 
-        /**
-         * Parse a qeli JSON client config. Unknown fields are ignored; missing
-         * fields fall back to the Rust defaults. Supports both the canonical
-         * schema and a few legacy aliases.
-         */
-        fun fromJson(text: String): VpnConfig {
-            val root = JSONObject(text)
-            // `optBoolean` swallows anything that is not a real JSON boolean and returns the
-            // default — the same fail-open the INI path had, reached through a different door.
-            // A key that is PRESENT but unreadable is recorded; an absent one is not (that is
-            // what the default is for). (Audit 2026-08-01, §8.)
-            val badJsonBools = mutableListOf<String>()
-            fun jbool(o: JSONObject, key: String, default: Boolean): Boolean {
-                if (!o.has(key) || o.isNull(key)) return default
-                when (val v = o.get(key)) {
-                    is Boolean -> return v
-                    is String -> when (v.trim().lowercase()) {
-                        "true", "1", "yes", "on" -> return true
-                        "false", "0", "no", "off" -> return false
-                    }
-                }
-                badJsonBools.add(key)
-                return default
-            }
-            // Numbers had the same door left open, and only booleans were closed.
-            //
-            // `optInt`/`optLong` swallow anything they cannot coerce and hand back the
-            // default, so `"port": "bad"` became 443 — a DIFFERENT SERVER — and an unreadable
-            // limit became whatever the default happens to be, in silence. That is exactly the
-            // failure the INI path was hardened against; the JSON importer reaches it through
-            // another door. Present-but-unreadable is recorded, absent is not.
-            // (Audit 2026-08-02, §6 of the follow-up.)
-            val badJsonNums = mutableListOf<String>()
-            fun jlong(o: JSONObject, key: String, default: Long): Long {
-                if (!o.has(key) || o.isNull(key)) return default
-                when (val v = o.get(key)) {
-                    // A FRACTIONAL number is not a small rounding matter: `toLong()` truncates,
-                    // so `"port": 443.9` became 443 and passed validation as a port the user
-                    // never wrote. Same for an MTU, a timeout or a limit. Record it instead.
-                    is Number -> {
-                        val d = v.toDouble()
-                        if (d == Math.floor(d) && !d.isInfinite()) return v.toLong()
-                    }
-                    // A JSON string holding digits is accepted: hand-written and
-                    // exported-from-elsewhere profiles quote numbers, and rejecting those
-                    // would refuse configs that have always worked.
-                    is String -> v.trim().toLongOrNull()?.let { return it }
-                }
-                badJsonNums.add(key)
-                return default
-            }
-            fun jint(o: JSONObject, key: String, default: Int): Int =
-                jlong(o, key, default.toLong()).coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
-            val server = root.optJSONObject("server") ?: JSONObject()
-            val reconnect = server.optJSONObject("reconnect") ?: JSONObject()
-            val auth = root.optJSONObject("auth") ?: JSONObject()
-            val tun = root.optJSONObject("tun") ?: JSONObject()
-            val routing = root.optJSONObject("routing") ?: JSONObject()
-            val dns = root.optJSONObject("dns") ?: JSONObject()
-            val obf = root.optJSONObject("obfuscation") ?: JSONObject()
-            val padding = obf.optJSONObject("padding") ?: JSONObject()
-            val heartbeat = obf.optJSONObject("heartbeat") ?: JSONObject()
-            val quic = obf.optJSONObject("quic") ?: JSONObject()
-            val awg = obf.optJSONObject("awg") ?: JSONObject()
-            // Sections the importer used to stop short of. A canonical JSON profile carrying
-            // shaping, an explicit `tun.mtu_probe = false` or a [logging] block lost all of it
-            // on import and came back with defaults — the profile looked configured and was
-            // not, and re-exporting it wrote the loss back out. (Audit 2026-07-29, #6.)
-            val shaping = obf.optJSONObject("traffic_shaping") ?: JSONObject()
-            val logging = root.optJSONObject("logging") ?: JSONObject()
-
-            val password = when {
-                auth.has("password") && !auth.isNull("password") -> auth.optString("password")
-                root.has("password") -> root.optString("password")
-                else -> ""
-            }
-            // Padding bounds are clamped, not rejected — see [checkedPadding]. (C6)
-            val pad = checkedPadding(jint(padding, "min_bytes", 0), jint(padding, "max_bytes", 255))
-
-            return VpnConfig(
-                serverAddress = server.optString("address", root.optString("address", "127.0.0.1")),
-                port = jint(server, "port", if (root.has("port")) jint(root, "port", 443) else 443),
-                protocol = server.optString("protocol", "tcp"),
-                connectionTimeoutSecs = jlong(server, "connection_timeout_secs", 30),
-                reconnectEnabled = jbool(reconnect, "enabled", true),
-                reconnectMaxRetries = jint(reconnect, "max_retries", -1),
-                reconnectBaseDelaySecs = jlong(reconnect, "base_delay_secs", 1),
-                reconnectMaxDelaySecs = jlong(reconnect, "max_delay_secs", 60),
-                username = auth.optString("username", root.optString("username", "client")),
-                password = password,
-                serverPublicKeyHex = auth.optStringOrNull("server_public_key"),
-                bindStaticToSession = jbool(auth, "bind_static_to_session", true),
-                // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
-                mtu = checkedMtu(jint(tun, "mtu", 0)),
-                // Default to full-tunnel (a VPN should carry ALL traffic) so a config
-                // without a routing section doesn't silently leak outside the tunnel.
-                // Explicit "split-tunnel" is still honoured: isFullTunnel only becomes
-                // true via add_default_gateway or mode=="full-tunnel".
-                routingMode = routing.optString("mode", "full-tunnel"),
-                addDefaultGateway = jbool(routing, "add_default_gateway", false),
-                includeRoutes = routing.optStringList("include"),
-                excludeRoutes = routing.optStringList("exclude"),
-                routeLocalNetworks = jbool(routing, "route_local_networks", false),
-                allowIpv6Leak = jbool(routing, "allow_ipv6_leak", false),
-                // Was missing: a JSON config carrying routing.allow_lan imported with LAN
-                // bypass silently off, while the iOS client honoured it.
-                allowLan = jbool(routing, "allow_lan", false),
-                dnsServers = dns.optStringList("servers"),
-                // JSON keeps mode and servers in separate fields, so it never had the flat
-                // INI's ambiguity — but the mode still has to survive the import.
-                // Kept RAW, not filtered: [validate] refuses an unknown value. Silently
-                // dropping it left the mode at "tunnel", so `"mode": "of"` sent every lookup
-                // through the tunnel when the user asked for the exact opposite — a typo
-                // choosing the other branch. (Audit 2026-08-02, §6 of the follow-up.)
-                dnsMode = dns.optString("mode", "tunnel").lowercase(),
-                wireMode = obf.optString("mode", "fake-tls"),
-                obfsKey = obf.optString("obfs_key", ""),
-                obfsFronting = obf.optString("fronting", "websocket"),
-                awgEnabled = jbool(awg, "enabled", false),
-                awgJc = jint(awg, "jc", 0),
-                awgJmin = jint(awg, "jmin", 40),
-                awgJmax = jint(awg, "jmax", 300),
-                quicEnabled = jbool(quic, "enabled", false),
-                sni = obf.optStringOrNull("sni"),
-                realityShortId = obf.optStringOrNull("reality_short_id"),
-                paddingEnabled = jbool(padding, "enabled", true),
-                paddingMin = pad.first,
-                paddingMax = pad.second,
-                heartbeatEnabled = jbool(heartbeat, "enabled", true),
-                heartbeatIntervalMs = jlong(heartbeat, "interval_ms", 15000),
-                heartbeatDataSize = jint(heartbeat, "data_size_bytes", 16),
-                heartbeatJitterMs = jlong(heartbeat, "jitter_ms", 2000),
-                mtuProbe = jbool(tun, "mtu_probe", true),
-                shapingEnabled = jbool(shaping, "enabled", false),
-                shapingGapMeanMs = jlong(shaping, "idle_gap_mean_ms", 700),
-                shapingGapMinMs = jlong(shaping, "idle_gap_min_ms", 40),
-                shapingGapMaxMs = jlong(shaping, "idle_gap_max_ms", 6000),
-                shapingBudgetBytesPerSec = jint(shaping, "budget_bytes_per_sec", 16384),
-                shapingMinSize = jint(shaping, "min_size", 64),
-                shapingMaxSize = jint(shaping, "max_size", 1024),
-                shapingStealth = jbool(shaping, "stealth", false),
-                shapingStealthRateMbps = jint(shaping, "stealth_rate_mbps", 2),
-                loggingLevel = logging.optString("level", "").takeIf { it.isNotEmpty() },
-                loggingFile = logging.optString("file", "").takeIf { it.isNotEmpty() },
-                loggingTimeFormat = logging.optString("time_format", "").takeIf { it.isNotEmpty() },
-                unparsedBooleanKeys = badJsonBools.toList(),
-                unparsedNumericKeys = badJsonNums.toList()
-            )
-        }
 
         /**
          * Parse a `qeli://` share link (the compact, QR-friendly format produced
@@ -1250,15 +1158,5 @@ data class VpnConfig(
             else -> -1
         }
 
-        private fun JSONObject.optStringOrNull(key: String): String? {
-            if (!has(key) || isNull(key)) return null
-            val v = optString(key, "")
-            return v.ifEmpty { null }
-        }
-
-        private fun JSONObject.optStringList(key: String): List<String> {
-            val arr = optJSONArray(key) ?: return emptyList()
-            return (0 until arr.length()).mapNotNull { arr.optString(it).ifEmpty { null } }
-        }
     }
 }

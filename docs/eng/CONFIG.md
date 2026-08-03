@@ -309,7 +309,7 @@ pushes this value to the client** at auth.
 
 Priority on the client:
 
-1. **an explicit client MTU** (`mtu` in `[qeli]` INI / `qeli://` link / `tun.mtu` in JSON, `> 0`) — wins;
+1. **an explicit client MTU** (`mtu` in the `[qeli]` INI or the `qeli://` link, `> 0`) — wins;
 2. otherwise (auto, `mtu = 0`) — the **discovered / pushed** MTU, see below;
 3. otherwise (an old server pushing nothing and no probe result) — a fallback of **1400**.
 
@@ -1212,7 +1212,7 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 | `exclude` | — | ✓ | ✓ | ✓ | ✓\* | ✓ | CIDR list carved **out** of the tunnel (Android — API 33+ only) |
 | `route_file` | — | — | ✓ | ✓ | — | — | split routes from a file (on the CLI use `include`/`exclude`) |
 | `dns` | `tunnel` | ✓ | ✓ | ✓ | ✓ | ✓ | DNS mode: `tunnel` / `off` / `system`. `system` is an accepted **spelling of `off`**, not a third behaviour — both mean "leave the device resolver alone". The GUI ports also accept a resolver LIST here (`dns = 1.1.1.1, 8.8.8.8`); the CLI keeps resolvers in `dns_servers` instead. Because the same key carries both, a misspelled mode would otherwise be read as an address — every client now refuses a resolver that is not an IP literal, so `dns = of` is an error rather than a "resolver" that cannot answer |
-| `dns_servers` | — | ✓ | — | — | — | — | comma-separated resolver(s) to install under `dns = tunnel` **when the server pushes none**. Empty and nothing pushed → the host's resolvers are left untouched (with a warning), **not** silently replaced by a third party's |
+| `dns_servers` | — | ✓ | — | — | — | — | comma-separated resolver(s) to install under `dns = tunnel`. **Override the server push**: a resolver the user typed is a deliberate choice and outranks the server's suggestion (the ignored push is logged). Empty and nothing pushed → the host's resolvers are left untouched (with a warning), **not** silently replaced by a third party's. `dns = off`/`system` disable resolver management entirely and beat both |
 | `kill_switch` | `false` | ✓ | ✓ | ✓ | — | —\* | fail-closed firewall (iptables / WFP / pf; Android — system always-on VPN) |
 | `allow_ipv6_leak` | `false` | ✓ | ✓ | ✓ | ✓ | ✓ | don't block IPv6 in a full tunnel / under the kill-switch |
 | `gateway_nat` | `false` | ✓ | — | — | — | — | router NAT (`MASQUERADE`) out the tun (Linux) |
@@ -1239,11 +1239,12 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 | `name` | — | — | ✓ | ✓ | ✓ | —\* | profile display label (GUI) |
 | `autostart` | `false` | ✓\* | — | — | — | — | auto-connect when the supervisor/panel starts (GUIs use their own OS autostart) |
 | `apps_mode` / `apps` | — | — | — | — | ✓ | —\* | per-app split tunnel: `all`/`include`/`exclude` + a package list. **Android only.** iOS parses and re-saves them, but does NOT apply them: per-app rules need `NEAppRule`, which needs an MDM-managed configuration, so on iOS every app is tunnelled whatever this says — the protection card states that outright rather than confirming a restriction that is not in force |
-| `reconnect` · `reconnect_retries` · `reconnect_base_delay` · `reconnect_max_delay` · `timeout` | — | — | — | — | ✓ | ✓ | reconnect/timeout tuning (Android; CLI/desktop use built-in backoff defaults) |
+| `reconnect` · `reconnect_retries` · `reconnect_base_delay` · `reconnect_max_delay` · `timeout` | — | ✓ | ✓ | ✓ | ✓ | reconnect/timeout tuning — read and applied by all four GUI clients; the CLI uses built-in backoff defaults |
 
-**The `[logging]` section** (`level`, `file`, `time_format`): read by **CLI only**. The GUI
-clients keep this choice in their own settings and do **not** read it from an imported
-config's `[logging]` (the app's time format is a separate UI option).
+**The `[logging]` section** (`level`, `file`, `time_format`): **applied by the CLI only**. The
+GUI clients keep their own log level in their settings (the app's time format is a separate UI
+option), but Android and iOS do **read and write the section back** — otherwise editing a
+router `client.conf` on the phone would silently strip it. Windows/macOS do not parse it.
 
 **Footnotes.** `mtu_probe` applies only to UDP with `mtu=0`. `gateway`'s default differs by
 platform (split on CLI/desktop, full-tunnel on phones). On Android: `include` is honored only

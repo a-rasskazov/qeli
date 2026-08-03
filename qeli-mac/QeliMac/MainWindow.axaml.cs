@@ -841,14 +841,9 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text)) return;
         try
         {
-            text = text.Trim();
-            VpnConfig cfg;
-            if (text.StartsWith("qeli://", StringComparison.OrdinalIgnoreCase))
-                cfg = VpnConfig.FromQeliUri(text);
-            else if (text.StartsWith("{"))
-                cfg = VpnConfig.FromJson(text);   // legacy JSON, still accepted
-            else
-                cfg = VpnConfig.FromIni(text);     // current flat-INI format
+            // Parse detects the format and names the retired one, so the brace case
+            // reports "JSON is no longer read" instead of an INI syntax error.
+            var cfg = VpnConfig.Parse(text.Trim());
             cfg.Name ??= cfg.ServerAddress;
             _profiles.Add(cfg);
             PersistAndSelect(cfg);

@@ -73,55 +73,21 @@ class ConfigImportRangesTest {
     }
 
     /**
-     * The JSON importer must record an unreadable NUMBER, not swap in a default.
+     * A JSON profile is refused BY NAME, not fed to the INI parser.
      *
-     * The INI path was hardened against this; the JSON path reached the same failure through
-     * another door, and only its booleans had been closed. `"port": "bad"` became 443 — a
-     * different server — with nothing said. (Audit 2026-08-02, §6 of the follow-up.)
+     * JSON was the original config format and is retired (see `VpnConfig.jsonRetired`). The
+     * leading brace is still detected for exactly one reason: without it an old file falls into
+     * `fromIni` and comes back "missing [qeli]", which tells the reader nothing about what
+     * actually happened or what to do. That message IS the remaining contract, so it is what
+     * this pins.
      */
     @Test
-    fun `json records an unreadable number instead of defaulting`() {
-        val cfg = VpnConfig.fromJson(
-            """{"server":{"address":"vpn.example.com","port":"bad"},
-                "auth":{"username":"alice","password":"s3cret"}}"""
-        )
-        assertTrue("port must be recorded: ${cfg.unparsedNumericKeys}",
-            cfg.unparsedNumericKeys.contains("port"))
-        val err = runCatching { cfg.validate() }.exceptionOrNull()
-        assertTrue("validate must refuse it, got $err", err?.message?.contains("port") == true)
-
-        // A QUOTED number is still fine — exported profiles legitimately quote them.
-        val quoted = VpnConfig.fromJson(
-            """{"server":{"address":"vpn.example.com","port":"8443"},
-                "auth":{"username":"alice","password":"s3cret"}}"""
-        )
-        assertEquals(8443, quoted.port)
-        assertTrue(quoted.unparsedNumericKeys.isEmpty())
-    }
-
-    /**
-     * A FRACTIONAL JSON number must be recorded, not truncated.
-     *
-     * `toLong()` silently drops the fraction, so `"port": 443.9` became 443 and validated as a
-     * port the user never wrote — the same class as `"port": "bad"`, just through a value that
-     * IS a number. (Audit 2026-08-02, follow-up.)
-     */
-    @Test
-    fun `json records a fractional number instead of truncating it`() {
-        val cfg = VpnConfig.fromJson(
-            """{"server":{"address":"vpn.example.com","port":443.9},
-                "auth":{"username":"alice","password":"s3cret"}}"""
-        )
-        assertTrue("port must be recorded: ${cfg.unparsedNumericKeys}",
-            cfg.unparsedNumericKeys.contains("port"))
-
-        // A whole number expressed with a decimal point is still a whole number.
-        val whole = VpnConfig.fromJson(
-            """{"server":{"address":"vpn.example.com","port":443.0},
-                "auth":{"username":"alice","password":"s3cret"}}"""
-        )
-        assertEquals(443, whole.port)
-        assertTrue(whole.unparsedNumericKeys.isEmpty())
+    fun `a json profile is refused by name`() {
+        val err = runCatching {
+            VpnConfig.parse("""{"server":{"address":"vpn.example.com","port":443}}""")
+        }.exceptionOrNull()
+        assertTrue("must name the format, got $err",
+            err?.message?.contains("JSON profile") == true && err.message?.contains("INI") == true)
     }
 
     /** Malformed IPv6 must be refused at config time, not when the TUN is built. */
@@ -179,15 +145,45 @@ class ConfigImportRangesTest {
         assertTrue("UTF-8 length must be what counts, got $err2", err2 != null)
     }
 
-    /** An unknown `dns.mode` must fail, not silently become the widest option. */
+    /**
+     * An unknown `dns` mode must fail, not silently become the widest option.
+     *
+     * Both readers now fold an unrecognised value back to `tunnel` and treat the text as a
+     * server list, so no FILE can put a bad mode in the field any more — but the UI writes it
+     * directly, and "tunnel" is precisely the wrong default to land on: it is the opposite of
+     * `off` and sends every lookup through the VPN. Checked where the value can still arrive.
+     */
     @Test
-    fun `json refuses an unknown dns mode`() {
-        val cfg = VpnConfig.fromJson(
-            """{"server":{"address":"vpn.example.com","port":443},
-                "auth":{"username":"alice","password":"s3cret"},"dns":{"mode":"of"}}"""
-        )
+    fun `validate refuses an unknown dns mode`() {
+        val cfg = VpnConfig.fromIni(ini()).copy(dnsMode = "of")
         val err = runCatching { cfg.validate() }.exceptionOrNull()
         assertTrue("validate must name dns, got $err", err?.message?.contains("dns") == true)
+        for (ok in listOf("off", "tunnel", "system")) {
+            VpnConfig.fromIni(ini()).copy(dnsMode = ok).validate()
+        }
+    }
+
+    /**
+     * A reconnect delay past a day must be RECORDED, not silently swapped for the default.
+     *
+     * The bound exists because the desktop port's reconnect loop waits through an Int: past
+     * ~24.8 days the millisecond cast truncates and can throw, killing the loop that the long
+     * delay was configuring. A profile moves between clients, so the bound is shared — and this
+     * is the port that has to agree with it rather than quietly accept more.
+     */
+    @Test
+    fun `an out-of-range reconnect delay is recorded`() {
+        val cfg = VpnConfig.fromIni(ini(
+            "reconnect_base_delay = 999999999", "reconnect_max_delay = 999999999"))
+        assertTrue("both must be recorded: ${cfg.unparsedNumericKeys}",
+            cfg.unparsedNumericKeys.containsAll(
+                listOf("reconnect_base_delay", "reconnect_max_delay")))
+        assertNotNull(runCatching { cfg.validate() }.exceptionOrNull())
+
+        // An hour is a long backoff and a legitimate one — the bound must not catch it.
+        val patient = VpnConfig.fromIni(ini("reconnect_max_delay = 3600"))
+        assertEquals(3600L, patient.reconnectMaxDelaySecs)
+        assertTrue(patient.unparsedNumericKeys.isEmpty())
     }
 
     /** A profile that never carried them must not grow empty lines for them. */
@@ -222,14 +218,14 @@ class ConfigImportRangesTest {
             VpnConfig.fromIni(ini("front = $f")).validate()
         }
 
-        // routingMode has NO ini key — the flat INI derives it from `gateway`, so only the JSON
-        // and qeli:// paths can carry a bad one. Exercise it where it can actually arrive.
-        fun json(mode: String) = """{"server":{"address":"1.2.3.4","port":443},
-            "auth":{"username":"u","password":"p"},"routing":{"mode":"$mode"}}"""
+        // routingMode has NO ini key — the flat INI derives it from `gateway`, and the JSON
+        // importer that used to carry one is retired, so no file can reach the field any more.
+        // The UI still sets it directly, which is the arrival path left to check.
+        val base = VpnConfig.fromIni(ini())
         assertNotNull("routing mode full-tunel must be refused",
-            runCatching { VpnConfig.fromJson(json("full-tunel")).validate() }.exceptionOrNull())
+            runCatching { base.copy(routingMode = "full-tunel").validate() }.exceptionOrNull())
         for (r in listOf("split-tunnel", "full-tunnel", "all")) {
-            VpnConfig.fromJson(json(r)).validate()
+            base.copy(routingMode = r).validate()
         }
     }
 
@@ -301,19 +297,6 @@ class ConfigImportRangesTest {
         assertEquals(0, VpnConfig.fromIni(ini()).mtu)   // absent = auto
     }
 
-    @Test
-    fun `a JSON config with an out-of-range mtu is rejected`() {
-        try {
-            VpnConfig.fromJson("""{"server":{"address":"h","port":443},"tun":{"mtu":99999}}""")
-            fail("JSON mtu 99999 must be rejected")
-        } catch (e: IllegalArgumentException) {
-            assertEquals(true, e.message?.contains("mtu"))
-        }
-        assertEquals(1400, VpnConfig.fromJson(
-            """{"server":{"address":"h","port":443},"tun":{"mtu":1400}}"""
-        ).mtu)
-    }
-
     /** A link must stay importable: the mtu falls back to auto, everything else survives. */
     @Test
     fun `a qeli link with an out-of-range mtu falls back to auto`() {
@@ -339,12 +322,6 @@ class ConfigImportRangesTest {
         val inverted = VpnConfig.fromIni(ini("padding_min = 900", "padding_max = 100"))
         assertEquals(900, inverted.paddingMin)
         assertEquals(900, inverted.paddingMax)
-        val j = VpnConfig.fromJson(
-            """{"server":{"address":"h","port":443},
-                "obfuscation":{"padding":{"min_bytes":-1,"max_bytes":99999}}}"""
-        )
-        assertEquals(0, j.paddingMin)
-        assertEquals(1400, j.paddingMax)
     }
 
     /** A clamped/accepted profile must still round-trip through the emit-side validator. */
@@ -518,35 +495,44 @@ class ConfigImportRangesTest {
 }
 
 /**
- * A canonical JSON profile must survive import intact. (Audit 2026-07-29, #6)
+ * A profile must survive a save/load round-trip intact. (Audit 2026-07-29, #6)
  *
- * `fromJson` stopped filling fields at heartbeat, so shaping, an explicit
- * `tun.mtu_probe = false` and the whole `[logging]` block were dropped: the imported profile
- * silently came back with defaults, and re-exporting it wrote that loss back to disk. The
- * values below are all non-default on purpose — with the old importer every assertion here
- * fails, which is the point of the test.
+ * The importer used to stop filling fields at heartbeat, so shaping, an explicit
+ * `mtu_probe = false` and the whole `[logging]` block were dropped: the reopened profile
+ * silently came back with defaults, and re-saving it wrote that loss back to disk. Every value
+ * below is non-default on purpose — a writer or reader that skips one fails an assertion here.
+ *
+ * Originally written against the JSON importer, which is retired; the loss it guards against is
+ * a property of the WRITER/READER PAIR, not of either format, so it moved to INI unchanged.
  */
-class ConfigJsonImportCompletenessTest {
-    private val json = """
-        {
-          "server": {"address": "example.com", "port": 8443, "protocol": "tcp"},
-          "auth": {"username": "u", "password": "p"},
-          "tun": {"mtu": 1280, "mtu_probe": false},
-          "logging": {"level": "debug", "time_format": "rfc3339"},
-          "obfuscation": {
-            "mode": "fake-tls",
-            "traffic_shaping": {
-              "enabled": true, "idle_gap_mean_ms": 800, "idle_gap_min_ms": 50,
-              "idle_gap_max_ms": 7000, "budget_bytes_per_sec": 4096,
-              "min_size": 128, "max_size": 900, "stealth": true, "stealth_rate_mbps": 5
-            }
-          }
-        }
+class ConfigRoundTripCompletenessTest {
+    private val ini = """
+        [qeli]
+        server = example.com:8443
+        proto = tcp
+        user = u
+        pass = p
+        mode = fake-tls
+        mtu = 1280
+        mtu_probe = false
+        shaping = true
+        shaping_gap_mean = 800
+        shaping_gap_min = 50
+        shaping_gap_max = 7000
+        shaping_budget = 4096
+        shaping_min_size = 128
+        shaping_max_size = 900
+        shaping_stealth = true
+        shaping_stealth_mbps = 5
+
+        [logging]
+        level = debug
+        time_format = rfc3339
     """.trimIndent()
 
     @Test
-    fun jsonImportKeepsShapingMtuProbeAndLogging() {
-        val c = VpnConfig.fromJson(json)
+    fun importKeepsShapingMtuProbeAndLogging() {
+        val c = VpnConfig.fromIni(ini)
         assertEquals(false, c.mtuProbe)
         assertEquals(true, c.shapingEnabled)
         assertEquals(800L, c.shapingGapMeanMs)
@@ -561,10 +547,10 @@ class ConfigJsonImportCompletenessTest {
         assertEquals("rfc3339", c.loggingTimeFormat)
     }
 
-    /** And the values must still be there after a save/load round-trip through INI. */
+    /** And the values must still be there after the profile is written back out and reread. */
     @Test
     fun theValuesSurviveAnIniRoundTrip() {
-        val back = VpnConfig.fromIni(VpnConfig.fromJson(json).toIni())
+        val back = VpnConfig.fromIni(VpnConfig.fromIni(ini).toIni())
         assertEquals(false, back.mtuProbe)
         assertEquals(true, back.shapingEnabled)
         assertEquals(800L, back.shapingGapMeanMs)

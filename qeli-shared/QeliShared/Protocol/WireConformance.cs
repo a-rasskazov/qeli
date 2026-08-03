@@ -58,6 +58,25 @@ public static class WireConformance
         bool sane = Ini("timeout = 45").ConnectionTimeoutSecs == 45;
         check("ini-bounds: a valid timeout is left alone", sane);
 
+        // The same cliff, one loop further along: the reconnect backoff also ends at an int.
+        //
+        // `reconnect_max_delay` accepted anything up to long.MaxValue, and VpnTunnelBase then
+        // casts the computed ms to int for `WaitHandle.WaitOne(int)`. Past ~24.8 days the cast
+        // truncates, and a truncated value that lands negative makes WaitOne THROW — so asking
+        // for a very patient reconnect killed the reconnect loop instead. Recorded rather than
+        // silently accepted, like every other out-of-range number.
+        var slowRetry = Ini("reconnect_max_delay = 999999999", "reconnect_base_delay = 999999999");
+        check("ini-bounds: an absurd reconnect delay is recorded",
+            slowRetry.UnparsedNumericKeys.Contains("reconnect_max_delay")
+            && slowRetry.UnparsedNumericKeys.Contains("reconnect_base_delay"));
+        // Whatever survives must be waitable: this is the cast that used to break.
+        bool waitable = (int)(slowRetry.ReconnectMaxDelaySecs * 1000) > 0
+            && (int)(slowRetry.ReconnectBaseDelaySecs * 1000) > 0;
+        check("ini-bounds: the reconnect delay still fits WaitOne(int)", waitable);
+        var patient = Ini("reconnect_max_delay = 3600");
+        check("ini-bounds: an hour-long reconnect delay is left alone",
+            patient.ReconnectMaxDelaySecs == 3600 && patient.UnparsedNumericKeys.Count == 0);
+
         // padding_min > padding_max is an inverted range; a five-digit padding is past the
         // ceiling. Each field only checked `>= 0` on its own, so both parsed.
         var inverted = Ini("padding_min = 900", "padding_max = 300");
@@ -251,27 +270,84 @@ public static class WireConformance
         catch (ArgumentException) { stillRefused = true; }
         check("ini-carry: the editor cannot launder a bad number or unknown key", stillRefused);
 
-        // The JSON importer must record an unreadable NUMBER, not swap in a default.
+        // ...but a number the form DOES control must clear, or the dialog is a dead end.
         //
-        // Its boolean reader was hardened long ago and its numeric one was not, so
-        // `"port": "bad"` silently became 443 — a DIFFERENT SERVER. Kotlin and Swift closed
-        // this first; C# was the port still failing open. (Audit 2026-08-02, follow-up.)
-        static Model.VpnConfig Json(string serverBody) => Model.VpnConfig.FromJson(
-            "{\"server\":{\"address\":\"vpn.example.com\"," + serverBody + "},"
-            + "\"auth\":{\"username\":\"u\",\"password\":\"p\"}}");
+        // The mirror of the check above, and the reason it cannot simply carry everything:
+        // `port = bad` marks the profile invalid, the user retypes the port in the very field
+        // the dialog offers, presses Save — and the marker rode across untouched, so Validate()
+        // kept refusing a profile that was now correct, with nothing in the UI able to fix it.
+        // The booleans already subtracted what the form supplies; the numbers did not.
+        // Written out rather than via Ini(): the marker has to come from the SERVER line
+        // itself, and Ini() already supplies one — a second would be a duplicate, which is a
+        // different rejection and would make this pass for the wrong reason.
+        var dirtyPort = Model.VpnConfig.FromIni(
+            "[qeli]\nserver = vpn.example.com:99999\nuser = u\npass = p\n");
+        check("ini-carry: an out-of-range port is marked to begin with",
+            dirtyPort.UnparsedNumericKeys.Contains("server (port)"));
+        var fixedPort = dirtyPort.WithEditorFields(
+            name: null, serverAddress: "vpn.example.com", port: 8443, protocol: "tcp",
+            wireMode: "fake-tls", obfsKey: "", obfsFronting: "websocket", realityShortId: null,
+            sni: null, quicEnabled: false, username: "u", password: "p",
+            serverPublicKeyHex: null, routingMode: "full-tunnel", addDefaultGateway: true,
+            routeLocalNetworks: false, mtu: 0, dnsServers: new List<string>(),
+            paddingEnabled: true, paddingMin: 0, paddingMax: 255,
+            heartbeatEnabled: true, heartbeatIntervalMs: 15000, heartbeatJitterMs: 2000);
+        bool portCleared = true;
+        try { fixedPort.Validate(); }
+        catch (ArgumentException) { portCleared = false; }
+        check("ini-carry: a number the form rewrote is no longer marked", portCleared);
 
-        bool jsonBadRecorded = Json("\"port\":\"bad\"").UnparsedNumericKeys.Contains("port");
-        bool jsonFractionRecorded = Json("\"port\":443.9").UnparsedNumericKeys.Contains("port");
-        // ...while the forms that ARE that number still parse: a quoted whole number and a
-        // whole number written with a decimal point.
-        bool jsonQuotedOk = Json("\"port\":\"8443\"").Port == 8443
-            && Json("\"port\":\"8443\"").UnparsedNumericKeys.Count == 0;
-        bool jsonWholeDoubleOk = Json("\"port\":443.0").Port == 443
-            && Json("\"port\":443.0").UnparsedNumericKeys.Count == 0;
-        check("json-nums: an unreadable number is recorded", jsonBadRecorded);
-        check("json-nums: a fractional number is recorded", jsonFractionRecorded);
-        check("json-nums: a quoted whole number still parses", jsonQuotedOk);
-        check("json-nums: a whole number written as a double still parses", jsonWholeDoubleOk);
+        // Entering DNS servers must switch the mode off `off`/`system`.
+        //
+        // One key, two meanings: `dns = off` is a MODE and `dns = 1.1.1.1` a server list. The
+        // form edits only the list and preserved the old mode, so on a `dns = off` profile the
+        // resolver the user typed was stored, shown in the UI, and never applied.
+        var wasOff = Ini("dns = off");
+        var nowSet = wasOff.WithEditorFields(
+            name: null, serverAddress: "vpn.example.com", port: 443, protocol: "tcp",
+            wireMode: "fake-tls", obfsKey: "", obfsFronting: "websocket", realityShortId: null,
+            sni: null, quicEnabled: false, username: "u", password: "p",
+            serverPublicKeyHex: null, routingMode: "full-tunnel", addDefaultGateway: true,
+            routeLocalNetworks: false, mtu: 0, dnsServers: new List<string> { "1.1.1.1" },
+            paddingEnabled: true, paddingMin: 0, paddingMax: 255,
+            heartbeatEnabled: true, heartbeatIntervalMs: 15000, heartbeatJitterMs: 2000);
+        check("ini-dns: entering resolvers leaves 'off' behind", nowSet.DnsMode == "tunnel");
+        // Written as `dns_servers` — the documented spelling this port emits — and, crucially,
+        // with no `dns = off` line left behind to contradict it.
+        var nowSetIni = nowSet.ToIni();
+        check("ini-dns: and they reach the file",
+            nowSetIni.Contains("dns_servers = 1.1.1.1") && !nowSetIni.Contains("dns = off"));
+
+        // Saving without touching DNS must NOT turn `off` into the public fallback.
+        var stillOff = wasOff.WithEditorFields(
+            name: null, serverAddress: "vpn.example.com", port: 443, protocol: "tcp",
+            wireMode: "fake-tls", obfsKey: "", obfsFronting: "websocket", realityShortId: null,
+            sni: null, quicEnabled: false, username: "u", password: "p",
+            serverPublicKeyHex: null, routingMode: "full-tunnel", addDefaultGateway: true,
+            routeLocalNetworks: false, mtu: 0, dnsServers: new List<string>(),
+            paddingEnabled: true, paddingMin: 0, paddingMax: 255,
+            heartbeatEnabled: true, heartbeatIntervalMs: 15000, heartbeatJitterMs: 2000);
+        check("ini-dns: an untouched 'off' survives Save", stillOff.DnsMode == "off");
+
+        // A JSON profile must be refused BY NAME, in every port.
+        //
+        // The format is retired, and the brace is still detected only so the message can say
+        // which format it was and what to do instead. That is the whole remaining contract, so
+        // it is the thing worth pinning: without the detection a JSON file falls into the INI
+        // parser and reports a syntax error on line 1, which tells the reader nothing.
+        //
+        // Pinned here rather than in one port's unit tests because the message is a
+        // cross-port promise — Kotlin throws `VpnConfig.jsonRetired`, Swift throws
+        // `VPNConfigError.invalid` with the same sentence. (Retired 2026-08-02.)
+        string jsonRefusal = "";
+        try
+        {
+            Model.VpnConfig.Parse(
+                "{\"server\":{\"address\":\"vpn.example.com\",\"port\":443}}");
+        }
+        catch (ArgumentException e) { jsonRefusal = e.Message; }
+        check("json-retired: a JSON profile is refused, naming the format",
+            jsonRefusal.Contains("JSON profile") && jsonRefusal.Contains("INI"));
 
         // The IP-literal check must agree with the other three ports.
         //

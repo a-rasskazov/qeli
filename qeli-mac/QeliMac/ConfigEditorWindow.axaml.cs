@@ -186,7 +186,7 @@ public partial class ConfigEditorWindow : Window
             heartbeatJitterMs: hbJitter);
     }
 
-    // ── manual text editing of the config (INI / qeli:// / JSON) ──────────────────
+    // ── manual text editing of the config (INI / qeli://) ─────────────────────────
     private async void OnManualEdit(object? sender, RoutedEventArgs e)
     {
         var text = BuildFromForm().ToIni();

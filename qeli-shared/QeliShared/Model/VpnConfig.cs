@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Qeli.Shared.Model;
@@ -12,7 +11,7 @@ public enum ProfileReachability { Unknown, Checking, Reachable, Unreachable }
 /// <summary>
 /// Full qeli client configuration. Mirrors the relevant fields of the Rust
 /// ClientConfig and the Android VpnConfig. Built from the simple UI fields, an
-/// imported JSON config (FromJson) or a qeli:// share link (FromQeliUri).
+/// imported flat-INI config (FromIni) or a qeli:// share link (FromQeliUri).
 /// </summary>
 public sealed class VpnConfig : INotifyPropertyChanged
 {
@@ -206,7 +205,11 @@ public sealed class VpnConfig : INotifyPropertyChanged
     {
         // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
         // "Что пушем НЕ передаётся" lists these as client file-only keys.
-        "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
+        // NB: `dns_servers` used to live here (carried, not understood). It is READ and WRITTEN
+        // by this port now — see FromIni/ToIni — so it moved to KnownIniKeys below. Leaving it
+        // here as well would have made it both carried and modelled, and `ToIni` would emit it
+        // twice: once from CarriedKeys, once from the DNS block. (Audit 2026-08-03, D2.)
+        "allow_unpinned_tofu", "autostart", "dev_attach", "exit_node",
         "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
         // Socket buffers (Linux-only in the Rust client) and the headless password sources.
         "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
@@ -221,7 +224,8 @@ public sealed class VpnConfig : INotifyPropertyChanged
     private static readonly HashSet<string> KnownIniKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         // Read by this port.
-        "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "exclude", "forward",
+        "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "dns_servers",
+        "exclude", "forward",
         "front", "gateway", "heartbeat", "heartbeat_interval", "heartbeat_jitter",
         "heartbeat_size", "include", "jc", "jmax", "jmin", "key", "kill_switch", "local",
         "lport", "metric", "mode", "mtu", "mtu_probe", "name", "obfs_key", "padding",
@@ -351,6 +355,21 @@ public sealed class VpnConfig : INotifyPropertyChanged
         "quic", "gateway", "route_local", "padding", "heartbeat",
     };
 
+    /// <summary>Numeric keys the editor form supplies a real value for, so a marker on them is
+    /// genuinely resolved by Save.</summary>
+    /// <remarks>
+    /// Names as <c>FromIni</c> records them — the port is recorded under <c>server (port)</c>,
+    /// because in the flat INI it is the tail of the <c>server</c> line and not a key of its own.
+    /// Everything absent from this list (<c>timeout</c>, <c>reconnect_*</c>, <c>lport</c>,
+    /// <c>metric</c>, <c>heartbeat_size</c>, <c>shaping_*</c>) has NO form control and must keep
+    /// its marker, exactly as with the booleans.
+    /// </remarks>
+    private static readonly string[] EditorControlledNumericKeys =
+    {
+        "server (port)", "mtu", "padding_min", "padding_max",
+        "heartbeat_interval", "heartbeat_jitter",
+    };
+
     public VpnConfig WithEditorFields(
         string? name, string serverAddress, int port, string protocol, string wireMode,
         string obfsKey, string obfsFronting, string? realityShortId, string? sni, bool quicEnabled,
@@ -366,7 +385,12 @@ public sealed class VpnConfig : INotifyPropertyChanged
         Sni = sni, QuicEnabled = quicEnabled,
         Username = username, Password = password, ServerPublicKeyHex = serverPublicKeyHex,
         RoutingMode = routingMode, AddDefaultGateway = addDefaultGateway, RouteLocalNetworks = routeLocalNetworks,
-        Mtu = mtu, DnsServers = dnsServers, DnsMode = DnsMode,
+        Mtu = mtu, DnsServers = dnsServers,
+        // Typing resolvers into the form MEANS "use these", so it has to move the mode off
+        // `off`/`system` — otherwise the address the user just entered is stored and then
+        // ignored, with the UI showing it as if it applied. The mode is kept when the field is
+        // left empty, so a `dns = off` profile saved without touching DNS stays `off`.
+        DnsMode = dnsServers.Count > 0 ? "tunnel" : DnsMode,
         PaddingEnabled = paddingEnabled, PaddingMin = paddingMin, PaddingMax = paddingMax,
         HeartbeatEnabled = heartbeatEnabled, HeartbeatIntervalMs = heartbeatIntervalMs, HeartbeatJitterMs = heartbeatJitterMs,
         Name = name,
@@ -399,11 +423,16 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // `reconnect_base_delay = bad` parses to the default AND records the key. Opening the
         // profile in the editor and pressing Save rebuilt the config without the marker, so
         // Validate() then saw something clean and the setting sat at its default with the
-        // original line gone from the file. The form has no control for either of these, so it
-        // cannot have resolved them; dropping them is pure loss. An unknown key is the same
-        // case, and for a security flag it is a silent weakening.
-        // (Audit 2026-08-02, follow-up.)
-        UnparsedNumericKeys = UnparsedNumericKeys,
+        // original line gone from the file. An unknown key is the same case, and for a security
+        // flag it is a silent weakening. (Audit 2026-08-02, follow-up.)
+        //
+        // Numbers, unlike unknown keys, need the SAME subtraction the booleans get: the form
+        // does supply port, mtu, padding and heartbeat, so carrying those markers wholesale
+        // left the profile rejected even after the user fixed the very field in the dialog —
+        // a dead end with no way out of the UI. Carried minus what the form just rewrote.
+        UnparsedNumericKeys = UnparsedNumericKeys
+            .Where(k => !EditorControlledNumericKeys.Contains(k))
+            .ToArray(),
         UnknownKeys = UnknownKeys,
         // Carried, MINUS whatever this form just rewrote.
         //
@@ -422,15 +451,6 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // gone, so carrying the marker would reject a profile that is now fine.
     };
 
-    // REMOVED: ToConfigJson(). It had no call sites anywhere in the tree, and what it
-    // produced was wrong: `routing.mode` was hardcoded to "full-tunnel" with
-    // `add_default_gateway: true` regardless of the profile's real routing, and it
-    // dropped most of the fields FromJson reads back (kill-switch, persist-tun,
-    // include/exclude routes, reconnect, shaping, heartbeat, bind_static, mtu_probe…).
-    // Anyone who called it would have silently rewritten a split-tunnel profile into a
-    // full-tunnel one. Deleted rather than half-fixed: writing ~30 fields of untested
-    // serialization for a method nobody calls just moves the trap. Reinstate it against
-    // FromJson field-by-field, with a round-trip test, if a caller ever needs it. (Shared)
     /// <summary>Bracket-wrap a bare IPv6 literal for a URI authority (RFC 3986:
     /// <c>qeli://user@[2001:db8::1]:443</c>); IPv4 / hostnames pass through unchanged.</summary>
     private static string UriHost(string host) =>
@@ -527,11 +547,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
         if (!string.IsNullOrEmpty(RouteFile)) sb.AppendLine($"route_file = {IniSafe(RouteFile)}");
         if (InterfaceMetric > 0) sb.AppendLine($"metric = {InterfaceMetric}");
         if (!string.IsNullOrEmpty(DevNode)) sb.AppendLine($"dev_node = {IniSafe(DevNode)}");
-        // One key, two meanings — mirroring the Rust client. A non-default MODE wins over the
-        // server list: `dns = off` must survive a save/load round-trip, or re-saving a profile
-        // would silently turn "leave my resolver alone" back into the public fallback.
+        // `dns` is the MODE, `dns_servers` is the resolver LIST — the split the key table in
+        // CONFIG.md documents and the Rust client implements. This port used to pack the list
+        // into `dns`, which made a desktop profile with custom resolvers unusable on the
+        // CLI/router client (it validates `dns` against the mode words and refused the file).
+        // FromIni still ACCEPTS the old spelling, so nothing is lost on upgrade; writing only
+        // the documented one migrates a profile the first time it is saved.
+        //
+        // The mode is emitted whenever it is non-default, independently of the list: `dns = off`
+        // has to survive a save/load round-trip, or re-saving would silently turn "leave my
+        // resolver alone" back into the public fallback.
         if (DnsMode != "tunnel") sb.AppendLine($"dns = {DnsMode}");
-        else if (DnsServers.Count > 0) sb.AppendLine($"dns = {string.Join(", ", DnsServers.Select(IniSafe))}");
+        if (DnsServers.Count > 0) sb.AppendLine($"dns_servers = {string.Join(", ", DnsServers.Select(IniSafe))}");
         if (Mtu > 0) sb.AppendLine($"mtu = {Mtu}");  // 0 = auto, omit
         if (!MtuProbe) sb.AppendLine("mtu_probe = false");  // default true, emit only when off
 
@@ -590,98 +617,34 @@ public sealed class VpnConfig : INotifyPropertyChanged
 
     /// <summary>
     /// Parse a config in any supported format, detecting by content: a qeli://
-    /// share link, legacy JSON ({…}), or the canonical flat-INI (everything else).
-    /// INI is the current format; JSON is only kept for backward compatibility.
+    /// share link, or the canonical flat-INI (everything else). A leading brace is
+    /// recognised only to report the retired JSON format by name.
     /// Mirrors the Android VpnConfig.parse.
     /// </summary>
     public static VpnConfig Parse(string text)
     {
         var t = text.TrimStart();
         if (t.StartsWith("qeli://", StringComparison.OrdinalIgnoreCase)) return FromQeliUri(text);
-        if (t.StartsWith("{")) return FromJson(text);
-        return FromIni(text);
-    }
-
-    public static VpnConfig FromJson(string text)
-    {
-        var root = JsonNode.Parse(text)!.AsObject();
-        var server = Obj(root, "server");
-        var reconnect = Obj(server, "reconnect");
-        var auth = Obj(root, "auth");
-        var tun = Obj(root, "tun");
-        var routing = Obj(root, "routing");
-        var dns = Obj(root, "dns");
-        var obf = Obj(root, "obfuscation");
-        var padding = Obj(obf, "padding");
-        var heartbeat = Obj(obf, "heartbeat");
-        var shaping = Obj(obf, "traffic_shaping");
-        var quic = Obj(obf, "quic");
-        var awg = Obj(obf, "awg");
-
-        string password = StrOrNull(auth, "password") ?? StrOrNull(root, "password") ?? "";
-        var badJsonBools = new List<string>();
-        var badJsonNums = new List<string>();
-        var pad = CheckedPadding(Int(padding, "min_bytes", 0, badJsonNums), Int(padding, "max_bytes", 255, badJsonNums));
-
-        return new VpnConfig
+        // JSON is RETIRED, and detected only so the message can say so.
+        //
+        // It was the original config format and stopped being written years ago; INI replaced
+        // it and every tool emits INI. What remained was a second, entirely parallel parser
+        // per client — with its own defaults, its own leniency and its own bugs. It kept
+        // accruing findings that the INI path had already fixed (numbers silently defaulting,
+        // unknown keys ignored, types coerced) because hardening it meant doing every fix
+        // twice, in four languages, for a format nobody produces.
+        //
+        // Letting `{…}` fall through to the INI parser instead would "work" but report a
+        // meaningless syntax error on line 1. Someone opening a genuinely old file deserves to
+        // be told what happened and what to do. (Retired 2026-08-02.)
+        if (t.StartsWith("{"))
         {
-            Name = StrOrNull(root, "name"),
-            ServerAddress = Str(server, "address", Str(root, "address", "127.0.0.1")),
-            Port = Int(server, "port", Int(root, "port", 443, badJsonNums), badJsonNums),
-            Protocol = Str(server, "protocol", "tcp"),
-            ConnectionTimeoutSecs = CheckedTimeout(Long(server, "connection_timeout_secs", 30, badJsonNums)),
-            ReconnectEnabled = Bool(reconnect, "enabled", true, badJsonBools),
-            ReconnectMaxRetries = Int(reconnect, "max_retries", -1, badJsonNums),
-            ReconnectBaseDelaySecs = Long(reconnect, "base_delay_secs", 1, badJsonNums),
-            ReconnectMaxDelaySecs = Long(reconnect, "max_delay_secs", 60, badJsonNums),
-            Username = Str(auth, "username", Str(root, "username", "client")),
-            Password = password,
-            ServerPublicKeyHex = StrOrNull(auth, "server_public_key"),
-            BindStaticToSession = Bool(auth, "bind_static_to_session", true, badJsonBools),
-            Mtu = CheckedMtu(Int(tun, "mtu", 0, badJsonNums)),  // 0 = auto (use server-pushed MTU)
-            RoutingMode = Str(routing, "mode", "full-tunnel"),
-            AddDefaultGateway = Bool(routing, "add_default_gateway", false, badJsonBools),
-            IncludeRoutes = StrList(routing, "include"),
-            ExcludeRoutes = StrList(routing, "exclude"),
-            RouteLocalNetworks = Bool(routing, "route_local_networks", false, badJsonBools),
-            KillSwitch = Bool(routing, "kill_switch", false, badJsonBools),
-            AllowIpv6Leak = Bool(routing, "allow_ipv6_leak", false, badJsonBools),
-            DnsServers = StrList(dns, "servers"),
-            WireMode = Str(obf, "mode", "fake-tls"),
-            ObfsKey = Str(obf, "obfs_key", ""),
-            ObfsFronting = Str(obf, "fronting", "websocket"),
-            AwgEnabled = Bool(awg, "enabled", false, badJsonBools),
-            AwgJc = (uint)Math.Clamp(Int(awg, "jc", 0, badJsonNums), 0, 128),
-            AwgJmin = (ushort)Math.Clamp(Int(awg, "jmin", 40, badJsonNums), 0, 1400),
-            AwgJmax = (ushort)Math.Clamp(Int(awg, "jmax", 300, badJsonNums), 0, 1400),
-            QuicEnabled = Bool(quic, "enabled", false, badJsonBools),
-            Sni = StrOrNull(obf, "sni"),
-            RealityShortId = StrOrNull(obf, "reality_short_id"),
-            PaddingEnabled = Bool(padding, "enabled", true, badJsonBools),
-            UnparsedBooleanKeys = badJsonBools,
-            UnparsedNumericKeys = badJsonNums,
-            PaddingMin = pad.Min,
-            PaddingMax = pad.Max,
-            HeartbeatEnabled = Bool(heartbeat, "enabled", true, badJsonBools),
-            HeartbeatIntervalMs = Long(heartbeat, "interval_ms", 15000, badJsonNums),
-            HeartbeatDataSize = Int(heartbeat, "data_size_bytes", 16, badJsonNums),
-            HeartbeatJitterMs = Long(heartbeat, "jitter_ms", 2000, badJsonNums),
-            // Parsing stopped at heartbeat, so a canonical JSON profile lost its shaping
-            // block entirely and `tun.mtu_probe = false` came back as true — the client then
-            // probed a path the profile had deliberately told it not to. Section and field
-            // names are the canonical Rust ones (`traffic_shaping`, `idle_gap_*`), not the
-            // INI shorthand. (Audit 2026-07-29, #7.)
-            MtuProbe = Bool(tun, "mtu_probe", true, badJsonBools),
-            ShapingEnabled = Bool(shaping, "enabled", false, badJsonBools),
-            ShapingGapMeanMs = Long(shaping, "idle_gap_mean_ms", 700, badJsonNums),
-            ShapingGapMinMs = Long(shaping, "idle_gap_min_ms", 40, badJsonNums),
-            ShapingGapMaxMs = Long(shaping, "idle_gap_max_ms", 6000, badJsonNums),
-            ShapingBudgetBytesPerSec = Int(shaping, "budget_bytes_per_sec", 16384, badJsonNums),
-            ShapingMinSize = Int(shaping, "min_size", 64, badJsonNums),
-            ShapingMaxSize = Int(shaping, "max_size", 1024, badJsonNums),
-            ShapingStealth = Bool(shaping, "stealth", false, badJsonBools),
-            ShapingStealthRateMbps = Int(shaping, "stealth_rate_mbps", 2, badJsonNums),
-        };
+            throw new ArgumentException(
+                "this is a JSON profile, a format qeli no longer reads — export the profile "
+                + "again from the server panel, or use its qeli:// link, to get the current "
+                + "INI format");
+        }
+        return FromIni(text);
     }
 
     /// <summary>
@@ -818,9 +781,33 @@ public sealed class VpnConfig : INotifyPropertyChanged
                 || dnsRaw.Equals("system", StringComparison.OrdinalIgnoreCase)
             ? dnsRaw.ToLowerInvariant()
             : "tunnel";
-        List<string>? dnsList = (dnsRaw.Length == 0 || dnsMode != "tunnel" || dnsRaw.Equals("tunnel", StringComparison.OrdinalIgnoreCase))
-            ? null
-            : dnsRaw.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+        // The resolver LIST belongs in `dns_servers`; `dns` is the mode. That is what the
+        // documented key table says (CONFIG.md) and what the Rust client implements, and this
+        // port was the one deviating — it packed the list into `dns`, so a desktop profile with
+        // custom resolvers was REJECTED outright by the CLI/router client ("unknown dns
+        // '1.1.1.1, 9.9.9.9'"), while a Rust-written profile lost its `dns_servers` here in the
+        // other direction, silently falling back to whatever the server pushed.
+        //
+        // BOTH forms are read, on purpose: profiles already saved by older builds carry the
+        // list in `dns`, and dropping that would wipe the setting on upgrade. Only the
+        // documented key is WRITTEN (see ToIni), so files migrate on the next save.
+        // `dns_servers` wins when both are present — it is the explicit, current spelling.
+        // (Audit 2026-08-03, D2.)
+        List<string> ParseResolvers(string raw) =>
+            raw.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+        var dnsServersRaw = Get("dns_servers");
+        List<string>? dnsList = null;
+        if (dnsServersRaw.Length > 0)
+        {
+            dnsList = ParseResolvers(dnsServersRaw);
+        }
+        else if (dnsRaw.Length > 0 && !dnsRaw.Equals("off", StringComparison.OrdinalIgnoreCase)
+                 && !dnsRaw.Equals("tunnel", StringComparison.OrdinalIgnoreCase)
+                 && !dnsRaw.Equals("system", StringComparison.OrdinalIgnoreCase))
+        {
+            dnsList = ParseResolvers(dnsRaw);   // legacy spelling, migrated on the next save
+        }
+        if (dnsList != null && dnsList.Count == 0) dnsList = null;
 
         // Alias: `mode=udp-quic` / `udp-obfs` fold transport+QUIC into the wire mode.
         var (proto, mode, quic) = NormalizeMode(Get("proto", "tcp"), Get("mode", "fake-tls"), BoolAt("quic", false));
@@ -858,7 +845,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
             Forward = BoolAt("forward", false),
             // Was neither parsed nor emitted here, so an imported/exported flat-INI silently
             // dropped the kill-switch flag — the leak protection the user asked for failed
-            // OPEN. Rust reads it (client.rs) and FromJson already did; mirror them.
+            // OPEN. The Rust client reads it (client.rs); mirror it.
             KillSwitch = BoolAt("kill_switch", false),
             AllowIpv6Leak = BoolAt("allow_ipv6_leak", false),
             LocalAddress = Get("local").Length > 0 ? Get("local") : null,
@@ -876,11 +863,17 @@ public sealed class VpnConfig : INotifyPropertyChanged
             // and a profile without them behaves exactly as before. (Audit 2026-07-29, #7.)
             ReconnectEnabled = BoolAt("reconnect", true),
             ReconnectMaxRetries = NumAt("reconnect_retries", -1),
-            ReconnectBaseDelaySecs = RangedLong("reconnect_base_delay", 1, 1, long.MaxValue),
-            ReconnectMaxDelaySecs = RangedLong("reconnect_max_delay", 60, 1, long.MaxValue),
+            // Bounded by what the reconnect loop can actually WAIT for, not by what a long can
+            // hold. `VpnTunnelBase` computes the backoff in ms and passes it to
+            // `WaitHandle.WaitOne(int)`; anything past int.MaxValue ms (~24.8 days) truncates
+            // on the cast, and a truncated value that lands negative makes WaitOne throw —
+            // killing the reconnect loop outright, which is the opposite of what a long delay
+            // was asking for. A day is already far beyond any real backoff policy.
+            ReconnectBaseDelaySecs = RangedLong("reconnect_base_delay", 1, 1, ReconnectDelaySecsMax),
+            ReconnectMaxDelaySecs = RangedLong("reconnect_max_delay", 60, 1, ReconnectDelaySecsMax),
             ConnectionTimeoutSecs = CheckedTimeout(LongAt("timeout", 30)),
             PaddingEnabled = BoolAt("padding", true),
-            // Through CheckedPadding, like FromJson: on its own each field only checked `>= 0`,
+            // Through CheckedPadding: on its own each field only checked `>= 0`,
             // so a hand-written INI could set padding_min > padding_max (an inverted range) or a
             // five-digit padding far past PaddingCeiling — records the peer would reject.
             // (Audit 2026-07-30, #11.)
@@ -926,7 +919,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
     private const int MtuMax = 16638;
     private const int PaddingCeiling = 1400;
 
-    /// <summary>Range-check an explicit TUN MTU from a config FILE (flat-INI or JSON);
+    /// <summary>Range-check an explicit TUN MTU from a config FILE (flat-INI);
     /// 0 = auto. REJECTS, like the Rust <c>from_ini</c>: a bad value in a file the user
     /// wrote by hand is a mistake worth surfacing at import (both GUI import paths show
     /// the message), not something to silently rewrite. (Audit 2026-07-27, C6)</summary>
@@ -940,10 +933,6 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// scanned or pasted link should still yield a usable profile. (Audit 2026-07-27, C6)</summary>
     private static int LinkMtu(int mtu) => mtu == 0 || (mtu >= MtuMin && mtu <= MtuMax) ? mtu : 0;
 
-    /// <summary>Clamp imported padding bounds to 0..1400 and restore min &lt;= max. Clamped
-    /// rather than rejected: unlike mtu these are pure obfuscation knobs, so narrowing them
-    /// costs the user nothing while an oversized max_bytes would make every data record
-    /// exceed PacketCodec.MaxRecordSize. (Audit 2026-07-27, C6)</summary>
     /// <summary>Clamp the connect timeout to the same 1..300 s the Android and iOS clients
     /// enforce. Unbounded before: the INI accepted any positive long, and
     /// <c>VpnTunnelBase</c> then computes <c>(int)ConnectionTimeoutSecs * 1000</c> — so a value
@@ -952,9 +941,22 @@ public sealed class VpnConfig : INotifyPropertyChanged
     private const long TimeoutSecsMin = 1;
     private const long TimeoutSecsMax = 300;
 
+    /// <summary>Upper bound for both reconnect delays, in seconds (one day).</summary>
+    /// <remarks>
+    /// Not a taste judgement about backoff: the loop in <c>VpnTunnelBase</c> ends at
+    /// <c>WaitHandle.WaitOne(int)</c>, so a delay past <c>int.MaxValue</c> ms (~24.8 days)
+    /// truncates on the cast and can land negative, which throws and takes the reconnect loop
+    /// with it. A day leaves three orders of magnitude of headroom under that cliff.
+    /// </remarks>
+    private const long ReconnectDelaySecsMax = 86_400;
+
     private static long CheckedTimeout(long secs) =>
         secs <= 0 ? 30 : Math.Clamp(secs, TimeoutSecsMin, TimeoutSecsMax);
 
+    /// <summary>Clamp imported padding bounds to 0..1400 and restore min &lt;= max. Clamped
+    /// rather than rejected: unlike mtu these are pure obfuscation knobs, so narrowing them
+    /// costs the user nothing while an oversized max would make every data record exceed
+    /// PacketCodec.MaxRecordSize. (Audit 2026-07-27, C6)</summary>
     private static (int Min, int Max) CheckedPadding(int min, int max)
     {
         min = Math.Clamp(min, 0, PaddingCeiling);
@@ -1245,91 +1247,10 @@ public sealed class VpnConfig : INotifyPropertyChanged
             _ => (proto, mode, quic),
         };
 
-    // ── JSON helpers ──────────────────────────────────────────────────────────
-    private static JsonObject Obj(JsonObject? parent, string key) =>
-        parent?[key] as JsonObject ?? new JsonObject();
 
-    private static string Str(JsonObject o, string key, string def) =>
-        o[key] is JsonValue v && v.TryGetValue(out string? s) ? s! : def;
 
-    private static string? StrOrNull(JsonObject o, string key)
-    {
-        if (o[key] is JsonValue v && v.TryGetValue(out string? s) && !string.IsNullOrEmpty(s)) return s;
-        return null;
-    }
 
-    /// <summary>A JSON number, recording anything that is PRESENT but not readable as one.
-    ///
-    /// The boolean reader beside this one was hardened long ago and the numeric one was not,
-    /// so `"port": "bad"` silently became 443 — a DIFFERENT SERVER — and a fractional or
-    /// out-of-range value was truncated or defaulted just as quietly. Same fail-open the INI
-    /// path was fixed for, reached through a different door; Kotlin and Swift closed it first.
-    /// A missing key is not an error (that is what the default is for); a key that is there
-    /// but unreadable is. A quoted whole number IS accepted — hand-written and
-    /// exported-from-elsewhere profiles quote them. (Audit 2026-08-02, follow-up.)</summary>
-    private static long Long(JsonObject o, string key, long def, List<string>? bad = null)
-    {
-        if (o[key] is not JsonValue v) return def;                 // absent → default
-        if (v.TryGetValue(out long l)) return l;
-        // A whole number that arrived as a double (`443.0`) is still that number; a fractional
-        // one is not, and truncating it would invent a value the profile never carried.
-        if (v.TryGetValue(out double d) && double.IsFinite(d) && d == Math.Floor(d)
-            && d >= long.MinValue && d <= long.MaxValue)
-        {
-            return (long)d;
-        }
-        if (v.TryGetValue(out string? s) && long.TryParse(s?.Trim(), out var parsed)) return parsed;
-        bad?.Add(key);
-        return def;
-    }
 
-    private static int Int(JsonObject o, string key, int def, List<string>? bad = null)
-    {
-        long l = Long(o, key, def, bad);
-        // Out of range for the target type is not a small matter either: silently clamping an
-        // `int` field would hand back a number the profile never carried.
-        if (l < int.MinValue || l > int.MaxValue)
-        {
-            if (o[key] is JsonValue && bad != null && !bad.Contains(key)) bad.Add(key);
-            return def;
-        }
-        return (int)l;
-    }
-
-    /// <summary>A JSON boolean, recording anything that is PRESENT but not a real bool.
-    ///
-    /// `"kill_switch": "ture"` is a JSON string, so `TryGetValue&lt;bool&gt;` fails and the
-    /// default was returned silently — the same fail-open the INI path had, reached through a
-    /// different door. A missing key is not an error (that is what the default is for); a key
-    /// that is there but unreadable is. (Audit 2026-07-31, §4.)</summary>
-    private static bool Bool(JsonObject o, string key, bool def, List<string>? bad = null)
-    {
-        if (o[key] is not JsonValue v) return def;                 // absent → default
-        if (v.TryGetValue(out bool b)) return b;
-        // A JSON string still spelling a boolean is accepted, like the INI path.
-        if (v.TryGetValue(out string? s) && s != null)
-        {
-            var t = s.Trim();
-            if (t.Equals("true", StringComparison.OrdinalIgnoreCase) || t == "1"
-                || t.Equals("yes", StringComparison.OrdinalIgnoreCase)
-                || t.Equals("on", StringComparison.OrdinalIgnoreCase)) return true;
-            if (t.Equals("false", StringComparison.OrdinalIgnoreCase) || t == "0"
-                || t.Equals("no", StringComparison.OrdinalIgnoreCase)
-                || t.Equals("off", StringComparison.OrdinalIgnoreCase)) return false;
-        }
-        bad?.Add(key);
-        return def;
-    }
-
-    private static List<string> StrList(JsonObject o, string key)
-    {
-        var result = new List<string>();
-        if (o[key] is JsonArray arr)
-            foreach (var n in arr)
-                if (n is JsonValue v && v.TryGetValue(out string? s) && !string.IsNullOrEmpty(s))
-                    result.Add(s!);
-        return result;
-    }
 
     private static string PctDecode(string s)
     {
