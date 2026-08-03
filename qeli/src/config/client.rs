@@ -724,6 +724,17 @@ impl ClientConfig {
     ///
     /// The server got this treatment in #23; the client parser was left accepting anything.
     /// (Audit 2026-07-30, #7.)
+    /// True when `dns` asks us NOT to touch the host resolver.
+    ///
+    /// Both `off` and `system` mean that; `tunnel` (the default) is the only mode that
+    /// installs anything. Comparing against `"off"` alone was the bug this replaces — it made
+    /// `system` fall through to the tunnel branch and apply the pushed resolver, which is the
+    /// exact opposite of what the mode requests. A predicate rather than a string comparison
+    /// so a future spelling is added in ONE place. (Audit 2026-08-02, follow-up.)
+    pub fn leaves_resolver_alone(&self) -> bool {
+        matches!(self.dns.mode.as_str(), "off" | "system")
+    }
+
     /// Refuse credentials that cannot fit the AUTH message in one datagram.
     ///
     /// The AUTH goes out UNFRAGMENTED, unlike the ClientHello beside it and the AuthOK coming
@@ -806,7 +817,15 @@ impl ClientConfig {
             &["fake-tls", "obfs", "plain", "reality-tls"],
         )?;
         check("front", &self.obfuscation.fronting, &["websocket", "none"])?;
-        check("dns", &self.dns.mode, &["tunnel", "off"])?;
+        // `system` is an accepted SPELLING of `off`, not a third behaviour.
+        //
+        // The GUI ports have shipped it for a while and treat it exactly as `off` (leave the
+        // device resolver alone), while this client rejected it at load and, had it got
+        // through, would have fallen into the `tunnel` branch and applied the pushed resolver
+        // — the opposite of what the word asks for. A profile is routinely moved between a
+        // phone and the CLI, so the same file has to mean the same thing on both.
+        // See `leaves_resolver_alone`. (Audit 2026-08-02, follow-up.)
+        check("dns", &self.dns.mode, &["tunnel", "off", "system"])?;
         // `is_tap_mode` compares case-insensitively, so accept either spelling here rather
         // than rejecting a value the runtime would have honoured.
         check(

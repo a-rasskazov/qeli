@@ -947,8 +947,37 @@ public sealed class VpnConfig : INotifyPropertyChanged
     ///
     /// Called at CONNECT, not at load: an editor must still be able to open a bad profile in
     /// order to fix it. Same split as the Rust client. (Audit 2026-07-31.)</summary>
+    /// <summary>True for a bare IPv4 or IPv6 literal.</summary>
+    /// <remarks>
+    /// Deliberately not <c>Dns.GetHostAddresses</c>: that RESOLVES anything which is not a
+    /// literal, which is a network round trip during config validation for a value that is by
+    /// definition not resolvable yet.
+    /// </remarks>
+    private static bool IsIpLiteral(string s) =>
+        System.Net.IPAddress.TryParse(s.Trim(), out _);
+
     public void Validate()
     {
+        // The flat INI spells the MODE and the RESOLVER LIST with the same `dns` key, so a
+        // misspelled mode does not fall through to an error — it falls through to being read
+        // as an ADDRESS. `dns = of` became a resolver named "of", the tunnel installed it, and
+        // every lookup went to something that cannot answer. A resolver must be an IP literal
+        // (you cannot resolve a resolver by name), so checking that turns the typo back into
+        // an error. (Audit 2026-08-02, follow-up.)
+        foreach (var server in DnsServers)
+        {
+            if (!string.IsNullOrWhiteSpace(server) && !IsIpLiteral(server))
+            {
+                throw new ArgumentException(
+                    $"dns server '{server}' is not an IP address — if you meant a mode, it must "
+                    + "be off, tunnel or system");
+            }
+        }
+        if (!new[] { "off", "tunnel", "system" }.Contains(DnsMode.ToLowerInvariant()))
+        {
+            throw new ArgumentException(
+                $"dns mode must be off, tunnel or system — got '{DnsMode}'");
+        }
         if (DuplicateKeys.Count > 0)
         {
             throw new ArgumentException(

@@ -2465,11 +2465,12 @@ fn log_server_push(
             "server push: no DNS sent — keeping this host's own resolvers \
              (on the server set dns.push_servers = <ip>, or dns.enabled = true + dns.listen)"
         );
-    } else if config.dns.mode == "off" {
+    } else if config.leaves_resolver_alone() {
         log::warn!(
-            "server push: DNS {} IGNORED — this client has dns = off (it does not touch the \
+            "server push: DNS {} IGNORED — this client has dns = {} (it does not touch the \
              resolver). Set dns = tunnel to apply the pushed resolver.",
-            dns_ip
+            dns_ip,
+            config.dns.mode
         );
     } else {
         log::info!(
@@ -3037,9 +3038,9 @@ fn setup_tunnel(
     // On a full-tunnel host with dns=off, all traffic is routed through the tunnel but the
     // system resolver is left untouched — on a normal host (unlike a router with its own
     // local resolver) that can leak DNS to the physical network's resolver. Make it visible.
-    if config.routing.add_default_gateway && config.dns.mode == "off" {
+    if config.routing.add_default_gateway && config.leaves_resolver_alone() {
         log::warn!(
-            "full-tunnel + dns=off: qeli does not manage the host resolver, so DNS queries may \
+            "full-tunnel + dns=off/system: qeli does not manage the host resolver, so DNS queries may \
              go to the physical network's resolver. Prefer dns=tunnel unless this host already \
              has a trusted local resolver (e.g. a router)."
         );

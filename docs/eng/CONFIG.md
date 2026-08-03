@@ -1211,7 +1211,7 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 | `include` | — | ✓ | ✓ | ✓ | ✓\* | ✓ | CIDR list forced **into** the tunnel (Android — split-tunnel only) |
 | `exclude` | — | ✓ | ✓ | ✓ | ✓\* | ✓ | CIDR list carved **out** of the tunnel (Android — API 33+ only) |
 | `route_file` | — | — | ✓ | ✓ | — | — | split routes from a file (on the CLI use `include`/`exclude`) |
-| `dns` | `tunnel` | ✓ | ✓ | ✓ | ✓ | ✓ | DNS mode: `tunnel` / `off` (desktop/Android also accept a resolver list) |
+| `dns` | `tunnel` | ✓ | ✓ | ✓ | ✓ | ✓ | DNS mode: `tunnel` / `off` / `system`. `system` is an accepted **spelling of `off`**, not a third behaviour — both mean "leave the device resolver alone". The GUI ports also accept a resolver LIST here (`dns = 1.1.1.1, 8.8.8.8`); the CLI keeps resolvers in `dns_servers` instead. Because the same key carries both, a misspelled mode would otherwise be read as an address — every client now refuses a resolver that is not an IP literal, so `dns = of` is an error rather than a "resolver" that cannot answer |
 | `dns_servers` | — | ✓ | — | — | — | — | comma-separated resolver(s) to install under `dns = tunnel` **when the server pushes none**. Empty and nothing pushed → the host's resolvers are left untouched (with a warning), **not** silently replaced by a third party's |
 | `kill_switch` | `false` | ✓ | ✓ | ✓ | — | —\* | fail-closed firewall (iptables / WFP / pf; Android — system always-on VPN) |
 | `allow_ipv6_leak` | `false` | ✓ | ✓ | ✓ | ✓ | ✓ | don't block IPv6 in a full tunnel / under the kill-switch |

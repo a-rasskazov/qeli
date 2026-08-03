@@ -266,6 +266,18 @@ data class VpnConfig(
         require(dnsMode in setOf("off", "tunnel", "system")) {
             "dns mode must be off, tunnel or system — got '$dnsMode'"
         }
+        // The flat INI spells the MODE and the RESOLVER LIST with the same `dns` key, so a
+        // misspelled mode does not fall through to an error — it falls through to being read
+        // as an ADDRESS. `dns = of` became a resolver named "of", the tunnel installed it, and
+        // every lookup went to something that cannot answer. A resolver must be an IP literal
+        // (you cannot resolve a resolver by name), so checking that turns the typo back into
+        // an error. (Audit 2026-08-02, follow-up.)
+        for (server in dnsServers) {
+            require(isIpLiteral(server)) {
+                "dns server '$server' is not an IP address — if you meant a mode, it must be " +
+                    "off, tunnel or system"
+            }
+        }
         fun scalar(name: String, v: String?) {
             val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
             throw IllegalArgumentException(
@@ -697,6 +709,27 @@ data class VpnConfig(
          * Declared BEFORE [KNOWN_INI_KEYS], which folds it in — a companion object's property
          * initializers run in declaration order, so the other way round leaves it null.
          */
+        /**
+         * True for a bare IPv4 or IPv6 literal.
+         *
+         * Deliberately hand-rolled rather than `InetAddress.getByName`, which performs a DNS
+         * LOOKUP for anything that is not a literal — on the main thread, during config
+         * validation, for a value that is by definition not resolvable yet.
+         */
+        private fun isIpLiteral(s: String): Boolean {
+            val v = s.trim()
+            if (v.isEmpty()) return false
+            if (':' in v) {
+                // IPv6: hex groups and at most one `::`. Good enough to separate an address
+                // from a word — the OS rejects a malformed one when the tunnel is built.
+                return v.all { it.isDigit() || it in "abcdefABCDEF:." } && v.count { it == ':' } >= 2
+            }
+            val parts = v.split('.')
+            return parts.size == 4 && parts.all { p ->
+                p.isNotEmpty() && p.length <= 3 && p.all(Char::isDigit) && p.toInt() <= 255
+            }
+        }
+
         private val CARRIED_INI_KEYS = setOf(
             // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
             // "Что пушем НЕ передаётся" lists these as client file-only keys.

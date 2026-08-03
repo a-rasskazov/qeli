@@ -368,6 +368,39 @@ struct VPNConfig: Codable, Equatable, Sendable {
         guard ["off", "tunnel", "system"].contains(dnsMode.lowercased()) else {
             throw VPNConfigError.invalid("dns mode must be off, tunnel or system — got '\(dnsMode)'")
         }
+        // The flat INI spells the MODE and the RESOLVER LIST with the same `dns` key, so a
+        // misspelled mode does not fall through to an error — it falls through to being read
+        // as an ADDRESS. `dns = of` became a resolver named "of", the tunnel installed it, and
+        // every lookup went to something that cannot answer. A resolver must be an IP literal
+        // (you cannot resolve a resolver by name), so checking that turns the typo back into
+        // an error. (Audit 2026-08-02, follow-up.)
+        for server in dnsServers where !Self.isIPLiteral(server) {
+            throw VPNConfigError.invalid(
+                "dns server '\(server)' is not an IP address — if you meant a mode, it must be "
+                    + "off, tunnel or system")
+        }
+    }
+
+    /// True for a bare IPv4 or IPv6 literal.
+    ///
+    /// Deliberately not `getaddrinfo`: that RESOLVES anything which is not a literal, which is
+    /// a network round trip during config validation for a value that is by definition not
+    /// resolvable yet.
+    static func isIPLiteral(_ s: String) -> Bool {
+        let v = s.trimmingCharacters(in: .whitespaces)
+        guard !v.isEmpty else { return false }
+        if v.contains(":") {
+            // IPv6: hex groups and at most one `::`. Enough to tell an address from a word —
+            // the OS rejects a malformed one when the tunnel is built.
+            let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF:.")
+            return v.unicodeScalars.allSatisfy { allowed.contains($0) }
+                && v.filter { $0 == ":" }.count >= 2
+        }
+        let parts = v.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { p in
+            !p.isEmpty && p.count <= 3 && p.allSatisfy(\.isNumber) && (Int(p) ?? 256) <= 255
+        }
     }
 
     static func fromINI(_ text: String) throws -> VPNConfig {
