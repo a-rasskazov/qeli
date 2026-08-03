@@ -472,7 +472,17 @@ impl ClientConfig {
             .get("password_command")
             .filter(|p| !p.is_empty())
             .map(str::to_string);
-        cfg.auth.server_public_key = q.get("key").filter(|k| !k.is_empty()).map(str::to_string);
+        // An ALL-ZERO key means TOFU, exactly as the shipped `client.conf` documents it
+        // ("Empty / all-zero = TOFU"). Only the empty string was filtered here, so the zeros
+        // became a real pin and `verify_server_key` compared the server's actual key against
+        // them — every copy of the shipped example failed its first connect with
+        // "SERVER KEY MISMATCH — possible MITM attack!", which is both wrong and the most
+        // alarming way to be wrong. The C# port has always read it this way.
+        // (Audit 2026-08-03, P2.)
+        cfg.auth.server_public_key = q
+            .get("key")
+            .filter(|k| !k.is_empty() && k.chars().any(|c| c != '0'))
+            .map(str::to_string);
         // H-1: bind the session keys to the server's static identity. ON by default
         // (baseline already true); requires a pinned `key`. Set `bind_static = false`
         // for an unpinned/TOFU client or to talk to a legacy 0.7.0 server.

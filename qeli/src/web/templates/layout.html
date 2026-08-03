@@ -513,7 +513,13 @@ async function restartServer(maxWaitMs = 25000) {
   while (Date.now() - start < maxWaitMs) {
     try {
       const d = await apiFetch('api/status', { cache: 'no-store' });
-      if (d && d.ok) return true;
+      // `ok` is hardcoded true in /api/status — it means "the panel answered", not "the
+      // server is up". Returning on it declared success while the DATA PLANE was in a
+      // respawn loop (a taken port, a TUN failure, a route clash), and the panel then said
+      // "server is live" over a tunnel that never came up. `worker_ok` is the field that
+      // actually knows. Waiting for it costs nothing: the loop already has its deadline and
+      // now returns false instead of a false yes. (Audit 2026-08-03, P1.)
+      if (d && d.ok && d.worker_ok !== false) return true;
     } catch {}
     await new Promise(res => setTimeout(res, 1000));
   }
