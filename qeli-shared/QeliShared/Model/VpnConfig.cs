@@ -620,24 +620,25 @@ public sealed class VpnConfig : INotifyPropertyChanged
 
         string password = StrOrNull(auth, "password") ?? StrOrNull(root, "password") ?? "";
         var badJsonBools = new List<string>();
-        var pad = CheckedPadding(Int(padding, "min_bytes", 0), Int(padding, "max_bytes", 255));
+        var badJsonNums = new List<string>();
+        var pad = CheckedPadding(Int(padding, "min_bytes", 0, badJsonNums), Int(padding, "max_bytes", 255, badJsonNums));
 
         return new VpnConfig
         {
             Name = StrOrNull(root, "name"),
             ServerAddress = Str(server, "address", Str(root, "address", "127.0.0.1")),
-            Port = Int(server, "port", Int(root, "port", 443)),
+            Port = Int(server, "port", Int(root, "port", 443, badJsonNums), badJsonNums),
             Protocol = Str(server, "protocol", "tcp"),
-            ConnectionTimeoutSecs = CheckedTimeout(Long(server, "connection_timeout_secs", 30)),
+            ConnectionTimeoutSecs = CheckedTimeout(Long(server, "connection_timeout_secs", 30, badJsonNums)),
             ReconnectEnabled = Bool(reconnect, "enabled", true, badJsonBools),
-            ReconnectMaxRetries = Int(reconnect, "max_retries", -1),
-            ReconnectBaseDelaySecs = Long(reconnect, "base_delay_secs", 1),
-            ReconnectMaxDelaySecs = Long(reconnect, "max_delay_secs", 60),
+            ReconnectMaxRetries = Int(reconnect, "max_retries", -1, badJsonNums),
+            ReconnectBaseDelaySecs = Long(reconnect, "base_delay_secs", 1, badJsonNums),
+            ReconnectMaxDelaySecs = Long(reconnect, "max_delay_secs", 60, badJsonNums),
             Username = Str(auth, "username", Str(root, "username", "client")),
             Password = password,
             ServerPublicKeyHex = StrOrNull(auth, "server_public_key"),
             BindStaticToSession = Bool(auth, "bind_static_to_session", true, badJsonBools),
-            Mtu = CheckedMtu(Int(tun, "mtu", 0)),  // 0 = auto (use server-pushed MTU)
+            Mtu = CheckedMtu(Int(tun, "mtu", 0, badJsonNums)),  // 0 = auto (use server-pushed MTU)
             RoutingMode = Str(routing, "mode", "full-tunnel"),
             AddDefaultGateway = Bool(routing, "add_default_gateway", false, badJsonBools),
             IncludeRoutes = StrList(routing, "include"),
@@ -650,20 +651,21 @@ public sealed class VpnConfig : INotifyPropertyChanged
             ObfsKey = Str(obf, "obfs_key", ""),
             ObfsFronting = Str(obf, "fronting", "websocket"),
             AwgEnabled = Bool(awg, "enabled", false, badJsonBools),
-            AwgJc = (uint)Math.Clamp(Int(awg, "jc", 0), 0, 128),
-            AwgJmin = (ushort)Math.Clamp(Int(awg, "jmin", 40), 0, 1400),
-            AwgJmax = (ushort)Math.Clamp(Int(awg, "jmax", 300), 0, 1400),
+            AwgJc = (uint)Math.Clamp(Int(awg, "jc", 0, badJsonNums), 0, 128),
+            AwgJmin = (ushort)Math.Clamp(Int(awg, "jmin", 40, badJsonNums), 0, 1400),
+            AwgJmax = (ushort)Math.Clamp(Int(awg, "jmax", 300, badJsonNums), 0, 1400),
             QuicEnabled = Bool(quic, "enabled", false, badJsonBools),
             Sni = StrOrNull(obf, "sni"),
             RealityShortId = StrOrNull(obf, "reality_short_id"),
             PaddingEnabled = Bool(padding, "enabled", true, badJsonBools),
             UnparsedBooleanKeys = badJsonBools,
+            UnparsedNumericKeys = badJsonNums,
             PaddingMin = pad.Min,
             PaddingMax = pad.Max,
             HeartbeatEnabled = Bool(heartbeat, "enabled", true, badJsonBools),
-            HeartbeatIntervalMs = Long(heartbeat, "interval_ms", 15000),
-            HeartbeatDataSize = Int(heartbeat, "data_size_bytes", 16),
-            HeartbeatJitterMs = Long(heartbeat, "jitter_ms", 2000),
+            HeartbeatIntervalMs = Long(heartbeat, "interval_ms", 15000, badJsonNums),
+            HeartbeatDataSize = Int(heartbeat, "data_size_bytes", 16, badJsonNums),
+            HeartbeatJitterMs = Long(heartbeat, "jitter_ms", 2000, badJsonNums),
             // Parsing stopped at heartbeat, so a canonical JSON profile lost its shaping
             // block entirely and `tun.mtu_probe = false` came back as true — the client then
             // probed a path the profile had deliberately told it not to. Section and field
@@ -671,14 +673,14 @@ public sealed class VpnConfig : INotifyPropertyChanged
             // INI shorthand. (Audit 2026-07-29, #7.)
             MtuProbe = Bool(tun, "mtu_probe", true, badJsonBools),
             ShapingEnabled = Bool(shaping, "enabled", false, badJsonBools),
-            ShapingGapMeanMs = Long(shaping, "idle_gap_mean_ms", 700),
-            ShapingGapMinMs = Long(shaping, "idle_gap_min_ms", 40),
-            ShapingGapMaxMs = Long(shaping, "idle_gap_max_ms", 6000),
-            ShapingBudgetBytesPerSec = Int(shaping, "budget_bytes_per_sec", 16384),
-            ShapingMinSize = Int(shaping, "min_size", 64),
-            ShapingMaxSize = Int(shaping, "max_size", 1024),
+            ShapingGapMeanMs = Long(shaping, "idle_gap_mean_ms", 700, badJsonNums),
+            ShapingGapMinMs = Long(shaping, "idle_gap_min_ms", 40, badJsonNums),
+            ShapingGapMaxMs = Long(shaping, "idle_gap_max_ms", 6000, badJsonNums),
+            ShapingBudgetBytesPerSec = Int(shaping, "budget_bytes_per_sec", 16384, badJsonNums),
+            ShapingMinSize = Int(shaping, "min_size", 64, badJsonNums),
+            ShapingMaxSize = Int(shaping, "max_size", 1024, badJsonNums),
             ShapingStealth = Bool(shaping, "stealth", false, badJsonBools),
-            ShapingStealthRateMbps = Int(shaping, "stealth_rate_mbps", 2),
+            ShapingStealthRateMbps = Int(shaping, "stealth_rate_mbps", 2, badJsonNums),
         };
     }
 
@@ -959,14 +961,6 @@ public sealed class VpnConfig : INotifyPropertyChanged
         return (min, Math.Clamp(max, min, PaddingCeiling));
     }
 
-    /// <summary>Reject a config the runtime would then silently reinterpret. The desktop client
-    /// had no equivalent of the Rust client's <c>ClientConfig::validate()</c>, so every string
-    /// enum fell through to another branch on a typo: an unknown protocol became TCP, an unknown
-    /// wire mode became fake-TLS, an unknown <c>front</c> meant raw obfs — and an unparseable
-    /// boolean read as false, which disabled the kill switch and the static-key binding.
-    ///
-    /// Called at CONNECT, not at load: an editor must still be able to open a bad profile in
-    /// order to fix it. Same split as the Rust client. (Audit 2026-07-31.)</summary>
     /// <summary>Largest `user` + `:` + `pass`, in UTF-8 bytes, that still fits one AUTH
     /// datagram.</summary>
     /// <remarks>
@@ -985,9 +979,33 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// literal, which is a network round trip during config validation for a value that is by
     /// definition not resolvable yet.
     /// </remarks>
-    private static bool IsIpLiteral(string s) =>
-        System.Net.IPAddress.TryParse(s.Trim(), out _);
+    private static bool IsIpLiteral(string s)
+    {
+        var v = s.Trim();
+        if (v.Length == 0) return false;
+        if (!System.Net.IPAddress.TryParse(v, out var addr)) return false;
+        // `IPAddress.TryParse` accepts the historical IPv4 shorthands — `1` → 0.0.0.1,
+        // `127.1` → 127.0.0.1, `0x7f000001` → 127.0.0.1 — which Rust, Kotlin and Swift all
+        // refuse. Choosing the "system parser" here for exactness bought the opposite: one
+        // profile validated on Windows/macOS and was rejected everywhere else, which is worse
+        // than either behaviour on its own. Require the canonical dotted quad by round-tripping
+        // the parse: a shorthand does not print back as it was written.
+        // (Audit 2026-08-02, follow-up.)
+        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            return addr.ToString() == v;
+        }
+        return true;   // IPv6 has no such shorthand; TryParse is strict there.
+    }
 
+    /// <summary>Reject a config the runtime would then silently reinterpret. The desktop client
+    /// had no equivalent of the Rust client's <c>ClientConfig::validate()</c>, so every string
+    /// enum fell through to another branch on a typo: an unknown protocol became TCP, an unknown
+    /// wire mode became fake-TLS, an unknown <c>front</c> meant raw obfs — and an unparseable
+    /// boolean read as false, which disabled the kill switch and the static-key binding.
+    ///
+    /// Called at CONNECT, not at load: an editor must still be able to open a bad profile in
+    /// order to fix it. Same split as the Rust client. (Audit 2026-07-31.)</summary>
     public void Validate()
     {
         // The flat INI spells the MODE and the RESOLVER LIST with the same `dns` key, so a
@@ -1240,11 +1258,43 @@ public sealed class VpnConfig : INotifyPropertyChanged
         return null;
     }
 
-    private static int Int(JsonObject o, string key, int def) =>
-        o[key] is JsonValue v && v.TryGetValue(out int i) ? i : def;
+    /// <summary>A JSON number, recording anything that is PRESENT but not readable as one.
+    ///
+    /// The boolean reader beside this one was hardened long ago and the numeric one was not,
+    /// so `"port": "bad"` silently became 443 — a DIFFERENT SERVER — and a fractional or
+    /// out-of-range value was truncated or defaulted just as quietly. Same fail-open the INI
+    /// path was fixed for, reached through a different door; Kotlin and Swift closed it first.
+    /// A missing key is not an error (that is what the default is for); a key that is there
+    /// but unreadable is. A quoted whole number IS accepted — hand-written and
+    /// exported-from-elsewhere profiles quote them. (Audit 2026-08-02, follow-up.)</summary>
+    private static long Long(JsonObject o, string key, long def, List<string>? bad = null)
+    {
+        if (o[key] is not JsonValue v) return def;                 // absent → default
+        if (v.TryGetValue(out long l)) return l;
+        // A whole number that arrived as a double (`443.0`) is still that number; a fractional
+        // one is not, and truncating it would invent a value the profile never carried.
+        if (v.TryGetValue(out double d) && double.IsFinite(d) && d == Math.Floor(d)
+            && d >= long.MinValue && d <= long.MaxValue)
+        {
+            return (long)d;
+        }
+        if (v.TryGetValue(out string? s) && long.TryParse(s?.Trim(), out var parsed)) return parsed;
+        bad?.Add(key);
+        return def;
+    }
 
-    private static long Long(JsonObject o, string key, long def) =>
-        o[key] is JsonValue v && v.TryGetValue(out long l) ? l : def;
+    private static int Int(JsonObject o, string key, int def, List<string>? bad = null)
+    {
+        long l = Long(o, key, def, bad);
+        // Out of range for the target type is not a small matter either: silently clamping an
+        // `int` field would hand back a number the profile never carried.
+        if (l < int.MinValue || l > int.MaxValue)
+        {
+            if (o[key] is JsonValue && bad != null && !bad.Contains(key)) bad.Add(key);
+            return def;
+        }
+        return (int)l;
+    }
 
     /// <summary>A JSON boolean, recording anything that is PRESENT but not a real bool.
     ///

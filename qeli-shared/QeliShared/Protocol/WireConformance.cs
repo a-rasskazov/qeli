@@ -251,6 +251,48 @@ public static class WireConformance
         catch (ArgumentException) { stillRefused = true; }
         check("ini-carry: the editor cannot launder a bad number or unknown key", stillRefused);
 
+        // The JSON importer must record an unreadable NUMBER, not swap in a default.
+        //
+        // Its boolean reader was hardened long ago and its numeric one was not, so
+        // `"port": "bad"` silently became 443 — a DIFFERENT SERVER. Kotlin and Swift closed
+        // this first; C# was the port still failing open. (Audit 2026-08-02, follow-up.)
+        static Model.VpnConfig Json(string serverBody) => Model.VpnConfig.FromJson(
+            "{\"server\":{\"address\":\"vpn.example.com\"," + serverBody + "},"
+            + "\"auth\":{\"username\":\"u\",\"password\":\"p\"}}");
+
+        bool jsonBadRecorded = Json("\"port\":\"bad\"").UnparsedNumericKeys.Contains("port");
+        bool jsonFractionRecorded = Json("\"port\":443.9").UnparsedNumericKeys.Contains("port");
+        // ...while the forms that ARE that number still parse: a quoted whole number and a
+        // whole number written with a decimal point.
+        bool jsonQuotedOk = Json("\"port\":\"8443\"").Port == 8443
+            && Json("\"port\":\"8443\"").UnparsedNumericKeys.Count == 0;
+        bool jsonWholeDoubleOk = Json("\"port\":443.0").Port == 443
+            && Json("\"port\":443.0").UnparsedNumericKeys.Count == 0;
+        check("json-nums: an unreadable number is recorded", jsonBadRecorded);
+        check("json-nums: a fractional number is recorded", jsonFractionRecorded);
+        check("json-nums: a quoted whole number still parses", jsonQuotedOk);
+        check("json-nums: a whole number written as a double still parses", jsonWholeDoubleOk);
+
+        // The IP-literal check must agree with the other three ports.
+        //
+        // `IPAddress.TryParse` accepts the historical IPv4 shorthands, which Rust, Kotlin and
+        // Swift refuse — so one profile validated here and was rejected everywhere else.
+        bool shorthandRefused = true;
+        foreach (var shorthand in new[] { "1", "127.1", "0x7f000001", "010.1.1.1" })
+        {
+            var cfg = Ini($"dns = {shorthand}");
+            try { cfg.Validate(); shorthandRefused = false; }
+            catch (ArgumentException) { }
+        }
+        bool realAddressesOk = true;
+        foreach (var ok in new[] { "1.1.1.1", "8.8.8.8", "::1", "2001:4860:4860::8888" })
+        {
+            try { Ini($"dns = {ok}").Validate(); }
+            catch (ArgumentException) { realAddressesOk = false; }
+        }
+        check("dns-ip: IPv4 shorthand is refused, as on the other ports", shorthandRefused);
+        check("dns-ip: real addresses still pass", realAddressesOk);
+
         // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
         // change silently keeps its default — `gatway = true` left the tunnel split with
         // nothing said anywhere. The Rust client has always refused these; this port did not.

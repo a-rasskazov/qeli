@@ -1691,9 +1691,14 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
 /// panel / `add-client` change a silent no-op: the worker kept (re)loading the
 /// inline copy and ignored the file the panel writes to, so edits never applied.
 ///
-/// Returns `Err` only when the users file can't be read/parsed AND there are no
-/// inline entries to fall back to — so callers keep their existing behaviour
-/// (start empty at boot, keep current users on a transient SIGHUP-reload error).
+/// Returns `Err` whenever the users file EXISTS but cannot be loaded — corrupt, truncated,
+/// unreadable, or carrying a value or key that will not parse. Inline entries do NOT excuse
+/// that: serving a different access-control list than the one on disk, silently, is the worst
+/// available outcome. Only a MISSING file falls back to the inline set, and only when there is
+/// one; otherwise that is an error too.
+///
+/// (This used to say inline entries were a fallback for any load failure, which is what the
+/// code did until the fix below — see the comment there. Audit 2026-08-02, §5.)
 pub fn load_users_db(config: &ServerConfig) -> anyhow::Result<UsersDb> {
     let has_inline = !config.auth.users.is_empty() || !config.auth.groups.is_empty();
     let mut db = match UsersDb::load(&config.auth.users_file) {

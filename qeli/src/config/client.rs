@@ -138,12 +138,15 @@ pub struct ClientRoutingConfig {
     pub include: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
-    /// Route private/local networks (RFC1918) through the tunnel. When `true`,
-    /// the client adds the private ranges (10/8, 172.16/12, 192.168/16) and
-    /// applies any networks the server pushed in its auth response, so LAN
-    /// resources reachable behind the server work through the VPN. When `false`
-    /// (default), local networks are NOT sent into the tunnel and server-pushed
-    /// networks are ignored.
+    /// Route private/local networks (RFC1918) through the tunnel: the BLANKET ranges
+    /// (10/8, 172.16/12, 192.168/16), so LAN resources behind the server work through
+    /// the VPN. `false` (the default) leaves them on the physical interface.
+    ///
+    /// It does NOT gate the server's pushed routes — those are applied either way since
+    /// 0.7.12. This used to say they were ignored when `false`, which was the historical
+    /// trap it describes: an operator pushing a route saw nothing happen and had to set
+    /// this flag, which then also pulled in all of RFC1918. Only the blanket ranges are
+    /// this flag's business now. (Audit 2026-08-02, follow-up.)
     #[serde(default = "default_false")]
     pub route_local_networks: bool,
     /// Firewall kill-switch (Linux/iptables): when `true` AND full-tunnel, block
