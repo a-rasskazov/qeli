@@ -179,38 +179,54 @@ struct ConnectionView: View {
                 detailRow("Server key", summary.keyPinned
                     ? String(localized: "server key pinned") : String(localized: "server key on trust (TOFU)"))
                 if live {
-                    let pushed = snapshot.pushed ?? PushedFacts()
                     if let address = snapshot.clientAddress {
                         detailRow("Tunnel IP", address)
                     }
-                    if let dns = snapshot.pushedDNS ?? config.dnsServers.first {
-                        detailRow("DNS", dns)
-                    }
+                    // `pushedDNS` is the resolver the tunnel ACTUALLY programmed, and `nil` is
+                    // a real answer: none was installed and the device keeps its own.
+                    //
+                    // Falling back to the profile's list here undid the fix that produced that
+                    // value. The nil case is precisely `dns = off` / `dns = system`, where the
+                    // profile's resolvers are deliberately NOT applied — so the row named
+                    // servers the tunnel had ignored, which is the claim this card exists not
+                    // to make. The profile is not a fallback for a live fact.
+                    // (Audit 2026-08-02, follow-up.)
+                    detailRow("DNS", snapshot.pushedDNS ?? String(localized: "system DNS"))
                     if let mtu = snapshot.appliedMTU {
                         detailRow("MTU", config.mtu > 0 ? "\(mtu)" : "\(mtu) (auto)")
                     }
                     if snapshot.maxStreams > 1 {
                         let streams = String(
                             format: String(localized: "up to %lld streams"), snapshot.maxStreams)
-                        detailRow("Multipath", pushed.multipathAdaptive
+                        detailRow("Multipath", snapshot.pushed?.multipathAdaptive == true
                             ? streams + ", " + String(localized: "adaptive") : streams)
                     }
-                    // Only a sample is ever held or shown: a server may advertise a very long
-                    // list. The count is the honest part; the sample makes it concrete.
-                    if pushed.routeCount > 0 {
-                        let shown = pushed.routes.joined(separator: ", ")
-                        let extra = pushed.routeCount - pushed.routes.count
-                        detailRow("Pushed routes", extra > 0
-                            ? String(format: String(localized: "%1$@ and %2$lld more"), shown, extra)
-                            : "\(shown) (\(pushed.routeCount))")
+                    // OMITTED, not defaulted, when the snapshot predates these fields.
+                    //
+                    // A running tunnel extension from an older build publishes a snapshot with
+                    // no `pushed`, and substituting `PushedFacts()` reported every flag as
+                    // false — the sheet then said Padding/Heartbeat/Shaping were OFF when their
+                    // real state was simply unknown, which for the DPI-resistance knobs is the
+                    // most misleading thing it could say. Showing nothing is honest; the rows
+                    // reappear on the next connection. (Audit 2026-08-02, follow-up.)
+                    if let pushed = snapshot.pushed {
+                        // Only a sample is ever held or shown: a server may advertise a very
+                        // long list. The count is the honest part; the sample makes it concrete.
+                        if pushed.routeCount > 0 {
+                            let shown = pushed.routes.joined(separator: ", ")
+                            let extra = pushed.routeCount - pushed.routes.count
+                            detailRow("Pushed routes", extra > 0
+                                ? String(format: String(localized: "%1$@ and %2$lld more"), shown, extra)
+                                : "\(shown) (\(pushed.routeCount))")
+                        }
+                        // The DPI-resistance knobs actually in force, which the server owns.
+                        detailRow("Padding", pushed.paddingEnabled
+                            ? "\(pushed.paddingMin)–\(pushed.paddingMax) B" : String(localized: "Off"))
+                        detailRow("Heartbeat", pushed.heartbeatEnabled
+                            ? "\(pushed.heartbeatIntervalMilliseconds / 1000) s" : String(localized: "Off"))
+                        detailRow("Traffic shaping", pushed.shapingEnabled
+                            ? String(localized: "On") : String(localized: "Off"))
                     }
-                    // The DPI-resistance knobs actually in force, which the server owns.
-                    detailRow("Padding", pushed.paddingEnabled
-                        ? "\(pushed.paddingMin)–\(pushed.paddingMax) B" : String(localized: "Off"))
-                    detailRow("Heartbeat", pushed.heartbeatEnabled
-                        ? "\(pushed.heartbeatIntervalMilliseconds / 1000) s" : String(localized: "Off"))
-                    detailRow("Traffic shaping", pushed.shapingEnabled
-                        ? String(localized: "On") : String(localized: "Off"))
                 }
                 detailRow("Routing", routingText(summary))
                 detailRow("Auto-reconnect", config.reconnectEnabled

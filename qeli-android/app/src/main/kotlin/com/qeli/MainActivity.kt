@@ -819,9 +819,19 @@ sni = www.microsoft.com
         if (live) {
             val pushed = VpnServiceImpl.livePushed
             rows += R.string.detail_tunnel_ip to VpnServiceImpl.liveIp
-            rows += R.string.detail_dns to (VpnServiceImpl.liveDns.ifEmpty {
-                cfg.dnsServers.joinToString(", ").ifEmpty { getString(R.string.protection_dns_system) }
-            })
+            // `liveDns` is the resolver the tunnel ACTUALLY programmed, and empty is a real
+            // answer: it means none was installed and the device keeps its own.
+            //
+            // Falling back to the profile's `dns` list here undid the fix that produced that
+            // value. The empty case is precisely `dns = off` / `dns = system`, where the
+            // profile's resolvers are deliberately NOT applied — so the row named servers the
+            // tunnel had ignored, which is the claim the whole card exists not to make. The
+            // profile is not a fallback for a live fact; while connected there is only one
+            // right answer and the service already computed it.
+            // (Audit 2026-08-02, follow-up.)
+            rows += R.string.detail_dns to VpnServiceImpl.liveDns.ifEmpty {
+                getString(R.string.protection_dns_system)
+            }
             if (VpnServiceImpl.liveMtu > 0) {
                 rows += R.string.detail_mtu to
                     "${VpnServiceImpl.liveMtu}${if (cfg.mtu > 0) "" else " (auto)"}"
