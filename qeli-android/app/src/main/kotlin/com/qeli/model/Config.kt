@@ -261,6 +261,11 @@ data class VpnConfig(
         require(appsMode in setOf("all", "include", "exclude")) {
             "apps_mode must be all, include or exclude — got '$appsMode'"
         }
+        // Same reasoning: the fallback is "tunnel", so a typo does not fail — it picks the
+        // opposite of `off`/`system` and sends every lookup through the VPN.
+        require(dnsMode in setOf("off", "tunnel", "system")) {
+            "dns mode must be off, tunnel or system — got '$dnsMode'"
+        }
         fun scalar(name: String, v: String?) {
             val bad = v?.firstOrNull { it == '\r' || it == '\n' || it == '\u0000' } ?: return
             throw IllegalArgumentException(
@@ -829,6 +834,29 @@ data class VpnConfig(
                 badJsonBools.add(key)
                 return default
             }
+            // Numbers had the same door left open, and only booleans were closed.
+            //
+            // `optInt`/`optLong` swallow anything they cannot coerce and hand back the
+            // default, so `"port": "bad"` became 443 — a DIFFERENT SERVER — and an unreadable
+            // limit became whatever the default happens to be, in silence. That is exactly the
+            // failure the INI path was hardened against; the JSON importer reaches it through
+            // another door. Present-but-unreadable is recorded, absent is not.
+            // (Audit 2026-08-02, §6 of the follow-up.)
+            val badJsonNums = mutableListOf<String>()
+            fun jlong(o: JSONObject, key: String, default: Long): Long {
+                if (!o.has(key) || o.isNull(key)) return default
+                when (val v = o.get(key)) {
+                    is Number -> return v.toLong()
+                    // A JSON string holding digits is accepted: hand-written and
+                    // exported-from-elsewhere profiles quote numbers, and rejecting those
+                    // would refuse configs that have always worked.
+                    is String -> v.trim().toLongOrNull()?.let { return it }
+                }
+                badJsonNums.add(key)
+                return default
+            }
+            fun jint(o: JSONObject, key: String, default: Int): Int =
+                jlong(o, key, default.toLong()).coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
             val server = root.optJSONObject("server") ?: JSONObject()
             val reconnect = server.optJSONObject("reconnect") ?: JSONObject()
             val auth = root.optJSONObject("auth") ?: JSONObject()
@@ -853,23 +881,23 @@ data class VpnConfig(
                 else -> ""
             }
             // Padding bounds are clamped, not rejected — see [checkedPadding]. (C6)
-            val pad = checkedPadding(padding.optInt("min_bytes", 0), padding.optInt("max_bytes", 255))
+            val pad = checkedPadding(jint(padding, "min_bytes", 0), jint(padding, "max_bytes", 255))
 
             return VpnConfig(
                 serverAddress = server.optString("address", root.optString("address", "127.0.0.1")),
-                port = server.optInt("port", root.optInt("port", 443)),
+                port = jint(server, "port", if (root.has("port")) jint(root, "port", 443) else 443),
                 protocol = server.optString("protocol", "tcp"),
-                connectionTimeoutSecs = server.optLong("connection_timeout_secs", 30),
+                connectionTimeoutSecs = jlong(server, "connection_timeout_secs", 30),
                 reconnectEnabled = jbool(reconnect, "enabled", true),
-                reconnectMaxRetries = reconnect.optInt("max_retries", -1),
-                reconnectBaseDelaySecs = reconnect.optLong("base_delay_secs", 1),
-                reconnectMaxDelaySecs = reconnect.optLong("max_delay_secs", 60),
+                reconnectMaxRetries = jint(reconnect, "max_retries", -1),
+                reconnectBaseDelaySecs = jlong(reconnect, "base_delay_secs", 1),
+                reconnectMaxDelaySecs = jlong(reconnect, "max_delay_secs", 60),
                 username = auth.optString("username", root.optString("username", "client")),
                 password = password,
                 serverPublicKeyHex = auth.optStringOrNull("server_public_key"),
                 bindStaticToSession = jbool(auth, "bind_static_to_session", true),
                 // 0 = auto (use server-pushed MTU). Range-checked: see [checkedMtu].
-                mtu = checkedMtu(tun.optInt("mtu", 0)),
+                mtu = checkedMtu(jint(tun, "mtu", 0)),
                 // Default to full-tunnel (a VPN should carry ALL traffic) so a config
                 // without a routing section doesn't silently leak outside the tunnel.
                 // Explicit "split-tunnel" is still honoured: isFullTunnel only becomes
@@ -886,15 +914,18 @@ data class VpnConfig(
                 dnsServers = dns.optStringList("servers"),
                 // JSON keeps mode and servers in separate fields, so it never had the flat
                 // INI's ambiguity — but the mode still has to survive the import.
-                dnsMode = dns.optString("mode", "tunnel").lowercase()
-                    .takeIf { it in setOf("off", "tunnel", "system") } ?: "tunnel",
+                // Kept RAW, not filtered: [validate] refuses an unknown value. Silently
+                // dropping it left the mode at "tunnel", so `"mode": "of"` sent every lookup
+                // through the tunnel when the user asked for the exact opposite — a typo
+                // choosing the other branch. (Audit 2026-08-02, §6 of the follow-up.)
+                dnsMode = dns.optString("mode", "tunnel").lowercase(),
                 wireMode = obf.optString("mode", "fake-tls"),
                 obfsKey = obf.optString("obfs_key", ""),
                 obfsFronting = obf.optString("fronting", "websocket"),
                 awgEnabled = jbool(awg, "enabled", false),
-                awgJc = awg.optInt("jc", 0),
-                awgJmin = awg.optInt("jmin", 40),
-                awgJmax = awg.optInt("jmax", 300),
+                awgJc = jint(awg, "jc", 0),
+                awgJmin = jint(awg, "jmin", 40),
+                awgJmax = jint(awg, "jmax", 300),
                 quicEnabled = jbool(quic, "enabled", false),
                 sni = obf.optStringOrNull("sni"),
                 realityShortId = obf.optStringOrNull("reality_short_id"),
@@ -902,23 +933,24 @@ data class VpnConfig(
                 paddingMin = pad.first,
                 paddingMax = pad.second,
                 heartbeatEnabled = jbool(heartbeat, "enabled", true),
-                heartbeatIntervalMs = heartbeat.optLong("interval_ms", 15000),
-                heartbeatDataSize = heartbeat.optInt("data_size_bytes", 16),
-                heartbeatJitterMs = heartbeat.optLong("jitter_ms", 2000),
+                heartbeatIntervalMs = jlong(heartbeat, "interval_ms", 15000),
+                heartbeatDataSize = jint(heartbeat, "data_size_bytes", 16),
+                heartbeatJitterMs = jlong(heartbeat, "jitter_ms", 2000),
                 mtuProbe = jbool(tun, "mtu_probe", true),
                 shapingEnabled = jbool(shaping, "enabled", false),
-                shapingGapMeanMs = shaping.optLong("idle_gap_mean_ms", 700),
-                shapingGapMinMs = shaping.optLong("idle_gap_min_ms", 40),
-                shapingGapMaxMs = shaping.optLong("idle_gap_max_ms", 6000),
-                shapingBudgetBytesPerSec = shaping.optInt("budget_bytes_per_sec", 16384),
-                shapingMinSize = shaping.optInt("min_size", 64),
-                shapingMaxSize = shaping.optInt("max_size", 1024),
+                shapingGapMeanMs = jlong(shaping, "idle_gap_mean_ms", 700),
+                shapingGapMinMs = jlong(shaping, "idle_gap_min_ms", 40),
+                shapingGapMaxMs = jlong(shaping, "idle_gap_max_ms", 6000),
+                shapingBudgetBytesPerSec = jint(shaping, "budget_bytes_per_sec", 16384),
+                shapingMinSize = jint(shaping, "min_size", 64),
+                shapingMaxSize = jint(shaping, "max_size", 1024),
                 shapingStealth = jbool(shaping, "stealth", false),
-                shapingStealthRateMbps = shaping.optInt("stealth_rate_mbps", 2),
+                shapingStealthRateMbps = jint(shaping, "stealth_rate_mbps", 2),
                 loggingLevel = logging.optString("level", "").takeIf { it.isNotEmpty() },
                 loggingFile = logging.optString("file", "").takeIf { it.isNotEmpty() },
                 loggingTimeFormat = logging.optString("time_format", "").takeIf { it.isNotEmpty() },
-                unparsedBooleanKeys = badJsonBools.toList()
+                unparsedBooleanKeys = badJsonBools.toList(),
+                unparsedNumericKeys = badJsonNums.toList()
             )
         }
 

@@ -363,6 +363,11 @@ struct VPNConfig: Codable, Equatable, Sendable {
             throw VPNConfigError.invalid(
                 "apps_mode must be all, include or exclude — got '\(appsMode)'")
         }
+        // Same reasoning: the fallback is "tunnel", so a typo does not fail — it picks the
+        // opposite of `off`/`system` and sends every lookup through the VPN.
+        guard ["off", "tunnel", "system"].contains(dnsMode.lowercased()) else {
+            throw VPNConfigError.invalid("dns mode must be off, tunnel or system — got '\(dnsMode)'")
+        }
     }
 
     static func fromINI(_ text: String) throws -> VPNConfig {
@@ -514,8 +519,28 @@ struct VPNConfig: Codable, Equatable, Sendable {
         func string(_ key: String, in parent: [String: Any], default fallback: String = "") -> String {
             parent[key] as? String ?? fallback
         }
+        // Numbers had the same door left open, and only booleans were closed.
+        //
+        // `(parent[key] as? NSNumber)?.intValue ?? fallback` swallowed anything that is not an
+        // NSNumber and handed back the default, so `"port": "bad"` became 443 — a DIFFERENT
+        // SERVER — and an unreadable limit became whatever the default happens to be, in
+        // silence. That is exactly the failure the INI path was hardened against; the JSON
+        // importer reaches it through another door. Present-but-unreadable is recorded, absent
+        // is not. (Audit 2026-08-02, §6 of the follow-up.)
+        var badJSONNumbers: [String] = []
         func int(_ key: String, in parent: [String: Any], default fallback: Int) -> Int {
-            (parent[key] as? NSNumber)?.intValue ?? fallback
+            guard let raw = parent[key], !(raw is NSNull) else { return fallback }
+            if let n = raw as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
+                return n.intValue
+            }
+            // A JSON string holding digits is accepted: hand-written and
+            // exported-from-elsewhere profiles quote numbers, and rejecting those would refuse
+            // configs that have always worked.
+            if let s = raw as? String, let parsed = Int(s.trimmingCharacters(in: .whitespaces)) {
+                return parsed
+            }
+            badJSONNumbers.append(key)
+            return fallback
         }
         // `(as? NSNumber)?.boolValue` accepted ANY number — `2` read as true — and silently
         // returned the default for a string or anything else: the same fail-open the INI path
@@ -589,7 +614,12 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.dnsServers = strings("servers", in: dns)
         // JSON keeps mode and servers apart, so it never had the flat INI's ambiguity — but
         // the mode still has to survive the import.
-        if let m = (dns["mode"] as? String)?.lowercased(), ["off", "system"].contains(m) {
+        // Kept RAW, not filtered: `validate()` refuses an unknown value. Silently dropping it
+        // left `dnsMode` at "tunnel", so `"mode": "of"` sent every lookup through the tunnel
+        // when the user asked for the exact opposite — a typo choosing the other branch, which
+        // is the failure the INI path was hardened against. (Audit 2026-08-02, §6 of the
+        // follow-up.)
+        if let m = (dns["mode"] as? String)?.lowercased() {
             config.dnsMode = m
         }
         config.wireMode = string("mode", in: obfuscation, default: "fake-tls")
@@ -619,6 +649,7 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.shapingStealth = bool("stealth", in: shaping, default: false)
         config.shapingStealthRateMbps = int("stealth_rate_mbps", in: shaping, default: 2)
         config.unparsedBooleanKeys = badJSONBools
+        config.unparsedNumericKeys = badJSONNumbers
         return config
     }
 

@@ -72,6 +72,44 @@ class ConfigImportRangesTest {
         assertTrue("re-import found: ${reExported.unknownKeys}", reExported.unknownKeys.isEmpty())
     }
 
+    /**
+     * The JSON importer must record an unreadable NUMBER, not swap in a default.
+     *
+     * The INI path was hardened against this; the JSON path reached the same failure through
+     * another door, and only its booleans had been closed. `"port": "bad"` became 443 — a
+     * different server — with nothing said. (Audit 2026-08-02, §6 of the follow-up.)
+     */
+    @Test
+    fun `json records an unreadable number instead of defaulting`() {
+        val cfg = VpnConfig.fromJson(
+            """{"server":{"address":"vpn.example.com","port":"bad"},
+                "auth":{"username":"alice","password":"s3cret"}}"""
+        )
+        assertTrue("port must be recorded: ${cfg.unparsedNumericKeys}",
+            cfg.unparsedNumericKeys.contains("port"))
+        val err = runCatching { cfg.validate() }.exceptionOrNull()
+        assertTrue("validate must refuse it, got $err", err?.message?.contains("port") == true)
+
+        // A QUOTED number is still fine — exported profiles legitimately quote them.
+        val quoted = VpnConfig.fromJson(
+            """{"server":{"address":"vpn.example.com","port":"8443"},
+                "auth":{"username":"alice","password":"s3cret"}}"""
+        )
+        assertEquals(8443, quoted.port)
+        assertTrue(quoted.unparsedNumericKeys.isEmpty())
+    }
+
+    /** An unknown `dns.mode` must fail, not silently become the widest option. */
+    @Test
+    fun `json refuses an unknown dns mode`() {
+        val cfg = VpnConfig.fromJson(
+            """{"server":{"address":"vpn.example.com","port":443},
+                "auth":{"username":"alice","password":"s3cret"},"dns":{"mode":"of"}}"""
+        )
+        val err = runCatching { cfg.validate() }.exceptionOrNull()
+        assertTrue("validate must name dns, got $err", err?.message?.contains("dns") == true)
+    }
+
     /** A profile that never carried them must not grow empty lines for them. */
     @Test
     fun `a profile without rust-only keys stays clean`() {
