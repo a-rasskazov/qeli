@@ -296,7 +296,9 @@ try:
             # tree as the release. A pin left over from an earlier version still fails — that
             # tree differs — which is the case this gate exists to catch.
             def tree_of(rev):
-                p = subprocess.run(["git", "rev-parse", f"{rev}^{{tree}}"],
+                # `<commit>:<path>` already resolves to the subtree's OID; appending
+                # ^{tree} makes git look for a PATH literally named "qeli^{tree}".
+                p = subprocess.run(["git", "rev-parse", rev],
                                    capture_output=True, text=True, cwd=ROOT)
                 return p.stdout.strip() if p.returncode == 0 else ""
 
