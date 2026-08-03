@@ -385,6 +385,14 @@ public sealed class VpnConfig : INotifyPropertyChanged
         ShapingGapMaxMs = ShapingGapMaxMs, ShapingBudgetBytesPerSec = ShapingBudgetBytesPerSec,
         ShapingMinSize = ShapingMinSize, ShapingMaxSize = ShapingMaxSize,
         ShapingStealth = ShapingStealth, ShapingStealthRateMbps = ShapingStealthRateMbps,
+        // The keys this port accepts but does not model. THE FORM HAS NO CONTROL FOR ANY OF
+        // THEM, so they must ride across untouched — this method is the GUI's Save path, and
+        // omitting them here undid the whole point of storing them: `FromIni → ToIni` kept
+        // `post_up`, `allow_unpinned_tofu` and the rest, while opening the profile in the
+        // editor and pressing Save still deleted them. The conformance test only exercised the
+        // direct parse/serialize pair, so it stayed green throughout.
+        // (Audit 2026-08-02, follow-up.)
+        CarriedKeys = CarriedKeys,
         // Carried, MINUS whatever this form just rewrote.
         //
         // Carrying it wholesale was wrong in the other direction: the user fixes the offending

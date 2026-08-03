@@ -386,21 +386,18 @@ struct VPNConfig: Codable, Equatable, Sendable {
     /// Deliberately not `getaddrinfo`: that RESOLVES anything which is not a literal, which is
     /// a network round trip during config validation for a value that is by definition not
     /// resolvable yet.
+    /// `inet_pton` rather than a hand-rolled parser: it is the system's own literal parser,
+    /// it does NOT resolve, and it is exact. The first version of this check tested "hex
+    /// digits and colons, at least two colons", which accepts `::::`, `1::2::3` and `abcd:::`
+    /// — the config then validated and the failure surfaced later, when the network settings
+    /// were built and quietly refused. (Audit 2026-08-02, follow-up.)
     static func isIPLiteral(_ s: String) -> Bool {
         let v = s.trimmingCharacters(in: .whitespaces)
         guard !v.isEmpty else { return false }
-        if v.contains(":") {
-            // IPv6: hex groups and at most one `::`. Enough to tell an address from a word —
-            // the OS rejects a malformed one when the tunnel is built.
-            let allowed = CharacterSet(charactersIn: "0123456789abcdefABCDEF:.")
-            return v.unicodeScalars.allSatisfy { allowed.contains($0) }
-                && v.filter { $0 == ":" }.count >= 2
-        }
-        let parts = v.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 4 else { return false }
-        return parts.allSatisfy { p in
-            !p.isEmpty && p.count <= 3 && p.allSatisfy(\.isNumber) && (Int(p) ?? 256) <= 255
-        }
+        var v4 = in_addr()
+        if v.withCString({ inet_pton(AF_INET, $0, &v4) }) == 1 { return true }
+        var v6 = in6_addr()
+        return v.withCString { inet_pton(AF_INET6, $0, &v6) } == 1
     }
 
     static func fromINI(_ text: String) throws -> VPNConfig {
@@ -564,7 +561,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
         func int(_ key: String, in parent: [String: Any], default fallback: Int) -> Int {
             guard let raw = parent[key], !(raw is NSNull) else { return fallback }
             if let n = raw as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
-                return n.intValue
+                // A FRACTIONAL number is not a small rounding matter: `intValue` truncates, so
+                // `"port": 443.9` became 443 and passed validation as a port the user never
+                // wrote. Same for an MTU, a timeout or a limit. Record it instead.
+                let d = n.doubleValue
+                if d == d.rounded(.towardZero) && d.isFinite {
+                    return n.intValue
+                }
             }
             // A JSON string holding digits is accepted: hand-written and
             // exported-from-elsewhere profiles quote numbers, and rejecting those would refuse

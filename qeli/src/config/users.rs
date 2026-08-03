@@ -100,6 +100,38 @@ pub struct GroupTemplate {
     pub allowed_networks: Option<Vec<String>>,
 }
 
+/// Refuse a users file containing a key nothing read — i.e. a misspelling.
+///
+/// `bad_values()` catches a bad VALUE under a correct key (`max_sessions = ten`); this catches
+/// a correct value under a MISSPELLED key (`max_session = 1`), which is the more dangerous
+/// half and was left open. Nothing reads the typo, so the real `max_sessions` stays 0 — and 0
+/// on this file does not mean "default", it means NO LIMIT. The restriction the operator wrote
+/// simply is not there, and the file still looks like it says so.
+///
+/// It also compounds: the typo is invisible to the INI codec that rewrites the file, so the
+/// next panel edit or `add-client` drops the line entirely and the evidence disappears.
+///
+/// `IniDoc` has tracked this since the `exclude_routes` bug — the mechanism existed and this
+/// file just never asked. Must be called AFTER `from_ini`, or every key looks unread.
+/// (Audit 2026-08-02, follow-up.)
+fn reject_unread_keys(doc: &crate::config::format::IniDoc, path: &Path) -> anyhow::Result<()> {
+    let unread = doc.unread_keys();
+    if unread.is_empty() {
+        return Ok(());
+    }
+    let listed: Vec<String> = unread
+        .iter()
+        .map(|(section, key)| format!("{section} {key}"))
+        .collect();
+    anyhow::bail!(
+        "{} unrecognised key(s) in the users database '{}' — nothing reads these, so the \
+         setting each was meant to impose is absent (and a missing limit means NO limit):\n  {}",
+        listed.len(),
+        path.display(),
+        listed.join("\n  ")
+    )
+}
+
 impl UsersDb {
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())?;
@@ -123,6 +155,7 @@ impl UsersDb {
                 bad.join("\n  ")
             );
         }
+        reject_unread_keys(&doc, path.as_ref())?;
         Ok(db)
     }
 
@@ -204,7 +237,13 @@ impl UsersDb {
                         bad.join("\n  ")
                     );
                 }
-                UsersDb::from_ini(&doc)
+                let db = UsersDb::from_ini(&doc);
+                // Same reasoning as the value check above, and the same reason it belongs on
+                // the WRITE path too: a misspelled key is invisible to the codec that rewrites
+                // this file, so saving would drop the line and take the operator's last clue
+                // with it.
+                reject_unread_keys(&doc, path)?;
+                db
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => UsersDb::default(),
             Err(e) => {
@@ -279,6 +318,47 @@ impl UserEntry {
 #[cfg(test)]
 mod load_tests {
     use super::*;
+
+    /// A MISSPELLED key must refuse the load too — the more dangerous half of the same bug.
+    ///
+    /// `max_sessions = ten` is an unreadable value under a correct key and was already caught.
+    /// `max_session = 1` is a correct value under a misspelled key: nothing reads it, the real
+    /// `max_sessions` stays 0, and 0 on this file means NO LIMIT. The restriction is simply
+    /// absent while the file still appears to state it. It also compounds — the codec that
+    /// rewrites this file cannot see the typo, so the next panel edit drops the line and the
+    /// evidence with it. (Audit 2026-08-02, follow-up.)
+    #[test]
+    fn a_misspelled_key_refuses_the_load_and_the_write() {
+        let dir = std::env::temp_dir().join("qeli-users-unread-test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let typo = dir.join("typo.conf");
+        std::fs::write(&typo, "[user:alice]\npassword_hash = x\nmax_session = 1\n").unwrap();
+        let err = UsersDb::load(&typo)
+            .expect_err("a misspelled key must refuse the load")
+            .to_string();
+        assert!(
+            err.contains("max_session"),
+            "the error must name the key: {err}"
+        );
+
+        // The WRITE path must refuse it too, or the panel launders the typo away.
+        let write_err = UsersDb::update_locked(&typo, |db| db.users.len())
+            .expect_err("the write path must refuse it as well")
+            .to_string();
+        assert!(write_err.contains("max_session"), "{write_err}");
+        // ...and the file is untouched, so the operator can still see what they wrote.
+        assert!(std::fs::read_to_string(&typo)
+            .unwrap()
+            .contains("max_session = 1"));
+
+        // The correctly-spelled file still loads AND still writes — otherwise this would pass
+        // against a check that simply refuses everything.
+        let good = dir.join("spelled.conf");
+        std::fs::write(&good, "[user:alice]\npassword_hash = x\nmax_sessions = 1\n").unwrap();
+        assert_eq!(UsersDb::load(&good).expect("must load").users.len(), 1);
+        UsersDb::update_locked(&good, |_| ()).expect("must write");
+    }
 
     /// An unreadable LIMIT must refuse the load, not fall back to "no limit".
     ///

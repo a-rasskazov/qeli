@@ -99,6 +99,46 @@ class ConfigImportRangesTest {
         assertTrue(quoted.unparsedNumericKeys.isEmpty())
     }
 
+    /**
+     * A FRACTIONAL JSON number must be recorded, not truncated.
+     *
+     * `toLong()` silently drops the fraction, so `"port": 443.9` became 443 and validated as a
+     * port the user never wrote — the same class as `"port": "bad"`, just through a value that
+     * IS a number. (Audit 2026-08-02, follow-up.)
+     */
+    @Test
+    fun `json records a fractional number instead of truncating it`() {
+        val cfg = VpnConfig.fromJson(
+            """{"server":{"address":"vpn.example.com","port":443.9},
+                "auth":{"username":"alice","password":"s3cret"}}"""
+        )
+        assertTrue("port must be recorded: ${cfg.unparsedNumericKeys}",
+            cfg.unparsedNumericKeys.contains("port"))
+
+        // A whole number expressed with a decimal point is still a whole number.
+        val whole = VpnConfig.fromJson(
+            """{"server":{"address":"vpn.example.com","port":443.0},
+                "auth":{"username":"alice","password":"s3cret"}}"""
+        )
+        assertEquals(443, whole.port)
+        assertTrue(whole.unparsedNumericKeys.isEmpty())
+    }
+
+    /** Malformed IPv6 must be refused at config time, not when the TUN is built. */
+    @Test
+    fun `dns rejects malformed ipv6 and accepts real addresses`() {
+        fun withDns(v: String) = VpnConfig.fromIni(
+            "[qeli]\nserver = vpn.example.com:443\nuser = alice\npass = s3cret\ndns = $v\n"
+        )
+        for (bad in listOf("::::", "1::2::3", "abcd:::", "of", "12345::1", "1:2:3:4:5:6:7")) {
+            val err = runCatching { withDns(bad).validate() }.exceptionOrNull()
+            assertTrue("'$bad' must be refused", err?.message?.contains("dns") == true)
+        }
+        for (ok in listOf("1.1.1.1", "::1", "2001:4860:4860::8888", "fe80::1", "::ffff:1.2.3.4")) {
+            withDns(ok).validate()
+        }
+    }
+
     /** An unknown `dns.mode` must fail, not silently become the widest option. */
     @Test
     fun `json refuses an unknown dns mode`() {

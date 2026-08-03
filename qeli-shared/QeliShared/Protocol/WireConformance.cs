@@ -209,6 +209,28 @@ public static class WireConformance
         // A profile that never carried them must not grow lines for them.
         check("ini-carry: a plain profile carries nothing", Ini().CarriedKeys.Count == 0);
 
+        // ...and the GUI's Save path must keep them too.
+        //
+        // The check above only exercises FromIni → ToIni. The editor does not use that pair:
+        // it calls WithEditorFields, which builds a NEW config from the form and whatever it
+        // chooses to copy across. That method omitted CarriedKeys, so the direct round trip was
+        // green while opening a profile in the editor and pressing Save still deleted the
+        // hooks. Exercise the real path. (Audit 2026-08-02, follow-up.)
+        var edited = carried.WithEditorFields(
+            name: "edited", serverAddress: "vpn.example.com", port: 443, protocol: "tcp",
+            wireMode: "fake-tls", obfsKey: "", obfsFronting: "websocket", realityShortId: null,
+            sni: null, quicEnabled: false, username: "u", password: "p",
+            serverPublicKeyHex: null, routingMode: "full-tunnel", addDefaultGateway: true,
+            routeLocalNetworks: false, mtu: 0, dnsServers: new List<string>(),
+            paddingEnabled: true, paddingMin: 0, paddingMax: 255,
+            heartbeatEnabled: true, heartbeatIntervalMs: 15000, heartbeatJitterMs: 2000);
+        bool editorKeeps = edited.CarriedKeys.TryGetValue("post_up", out var up)
+            && up == "/etc/qeli/up.sh"
+            && edited.CarriedKeys.Count == carried.CarriedKeys.Count;
+        check("ini-carry: the editor's Save path keeps them", editorKeeps);
+        check("ini-carry: and they reach the file it writes",
+            edited.ToIni().Contains("post_up = /etc/qeli/up.sh"));
+
         // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
         // change silently keeps its default — `gatway = true` left the tunnel split with
         // nothing said anywhere. The Rust client has always refused these; this port did not.

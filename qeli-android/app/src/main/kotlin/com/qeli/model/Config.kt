@@ -720,9 +720,39 @@ data class VpnConfig(
             val v = s.trim()
             if (v.isEmpty()) return false
             if (':' in v) {
-                // IPv6: hex groups and at most one `::`. Good enough to separate an address
-                // from a word — the OS rejects a malformed one when the tunnel is built.
-                return v.all { it.isDigit() || it in "abcdefABCDEF:." } && v.count { it == ':' } >= 2
+                // IPv6, structurally — not just "has colons and legal characters".
+                //
+                // The first version of this check accepted anything made of hex digits and
+                // colons with at least two colons, which passes `::::`, `1::2::3` and
+                // `abcd:::`. Those are not addresses: the config validated and the failure
+                // surfaced later, when the TUN was built and the DNS entry was quietly not
+                // added. A structural check keeps the error where the value was written.
+                if (v.count { it == ':' } > 8) return false
+                // At most one `::`, and it is the only place an empty group may appear.
+                val doubleColons = Regex("::").findAll(v).count()
+                if (doubleColons > 1) return false
+                val groups = v.split(':')
+                if (doubleColons == 0 && groups.size != 8) return false
+                var seenEmpty = 0
+                for ((i, g) in groups.withIndex()) {
+                    if (g.isEmpty()) {
+                        // `::1` and `1::` produce a leading/trailing empty pair; count once.
+                        if (i != 0 && i != groups.lastIndex) seenEmpty++
+                        continue
+                    }
+                    // A trailing IPv4 form (`::ffff:1.2.3.4`) is legal only in the last group.
+                    if ('.' in g) {
+                        if (i != groups.lastIndex) return false
+                        val quads = g.split('.')
+                        if (quads.size != 4 || !quads.all { q ->
+                                q.isNotEmpty() && q.length <= 3 && q.all(Char::isDigit) && q.toInt() <= 255
+                            }
+                        ) return false
+                        continue
+                    }
+                    if (g.length > 4 || !g.all { it.isDigit() || it in "abcdefABCDEF" }) return false
+                }
+                return seenEmpty <= 1
             }
             val parts = v.split('.')
             return parts.size == 4 && parts.all { p ->
@@ -879,7 +909,13 @@ data class VpnConfig(
             fun jlong(o: JSONObject, key: String, default: Long): Long {
                 if (!o.has(key) || o.isNull(key)) return default
                 when (val v = o.get(key)) {
-                    is Number -> return v.toLong()
+                    // A FRACTIONAL number is not a small rounding matter: `toLong()` truncates,
+                    // so `"port": 443.9` became 443 and passed validation as a port the user
+                    // never wrote. Same for an MTU, a timeout or a limit. Record it instead.
+                    is Number -> {
+                        val d = v.toDouble()
+                        if (d == Math.floor(d) && !d.isInfinite()) return v.toLong()
+                    }
                     // A JSON string holding digits is accepted: hand-written and
                     // exported-from-elsewhere profiles quote numbers, and rejecting those
                     // would refuse configs that have always worked.
