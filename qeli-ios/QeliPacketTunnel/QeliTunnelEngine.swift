@@ -30,6 +30,10 @@ final class QeliTunnelEngine: @unchecked Sendable {
     private let packetWriteLock = NSLock()
     private let networkSettingsGate = AsyncOperationGate()
     private var snapshot: TunnelSnapshot
+
+    /// How many pushed routes survived into `includedRoutes`, or `-1` before settings are built.
+    /// See ``PushedFacts/routesInstalled``.
+    private var installedPushedRoutes: Int = -1
     private var activeSession: TunnelSessionConfiguration?
     private var activePool: TunnelStreamPool?
     private var supervisorTask: Task<Void, Never>?
@@ -186,7 +190,19 @@ final class QeliTunnelEngine: @unchecked Sendable {
         } else {
             included += effectiveConfig.includeRoutes.compactMap(Self.ipv4Route)
         }
-        included += session.pushedRoutes.compactMap(Self.ipv4Route)
+        // `compactMap` DROPS whatever it cannot turn into a route, silently — so a malformed
+        // pushed CIDR left the tunnel carrying less than the card went on to claim, since the
+        // card counted `session.pushedRoutes` (what arrived) rather than what went in. Count
+        // the survivors here, at the only place that knows the difference.
+        let pushedRouteEntries = session.pushedRoutes.compactMap(Self.ipv4Route)
+        installedPushedRoutes = pushedRouteEntries.count
+        if pushedRouteEntries.count < session.pushedRoutes.count {
+            sharedStore.appendLog(
+                "WARNING: \(session.pushedRoutes.count - pushedRouteEntries.count) of "
+                    + "\(session.pushedRoutes.count) pushed route(s) are malformed and were NOT "
+                    + "installed — traffic for them is NOT in the tunnel")
+        }
+        included += pushedRouteEntries
         if effectiveConfig.routeLocalNetworks {
             included += [
                 NEIPv4Route(destinationAddress: "10.0.0.0", subnetMask: "255.0.0.0"),
@@ -767,13 +783,19 @@ final class QeliTunnelEngine: @unchecked Sendable {
             snapshot.pushedDNS = Self.effectiveDNS(config: config, session: session).first
             snapshot.appliedMTU = session.mtu > 0 ? session.mtu : nil
             snapshot.maxStreams = session.maxStreams
-            snapshot.pushedRoutes = session.pushedRoutes.count
+            // The count in force, not the count received: `applyNetworkSettings` has already
+            // run by the time this publishes, so the survivors are known. Falls back to the
+            // received count only if it somehow has not (‑1), which keeps the old behaviour
+            // rather than reporting zero routes on a healthy tunnel.
+            snapshot.pushedRoutes =
+                installedPushedRoutes >= 0 ? installedPushedRoutes : session.pushedRoutes.count
             snapshot.pushed = PushedFacts(
                 // Only a sample is kept. A server may advertise a very long list (a
                 // country-sized prefix set is a legitimate split-tunnel setup), and both this
                 // snapshot and the detail sheet would otherwise scale with it.
                 routes: Array(session.pushedRoutes.prefix(PushedFacts.routeSample)),
                 routeCount: session.pushedRoutes.count,
+                routesInstalled: installedPushedRoutes,
                 multipathAdaptive: session.multipathAdaptive,
                 // Safe to read off the effective config here: both handshakes write the
                 // server's obfuscation INTO it and then clamp (unlike the Android client,

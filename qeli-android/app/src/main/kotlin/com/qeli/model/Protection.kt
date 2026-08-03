@@ -17,6 +17,20 @@ package com.qeli.model
 data class PushedFacts(
     val routes: List<String> = emptyList(),
     val routeCount: Int = 0,
+
+    /**
+     * How many of [routeCount] the builder actually took, or `-1` before the TUN exists.
+     *
+     * The card used to show [routeCount] — the number the server SENT — as though it were the
+     * number in force. Those differ whenever a route is malformed or the builder rejects it:
+     * `addRoute` throws, the failure is logged, and the tunnel comes up carrying less than the
+     * card claims. That is the one direction a protection card must never be wrong in, so the
+     * installed count is tracked separately and published only once `establish()` has returned.
+     *
+     * `-1` is deliberately not `0`: "not installed yet" and "installed none" look identical
+     * otherwise, and the first is a normal moment during connect while the second is a fault.
+     */
+    val routesInstalled: Int = -1,
     val multipathAdaptive: Boolean = false,
     val paddingEnabled: Boolean = false,
     val paddingMin: Int = 0,

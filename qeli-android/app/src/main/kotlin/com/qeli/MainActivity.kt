@@ -860,9 +860,20 @@ sni = www.microsoft.com
             if (pushed.routeCount > 0) {
                 val shown = pushed.routes.joinToString(", ")
                 val extra = pushed.routeCount - pushed.routes.size
-                rows += R.string.detail_pushed_routes to
+                val line =
                     if (extra > 0) getString(R.string.detail_routes_more, shown, extra)
                     else "$shown (${pushed.routeCount})"
+                // The count above is what the SERVER SENT. When fewer actually went into the
+                // builder, say so on the same row: the card is read as a statement about the
+                // device, and a route that failed to install is traffic outside the tunnel —
+                // exactly the direction in which this card must never be optimistic.
+                rows += R.string.detail_pushed_routes to
+                    if (pushed.routesInstalled in 0 until pushed.routeCount)
+                        getString(
+                            R.string.detail_routes_partial, line, pushed.routesInstalled,
+                            pushed.routeCount
+                        )
+                    else line
             }
             // The DPI-resistance knobs actually in force, which the server owns.
             rows += R.string.detail_padding to

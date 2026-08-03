@@ -18,6 +18,20 @@ struct PushedFacts: Codable, Equatable, Sendable {
 
     var routes: [String] = []
     var routeCount = 0
+
+    /// How many of ``routeCount`` survived into `includedRoutes`, or `-1` before the settings
+    /// are built.
+    ///
+    /// The card used to show ``routeCount`` — the number the server SENT — as though it were
+    /// the number in force. Those differ whenever a pushed CIDR is malformed: the `compactMap`
+    /// that turns them into `NEIPv4Route` drops it without a word, and the tunnel comes up
+    /// carrying less than the card claims. That is the one direction a protection card must
+    /// never be wrong in.
+    ///
+    /// `-1` is deliberately not `0`: "not built yet" and "none installed" look identical
+    /// otherwise, and the first is a normal moment during connect while the second is a fault.
+    /// Mirrors the Android `PushedFacts.routesInstalled`.
+    var routesInstalled = -1
     var multipathAdaptive = false
     var paddingEnabled = false
     var paddingMin = 0

@@ -217,4 +217,5 @@
     <string name="detail_shaping">Traffic shaping</string>
     <!-- Only a sample of the pushed routes is ever rendered; %2$d is what is left over. -->
     <string name="detail_routes_more">%1$s and %2$d more</string>
+    <string name="detail_routes_partial">%1$s — only %2$d of %3$d installed</string>
 </resources>

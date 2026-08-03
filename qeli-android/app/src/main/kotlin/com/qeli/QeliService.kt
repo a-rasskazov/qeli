@@ -266,6 +266,12 @@ class VpnServiceImpl : VpnService() {
         var livePushed: PushedFacts = PushedFacts()
     }
 
+    /**
+     * How many pushed routes the builder took, filled while building and published after
+     * `establish()` returns. `-1` until then — see [PushedFacts.routesInstalled].
+     */
+    private var pushedRoutesInstalled: Int = -1
+
     // ── lifecycle ────────────────────────────────────────────────────────────
 
     override fun onCreate() {
@@ -782,6 +788,7 @@ class VpnServiceImpl : VpnService() {
         liveRoutes = 0
         liveLockdown = false
         livePushed = PushedFacts()
+        pushedRoutesInstalled = -1
         liveBytesUp = 0L
         liveBytesDown = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1155,6 +1162,24 @@ class VpnServiceImpl : VpnService() {
         if (previous != null && previous !== tun) {
             try { previous.close() } catch (_: Exception) {}
         }
+
+        // Only NOW is a route a fact. Everything before this merely ASKED the builder for one,
+        // and `establish()` is what turns the whole set into an interface — so publishing the
+        // count earlier (where `logServerPush` runs, before this function is even called)
+        // described an intention as though it were the state of the device. Published here, and
+        // only after a build that returned: a failed establish throws out of the calls above,
+        // so the card is never told the routes are in force.
+        //
+        // `buildTunInterface` may have run twice (IPv6, then IPv4-only), and the field holds
+        // the LAST attempt's count — which is the attempt that produced this `tun`.
+        livePushed = livePushed.copy(routesInstalled = pushedRoutesInstalled)
+        val requested = livePushed.routeCount
+        if (pushedRoutesInstalled in 0 until requested) {
+            broadcastLog(
+                "WARNING: ${requested - pushedRoutesInstalled} of $requested pushed route(s) " +
+                    "were NOT installed — traffic for them is NOT in the tunnel"
+            )
+        }
         return tun
     }
 
@@ -1256,7 +1281,7 @@ class VpnServiceImpl : VpnService() {
             // specific, explicit admin decision — always honoured, like OpenVPN's
             // `push "route …"`. Until 0.7.12 these sat behind routeLocalNetworks, so a
             // correctly configured route was silently dropped on every default client.
-            applyPushedRoutes(this, session.routesJson)
+            pushedRoutesInstalled = applyPushedRoutes(this, session.routesJson)
 
             // routeLocalNetworks gates only the BLANKET RFC1918 pull, which stays off by
             // default because it would hijack the device's own LAN (printers, NAS, router).
@@ -1389,7 +1414,10 @@ class VpnServiceImpl : VpnService() {
         liveDns = effectiveDns(config, session).firstOrNull() ?: ""
         liveMtu = effectiveMtu(config.mtu, session.pushedMtu)
         liveStreams = session.maxStreams
+        // What the server SENT. `livePushed.routesInstalled` carries what the builder took,
+        // filled in after establish() — a reconnect re-enters here, so reset it with the rest.
         liveRoutes = nRoutes
+        pushedRoutesInstalled = -1
         // Keep only a sample. A server may advertise a very long list (a country-sized
         // prefix set is a legitimate split-tunnel setup), and everything downstream — this
         // @Volatile field and a detail sheet that inflates one view per row without
@@ -1460,8 +1488,10 @@ class VpnServiceImpl : VpnService() {
         }
     }
 
-    private fun applyPushedRoutes(builder: Builder, routesJson: String) {
-        if (routesJson.isBlank() || routesJson == "[]") return
+    /** Install the server's routes. Returns how many the builder actually took. */
+    private fun applyPushedRoutes(builder: Builder, routesJson: String): Int {
+        if (routesJson.isBlank() || routesJson == "[]") return 0
+        var installed = 0
         try {
             val arr = JSONArray(routesJson)
             for (i in 0 until arr.length()) {
@@ -1480,7 +1510,16 @@ class VpnServiceImpl : VpnService() {
                 val got = StringBuilder(cidr)
                 if (gw.isNotEmpty()) got.append(" gateway=").append(gw)
                 if (metric > 0) got.append(" metric=").append(metric)
-                builder.addCidrRoute(cidr)
+                // APPLIED is a claim about the BUILDER, so it may only be printed when the
+                // builder took the route. It used to be printed unconditionally, right after a
+                // call whose failure `addCidrRoute` swallowed into a log line — so the same
+                // route could produce "bad route …" and "-> APPLIED" one line apart, and the
+                // second is the one a reader believes.
+                if (!builder.addCidrRoute(cidr)) {
+                    broadcastLog("pushed route: $got -> NOT APPLIED (see the error above)")
+                    continue
+                }
+                installed++
                 if (gw.isNotEmpty() || metric > 0) {
                     broadcastLog("pushed route: $got -> APPLIED into the tunnel (Android routes are interface-scoped: next-hop/metric not settable)")
                 } else {
@@ -1490,14 +1529,29 @@ class VpnServiceImpl : VpnService() {
         } catch (e: Exception) {
             broadcastLog("routes parse error: ${e.message}")
         }
+        return installed
     }
 
-    private fun Builder.addCidrRoute(cidr: String) {
+    /**
+     * Add one CIDR to the builder. Returns whether it actually went in.
+     *
+     * The result used to be discarded, so a malformed prefix or a builder rejection was logged
+     * and then reported as applied anyway — the caller had no way to know. Anything that counts
+     * routes for the user has to count what the builder TOOK.
+     */
+    private fun Builder.addCidrRoute(cidr: String): Boolean {
         val slash = cidr.indexOf('/')
-        if (slash < 0) { addRoute(cidr, 32); return }
+        if (slash < 0) {
+            return try { addRoute(cidr, 32); true }
+            catch (e: Exception) { broadcastLog("bad route $cidr: ${e.message}"); false }
+        }
         val addr = cidr.substring(0, slash)
-        val prefix = cidr.substring(slash + 1).toIntOrNull() ?: return
-        try { addRoute(addr, prefix) } catch (e: Exception) { broadcastLog("bad route $cidr: ${e.message}") }
+        val prefix = cidr.substring(slash + 1).toIntOrNull() ?: run {
+            broadcastLog("bad route $cidr: prefix is not a number")
+            return false
+        }
+        return try { addRoute(addr, prefix); true }
+        catch (e: Exception) { broadcastLog("bad route $cidr: ${e.message}"); false }
     }
 
     /**
