@@ -136,3 +136,9 @@
 "CONNECTION PROPERTIES" = "CONNECTION PROPERTIES";
 "PQ" = "PQ";
 "X25519" = "X25519";
+"Tunnel IP" = "Tunnel IP";
+"adaptive" = "adaptive";
+"Padding" = "Padding";
+"Heartbeat" = "Heartbeat";
+"Traffic shaping" = "Traffic shaping";
+"%1$@ and %2$lld more" = "%1$@ and %2$lld more";

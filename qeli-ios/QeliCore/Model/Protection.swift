@@ -1,5 +1,32 @@
 import Foundation
 
+/// What the SERVER pushed for this session, as the client applied it.
+///
+/// Mirror of the Android `PushedFacts`. Only knowable after the handshake, so it travels on
+/// `TunnelSnapshot` rather than being derived from the profile. Two deliberate limits:
+///
+/// * `routes` is CAPPED at ``routeSample`` entries with `routeCount` carrying the real total.
+///   A server may advertise an arbitrarily long list — an operator pushing a country-sized
+///   prefix set is a normal thing to do — and the detail sheet renders a row per entry.
+///   Capping where the snapshot is built keeps both bounded instead of hoping the list stays
+///   short.
+/// * the session token is NOT here and must never be: it is the credential that authorises a
+///   bonded stream to join this session.
+struct PushedFacts: Codable, Equatable, Sendable {
+    /// How many pushed routes the UI ever holds or renders.
+    static let routeSample = 6
+
+    var routes: [String] = []
+    var routeCount = 0
+    var multipathAdaptive = false
+    var paddingEnabled = false
+    var paddingMin = 0
+    var paddingMax = 0
+    var heartbeatEnabled = false
+    var heartbeatIntervalMilliseconds = 0
+    var shapingEnabled = false
+}
+
 /// How much of the device's traffic the tunnel carries.
 ///
 /// Structurally identical to the Android `ProtectionScope` so the two cards stay comparable

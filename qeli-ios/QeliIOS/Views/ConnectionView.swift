@@ -121,21 +121,23 @@ struct ConnectionView: View {
     /// Mirrors the Android strip decision for decision — both read `ProtectionSummary`.
     @ViewBuilder
     private var protectionCard: some View {
-        let config = model.activeProfile.flatMap { try? VPNConfig(parsing: $0.configText) }
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("CONNECTION PROPERTIES")
-                    .font(.system(size: 11, weight: .semibold))
-                    .kerning(0.8)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-            }
-            if let config {
-                // The app-wide LAN switch counts as much as the profile field — the tunnel
-                // carves the private ranges out on either. (Audit 2026-08-02, §13.)
-                let summary = ProtectionSummary(
-                    config: config, globalAllowLAN: model.settings.allowLAN)
+        // Properties OF A CONNECTION — nothing to state until there is one, and the idle
+        // screen gets the whole card's height back. An unparseable profile cannot be
+        // connected either, so the same guard covers it.
+        if model.tunnelSnapshot.phase == .connected,
+           let config = model.activeProfile.flatMap({ try? VPNConfig(parsing: $0.configText) }) {
+            // The app-wide LAN switch counts as much as the profile field — the tunnel carves
+            // the private ranges out on either. (Audit 2026-08-02, §13.)
+            let summary = ProtectionSummary(config: config, globalAllowLAN: model.settings.allowLAN)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("CONNECTION PROPERTIES")
+                        .font(.system(size: 11, weight: .semibold))
+                        .kerning(0.8)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                }
                 if let warning = summary.warnings.first {
                     // A carve-out is what the user needs to see first, and there is only one
                     // line to say it in — so it replaces the facts and colours them.
@@ -147,19 +149,13 @@ struct ConnectionView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            } else {
-                Text(model.activeProfile == nil ? "No profile selected" : "Profile config is invalid")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
-        }
-        .lineLimit(2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .qeliCard(padding: 13)
-        .contentShape(Rectangle())
-        .onTapGesture { if config != nil { showingProtectionDetails = true } }
-        .sheet(isPresented: $showingProtectionDetails) {
-            if let config { protectionDetails(config) }
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .qeliCard(padding: 13)
+            .contentShape(Rectangle())
+            .onTapGesture { showingProtectionDetails = true }
+            .sheet(isPresented: $showingProtectionDetails) { protectionDetails(config) }
         }
     }
 
@@ -183,6 +179,10 @@ struct ConnectionView: View {
                 detailRow("Server key", summary.keyPinned
                     ? String(localized: "server key pinned") : String(localized: "server key on trust (TOFU)"))
                 if live {
+                    let pushed = snapshot.pushed ?? PushedFacts()
+                    if let address = snapshot.clientAddress {
+                        detailRow("Tunnel IP", address)
+                    }
                     if let dns = snapshot.pushedDNS ?? config.dnsServers.first {
                         detailRow("DNS", dns)
                     }
@@ -190,12 +190,27 @@ struct ConnectionView: View {
                         detailRow("MTU", config.mtu > 0 ? "\(mtu)" : "\(mtu) (auto)")
                     }
                     if snapshot.maxStreams > 1 {
-                        detailRow("Multipath", String(
-                            format: String(localized: "up to %lld streams"), snapshot.maxStreams))
+                        let streams = String(
+                            format: String(localized: "up to %lld streams"), snapshot.maxStreams)
+                        detailRow("Multipath", pushed.multipathAdaptive
+                            ? streams + ", " + String(localized: "adaptive") : streams)
                     }
-                    if snapshot.pushedRoutes > 0 {
-                        detailRow("Pushed routes", "\(snapshot.pushedRoutes)")
+                    // Only a sample is ever held or shown: a server may advertise a very long
+                    // list. The count is the honest part; the sample makes it concrete.
+                    if pushed.routeCount > 0 {
+                        let shown = pushed.routes.joined(separator: ", ")
+                        let extra = pushed.routeCount - pushed.routes.count
+                        detailRow("Pushed routes", extra > 0
+                            ? String(format: String(localized: "%1$@ and %2$lld more"), shown, extra)
+                            : "\(shown) (\(pushed.routeCount))")
                     }
+                    // The DPI-resistance knobs actually in force, which the server owns.
+                    detailRow("Padding", pushed.paddingEnabled
+                        ? "\(pushed.paddingMin)–\(pushed.paddingMax) B" : String(localized: "Off"))
+                    detailRow("Heartbeat", pushed.heartbeatEnabled
+                        ? "\(pushed.heartbeatIntervalMilliseconds / 1000) s" : String(localized: "Off"))
+                    detailRow("Traffic shaping", pushed.shapingEnabled
+                        ? String(localized: "On") : String(localized: "Off"))
                 }
                 detailRow("Routing", routingText(summary))
                 detailRow("Auto-reconnect", config.reconnectEnabled

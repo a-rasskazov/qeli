@@ -210,4 +210,11 @@
     <string name="detail_reconnect">Auto-reconnect</string>
     <string name="detail_on">On</string>
     <string name="detail_off">Off</string>
+    <string name="detail_tunnel_ip">Tunnel IP</string>
+    <string name="detail_adaptive">adaptive</string>
+    <string name="detail_padding">Padding</string>
+    <string name="detail_heartbeat">Heartbeat</string>
+    <string name="detail_shaping">Traffic shaping</string>
+    <!-- Only a sample of the pushed routes is ever rendered; %2$d is what is left over. -->
+    <string name="detail_routes_more">%1$s and %2$d more</string>
 </resources>

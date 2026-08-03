@@ -49,6 +49,12 @@ struct TunnelSnapshot: Codable, Equatable, Sendable {
     /// Routes the server pushed and this client applied.
     var pushedRoutes: Int = 0
 
+    /// The rest of the push (capped route sample, multipath mode, the obfuscation knobs the
+    /// server owns). OPTIONAL on purpose: Swift's synthesized decoder throws on a missing key
+    /// rather than using a default, so a non-optional field would make every snapshot written
+    /// by an older build fail to decode. Optional decodes to nil instead.
+    var pushed: PushedFacts?
+
     var uptime: TimeInterval {
         connectedAt.map { max(0, Date().timeIntervalSince($0)) } ?? 0
     }

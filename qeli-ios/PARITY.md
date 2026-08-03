@@ -10,12 +10,16 @@
   tunnel gateway rather than the public endpoint.
 - English / Russian UI with an in-app language picker. English is the default on every
   device, matching Android — the app does not follow the system locale.
-- Protection card on the connection screen, driven by the shared `ProtectionSummary`
-  decisions so both clients describe the same profile identically: scope, wire mode and
-  transport, hybrid-PQ vs plain X25519, DNS, pinned key vs TOFU, and a warning line for
-  anything that narrows the tunnel. Tapping it opens the detail sheet, which adds the
-  negotiated values (pushed DNS, applied MTU, bonded streams, pushed routes) from the
-  tunnel snapshot while connected.
+- Connection-properties card, shown only while connected and driven by the shared
+  `ProtectionSummary` decisions so both clients describe the same session identically: wire
+  mode and transport, hybrid-PQ vs plain X25519, pinned key vs TOFU, and a warning line that
+  replaces the facts when something narrows the tunnel. Tapping it opens the detail sheet
+  with everything the server pushed — tunnel IP, DNS, applied MTU, bonded streams and
+  whether they ramp adaptively, the advertised routes, and the padding / heartbeat /
+  traffic-shaping knobs in force. The route list is capped where the snapshot is built
+  (`PushedFacts.routeSample`), because a server may advertise an arbitrarily long set. The
+  session token is deliberately never surfaced: it is the credential that authorises a
+  bonded stream to join the session.
 - INI, JSON, file, clipboard, QR and `qeli://` deep-link import.
 - Share link, QR generation and system share sheet.
 - Encrypted-at-rest profile store and Android-compatible backup encryption.

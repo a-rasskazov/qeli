@@ -1,5 +1,36 @@
 package com.qeli.model
 
+/**
+ * What the SERVER pushed for this session, as the client applied it.
+ *
+ * Only knowable after the handshake, so it lives beside the tunnel rather than in the
+ * profile. Two deliberate limits:
+ *
+ * * [routes] is CAPPED at [ROUTE_SAMPLE] entries with [routeCount] carrying the real total.
+ *   A server may advertise an arbitrarily long list — an operator pushing a country-sized
+ *   prefix set is a normal thing to do — and the detail sheet builds a view per row with no
+ *   recycling. Capping at the source keeps both the snapshot and the sheet bounded instead
+ *   of hoping the list stays short.
+ * * the session token is NOT here and must never be: it is the credential that authorises a
+ *   bonded stream to join this session.
+ */
+data class PushedFacts(
+    val routes: List<String> = emptyList(),
+    val routeCount: Int = 0,
+    val multipathAdaptive: Boolean = false,
+    val paddingEnabled: Boolean = false,
+    val paddingMin: Int = 0,
+    val paddingMax: Int = 0,
+    val heartbeatEnabled: Boolean = false,
+    val heartbeatIntervalMs: Long = 0,
+    val shapingEnabled: Boolean = false,
+) {
+    companion object {
+        /** How many pushed routes the UI ever holds or renders. */
+        const val ROUTE_SAMPLE = 6
+    }
+}
+
 /** How much of the device's traffic the tunnel carries. */
 enum class ProtectionScope {
     /** Every app, every route. */

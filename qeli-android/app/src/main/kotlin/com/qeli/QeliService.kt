@@ -19,6 +19,7 @@ import android.util.Log
 import com.qeli.crypto.KeyDerivation
 import com.qeli.crypto.KeyExchange
 import com.qeli.crypto.PacketCipher
+import com.qeli.model.PushedFacts
 import com.qeli.model.VpnConfig
 import com.qeli.protocol.CtrlFrame
 import com.qeli.protocol.MtuLadder
@@ -254,6 +255,15 @@ class VpnServiceImpl : VpnService() {
         @Volatile
         @JvmField
         var liveLockdown: Boolean = false
+
+        /**
+         * Everything else the server pushed, as applied. Route list is capped at the source
+         * (see [PushedFacts]) so neither this field nor the UI can be handed an unbounded
+         * list; the session token is deliberately absent.
+         */
+        @Volatile
+        @JvmField
+        var livePushed: PushedFacts = PushedFacts()
     }
 
     // ── lifecycle ────────────────────────────────────────────────────────────
@@ -771,6 +781,7 @@ class VpnServiceImpl : VpnService() {
         liveStreams = 1
         liveRoutes = 0
         liveLockdown = false
+        livePushed = PushedFacts()
         liveBytesUp = 0L
         liveBytesDown = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1379,6 +1390,36 @@ class VpnServiceImpl : VpnService() {
         liveMtu = effectiveMtu(config.mtu, session.pushedMtu)
         liveStreams = session.maxStreams
         liveRoutes = nRoutes
+        // Keep only a sample. A server may advertise a very long list (a country-sized
+        // prefix set is a legitimate split-tunnel setup), and everything downstream — this
+        // @Volatile field and a detail sheet that inflates one view per row without
+        // recycling — would otherwise scale with it.
+        val sample = ArrayList<String>(PushedFacts.ROUTE_SAMPLE)
+        try {
+            val arr = if (session.routesJson.isBlank()) null else JSONArray(session.routesJson)
+            var i = 0
+            while (arr != null && i < arr.length() && sample.size < PushedFacts.ROUTE_SAMPLE) {
+                arr.optString(i).takeIf { it.isNotEmpty() }?.let { sample.add(it) }
+                i++
+            }
+        } catch (_: Exception) { /* the count above already says how many there were */ }
+        livePushed = PushedFacts(
+            routes = sample,
+            routeCount = nRoutes,
+            multipathAdaptive = session.adaptive,
+            // Padding comes from the PUSH, not from `config`: the server's values are applied
+            // straight to the codec (`encCodec.setPadding`) and never copied back, so the
+            // config still holds the profile's numbers while the wire uses the server's.
+            // Reporting the config here would describe padding this tunnel is not emitting.
+            // Heartbeat and shaping ARE copied into the effective config, so either source
+            // agrees for them; taken from the push too, for one rule instead of two.
+            paddingEnabled = pushed?.paddingEnabled ?: config.paddingEnabled,
+            paddingMin = pushed?.paddingMin ?: config.paddingMin,
+            paddingMax = pushed?.paddingMax ?: config.paddingMax,
+            heartbeatEnabled = pushed?.hbEnabled ?: config.heartbeatEnabled,
+            heartbeatIntervalMs = pushed?.hbIntervalMs ?: config.heartbeatIntervalMs,
+            shapingEnabled = pushed?.shEnabled ?: config.shapingEnabled,
+        )
         liveLockdown = try {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && isLockdownEnabled
         } catch (_: Exception) { false }
@@ -2019,7 +2060,7 @@ class VpnServiceImpl : VpnService() {
         transports.watchdog?.interrupt()
         transports.watchdog = null
         broadcastLog("Auth OK, IP ${r.session.clientIp}")
-        logServerPush(r.config, r.session)
+        logServerPush(r.config, r.session, r.pushedObf)
         vpnInterface = setupTunInterface(r.config, r.session)
         // Announce Connected (green + "established" for the reconnect backoff) only AFTER the
         // TUN is up; see the UDP path / issue #69. At Auth OK it showed green with no working
@@ -2104,7 +2145,7 @@ class VpnServiceImpl : VpnService() {
         origConfig: VpnConfig, transport: Transport, isUdp: Boolean, r: HandshakeResult
     ) {
         broadcastLog("Auth OK, IP ${r.session.clientIp}")
-        logServerPush(r.config, r.session)
+        logServerPush(r.config, r.session, r.pushedObf)
         var cfg = r.config
         // Auto MTU on UDP: discover the path MTU (DF probes from the pushed ceiling down)
         // BEFORE establishing the TUN — Android fixes the VpnService MTU at establish() and
@@ -2117,6 +2158,11 @@ class VpnServiceImpl : VpnService() {
             if (probed > 0) {
                 broadcastLog("UDP path-MTU probe: tunnel MTU $probed (ceiling $ceiling)")
                 cfg = cfg.copy(mtu = probed)
+                // Republish: `logServerPush` ran BEFORE the probe and could only know the
+                // pushed/config ceiling, so the card kept showing 1400 while the TUN and the
+                // data plane were on 1280. The probe is the last word on this number, so it
+                // has to be the one displayed. (Audit 2026-08-02, follow-up.)
+                liveMtu = probed
             } else broadcastLog("UDP path-MTU probe: no result — using MTU $ceiling")
         }
         vpnInterface = setupTunInterface(cfg, r.session)
@@ -2158,11 +2204,6 @@ class VpnServiceImpl : VpnService() {
                 catch (e: Exception) { return false }   // EMSGSIZE: link < probe
                 val payload = t.recvRawPayload(220)
                 if (payload != null && UdpFrag.isMtuProbeAck(payload)
-                // Republish: `logServerPush` ran BEFORE the probe and could only know the
-                // pushed/config ceiling, so the card kept showing 1400 while the TUN and the
-                // data plane were on 1280. The probe is the last word on this number, so it
-                // has to be the one displayed. (Audit 2026-08-02, follow-up.)
-                liveMtu = probed
                     && UdpFrag.parseMtuProbe(payload) == Pair(id, outerSize)) return true
             }
             return false

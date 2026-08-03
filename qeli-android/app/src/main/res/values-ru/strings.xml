@@ -214,6 +214,13 @@
     <string name="detail_reconnect">Автопереподключение</string>
     <string name="detail_on">Включено</string>
     <string name="detail_off">Выключено</string>
+    <string name="detail_tunnel_ip">IP в туннеле</string>
+    <string name="detail_adaptive">адаптивно</string>
+    <string name="detail_padding">Padding</string>
+    <string name="detail_heartbeat">Heartbeat</string>
+    <string name="detail_shaping">Шейпинг трафика</string>
+    <!-- Показывается только выборка пушнутых маршрутов; %2$d — сколько осталось. -->
+    <string name="detail_routes_more">%1$s и ещё %2$d</string>
 
     <!-- ── Уведомление фонового сервиса ── -->
     <string name="notif_channel_name">Сервис VPN</string>

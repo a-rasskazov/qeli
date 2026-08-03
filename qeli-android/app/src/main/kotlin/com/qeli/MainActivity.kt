@@ -817,6 +817,8 @@ sni = www.microsoft.com
         rows += R.string.detail_server_key to
             getString(if (s.keyPinned) R.string.protection_key_pinned else R.string.protection_key_tofu)
         if (live) {
+            val pushed = VpnServiceImpl.livePushed
+            rows += R.string.detail_tunnel_ip to VpnServiceImpl.liveIp
             rows += R.string.detail_dns to (VpnServiceImpl.liveDns.ifEmpty {
                 cfg.dnsServers.joinToString(", ").ifEmpty { getString(R.string.protection_dns_system) }
             })
@@ -825,12 +827,31 @@ sni = www.microsoft.com
                     "${VpnServiceImpl.liveMtu}${if (cfg.mtu > 0) "" else " (auto)"}"
             }
             if (VpnServiceImpl.liveStreams > 1) {
-                rows += R.string.detail_multipath to
-                    getString(R.string.detail_streams, VpnServiceImpl.liveStreams)
+                rows += R.string.detail_multipath to (
+                    getString(R.string.detail_streams, VpnServiceImpl.liveStreams) +
+                        if (pushed.multipathAdaptive) ", " + getString(R.string.detail_adaptive) else ""
+                    )
             }
-            if (VpnServiceImpl.liveRoutes > 0) {
-                rows += R.string.detail_pushed_routes to VpnServiceImpl.liveRoutes.toString()
+            // Only a sample is ever held or shown: a server may advertise a very long list,
+            // and this dialog inflates one view per row with no recycling. The count is the
+            // honest part; the sample is there to make it concrete.
+            if (pushed.routeCount > 0) {
+                val shown = pushed.routes.joinToString(", ")
+                val extra = pushed.routeCount - pushed.routes.size
+                rows += R.string.detail_pushed_routes to
+                    if (extra > 0) getString(R.string.detail_routes_more, shown, extra)
+                    else "$shown (${pushed.routeCount})"
             }
+            // The DPI-resistance knobs actually in force, which the server owns.
+            rows += R.string.detail_padding to
+                if (pushed.paddingEnabled) "${pushed.paddingMin}–${pushed.paddingMax} B"
+                else getString(R.string.detail_off)
+            rows += R.string.detail_heartbeat to
+                if (pushed.heartbeatEnabled) "${pushed.heartbeatIntervalMs / 1000} s"
+                else getString(R.string.detail_off)
+            rows += R.string.detail_shaping to getString(
+                if (pushed.shapingEnabled) R.string.detail_on else R.string.detail_off
+            )
             rows += R.string.detail_lockdown to getString(
                 if (VpnServiceImpl.liveLockdown) R.string.detail_on else R.string.detail_off
             )
@@ -929,14 +950,14 @@ sni = www.microsoft.com
         val cfg = profile?.let { try { VpnConfig.parse(it.text) } catch (_: Exception) { null } }
         val row = binding.connectionInfoRow
         val text = binding.tvConnectionInfo
-        if (cfg == null) {
-            text.text = getString(
-                if (profile == null) R.string.protection_no_profile else R.string.protection_invalid
-            )
-            text.setTextColor(getColor(R.color.text_secondary))
-            row.isClickable = false
+        // Properties OF A CONNECTION — so there is nothing to state until there is one. This
+        // also gives the idle screen the whole card's height back, which is where the tab was
+        // tightest.
+        if (!isConnected || cfg == null) {
+            row.visibility = View.GONE
             return
         }
+        row.visibility = View.VISIBLE
         row.isClickable = true
 
         val s = ProtectionSummary.of(cfg, globalAllowLan())
