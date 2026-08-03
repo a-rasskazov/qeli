@@ -3220,11 +3220,18 @@ async fn connect_and_run_udp(
     // down) are re-sent on a jittered ~HS_RETRANSMIT_INTERVAL tick until answered or
     // hs_deadline: the server's Reassembler dedups duplicate ClientHello fragments,
     // continuation fragments aren't re-charged by the new-session rate limiter, and a
-    // resent auth packet is replay-dropped if it's a duplicate. The reverse direction
-    // (a dropped ServerHello or AuthOK) is not repaired in place — once the server has
-    // our session it ignores handshake resends — so that case fails fast at hs_deadline
-    // to a fresh-port reconnect. Jitter avoids fleet-wide phase-locking and a fixed DPI
-    // cadence. A legacy single-datagram ServerHello (no fragment magic) is accepted.
+    // resent auth packet is replay-dropped if it's a duplicate.
+    //
+    // The reverse direction is repaired by the SAME retransmits. The server caches its
+    // ServerHello and its AuthOK and re-emits on a byte-identical request — the AuthOK up
+    // to a small per-session cap — so a dropped reply costs about one RTT rather than the
+    // whole connect timeout. That is why the resends above must be identical bytes: the
+    // server matches on them. Only once the cap is spent does this fall through to
+    // hs_deadline and a fresh-port reconnect. (This used to say the server ignores
+    // handshake resends once it has the session; it has re-emitted since 0.7.14 — see
+    // `UdpClient::server_hello` / `auth_ok`.) Jitter avoids fleet-wide phase-locking and a
+    // fixed DPI cadence. A legacy single-datagram ServerHello (no fragment magic) is
+    // accepted.
     const HS_RETRANSMIT_INTERVAL: Duration = Duration::from_millis(1000);
     let hs_deadline = tokio::time::Instant::now() + timeout;
     let mut sh_re = crate::protocol::udp_frag::Reassembler::new();
@@ -3436,10 +3443,14 @@ async fn connect_and_run_udp(
 
     // Retransmit the auth credentials on the same jittered timer as the ClientHello,
     // bounded by hs_deadline, so a dropped auth datagram (client->server) recovers in
-    // ~1-2s instead of stalling the full connect timeout. A dropped AuthOK
-    // (server->client) is not repaired in place — the server won't re-emit it for an
-    // already-authenticated session — so that case still falls through to the deadline
-    // and a fresh-port reconnect, which redoes the whole handshake cleanly.
+    // ~1-2s instead of stalling the full connect timeout.
+    //
+    // A dropped AuthOK (server->client) is repaired by the SAME retransmit: the server
+    // caches it and re-emits on a byte-identical AUTH, up to a small per-session cap. That
+    // is why resending identical inner bytes matters — the server matches on them. Only
+    // once the cap is spent does this fall through to the deadline and a fresh-port
+    // reconnect, which redoes the whole handshake cleanly. (This used to say the server
+    // never re-emits; it has since 0.7.14 — see `UdpClient::auth_ok`.)
     let mut auth_sends = 0u32;
     // Reassembly state for a FRAGMENTED AuthOK. A server whose pushed-route list puts the
     // AuthOK over the fragment budget splits it rather than emitting one oversized datagram

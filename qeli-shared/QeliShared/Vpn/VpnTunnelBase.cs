@@ -1541,10 +1541,15 @@ public abstract class VpnTunnelBase
         // can't add up) and re-send the ClientHello on a jittered ~1s tick, mirroring the Rust
         // client's hs_deadline / HS_RETRANSMIT_INTERVAL loop: the server's reassembler dedups
         // duplicate ClientHello fragments and continuation fragments are not re-charged by its
-        // new-session rate limiter, so re-sending is safe. The reverse direction (a dropped
-        // ServerHello) is not repairable here — once the server has our session it ignores
-        // handshake re-sends — so that case fails at the deadline and the outer loop retries from
-        // a fresh local port. TCP needs none of this (the kernel retransmits) and is untouched.
+        // new-session rate limiter, so re-sending is safe.
+        //
+        // The reverse direction is repaired by the SAME re-send: the server caches its
+        // ServerHello and re-emits it on a byte-identical ClientHello, so a dropped reply costs
+        // about one RTT instead of the whole timeout. That is why the re-send must be the
+        // identical bytes — the server matches on them. Only if that fails too does this reach
+        // the deadline and the outer loop retry from a fresh local port. (This used to say the
+        // server ignores handshake re-sends once it has the session; it has re-emitted since
+        // 0.7.14.) TCP needs none of this (the kernel retransmits) and is untouched.
         byte[] serverHelloRecord;
         long hsDeadline = Environment.TickCount64 + (long)config.ConnectionTimeoutSecs * 1000;
         for (int skipped = 0; ; skipped++)
