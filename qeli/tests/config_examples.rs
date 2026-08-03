@@ -26,7 +26,15 @@ fn shipped_server_examples_have_no_unread_keys() {
         ),
     ] {
         let doc = IniDoc::parse(text).unwrap_or_else(|e| panic!("{name}: parse error: {e}"));
-        ServerConfig::from_ini(&doc).unwrap_or_else(|e| panic!("{name}: from_ini: {e}"));
+        let cfg = ServerConfig::from_ini(&doc).unwrap_or_else(|e| panic!("{name}: from_ini: {e}"));
+        // Parsing is not starting. `from_ini` only says the file is well-formed; every rule
+        // about whether a profile can actually RUN — reality_proxy without short_ids, plain or
+        // reality-tls on UDP, a zero max_clients, a too-long tun name — lives in
+        // `validate_profiles`, and the test never called it. A shipped example that parses and
+        // then refuses to boot is the worst kind of green CI, because the example is exactly
+        // what an operator copies. (Audit 2026-08-03, P3.)
+        qeli::server::validate_profiles(&cfg)
+            .unwrap_or_else(|e| panic!("{name}: would refuse to start: {e}"));
         // Also consume any inline [user:*] / [group:*] the example might carry, so
         // their keys are not counted as unread.
         let _ = UsersDb::from_ini(&doc);
@@ -46,22 +54,21 @@ fn shipped_client_example_has_no_unexpected_unread_keys() {
     // macOS GUI clients implement (this Rust client does not read them) —
     // check-config whitelists exactly these, so the test does too. Anything ELSE
     // left unread would be a real check-config false-positive on a shipped file.
-    // Keep this list in sync with GUI_ONLY_CLIENT_KEYS in main.rs.
-    const GUI_ONLY: &[&str] = &[
-        "dev_node",
-        "local",
-        "lport",
-        "metric",
-        "persist_tun",
-        "route_file",
-    ];
+    // Taken FROM the real allowlist rather than copied beside it. The copy here had drifted:
+    // it still held the original six names while the shipped list had grown to twenty-two, so
+    // the test enforced a rule stricter than the tool it is supposed to mirror — and a comment
+    // asking a human to keep two lists in sync is what let that happen. (Audit 2026-08-03, P3.)
     let text = include_str!("../config/client.conf");
     let doc = IniDoc::parse(text).expect("client.conf parse error");
-    ClientConfig::from_ini(&doc).expect("client.conf from_ini");
+    let cfg = ClientConfig::from_ini(&doc).expect("client.conf from_ini");
+    // Same reasoning as the server examples: parsing is not running. `validate` is what
+    // enforces the pair rules (no `plain`/`reality-tls` on UDP) and every range.
+    cfg.validate()
+        .unwrap_or_else(|e| panic!("client.conf: would refuse to start: {e}"));
     let unexpected: Vec<_> = doc
         .unread_keys()
         .into_iter()
-        .filter(|(_, k)| !GUI_ONLY.contains(k))
+        .filter(|(_, k)| !qeli::config::GUI_ONLY_CLIENT_KEYS.contains(k))
         .collect();
     assert!(
         unexpected.is_empty(),

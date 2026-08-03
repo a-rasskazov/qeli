@@ -3533,8 +3533,16 @@ async fn connect_and_run_udp(
                 }
             }
             match client_rx.decrypt_packet(&raw) {
-                Ok(resp) => break 'auth resp,
-                Err(_) => continue, // cover / stray datagram — keep waiting
+                // A record that decrypts is not automatically the AuthOK. Server cover and
+                // heartbeat traffic carries an EMPTY payload and is encrypted with these very
+                // keys, so it decrypts perfectly and used to be accepted here — then failed the
+                // `OK:` parse a few lines down and killed the connect. The server no longer
+                // emits either before the AuthOK, but an older one still does, and "empty is
+                // not an answer" is true regardless of who is on the other end.
+                // (Audit 2026-08-03, P1.)
+                Ok(resp) if !resp.is_empty() => break 'auth resp,
+                Ok(_) => continue,  // server cover/beacon — keep waiting
+                Err(_) => continue, // stray datagram — keep waiting
             }
         }
     };

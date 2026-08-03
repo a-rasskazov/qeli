@@ -1305,9 +1305,12 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // such transport and falls through to fake-tls/obfs datagram framing. So the profile
         // started, reported itself as reality-tls, and put no genuine TLS on the wire at all
         // — the operator believes they have the strongest masking available and has the
-        // weakest. Only `plain` was rejected here; the iOS client already refuses both
-        // combinations, so the server was the more permissive end.
-        // (Audit 2026-07-29, #18.)
+        // weakest. Only `plain` was rejected here. (Audit 2026-07-29, #18.)
+        //
+        // The note here used to add that "the iOS client already refuses both combinations",
+        // which was not true of any client: all four checked `proto` and `mode` separately and
+        // never the pair. They refuse both now, so this end is no longer the strict one on its
+        // own. (Audit 2026-08-03, P2.)
         if p.obfuscation.mode == "reality-tls" && p.bind.transport == "udp" {
             anyhow::bail!(
                 "profile '{}': reality-tls is TCP-only — it terminates a real TLS session, \

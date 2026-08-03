@@ -217,6 +217,32 @@ class ConfigImportRangesTest {
         assertNotNull(runCatching { cfg.validate() }.exceptionOrNull())
     }
 
+    /**
+     * A wire mode that needs a STREAM must not validate on a datagram transport.
+     *
+     * `proto` and `mode` were each checked against their own enum and never against each other,
+     * so `udp` + `reality-tls` passed while the server refuses it — the profile could not reach
+     * any working server, and failed later and less clearly. `reality-tls` is the dangerous
+     * half: nothing in the name says TCP, so the operator believes they have the strongest
+     * masking available while the datagram path falls back to fake-tls framing.
+     */
+    @Test
+    fun `stream-only wire modes are refused on udp`() {
+        for (mode in listOf("plain", "reality-tls")) {
+            val err = runCatching {
+                VpnConfig.fromIni(ini("proto = udp", "mode = $mode")).validate()
+            }.exceptionOrNull()
+            assertTrue("udp + $mode must be refused, got $err",
+                err?.message?.contains("TCP-only") == true && err.message?.contains(mode) == true)
+            // The same mode over TCP is exactly what it is for.
+            VpnConfig.fromIni(ini("proto = tcp", "mode = $mode")).validate()
+        }
+        // ...and the datagram modes are untouched, so this cannot pass by refusing all UDP.
+        for (mode in listOf("fake-tls", "obfs")) {
+            VpnConfig.fromIni(ini("proto = udp", "mode = $mode")).validate()
+        }
+    }
+
     /** A profile that never carried them must not grow empty lines for them. */
     @Test
     fun `a profile without rust-only keys stays clean`() {

@@ -1167,6 +1167,26 @@ public sealed class VpnConfig : INotifyPropertyChanged
         }
         Enum_("proto", Protocol, "tcp", "udp");
         Enum_("mode", WireMode, "fake-tls", "obfs", "plain", "reality-tls");
+        // Both fields are individually valid and the PAIR is not. The server refuses these two
+        // combinations, so a client that accepts them cannot reach any working profile — it
+        // just fails later and less clearly. Worse for `reality-tls`: nothing about the name
+        // says TCP, so the operator believes they have the strongest masking available while
+        // the datagram path quietly falls back to fake-tls framing. (Audit 2026-08-03, P2.)
+        if (Protocol.Equals("udp", StringComparison.OrdinalIgnoreCase))
+        {
+            if (WireMode.Equals("plain", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    "'mode = plain' is TCP-only (raw framing has no datagram form) — set "
+                    + "proto = tcp, or pick obfs/fake-tls for a UDP profile");
+            }
+            if (WireMode.Equals("reality-tls", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    "'mode = reality-tls' is TCP-only — it terminates a REAL TLS 1.3 session, "
+                    + "which UDP cannot carry. Set proto = tcp, or pick obfs for UDP");
+            }
+        }
         Enum_("front", ObfsFronting, "websocket", "none");
         Enum_("routing mode", RoutingMode, "split-tunnel", "full-tunnel", "all");
         if (ConnectionTimeoutSecs is < 1 or > 300)

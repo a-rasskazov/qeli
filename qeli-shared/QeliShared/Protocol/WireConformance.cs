@@ -58,6 +58,36 @@ public static class WireConformance
         bool sane = Ini("timeout = 45").ConnectionTimeoutSecs == 45;
         check("ini-bounds: a valid timeout is left alone", sane);
 
+        // A wire mode that needs a STREAM must not validate on a datagram transport.
+        //
+        // `proto` and `mode` were each checked against their own enum and never against each
+        // other, so `udp` + `reality-tls` passed here while the server refuses it — the client
+        // could not reach any working profile, and failed later and less clearly. `reality-tls`
+        // is the dangerous half: nothing in the name says TCP, so the operator believes they
+        // have the strongest masking available while the datagram path falls back to fake-tls
+        // framing. Pinned in the SHARED gate because all four ports had the same gap.
+        // (Audit 2026-08-03, P2.)
+        foreach (var mode in new[] { "plain", "reality-tls" })
+        {
+            string refusal = "";
+            try { Ini("proto = udp", $"mode = {mode}").Validate(); }
+            catch (ArgumentException e) { refusal = e.Message; }
+            check($"proto-mode: udp + {mode} is refused, naming the mode",
+                refusal.Contains("TCP-only") && refusal.Contains(mode));
+            bool tcpOk = true;
+            try { Ini("proto = tcp", $"mode = {mode}").Validate(); }
+            catch (ArgumentException) { tcpOk = false; }
+            check($"proto-mode: tcp + {mode} is still accepted", tcpOk);
+        }
+        // ...and the datagram modes are untouched, so this cannot pass by refusing all UDP.
+        bool udpModesOk = true;
+        foreach (var mode in new[] { "fake-tls", "obfs" })
+        {
+            try { Ini("proto = udp", $"mode = {mode}").Validate(); }
+            catch (ArgumentException) { udpModesOk = false; }
+        }
+        check("proto-mode: the datagram wire modes still pass on udp", udpModesOk);
+
         // The same cliff, one loop further along: the reconnect backoff also ends at an int.
         //
         // `reconnect_max_delay` accepted anything up to long.MaxValue, and VpnTunnelBase then

@@ -337,6 +337,21 @@ data class VpnConfig(
         require(routingMode in ROUTING_MODES) {
             "'routing_mode' must be one of $ROUTING_MODES, got '$routingMode'"
         }
+        // Both fields are individually valid and the PAIR is not. The server refuses these two
+        // combinations, so a client that accepts them cannot reach any working profile — it
+        // just fails later and less clearly. Worse for `reality-tls`: nothing about the name
+        // says TCP, so the operator believes they have the strongest masking available while
+        // the datagram path quietly falls back to fake-tls framing. (Audit 2026-08-03, P2.)
+        if (protocol.lowercase() == "udp") {
+            require(wireMode.lowercase() != "plain") {
+                "'mode = plain' is TCP-only (raw framing has no datagram form) — set " +
+                    "proto = tcp, or pick obfs/fake-tls for a UDP profile"
+            }
+            require(wireMode.lowercase() != "reality-tls") {
+                "'mode = reality-tls' is TCP-only — it terminates a REAL TLS 1.3 session, " +
+                    "which UDP cannot carry. Set proto = tcp, or pick obfs for UDP"
+            }
+        }
         // 0 = auto. Matches the Rust client, which rejects anything outside MTU_MIN..MTU_MAX.
         // Same predicate the import paths use, so emit and import can never disagree. (C6)
         require(mtuInRange(mtu)) { "'mtu' must be 0 (auto) or $MTU_MIN..$MTU_MAX, got $mtu" }

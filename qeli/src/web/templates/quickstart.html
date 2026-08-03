@@ -168,6 +168,15 @@ function quickstartPage() {
         const def = await apiFetch('api/config/defaults');
         if (def.ok) this.defaultProfile = def.profile;
       } catch {}
+      // A retry, because one failed request used to disable Quick Start for the whole page
+      // load — see the refusal in launch(). Cheap and silent: the second attempt is only
+      // reached when the first already failed.
+      if (!this.defaultProfile) {
+        try {
+          const def = await apiFetch('api/config/defaults');
+          if (def.ok) this.defaultProfile = def.profile;
+        } catch {}
+      }
     },
 
     copy(text) {
@@ -182,9 +191,18 @@ function quickstartPage() {
     buildProfile(m) {
       const sid = m.needsSid ? randHex(16) : null;
       const obfsKey = m.needsKey ? randHex(32) : null;
-      const profile = this.defaultProfile
-        ? JSON.parse(JSON.stringify(this.defaultProfile))
-        : { obfuscation: { tls: { reality_proxy: {} }, quic: {} }, bind: {}, tun: {}, pool: {}, dns: {}, routing: { nat: {} } };
+      // No skeleton fallback. There used to be one — an empty-section object used when
+      // /api/config/defaults had failed — and every profile built on it was DEAD ON ARRIVAL:
+      // with no `performance` section `max_clients` and `handshake_timeout_secs` derive to 0,
+      // which the server refuses outright. So a transient request failure turned Quick Start
+      // into a button that builds, saves, and is then rejected, with nothing pointing at the
+      // real cause. Filling the gap with literals here is worse still: it would fork the
+      // canonical defaults into the template, and they would drift.
+      //
+      // launch() refuses before reaching this point; the throw is the backstop for any other
+      // caller. (Audit 2026-08-03, P2.)
+      if (!this.defaultProfile) throw new Error('server defaults are not loaded');
+      const profile = JSON.parse(JSON.stringify(this.defaultProfile));
       profile.name = m.id;
       profile.enabled = true;
       profile.bind.address = '0.0.0.0';
@@ -266,6 +284,21 @@ function quickstartPage() {
         this.qs.busy = null; this.qs.step = '';
         this.portClash = { port: m.port, profile: clash.name };
         return;
+      }
+
+      // Refuse EARLY when the canonical defaults never arrived: a profile built without them
+      // is rejected by the server on save, and the operator would have confirmed a restart
+      // first. Offer the retry instead of a dead button. (Audit 2026-08-03, P2.)
+      if (!this.defaultProfile) {
+        this.qs.busy = null; this.qs.step = '';
+        await this.init();
+        if (!this.defaultProfile) {
+          this.$dispatch('notify', {
+            msg: qeliT('Could not load the server defaults — reload the page and try again'),
+            type: 'error',
+          });
+          return;
+        }
       }
 
       if (!await qeliConfirm('Set up and restart',

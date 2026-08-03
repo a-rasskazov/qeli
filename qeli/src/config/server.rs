@@ -628,10 +628,14 @@ pub struct RealityProxyConfig {
     pub target: String,
     #[serde(default = "default_reality_target_port")]
     pub target_port: u16,
-    /// REALITY short_ids (hex, ≤8 bytes) accepted from clients. When non-empty,
-    /// the server discriminates qeli clients by a crypto token in the ClientHello
-    /// session_id (`crypto::reality`) instead of by ALPN absence. Empty = legacy
-    /// ALPN-absence detection.
+    /// REALITY short_ids (hex, ≤8 bytes) accepted from clients. The server discriminates qeli
+    /// clients by a crypto token in the ClientHello session_id (`crypto::reality`).
+    ///
+    /// At least one non-empty entry is REQUIRED when `enabled` — `validate_profiles` refuses to
+    /// start otherwise. This note used to say an empty list meant "legacy ALPN-absence
+    /// detection", which was true of an older build and is now the opposite of what happens: an
+    /// active prober defeats that heuristic trivially, so the fallback was removed rather than
+    /// left as a quiet downgrade. (Audit 2026-08-03, P3.)
     #[serde(default)]
     pub short_ids: Vec<String>,
     /// When true, an authenticated ("our") client is terminated with a genuine

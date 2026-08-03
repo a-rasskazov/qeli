@@ -162,6 +162,22 @@ struct UdpClient {
     /// us re-send; a small count cap bounds that to a handful of datagrams per session, which
     /// is all the legitimate path ever needs. (Audit 2026-08-02, §4.)
     auth_ok_reemits: u8,
+    /// Whether this session's AuthOK has actually reached the socket.
+    ///
+    /// NOTHING may precede the AuthOK on an authenticated session, and `Authenticated` alone
+    /// does not mean it has been sent: `handle_udp_auth` runs on its own task (spawned off the
+    /// recv loop so Argon2 cannot stall the worker), sets this state, and only then takes the
+    /// pool lock, checks `max_clients` and programs routes before sending. The select! loop
+    /// keeps running throughout, so a heartbeat or cover tick landing in that window found a
+    /// session it considered live and wrote to the wire first.
+    ///
+    /// What the client does with that is not graceful: it takes the first record that decrypts
+    /// as the AuthOK, so a cover packet — which decrypts perfectly into an EMPTY payload —
+    /// fails the `OK:` parse and the connect dies. On a fragmented AuthOK the stray datagram
+    /// also resets reassembly. Rare (the window is short against a 15 s beacon), and a random
+    /// UDP auth failure with a reconnect loop is exactly the kind of rare that never gets
+    /// diagnosed. (Audit 2026-08-03, P1.)
+    auth_ok_sent: bool,
 }
 
 /// How many times one session may have its AuthOK re-sent. The client retransmits AUTH on a
@@ -389,7 +405,13 @@ pub async fn run_udp_server(
                     let mut sessions_guard = sessions.write().await;
                     let mut out = Vec::new();
                     for (addr, client) in sessions_guard.iter_mut() {
-                        if !matches!(client.state, UdpSessionState::Authenticated { .. }) {
+                        // Authenticated is not enough: the AuthOK may still be in flight on the
+                        // auth task. A cover packet reaching the client first is taken for the
+                        // AuthOK, decrypts into nothing, and kills the connect. See
+                        // `auth_ok_sent`. (Audit 2026-08-03, P1.)
+                        if !matches!(client.state, UdpSessionState::Authenticated { .. })
+                            || !client.auth_ok_sent
+                        {
                             continue;
                         }
                         if now < client.next_cover_at {
@@ -430,8 +452,13 @@ pub async fn run_udp_server(
                     let mut out = Vec::new();
                     for (addr, client) in sessions_guard.iter() {
                         // Only beacon AUTHENTICATED clients (a fresh AwaitingAuth entry
-                        // is not a real session yet).
-                        if !matches!(client.state, UdpSessionState::Authenticated { .. }) {
+                        // is not a real session yet) whose AuthOK has actually gone out —
+                        // this loop deliberately does NOT idle-gate (see below), so without
+                        // that second condition it is the most likely thing to overtake the
+                        // AuthOK. See `auth_ok_sent`. (Audit 2026-08-03, P1.)
+                        if !matches!(client.state, UdpSessionState::Authenticated { .. })
+                            || !client.auth_ok_sent
+                        {
                             continue;
                         }
                         if idle_timeout.as_secs() > 0 && now.duration_since(client.last_activity) > idle_timeout {
@@ -1701,6 +1728,12 @@ async fn handle_udp_auth(
     for pkt in &response_pkts {
         let _ = socket.send_to(pkt, addr).await;
     }
+    // The AuthOK is on the wire — the beacon and cover loops may write to this session now.
+    // Set AFTER the sends, not before: the whole point is that nothing precedes it, and the
+    // flag exists to make that an invariant rather than a timing accident. See `auth_ok_sent`.
+    if let Some(client) = sessions.write().await.get_mut(&addr) {
+        client.auth_ok_sent = true;
+    }
 
     // Link the per-worker ingress entry to the session's revocation flag, so a later
     // kick / quota cut-off / supersede stops this client's UPLOAD as well as its
@@ -1911,6 +1944,7 @@ async fn handle_new_udp_client(
             amp_received: initial_packet.len() as u64,
             amp_sent: response.len() as u64,
             auth_ok_reemits: 0,
+            auth_ok_sent: false,
             last_activity: now,
             bytes_recv: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             created_at: now,

@@ -614,6 +614,41 @@ mod tests {
         );
     }
 
+    /// A wire mode that needs a stream must not validate on a datagram transport.
+    ///
+    /// `proto` and `mode` were each checked against their own enum and never against each
+    /// other, so `udp` + `reality-tls` passed here while the SERVER refuses it — the client
+    /// could not reach any working profile, and failed later and less clearly. `reality-tls` is
+    /// the dangerous half: nothing in the name says TCP, so the operator believes they have the
+    /// strongest masking available while the datagram path falls back to fake-tls framing.
+    /// (Audit 2026-08-03, P2.)
+    #[test]
+    fn stream_only_wire_modes_are_refused_on_udp() {
+        let profile = |proto: &str, mode: &str| {
+            format!("[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\nproto = {proto}\nmode = {mode}\n")
+        };
+        for mode in ["plain", "reality-tls"] {
+            let err = super::parse_client_config(&profile("udp", mode))
+                .and_then(|c| c.validate())
+                .expect_err(&format!("udp + {mode} must be refused"));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("TCP-only") && msg.contains(mode),
+                "the message must name the mode and say why, got: {msg}"
+            );
+            // The same mode over TCP is exactly what it is for.
+            super::parse_client_config(&profile("tcp", mode))
+                .and_then(|c| c.validate())
+                .unwrap_or_else(|e| panic!("tcp + {mode} must still be accepted: {e}"));
+        }
+        // ...and the datagram modes are untouched, so this cannot pass by refusing all UDP.
+        for mode in ["fake-tls", "obfs"] {
+            super::parse_client_config(&profile("udp", mode))
+                .and_then(|c| c.validate())
+                .unwrap_or_else(|e| panic!("udp + {mode} must be accepted: {e}"));
+        }
+    }
+
     #[test]
     fn user_profile_authorization() {
         let all = crate::config::users::UserEntry {

@@ -819,6 +819,26 @@ impl ClientConfig {
             &self.obfuscation.mode,
             &["fake-tls", "obfs", "plain", "reality-tls"],
         )?;
+        // Both fields are individually valid and the PAIR is not. The server refuses these two
+        // combinations (server/mod.rs), so a client that accepts them cannot reach any working
+        // profile — it just fails later and less clearly. Worse for `reality-tls`: nothing about
+        // the name says TCP, so the operator believes they have the strongest masking available
+        // while the datagram path quietly falls back to fake-tls framing.
+        // (Audit 2026-08-03, P2.)
+        if self.server.protocol == "udp" {
+            if self.obfuscation.mode == "plain" {
+                anyhow::bail!(
+                    "'mode = plain' is TCP-only (raw framing has no datagram form) — set \
+                     proto = tcp, or pick obfs/fake-tls for a UDP profile"
+                );
+            }
+            if self.obfuscation.mode == "reality-tls" {
+                anyhow::bail!(
+                    "'mode = reality-tls' is TCP-only — it terminates a REAL TLS 1.3 session, \
+                     which UDP cannot carry. Set proto = tcp, or pick obfs for a UDP profile"
+                );
+            }
+        }
         check("front", &self.obfuscation.fronting, &["websocket", "none"])?;
         // `system` is an accepted SPELLING of `off`, not a third behaviour.
         //
