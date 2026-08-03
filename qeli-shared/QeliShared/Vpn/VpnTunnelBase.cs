@@ -1620,10 +1620,32 @@ public abstract class VpnTunnelBase
         // spent does this fall through to the deadline and a fresh-port reconnect, which redoes
         // the whole handshake cleanly. (This used to say the server never re-emits; it has since
         // 0.7.14.)
-        var authResponse = dec.Decrypt(isUdp
-            ? RecvUdpWithRetransmit(transport, authPacket, longHeader: false, config, hsDeadline,
-                "AuthOK", "auth")
-            : transport.RecvRecord());
+        //
+        // A record that decrypts is not automatically the AuthOK. Server cover and heartbeat
+        // traffic carries an EMPTY payload and is encrypted with these very keys, so it
+        // decrypts perfectly and used to be accepted here — then failed the `OK:` check below
+        // with "Auth failed: " and nothing after it. The server no longer emits either before
+        // the AuthOK, but UDP still loses and reorders: the AuthOK can be dropped while the
+        // beacon that follows it arrives. "Empty is not an answer" holds whoever is on the
+        // other end, and the retransmit above is already the right place to wait.
+        //
+        // Deliberately NOT "anything that isn't OK:": a non-empty refusal from the server must
+        // still fail fast rather than spin until the deadline. (Audit 2026-08-03, P1.)
+        byte[] authResponse;
+        if (isUdp)
+        {
+            do
+            {
+                authResponse = dec.Decrypt(RecvUdpWithRetransmit(
+                    transport, authPacket, longHeader: false, config, hsDeadline, "AuthOK", "auth"));
+                if (authResponse.Length == 0)
+                    Log("UDP: server cover/beacon arrived before the AuthOK — still waiting");
+            } while (authResponse.Length == 0);
+        }
+        else
+        {
+            authResponse = dec.Decrypt(transport.RecvRecord());
+        }
         var authStr = Encoding.UTF8.GetString(authResponse);
         if (!authStr.StartsWith("OK:", StringComparison.Ordinal))
             throw new Exception($"Auth failed: {authStr}");

@@ -2431,11 +2431,31 @@ class VpnServiceImpl : VpnService() {
         val authPacket = encCodec.encrypt(authPlain)
         transport.send(authPacket)
 
-        val authResponse = decCodec.decrypt(
-            if (isUdp) recvUdpWithRetransmit(transport, authPacket, longHeader = false, config,
-                hsDeadline, "AuthOK", "auth")
-            else transport.recvRecord()
-        )
+        // A record that decrypts is not automatically the AuthOK.
+        //
+        // Server cover and heartbeat traffic carries an EMPTY payload and is encrypted with
+        // these very keys, so it decrypts perfectly and used to be accepted here — then failed
+        // the `OK:` check below with "Auth failed: " and an empty message. The server no longer
+        // emits either before the AuthOK, but UDP still loses and reorders: the AuthOK can be
+        // dropped while the beacon that follows it arrives. "Empty is not an answer" holds
+        // whoever is on the other end, and the retransmit loop is already the right place to
+        // wait — a re-sent AUTH makes the server re-emit its AuthOK.
+        //
+        // Deliberately NOT "anything that isn't OK:": a non-empty refusal from the server must
+        // still fail fast rather than spin until the deadline. (Audit 2026-08-03, P1.)
+        val authResponse = if (isUdp) {
+            var plain: ByteArray
+            while (true) {
+                plain = decCodec.decrypt(recvUdpWithRetransmit(
+                    transport, authPacket, longHeader = false, config,
+                    hsDeadline, "AuthOK", "auth"))
+                if (plain.isNotEmpty()) break
+                broadcastLog("UDP: server cover/beacon arrived before the AuthOK — still waiting")
+            }
+            plain
+        } else {
+            decCodec.decrypt(transport.recvRecord())
+        }
         val authStr = String(authResponse)
         if (!authStr.startsWith("OK:")) throw Exception("Auth failed: $authStr")
         val ok = parseOk(authStr)

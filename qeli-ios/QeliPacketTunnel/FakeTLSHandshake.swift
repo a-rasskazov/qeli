@@ -139,14 +139,33 @@ private enum FakeTLSHandshake {
         let authenticationRecord = try exchange.encoder.encrypt(authentication)
         try await recordTransport.sendRecord(authenticationRecord)
 
-        let responseRecord = try await receiveHandshakeLeg(
-            from: recordTransport,
-            resending: authenticationRecord,
-            longHeader: false,
-            deadline: handshakeDeadline,
-            expected: "AuthOK"
-        )
-        let response = try exchange.decoder.decrypt(responseRecord)
+        // A record that decrypts is not automatically the AuthOK.
+        //
+        // Server cover and heartbeat traffic carries an EMPTY payload and is encrypted with
+        // these very keys, so it decrypts perfectly and used to be accepted here — then failed
+        // the `OK:` check below with an empty message. The server no longer emits either before
+        // the AuthOK, but UDP still loses and reorders: the AuthOK can be dropped while the
+        // beacon that follows it arrives. "Empty is not an answer" holds whoever is on the
+        // other end, and `receiveHandshakeLeg` is already the right place to wait — a re-sent
+        // AUTH makes the server re-emit its AuthOK.
+        //
+        // Deliberately NOT "anything that isn't OK:": a non-empty refusal from the server must
+        // still fail fast rather than spin until the deadline. (Audit 2026-08-03, P1.)
+        var response = Data()
+        while response.isEmpty {
+            let responseRecord = try await receiveHandshakeLeg(
+                from: recordTransport,
+                resending: authenticationRecord,
+                longHeader: false,
+                deadline: handshakeDeadline,
+                expected: "AuthOK"
+            )
+            response = try exchange.decoder.decrypt(responseRecord)
+            if response.isEmpty {
+                sharedStore.appendLog(
+                    "server cover/beacon arrived before the AuthOK — still waiting")
+            }
+        }
         guard let responseText = String(data: response, encoding: .utf8), responseText.hasPrefix("OK:") else {
             throw MaskedHandshakeError.authenticationFailed(String(data: response, encoding: .utf8) ?? "invalid response")
         }
