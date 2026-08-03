@@ -356,6 +356,15 @@ impl PacketCodec {
                 if content_type != 0x17 {
                     return Err(PacketError::WrongContentType(content_type));
                 }
+                // The legacy_record_version too, not just the content type. Every record we
+                // EMIT carries 0x03 0x03, and a real TLS 1.3 peer emits nothing else on an
+                // established connection — so accepting other bytes made the masking framing
+                // looser than the thing it imitates, for no gain. It costs nothing (the AEAD
+                // already protects the payload); it just stops the header from being the one
+                // part of the record that anybody may rewrite. (Audit 2026-08-03, P3.)
+                if record[1] != 0x03 || record[2] != 0x03 {
+                    return Err(PacketError::WrongContentType(record[1]));
+                }
                 u16::from_be_bytes([record[3], record[4]]) as usize
             }
             Framing::Raw => u16::from_be_bytes([record[0], record[1]]) as usize,
@@ -888,7 +897,12 @@ mod tests {
         ));
         // TLS framing: content_type 0x17, length field 0, padded to clear the floor.
         let mut tls = vec![0u8; TLS_RECORD_HEADER + NONCE_SIZE + TAG_SIZE + COUNTER_SIZE];
-        tls[0] = 0x17; // application_data, else it short-circuits earlier
+        // application_data and a canonical legacy_record_version: the whole header is checked
+        // before the length, so leaving either wrong would prove only that the header check
+        // fires and never reach the short-payload path this test is about.
+        tls[0] = 0x17;
+        tls[1] = 0x03;
+        tls[2] = 0x03;
         assert!(matches!(
             PacketCodec::new(key).decrypt_packet(&tls),
             Err(PacketError::PacketTooShort)

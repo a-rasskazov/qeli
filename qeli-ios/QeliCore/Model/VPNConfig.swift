@@ -367,6 +367,45 @@ struct VPNConfig: Codable, Equatable, Sendable {
         guard ["plain", "fake-tls", "obfs", "reality-tls"].contains(wireMode.lowercased()) else {
             throw VPNConfigError.invalid("unsupported mode: \(wireMode)")
         }
+        // A mode that needs a secret must HAVE it, or the profile is valid and unusable.
+        //
+        // Each of these was checked at the use site or not at all, so the app called the
+        // profile fine and the failure surfaced mid-handshake — where it reads as a server or
+        // network problem rather than a missing field. The short_id is the sharpest case: this
+        // side parses hex leniently and the SERVER strictly, so `reality_sid = deadbeeg` became
+        // a different token here and matched nothing there. (Audit 2026-08-03, P2.)
+        if wireMode.lowercased() == "reality-tls" {
+            let sid = (realityShortID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sid.isEmpty else {
+                throw VPNConfigError.invalid(
+                    "mode = reality-tls requires reality_sid — it is the token the server uses "
+                        + "to tell qeli clients from probes; without it this client is treated "
+                        + "as a probe and proxied to the decoy site")
+            }
+            let hex = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+            guard sid.count % 2 == 0, sid.count <= 16,
+                  sid.unicodeScalars.allSatisfy(hex.contains), sid.contains(where: { $0 != "0" })
+            else {
+                throw VPNConfigError.invalid(
+                    "reality_sid must be 1..8 bytes of hex (2..16 hex digits, not all zero), got "
+                        + "'\(sid)' — this client parses hex leniently and the SERVER does not, "
+                        + "so a malformed value silently becomes a different token")
+            }
+            guard !(serverPublicKeyHex ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw VPNConfigError.invalid(
+                    "mode = reality-tls requires a pinned server key — REALITY's whole point is "
+                        + "that an unauthenticated peer is proxied to the decoy site, which a "
+                        + "TOFU client cannot tell apart from the real server")
+            }
+        }
+        if wireMode.lowercased() == "obfs",
+           obfsKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw VPNConfigError.invalid(
+                "mode = obfs requires a non-empty obfs_key — an empty key is publicly derivable, "
+                    + "so the stream is obfuscated against nobody (the server refuses the same "
+                    + "pairing)")
+        }
         // Both fields are individually valid and the PAIR is not. The server refuses these two
         // combinations, so a client that accepts them cannot reach any working profile — it
         // just fails later and less clearly. Worse for `reality-tls`: nothing about the name

@@ -1364,6 +1364,67 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // Fail loud rather than start a REALITY profile with no crypto token. (An
         // all-blank list — e.g. `short_ids = [""]` — counts as empty.)
         let rp = &p.obfuscation.tls.reality_proxy;
+        // `obf.mode` does not TURN ON any of this — that is the whole problem it creates.
+        //
+        // The runtime picks the REALITY path from `reality_proxy.enabled` and genuine TLS from
+        // `real_tls`; the mode string only labels the profile. So `mode = reality-tls` with
+        // either flag off started happily, called itself reality-tls in every log and in the
+        // panel, and put plain fake-TLS on the wire — the operator believes they have the
+        // strongest masking available and has the weakest, which is exactly the failure the
+        // udp+reality-tls rule below exists to prevent, one level up.
+        //
+        // The converse pairing is legitimate and stays allowed: `mode = fake-tls` WITH
+        // reality_proxy is the shipped "REALITY token, fake-TLS inner" variant
+        // (server-multiprofile.conf) and `fake-tls` + real_tls is server-maxobf.conf. Only the
+        // NAME is being held to its promise here. (Audit 2026-08-03, P2.)
+        if p.obfuscation.mode == "reality-tls" && !rp.enabled {
+            anyhow::bail!(
+                "profile '{}': obf.mode = reality-tls but obf.tls.reality_proxy.enabled is \
+                 false — the mode name turns nothing on, so this profile is plain fake-TLS \
+                 while calling itself REALITY. Set reality_proxy.enabled = true (with \
+                 short_ids), or set obf.mode = fake-tls",
+                p.name
+            );
+        }
+        // A WARNING, not a refusal, and the asymmetry is deliberate.
+        //
+        // `reality-tls` + REALITY + `real_tls = false` is a coherent profile — REALITY token
+        // detection with a fake-TLS inner handshake — that the shipped examples spell
+        // `obf.mode = fake-tls` (server-multiprofile.conf). So the name overstates the wire
+        // without lying about what runs, and refusing it would stop an existing server from
+        // booting after an upgrade over a naming convention. The case above is different: with
+        // reality_proxy off, NOTHING about REALITY is on and the label is simply false.
+        if p.obfuscation.mode == "reality-tls" && !rp.real_tls {
+            log::warn!(
+                "profile '{}': obf.mode = reality-tls with reality_proxy.real_tls = false — no \
+                 genuine TLS session is terminated, so the wire carries the fake-TLS handshake \
+                 a TLS-state-machine DPI can spot. Set real_tls = true for what the name \
+                 promises, or obf.mode = fake-tls for what this actually is",
+                p.name
+            );
+        }
+        // REALITY reads a TLS ClientHello. `obfs` and `plain` never send one, so the token has
+        // nowhere to live and the setting is inert — the profile advertises active-probe
+        // resistance it does not have.
+        if rp.enabled && !matches!(p.obfuscation.mode.as_str(), "fake-tls" | "reality-tls") {
+            anyhow::bail!(
+                "profile '{}': obf.tls.reality_proxy.enabled with obf.mode = '{}' — REALITY \
+                 identifies clients by a token in the TLS ClientHello, which this mode never \
+                 sends, so the setting does nothing. Use fake-tls or reality-tls",
+                p.name,
+                p.obfuscation.mode
+            );
+        }
+        // Same reasoning across transports: the UDP handler has no ClientHello to read.
+        // `mode = reality-tls` on UDP is caught below; this catches the fake-tls spelling.
+        if rp.enabled && p.bind.transport == "udp" {
+            anyhow::bail!(
+                "profile '{}': obf.tls.reality_proxy.enabled on a UDP profile — REALITY \
+                 inspects a TLS ClientHello, which the datagram path never carries, so the \
+                 setting is inert. Use bind.transport = tcp, or obfs for a UDP profile",
+                p.name
+            );
+        }
         if rp.enabled && rp.short_ids.iter().all(|s| s.trim().is_empty()) {
             anyhow::bail!(
                 "profile '{}': reality_proxy.enabled requires at least one non-empty \
@@ -4730,8 +4791,15 @@ pool.cidr = 10.1.0.0/24
             err.to_string().contains("TCP-only"),
             "expected a TCP-only rejection, got: {err}"
         );
-        // …and must still be allowed on TCP, which is where it belongs.
-        assert!(validate_profiles(&cfg_with("reality-tls", "tcp")).is_ok());
+        // …and must still be allowed on TCP, which is where it belongs. The label now has to
+        // come with the thing it names — `reality-tls` with reality_proxy off is a profile that
+        // announces REALITY and runs plain fake-TLS — so the fixture carries a short_id, the
+        // same way the shipped reality profile does.
+        let mut tcp = cfg_with("reality-tls", "tcp");
+        tcp.profiles[0].obfuscation.tls.reality_proxy.enabled = true;
+        tcp.profiles[0].obfuscation.tls.reality_proxy.short_ids = vec!["0123456789abcdef".into()];
+        tcp.profiles[0].obfuscation.tls.reality_proxy.real_tls = true;
+        assert!(validate_profiles(&tcp).is_ok());
     }
 
     #[test]
@@ -4780,7 +4848,18 @@ pool.cidr = 10.1.0.0/24
         let mut cfg = cfg_with("reality-tls", "tcp");
         cfg.profiles[0].obfuscation.tls.reality_proxy.enabled = true;
         cfg.profiles[0].obfuscation.tls.reality_proxy.short_ids = vec!["0123456789abcdef".into()];
+        cfg.profiles[0].obfuscation.tls.reality_proxy.real_tls = true;
         assert!(validate_profiles(&cfg).is_ok());
+
+        // …but the label alone is not enough: with reality_proxy off, nothing about REALITY is
+        // running and the profile announces the strongest masking the project has while putting
+        // plain fake-TLS on the wire. (Audit 2026-08-03, P2.)
+        let bare = cfg_with("reality-tls", "tcp");
+        let err = validate_profiles(&bare).unwrap_err();
+        assert!(
+            err.to_string().contains("reality_proxy.enabled is false"),
+            "expected the mislabelled profile to be named as such, got: {err}"
+        );
     }
 
     #[test]

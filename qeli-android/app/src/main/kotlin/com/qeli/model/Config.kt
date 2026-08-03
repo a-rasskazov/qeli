@@ -337,6 +337,37 @@ data class VpnConfig(
         require(routingMode in ROUTING_MODES) {
             "'routing_mode' must be one of $ROUTING_MODES, got '$routingMode'"
         }
+        // A mode that needs a secret must HAVE it, or the profile is valid and unusable.
+        //
+        // Each of these was checked at the use site or not at all, so the app called the
+        // profile fine and the failure surfaced mid-handshake — where it reads as a server or
+        // network problem rather than a missing field. The short_id is the sharpest case: this
+        // side parses hex leniently and the SERVER strictly, so `reality_sid = deadbeeg` became
+        // a different token here and matched nothing there. (Audit 2026-08-03, P2.)
+        if (wireMode.lowercase() == "reality-tls") {
+            val sid = realityShortId?.trim().orEmpty()
+            require(sid.isNotEmpty()) {
+                "'mode = reality-tls' requires 'reality_sid' — it is the token the server uses " +
+                    "to tell qeli clients from probes; without it this client is treated as a " +
+                    "probe and proxied to the decoy site"
+            }
+            require(sid.length % 2 == 0 && sid.length <= 16 &&
+                sid.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' } &&
+                sid.any { it != '0' }) {
+                "'reality_sid' must be 1..8 bytes of hex (2..16 hex digits, not all zero), got " +
+                    "'$sid' — this client parses hex leniently and the SERVER does not, so a " +
+                    "malformed value silently becomes a different token and never matches"
+            }
+            require(!serverPublicKeyHex.isNullOrBlank()) {
+                "'mode = reality-tls' requires a pinned server 'key' — REALITY's whole point is " +
+                    "that an unauthenticated peer is proxied to the decoy site, which a TOFU " +
+                    "client cannot tell apart from the real server"
+            }
+        }
+        require(wireMode.lowercase() != "obfs" || obfsKey.isNotBlank()) {
+            "'mode = obfs' requires a non-empty 'obfs_key' — an empty key is publicly derivable, " +
+                "so the stream is obfuscated against nobody (the server refuses the same pairing)"
+        }
         // Both fields are individually valid and the PAIR is not. The server refuses these two
         // combinations, so a client that accepts them cannot reach any working profile — it
         // just fails later and less clearly. Worse for `reality-tls`: nothing about the name

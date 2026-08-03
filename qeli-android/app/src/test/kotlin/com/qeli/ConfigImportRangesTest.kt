@@ -228,18 +228,42 @@ class ConfigImportRangesTest {
      */
     @Test
     fun `stream-only wire modes are refused on udp`() {
+        // Each mode carries whatever IT requires, so this fails on the transport pairing only.
+        val secrets = arrayOf(
+            "reality_sid = 0123456789abcdef",
+            "key = 1111111111111111111111111111111111111111111111111111111111111111",
+            "obfs_key = deadbeefcafe",
+        )
         for (mode in listOf("plain", "reality-tls")) {
             val err = runCatching {
-                VpnConfig.fromIni(ini("proto = udp", "mode = $mode")).validate()
+                VpnConfig.fromIni(ini("proto = udp", "mode = $mode", *secrets)).validate()
             }.exceptionOrNull()
             assertTrue("udp + $mode must be refused, got $err",
                 err?.message?.contains("TCP-only") == true && err.message?.contains(mode) == true)
             // The same mode over TCP is exactly what it is for.
-            VpnConfig.fromIni(ini("proto = tcp", "mode = $mode")).validate()
+            VpnConfig.fromIni(ini("proto = tcp", "mode = $mode", *secrets)).validate()
         }
         // ...and the datagram modes are untouched, so this cannot pass by refusing all UDP.
         for (mode in listOf("fake-tls", "obfs")) {
-            VpnConfig.fromIni(ini("proto = udp", "mode = $mode")).validate()
+            VpnConfig.fromIni(ini("proto = udp", "mode = $mode", *secrets)).validate()
+        }
+    }
+
+    /** A mode that needs a secret must not validate without it. Mirrors the Rust client. */
+    @Test
+    fun `a wire mode without its secret is refused`() {
+        val cases = listOf(
+            arrayOf("mode = reality-tls") to "requires 'reality_sid'",
+            arrayOf("mode = reality-tls", "reality_sid = deadbeeg") to "1..8 bytes of hex",
+            arrayOf("mode = reality-tls", "reality_sid = 0123456789abcdef") to "pinned server 'key'",
+            arrayOf("mode = obfs") to "requires a non-empty 'obfs_key'",
+        )
+        for ((extra, want) in cases) {
+            val err = runCatching {
+                VpnConfig.fromIni(ini(*extra)).validate()
+            }.exceptionOrNull()
+            assertTrue("${extra.toList()} must be refused with '$want', got $err",
+                err?.message?.contains(want) == true)
         }
     }
 

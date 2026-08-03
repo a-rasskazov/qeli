@@ -161,8 +161,8 @@
     },
     {
       "name": "alias-udp-obfs",
-      "why": "`mode=udp-obfs` expands to proto=udp + mode=obfs (quic stays off).",
-      "uri": "qeli://alice:pw@vpn.example.com:4443?mode=udp-obfs",
+      "why": "`mode=udp-obfs` expands to proto=udp + mode=obfs (quic stays off). Carries a key because obfs without one cannot connect — an empty obfs_key is publicly derivable, so every client now refuses the pairing at import and this case would be testing an unusable profile.",
+      "uri": "qeli://alice:pw@vpn.example.com:4443?mode=udp-obfs&obfs=aliaskey",
       "expect": {
         "host": "vpn.example.com",
         "port": 4443,
@@ -173,7 +173,7 @@
         "server_key": "",
         "sni": null,
         "reality_sid": null,
-        "obfs_key": null,
+        "obfs_key": "aliaskey",
         "quic": false,
         "awg": false
       }

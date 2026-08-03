@@ -839,6 +839,63 @@ impl ClientConfig {
                 );
             }
         }
+        // A mode that needs a secret must HAVE it, or the profile is valid and unusable.
+        //
+        // Each of these was checked at the use site or not at all, so `check-config` and the
+        // GUIs called the profile fine and the failure surfaced mid-handshake — where it reads
+        // as a server or network problem rather than a missing line in the file.
+        //
+        // The short_id is the sharpest case: this side parses hex LENIENTLY (non-hex characters
+        // are dropped), the server parses it STRICTLY, so `reality_sid = deadbeeg` became
+        // `deadbee` here and matched nothing there. Rejecting the malformed value is the only
+        // way the two ends can agree about what was configured. (Audit 2026-08-03, P2.)
+        if self.obfuscation.mode == "reality-tls" {
+            let sid = self
+                .obfuscation
+                .reality_short_id
+                .as_deref()
+                .unwrap_or("")
+                .trim();
+            if sid.is_empty() {
+                anyhow::bail!(
+                    "'mode = reality-tls' requires 'reality_sid' — it is the token the server \
+                     uses to tell qeli clients from probes; without it the server treats this \
+                     client as a probe and proxies it to the decoy site"
+                );
+            }
+            if sid.len() % 2 != 0
+                || sid.len() > 16
+                || !sid.chars().all(|c| c.is_ascii_hexdigit())
+                || sid.chars().all(|c| c == '0')
+            {
+                anyhow::bail!(
+                    "'reality_sid' must be 1..8 bytes of hex (2..16 hex digits, not all zero), \
+                     got '{sid}' — this client parses hex leniently and the SERVER does not, so \
+                     a malformed value silently becomes a different token and never matches"
+                );
+            }
+            if self
+                .auth
+                .server_public_key
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+            {
+                anyhow::bail!(
+                    "'mode = reality-tls' requires a pinned server 'key' — REALITY's whole \
+                     point is that an unauthenticated peer is proxied to the decoy site, which \
+                     a TOFU client cannot tell apart from the real server"
+                );
+            }
+        }
+        if self.obfuscation.mode == "obfs" && self.obfuscation.obfs_key.trim().is_empty() {
+            anyhow::bail!(
+                "'mode = obfs' requires a non-empty 'obfs_key' — an empty key is publicly \
+                 derivable, so the stream is obfuscated against nobody (the server refuses the \
+                 same combination)"
+            );
+        }
         check("front", &self.obfuscation.fronting, &["websocket", "none"])?;
         // `system` is an accepted SPELLING of `off`, not a third behaviour.
         //
@@ -1263,10 +1320,12 @@ sni    = www.cloudflare.com
             );
         }
 
-        // Valid non-default values must still be accepted.
+        // Valid non-default values must still be accepted. `obfs` now carries its key: an
+        // empty `obfs_key` is publicly derivable, so the mode obfuscates against nobody and
+        // the server refuses the same pairing. (Audit 2026-08-03, P2.)
         for line in [
             "proto = udp\n",
-            "mode = obfs\n",
+            "mode = obfs\nobfs_key = deadbeefcafe\n",
             "front = none\n",
             "dns = off\n",
         ] {

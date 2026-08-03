@@ -24,6 +24,14 @@ fn shipped_server_examples_have_no_unread_keys() {
             "server-multiprofile.conf",
             include_str!("../config/server-multiprofile.conf"),
         ),
+        // The maximum-obfuscation reference was shipped and never tested. It is the one an
+        // operator on a hostile network copies, and it exercises the REALITY combination
+        // (fake-tls + reality_proxy + real_tls) that none of the others do.
+        // (Audit 2026-08-03, P2.)
+        (
+            "server-maxobf.conf",
+            include_str!("../config/server-maxobf.conf"),
+        ),
     ] {
         let doc = IniDoc::parse(text).unwrap_or_else(|e| panic!("{name}: parse error: {e}"));
         let cfg = ServerConfig::from_ini(&doc).unwrap_or_else(|e| panic!("{name}: from_ini: {e}"));
@@ -46,6 +54,27 @@ fn shipped_server_examples_have_no_unread_keys() {
             unread
         );
     }
+}
+
+/// The REALITY template must keep FAILING until its placeholder is replaced.
+///
+/// `release/reality-tls/server-reality.conf` ships `REPLACE_WITH_OWN_SHORT_ID` on purpose —
+/// a short_id is a per-deployment secret and a shared one is no secret. That makes it the one
+/// example that must not validate, and the reason it cannot simply join the loop above. Pinned
+/// so the day someone "fixes" the template by filling in a value, this says why not.
+/// (Audit 2026-08-03, P2.)
+#[test]
+fn the_reality_template_refuses_its_own_placeholder() {
+    let text = include_str!("../../release/reality-tls/server-reality.conf");
+    let doc = IniDoc::parse(text).expect("reality template parse error");
+    let err = ServerConfig::from_ini(&doc)
+        .and_then(|cfg| qeli::server::validate_profiles(&cfg))
+        .expect_err("the placeholder short_id must not validate");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("short_ids"),
+        "the refusal must point at the short_id placeholder, got: {msg}"
+    );
 }
 
 #[test]

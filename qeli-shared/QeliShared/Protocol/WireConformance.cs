@@ -70,20 +70,60 @@ public static class WireConformance
         foreach (var mode in new[] { "plain", "reality-tls" })
         {
             string refusal = "";
-            try { Ini("proto = udp", $"mode = {mode}").Validate(); }
+            try { Ini("proto = udp", $"mode = {mode}", "obfs_key = deadbeefcafe").Validate(); }
             catch (ArgumentException e) { refusal = e.Message; }
             check($"proto-mode: udp + {mode} is refused, naming the mode",
                 refusal.Contains("TCP-only") && refusal.Contains(mode));
+            // On TCP the same mode is exactly what it is for — carrying whatever IT requires,
+            // so this half fails on the transport pairing and nothing else.
             bool tcpOk = true;
-            try { Ini("proto = tcp", $"mode = {mode}").Validate(); }
+            try
+            {
+                Ini("proto = tcp", $"mode = {mode}",
+                    "reality_sid = 0123456789abcdef",
+                    "key = 1111111111111111111111111111111111111111111111111111111111111111")
+                    .Validate();
+            }
             catch (ArgumentException) { tcpOk = false; }
             check($"proto-mode: tcp + {mode} is still accepted", tcpOk);
         }
+
+        // A mode that needs a secret must not validate without it. Same three rules as the
+        // Rust client, pinned here because all four ports share this gate.
+        // (Audit 2026-08-03, P2.)
+        foreach (var (extra, want) in new[]
+        {
+            ("mode = reality-tls", "requires 'reality_sid'"),
+            ("mode = reality-tls\nreality_sid = deadbeeg", "1..8 bytes of hex"),
+            ("mode = obfs", "requires a non-empty 'obfs_key'"),
+        })
+        {
+            string refusal = "";
+            try
+            {
+                Model.VpnConfig.FromIni(
+                    "[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\n" + extra + "\n")
+                    .Validate();
+            }
+            catch (ArgumentException e) { refusal = e.Message; }
+            check($"mode-secrets: {extra.Replace('\n', ' ')} is refused", refusal.Contains(want));
+        }
+        // A reality-tls profile WITHOUT the pinned key is refused for that reason alone.
+        string noKey = "";
+        try
+        {
+            Model.VpnConfig.FromIni(
+                "[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\nmode = reality-tls\n"
+                + "reality_sid = 0123456789abcdef\n").Validate();
+        }
+        catch (ArgumentException e) { noKey = e.Message; }
+        check("mode-secrets: reality-tls without a pinned key is refused",
+            noKey.Contains("pinned server 'key'"));
         // ...and the datagram modes are untouched, so this cannot pass by refusing all UDP.
         bool udpModesOk = true;
         foreach (var mode in new[] { "fake-tls", "obfs" })
         {
-            try { Ini("proto = udp", $"mode = {mode}").Validate(); }
+            try { Ini("proto = udp", $"mode = {mode}", "obfs_key = deadbeefcafe").Validate(); }
             catch (ArgumentException) { udpModesOk = false; }
         }
         check("proto-mode: the datagram wire modes still pass on udp", udpModesOk);

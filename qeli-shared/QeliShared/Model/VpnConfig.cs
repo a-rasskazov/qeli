@@ -1187,6 +1187,46 @@ public sealed class VpnConfig : INotifyPropertyChanged
                     + "which UDP cannot carry. Set proto = tcp, or pick obfs for UDP");
             }
         }
+        // A mode that needs a secret must HAVE it, or the profile is valid and unusable.
+        //
+        // Each of these was checked at the use site or not at all, so the editor called the
+        // profile fine and the failure surfaced mid-handshake — where it reads as a server or
+        // network problem rather than a missing field. The short_id is the sharpest case: this
+        // side parses hex leniently and the SERVER strictly, so `reality_sid = deadbeeg` became
+        // a different token here and matched nothing there. (Audit 2026-08-03, P2.)
+        if (WireMode.Equals("reality-tls", StringComparison.OrdinalIgnoreCase))
+        {
+            var sid = (RealityShortId ?? "").Trim();
+            if (sid.Length == 0)
+            {
+                throw new ArgumentException(
+                    "'mode = reality-tls' requires 'reality_sid' — it is the token the server "
+                    + "uses to tell qeli clients from probes; without it this client is treated "
+                    + "as a probe and proxied to the decoy site");
+            }
+            if (sid.Length % 2 != 0 || sid.Length > 16
+                || !sid.All(Uri.IsHexDigit) || sid.All(c => c == '0'))
+            {
+                throw new ArgumentException(
+                    $"'reality_sid' must be 1..8 bytes of hex (2..16 hex digits, not all zero), "
+                    + $"got '{sid}' — this client parses hex leniently and the SERVER does not, "
+                    + "so a malformed value silently becomes a different token and never matches");
+            }
+            if ((ServerPublicKeyHex ?? "").Trim().Length == 0)
+            {
+                throw new ArgumentException(
+                    "'mode = reality-tls' requires a pinned server 'key' — REALITY's whole point "
+                    + "is that an unauthenticated peer is proxied to the decoy site, which a "
+                    + "TOFU client cannot tell apart from the real server");
+            }
+        }
+        if (WireMode.Equals("obfs", StringComparison.OrdinalIgnoreCase) && ObfsKey.Trim().Length == 0)
+        {
+            throw new ArgumentException(
+                "'mode = obfs' requires a non-empty 'obfs_key' — an empty key is publicly "
+                + "derivable, so the stream is obfuscated against nobody (the server refuses "
+                + "the same combination)");
+        }
         Enum_("front", ObfsFronting, "websocket", "none");
         Enum_("routing mode", RoutingMode, "split-tunnel", "full-tunnel", "all");
         if (ConnectionTimeoutSecs is < 1 or > 300)

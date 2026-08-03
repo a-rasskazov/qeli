@@ -121,6 +121,13 @@ final class PacketCodec: @unchecked Sendable {
         if !rawFraming, packet[0] != Self.applicationData {
             throw PacketCodecError.wrongContentType(packet[0])
         }
+        // The legacy_record_version too, not just the content type. Every record we EMIT
+        // carries 0x03 0x03, and a real TLS 1.3 peer emits nothing else on an established
+        // connection — so accepting other bytes made the masking framing looser than the thing
+        // it imitates, for no gain. (Audit 2026-08-03, P3.)
+        if !rawFraming, packet[1] != 0x03 || packet[2] != 0x03 {
+            throw PacketCodecError.wrongContentType(packet[1])
+        }
         let payloadLength = rawFraming
             ? (Int(packet[0]) << 8) | Int(packet[1])
             : (Int(packet[3]) << 8) | Int(packet[4])

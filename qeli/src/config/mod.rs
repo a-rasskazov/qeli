@@ -624,8 +624,21 @@ mod tests {
     /// (Audit 2026-08-03, P2.)
     #[test]
     fn stream_only_wire_modes_are_refused_on_udp() {
+        // Each mode carries whatever IT requires (a REALITY short_id and a pinned key, an
+        // obfs key), so this test fails on the transport pairing and nothing else.
         let profile = |proto: &str, mode: &str| {
-            format!("[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\nproto = {proto}\nmode = {mode}\n")
+            let extra = match mode {
+                "reality-tls" => concat!(
+                    "reality_sid = 0123456789abcdef\n",
+                    "key = 1111111111111111111111111111111111111111111111111111111111111111\n"
+                ),
+                "obfs" => "obfs_key = deadbeefcafe\n",
+                _ => "",
+            };
+            format!(
+                "[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\n\
+                 proto = {proto}\nmode = {mode}\n{extra}"
+            )
         };
         for mode in ["plain", "reality-tls"] {
             let err = super::parse_client_config(&profile("udp", mode))

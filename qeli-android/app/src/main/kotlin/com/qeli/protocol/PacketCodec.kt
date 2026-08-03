@@ -251,6 +251,13 @@ class PacketCodec(
             if (packet[0] != APPLICATION_DATA) {
                 throw PacketException("Wrong content type: ${packet[0]}")
             }
+            // The legacy_record_version too, not just the content type. Every record we EMIT
+            // carries 0x03 0x03, and a real TLS 1.3 peer emits nothing else on an established
+            // connection — so accepting other bytes made the masking framing looser than the
+            // thing it imitates, for no gain. (Audit 2026-08-03, P3.)
+            if (packet[1] != 0x03.toByte() || packet[2] != 0x03.toByte()) {
+                throw PacketException("Wrong record version: ${packet[1]} ${packet[2]}")
+            }
             ((packet[3].toInt() and 0xFF) shl 8) or (packet[4].toInt() and 0xFF)
         }
         if (payloadLen > MAX_RECORD_SIZE) {

@@ -53,7 +53,7 @@ case "$1" in
         echo "Service runs as: ${RUN_AS}   (change later: qeli set-service-user root|qeli)"
         echo "Examples in /etc/qeli/ (flat-INI):"
         echo "  server.conf.example              - exhaustive single-profile reference (every key)"
-        echo "  server-multiprofile.conf.example - ready 9-profile template (one per wire mode)"
+        echo "  server-multiprofile.conf.example - ready 10-profile template (one per wire mode)"
         echo "Create your config, e.g.: cp /etc/qeli/server-multiprofile.conf.example /etc/qeli/server.conf"
         echo "Add users (written to /etc/qeli/users.conf): qeli add-client <name> --config /etc/qeli/server.conf"
         echo "Show identity: qeli show-identity --config /etc/qeli/server.conf"
