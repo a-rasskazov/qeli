@@ -403,6 +403,14 @@ An empty `dns` = the client keeps its own resolvers. The default `dns.listen` (`
 pushed **only** when the in-tunnel proxy actually runs — otherwise it resolves nowhere and would
 black-hole the client's DNS.
 
+> ⚠️ **On a FULL tunnel the GUI clients do not keep the system resolvers.** With no `dns` in
+> the profile and nothing pushed, Windows, macOS, Android and iOS fall back to `1.1.1.1` /
+> `8.8.8.8`, because a full tunnel that left the system resolver in place would send every
+> query out of the tunnel — a DNS leak that defeats the point of the tunnel. The Rust CLI
+> does keep the system resolvers, which is the divergence to be aware of. On a SPLIT tunnel
+> every client leaves them alone. If you do not want those two public resolvers used, set
+> `dns` explicitly on the profile or push one from the server.
+
 ### Routes (`route`) in detail
 
 > ⚠️ **`gateway` and `metric` do not reach every client.** All of them apply the CIDR, but
@@ -598,12 +606,26 @@ For `udp-*` compute the whole on-the-wire size, or packets start fragmenting and
 halves while the tunnel still looks healthy:
 
 ```
-tun.mtu + 48 (qeli record) + obf.padding.max_bytes + 9 (QUIC, if enabled) + 8 (UDP) + 20 (IP)  ≤  PMTU
+tun.mtu + 48 (qeli record) + 9 (QUIC, if enabled) + 8 (UDP) + 20 (IP)  ≤  PMTU
 ```
 
-At a 1500 PMTU a profile with `tun.mtu = 1380` and `padding.max_bytes = 400` reaches 1865
-bytes — **every** full-size packet fragments. A working pair for udp-quic is
-`tun.mtu = 1240` + `obf.padding.max_bytes = 80` (1405 total). Verify with
+**Padding is not a separate term.** It is clamped so that `payload + padding ≤ tun.mtu` in
+both directions — client uplink in `client/mod.rs` (`pad_cap = padding_max.min(mtu −
+payload)`) and server downlink in `server/mod.rs`, which is stricter still and reserves the
+record overhead inside the same budget. So `obf.padding.max_bytes` decides how much of the
+MTU padding may *occupy*, never how far past it a packet may grow.
+
+That clamp is recent, and the reason it exists is the arithmetic this section used to
+document: before it, padding really did add on top, so `tun.mtu = 1380` with
+`padding.max_bytes = 400` put full-size packets at 1865 bytes on a 1500 PMTU and **every one
+of them fragmented**. Adding `padding.max_bytes` to the formula today double-counts it and
+makes profiles look unusable when they are fine — at a 1500 PMTU, `tun.mtu = 1380` now costs
+1465 bytes whatever the padding is set to.
+
+Padding still competes with the payload for that budget: a large `max_bytes` on a full-size
+packet simply gets clamped to near zero, which costs obfuscation rather than throughput. If
+you want padding to be effective on full-size packets, leave it room — `tun.mtu = 1240` with
+`obf.padding.max_bytes = 80` is a comfortable udp-quic pair. Verify either way with
 `netstat -s | grep -i 'fragments created'`: it must not climb under load.
 
 > In production, removing the fragmentation alone took udp-quic from 22 to 30 Mbit; together
@@ -1122,7 +1144,14 @@ allowed_networks = 0.0.0.0/0
 A client config is a single `[qeli]` section (plus an optional `[logging]`). The same file
 is read by five clients, but **the set of supported keys differs between them** — the
 platform dictates what is even applicable (a phone has no iptables, the Rust CLI has no
-Wintun adapter, and so on). An unknown key is silently ignored.
+Wintun adapter, and so on).
+
+An unknown key is **rejected, not ignored.** Every client refuses a config carrying a name
+no qeli client understands, because being ignored is what made a misspelling invisible:
+`gatway = true` left the tunnel split with nothing said anywhere. "Unknown" means unknown to
+*all* of them — a key this client ignores but another one acts on (`post_up`, `exit_node`,
+the whole `—` column below) is carried through untouched, and on the GUI clients it is also
+written back out unchanged, so opening a CLI profile and saving it does not strip it.
 
 Clients: **CLI** — Rust `qeli client` / `qeli-client` (Linux, routers, headless);
 **Win** — Windows desktop (C#); **mac** — macOS desktop (C#); **And** — Android (Kotlin);
@@ -1208,7 +1237,7 @@ Legend: **✓** read and applied, **—** ignored, **✓\*** with a caveat (foot
 |---|---|:-:|:-:|:-:|:-:|:-:|---|
 | `name` | — | — | ✓ | ✓ | ✓ | —\* | profile display label (GUI) |
 | `autostart` | `false` | ✓\* | — | — | — | — | auto-connect when the supervisor/panel starts (GUIs use their own OS autostart) |
-| `apps_mode` / `apps` | — | — | — | — | ✓ | ✓ | per-app split tunnel: `all`/`include`/`exclude` + a package list (Android) |
+| `apps_mode` / `apps` | — | — | — | — | ✓ | —\* | per-app split tunnel: `all`/`include`/`exclude` + a package list. **Android only.** iOS parses and re-saves them, but does NOT apply them: per-app rules need `NEAppRule`, which needs an MDM-managed configuration, so on iOS every app is tunnelled whatever this says — the protection card states that outright rather than confirming a restriction that is not in force |
 | `reconnect` · `reconnect_retries` · `reconnect_base_delay` · `reconnect_max_delay` · `timeout` | — | — | — | — | ✓ | ✓ | reconnect/timeout tuning (Android; CLI/desktop use built-in backoff defaults) |
 
 **The `[logging]` section** (`level`, `file`, `time_format`): read by **CLI only**. The GUI
