@@ -166,7 +166,10 @@ final class ParityHardeningTests: XCTestCase {
     /// SAME PQ ClientHello, so claiming post-quantum for them is correct.
     func testPostQuantumIsClaimedForEveryModeExceptPlain() throws {
         for mode in ["fake-tls", "obfs", "reality-tls"] {
-            let config = try VPNConfig(parsing: minimalINI("mode = \(mode)\nobfs_key = k"))
+            // reality_sid is now REQUIRED with reality-tls (a profile without it is treated as
+            // a probe and proxied to the decoy site), so the fixture has to carry it. This test
+            // is about the post-quantum claim, not about that rule — it is covered on its own.
+            let config = try VPNConfig(parsing: minimalINI("mode = \(mode)\nobfs_key = k\nreality_sid = 0a1b"))
             XCTAssertTrue(ProtectionSummary(config: config).postQuantum, mode)
         }
         let plain = try VPNConfig(parsing: minimalINI("mode = plain"))
@@ -180,7 +183,7 @@ final class ParityHardeningTests: XCTestCase {
     /// (The refusal itself isn't covered here: exercising it means driving `TunnelManager`,
     /// which talks to the system VPN stack and isn't safe to touch from a unit test.)
     func testRealityWithoutPinnedKeyStillParsesAndSaves() throws {
-        let config = try VPNConfig(parsing: minimalINI("mode = reality-tls"))
+        let config = try VPNConfig(parsing: minimalINI("mode = reality-tls\nreality_sid = 0a1b"))
         XCTAssertEqual(config.wireMode, "reality-tls")
         XCTAssertNil(config.serverPublicKeyHex)
         XCTAssertNoThrow(try config.toINI())
