@@ -759,7 +759,7 @@ profiles, no `gmt_unix_time`, no arbitrary extension composition.
     disk-filling risk on a router/VPS). Either `[logging] max_size_mb` + `keep`, or
     document handing it to logrotate explicitly.
 
-Everything Medium-and-above from the three audits is fixed on the 0.7.12 branch (**not released yet**) (see CHANGELOG). What
+Everything Medium-and-above from the three audits is fixed in 0.7.12 (**released 2026-07-21**) (see CHANGELOG). What
 follows was deliberately deferred.
 
 - ✅ **Reverse PMTU channel (client reports its discovered path MTU to the server).**

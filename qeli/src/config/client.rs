@@ -828,6 +828,25 @@ impl ClientConfig {
         // — the opposite of what the word asks for. A profile is routinely moved between a
         // phone and the CLI, so the same file has to mean the same thing on both.
         // See `leaves_resolver_alone`. (Audit 2026-08-02, follow-up.)
+        // A resolver LIST in `dns` is the desktop clients' old spelling — point at the right
+        // key instead of just listing the modes. Without this the operator sees "expected
+        // 'tunnel' or 'off' or 'system'" over a perfectly reasonable `dns = 1.1.1.1, 9.9.9.9`
+        // and has no way to guess that the list belongs in `dns_servers`. Newer desktop builds
+        // write the documented key; an older profile copied straight onto a router hits this.
+        // (Audit 2026-08-03, D2.)
+        if !["tunnel", "off", "system"].contains(&self.dns.mode.as_str())
+            && self.dns.mode.contains('.')
+        {
+            anyhow::bail!(
+                "'dns' is the resolver MODE ('tunnel', 'off' or 'system'), but this config has \
+                 an address list in it: dns = {}. The list belongs in its own key — write \
+                 `dns_servers = {}` and either drop `dns` or set `dns = tunnel`. (Older \
+                 Windows/macOS builds wrote the list into `dns`; re-saving the profile in the \
+                 current client migrates it.)",
+                self.dns.mode,
+                self.dns.mode
+            );
+        }
         check("dns", &self.dns.mode, &["tunnel", "off", "system"])?;
         // `is_tap_mode` compares case-insensitively, so accept either spelling here rather
         // than rejecting a value the runtime would have honoured.

@@ -139,14 +139,14 @@ home directory:
 
 ```bash
 cd /tmp
-curl -fLO https://github.com/litvinovtd/qeli/releases/download/v0.7.12/qeli_0.7.12_amd64.deb
-# or copy it from your workstation:  scp qeli_0.7.12_amd64.deb root@server:/tmp/
+curl -fLO https://github.com/litvinovtd/qeli/releases/download/v0.7.13/qeli_0.7.13_amd64.deb
+# or copy it from your workstation:  scp qeli_0.7.13_amd64.deb root@server:/tmp/
 ```
 
 > **Why `/tmp`.** `apt` downloads and unpacks as the unprivileged `_apt` user, which cannot
 > read `/root` or home directories. Installing from `/root` still works, but prints:
 > ```
-> N: Download is performed unsandboxed as root as file '/root/qeli_0.7.12_amd64.deb'
+> N: Download is performed unsandboxed as root as file '/root/qeli_0.7.13_amd64.deb'
 >    couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
 > ```
 > It is only a warning (apt falls back to running as root), but from `/tmp` it never appears.
@@ -154,14 +154,14 @@ curl -fLO https://github.com/litvinovtd/qeli/releases/download/v0.7.12/qeli_0.7.
 #### A.2. Install
 
 ```bash
-sudo apt install /tmp/qeli_0.7.12_amd64.deb     # installs and pulls dependencies
+sudo apt install /tmp/qeli_0.7.13_amd64.deb     # installs and pulls dependencies
 ```
 
 Give a **full path** (or `./name.deb`) — without a slash apt looks for a repository package
 of that name instead. If apt is unavailable:
 
 ```bash
-sudo dpkg -i /tmp/qeli_0.7.12_amd64.deb
+sudo dpkg -i /tmp/qeli_0.7.13_amd64.deb
 sudo apt-get -f install -y          # pull the dependencies (iproute2, iptables, libcap2-bin)
 ```
 

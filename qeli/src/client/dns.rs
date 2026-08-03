@@ -77,16 +77,32 @@ pub fn setup_dns_for_interface(
         return Ok(());
     }
 
-    // Empty pushed DNS (the server's in-tunnel proxy is disabled) → fall back to
-    // the client's own configured resolvers, so names still resolve instead of
-    // pointing at a dead pushed address.
+    // Resolver precedence: the client's OWN `dns_servers` first, then whatever the server
+    // pushed, then the built-in fallback.
+    //
+    // The client's list used to be consulted only when the push was EMPTY, which inverted
+    // the rule the product works by and every other port already implements (see the C#
+    // `EffectiveDns`, which logs "server push: DNS … IGNORED — this client's own dns …
+    // overrides it"): a resolver the user typed into their own config is a deliberate
+    // choice and outranks the server's suggestion. With the old order, setting
+    // `dns_servers` on a profile whose server pushes anything at all did nothing at all,
+    // silently — the operator's resolver won and the user never learned their setting was
+    // ignored. `dns = off` / `system` still short-circuit above this, so "leave my resolver
+    // alone" continues to beat both. (Audit 2026-08-03, D1.)
+    let chosen;
     let fallback;
-    let dns_server = if dns_server.is_empty() {
-        match config
-            .servers
-            .first()
-            .or_else(|| config.fallback_servers.first())
-        {
+    let dns_server = if let Some(own) = config.servers.first() {
+        chosen = own.clone();
+        if !dns_server.is_empty() && dns_server != chosen {
+            log::info!(
+                "server pushed DNS {dns_server}, but this client's own dns_servers = {} \
+                 overrides it (clear dns_servers to use the pushed resolver)",
+                config.servers.join(", ")
+            );
+        }
+        chosen.as_str()
+    } else if dns_server.is_empty() {
+        match config.fallback_servers.first() {
             Some(s) => {
                 fallback = s.clone();
                 log::info!("server pushed no DNS — using client resolver {}", fallback);

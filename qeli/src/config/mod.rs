@@ -37,6 +37,41 @@ pub const GUI_ONLY_CLIENT_KEYS: &[&str] = &[
     "allow_lan",
     "apps",
     "apps_mode",
+    // The rest of what a desktop GUI writes. Measured, not guessed: a profile containing
+    // every key in the C# `KnownIniKeys` set (VpnConfig.cs) came back from
+    // `check-config --client` with TWENTY-TWO of them called misspellings — on a file the
+    // Windows/macOS client had just written. The list was covering six of the desktop keys
+    // and none of these, so the command failed (exit 1) on an ordinary, correct profile and
+    // told the operator to go hunting for spelling mistakes that were not there.
+    //
+    // Why the runtime does not read them: `padding*`, `heartbeat*` and `shaping*` are
+    // negotiated — the SERVER pushes them, and a client-side value would only disagree with
+    // the peer. `timeout`/`reconnect*` are the desktop backoff knobs; the CLI has built-in
+    // ones (documented in CONFIG.md, where the CLI column is deliberately "—"). `name` is a
+    // display label for the GUI's profile list and has no runtime meaning at all.
+    // (Audit 2026-08-03, F1.)
+    "name",
+    "timeout",
+    "reconnect",
+    "reconnect_retries",
+    "reconnect_base_delay",
+    "reconnect_max_delay",
+    "heartbeat",
+    "heartbeat_interval",
+    "heartbeat_jitter",
+    "heartbeat_size",
+    "padding",
+    "padding_min",
+    "padding_max",
+    "shaping",
+    "shaping_budget",
+    "shaping_gap_mean",
+    "shaping_gap_min",
+    "shaping_gap_max",
+    "shaping_min_size",
+    "shaping_max_size",
+    "shaping_stealth",
+    "shaping_stealth_mbps",
 ];
 
 /// Keys that USED to exist. A config carrying one is stale rather than misspelled, and the
@@ -70,13 +105,23 @@ pub const RETIRED_KEYS: &[&str] = &[
 pub fn unknown_keys(doc: &format::IniDoc, client: bool) -> Vec<String> {
     doc.unread_keys()
         .into_iter()
-        .filter(|(_, k)| !(client && GUI_ONLY_CLIENT_KEYS.contains(k)))
+        // The exemption is SECTION-SCOPED. These names are `[qeli]` keys; the same name under
+        // another header is read by nobody, so exempting it there would wave through a setting
+        // that does not work — `[logging] reconnect = false` looks accepted and does nothing.
+        // The list grew to 22 names, which is 22 more chances for that to happen quietly.
+        //
+        // `header()` returns the BRACKETED form (`[qeli]`), which is what the message below
+        // wants; comparing it against a bare "qeli" silently matched nothing and turned the
+        // exemption off entirely, so every desktop profile went back to reporting 22
+        // misspellings. Compared in the shape it actually has.
+        .filter(|(section, k)| !(client && section == "[qeli]" && GUI_ONLY_CLIENT_KEYS.contains(k)))
         .filter(|(_, k)| !RETIRED_KEYS.contains(k))
         .map(|(section, k)| {
             if section.is_empty() {
                 k.to_string()
             } else {
-                format!("[{section}] {k}")
+                // Already bracketed — wrapping it again printed `[[qeli]] reconnect`.
+                format!("{section} {k}")
             }
         })
         .collect()
@@ -481,6 +526,93 @@ fn default_log_level() -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A profile written by the desktop GUI must produce NO "check the spelling" report.
+    ///
+    /// The keys below are the ones the C# clients write (`VpnConfig.cs`, `KnownIniKeys`) that
+    /// the Rust runtime does not read. They belong in `GUI_ONLY_CLIENT_KEYS`; when they were
+    /// missing from it, `check-config --client` failed with exit 1 on a perfectly correct
+    /// profile and called 22 valid keys misspellings. Asserting on the list itself rather than
+    /// on the command keeps the failure message pointed at the cause — add a key to the GUI
+    /// and this test names it. (Audit 2026-08-03, F1.)
+    #[test]
+    fn gui_only_list_covers_every_desktop_key() {
+        let written_by_the_gui = [
+            // profile metadata / desktop-side connection knobs
+            "name",
+            "timeout",
+            "reconnect",
+            "reconnect_retries",
+            "reconnect_base_delay",
+            "reconnect_max_delay",
+            // server-negotiated obfuscation: the peer pushes these, the GUI merely stores them
+            "heartbeat",
+            "heartbeat_interval",
+            "heartbeat_jitter",
+            "heartbeat_size",
+            "padding",
+            "padding_min",
+            "padding_max",
+            "shaping",
+            "shaping_budget",
+            "shaping_gap_mean",
+            "shaping_gap_min",
+            "shaping_gap_max",
+            "shaping_min_size",
+            "shaping_max_size",
+            "shaping_stealth",
+            "shaping_stealth_mbps",
+            // platform-specific interface handling
+            "dev_node",
+            "local",
+            "lport",
+            "metric",
+            "persist_tun",
+            "route_file",
+            // mobile-only
+            "allow_lan",
+            "apps",
+            "apps_mode",
+        ];
+        let missing: Vec<_> = written_by_the_gui
+            .iter()
+            .filter(|k| !super::GUI_ONLY_CLIENT_KEYS.contains(k))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "GUI_ONLY_CLIENT_KEYS is missing {} key(s) the desktop clients write — \
+             `check-config --client` will report them as misspellings on a valid profile: {:?}",
+            missing.len(),
+            missing
+        );
+    }
+
+    /// The GUI-key exemption must not leak out of `[qeli]`.
+    ///
+    /// The list exists so a desktop profile is not reported as 22 misspellings. Matching on the
+    /// NAME alone extended that pardon to every section: `[logging] reconnect = false` looks
+    /// accepted and is read by nobody, which is precisely the silent-default failure the
+    /// unknown-key check was built to catch — and the wider the list grew, the wider that hole
+    /// got. Both halves are asserted here, because a fix for one that breaks the other just
+    /// moves the problem.
+    #[test]
+    fn gui_key_exemption_is_scoped_to_the_qeli_section() {
+        let doc = super::format::IniDoc::parse(
+            "[qeli]\nserver = 1.2.3.4:443\nuser = u\npass = p\nreconnect = false\n\
+             [logging]\nreconnect = false\n",
+        )
+        .expect("parses");
+        let _ = super::client::ClientConfig::from_ini(&doc).expect("valid client config");
+        let unknown = super::unknown_keys(&doc, true);
+        assert!(
+            unknown.iter().any(|k| k == "[logging] reconnect"),
+            "a GUI key under the wrong section must still be reported, got {unknown:?}"
+        );
+        assert!(
+            !unknown.iter().any(|k| k == "reconnect"),
+            "the same key in [qeli] is a real desktop setting and must stay exempt, got {unknown:?}"
+        );
+    }
 
     #[test]
     fn user_profile_authorization() {

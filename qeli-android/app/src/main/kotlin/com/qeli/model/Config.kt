@@ -726,18 +726,31 @@ data class VpnConfig(
                 paddingMin = pad.first,
                 paddingMax = pad.second,
                 heartbeatEnabled = boolAt("heartbeat", true),
-                heartbeatIntervalMs = longAt("heartbeat_interval", 15000L, badNums, q),
-                heartbeatDataSize = numAt("heartbeat_size", 16, badNums, q),
-                heartbeatJitterMs = longAt("heartbeat_jitter", 2000L, badNums, q),
+                // Range-checked, matching the C# reader. Unbounded, `heartbeat_interval = -1`
+                // parsed cleanly and then disabled the heartbeat entirely while `heartbeat =
+                // true` still claimed it was on — a keepalive that silently is not one. The
+                // jitter floor is 0 (no jitter is a valid choice); the interval's is 1.
+                heartbeatIntervalMs =
+                    rangedLong("heartbeat_interval", 15000L, 1L, Long.MAX_VALUE, badNums, q),
+                heartbeatDataSize = rangedNum("heartbeat_size", 16, 0, Int.MAX_VALUE, badNums, q),
+                heartbeatJitterMs =
+                    rangedLong("heartbeat_jitter", 2000L, 0L, Long.MAX_VALUE, badNums, q),
                 shapingEnabled = boolAt("shaping", false),
-                shapingGapMeanMs = longAt("shaping_gap_mean", 700L, badNums, q),
-                shapingGapMinMs = longAt("shaping_gap_min", 40L, badNums, q),
-                shapingGapMaxMs = longAt("shaping_gap_max", 6000L, badNums, q),
-                shapingBudgetBytesPerSec = numAt("shaping_budget", 16384, badNums, q),
-                shapingMinSize = numAt("shaping_min_size", 64, badNums, q),
-                shapingMaxSize = numAt("shaping_max_size", 1024, badNums, q),
+                // Same floors as the C# reader: every one of these is a duration or a size, so
+                // zero or negative is not a setting but a value nothing can act on.
+                shapingGapMeanMs =
+                    rangedLong("shaping_gap_mean", 700L, 1L, Long.MAX_VALUE, badNums, q),
+                shapingGapMinMs =
+                    rangedLong("shaping_gap_min", 40L, 1L, Long.MAX_VALUE, badNums, q),
+                shapingGapMaxMs =
+                    rangedLong("shaping_gap_max", 6000L, 1L, Long.MAX_VALUE, badNums, q),
+                shapingBudgetBytesPerSec =
+                    rangedNum("shaping_budget", 16384, 1, Int.MAX_VALUE, badNums, q),
+                shapingMinSize = rangedNum("shaping_min_size", 64, 1, Int.MAX_VALUE, badNums, q),
+                shapingMaxSize = rangedNum("shaping_max_size", 1024, 1, Int.MAX_VALUE, badNums, q),
                 shapingStealth = boolAt("shaping_stealth", false),
-                shapingStealthRateMbps = numAt("shaping_stealth_mbps", 2, badNums, q),
+                shapingStealthRateMbps =
+                    rangedNum("shaping_stealth_mbps", 2, 1, Int.MAX_VALUE, badNums, q),
                 // Carried through untouched so re-saving a desktop config keeps its logging.
                 loggingLevel = log?.get("level")?.takeIf { it.isNotEmpty() },
                 loggingFile = log?.get("file")?.takeIf { it.isNotEmpty() },
@@ -937,6 +950,21 @@ data class VpnConfig(
             val raw = q[key]?.trim() ?: return default
             if (raw.isEmpty()) return default
             return raw.toIntOrNull() ?: run { bad.add(key); default }
+        }
+
+        /** [numAt] with a range. Int counterpart of [rangedLong]; same reasoning. */
+        private fun rangedNum(
+            key: String,
+            default: Int,
+            lo: Int,
+            hi: Int,
+            bad: MutableList<String>,
+            q: Map<String, String>
+        ): Int {
+            val v = numAt(key, default, bad, q)
+            if (v in lo..hi) return v
+            if (!q[key].isNullOrBlank() && key !in bad) bad.add(key)
+            return default
         }
 
         private fun parseIni(

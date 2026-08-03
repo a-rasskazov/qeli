@@ -186,6 +186,37 @@ class ConfigImportRangesTest {
         assertTrue(patient.unparsedNumericKeys.isEmpty())
     }
 
+    /**
+     * A negative heartbeat interval must be refused, not quietly turn the keepalive off.
+     *
+     * `heartbeat_interval = -1` parsed cleanly and disabled the heartbeat entirely, while
+     * `heartbeat = true` sitting right above it still said it was on. That is worse than either
+     * a rejection or an honest `heartbeat = false`: the profile claims a keepalive it does not
+     * have, and the connection dies on the first idle NAT timeout with nothing to point at.
+     */
+    @Test
+    fun `a non-positive heartbeat interval is recorded`() {
+        val cfg = VpnConfig.fromIni(ini("heartbeat = true", "heartbeat_interval = -1"))
+        assertTrue("interval must be recorded: ${cfg.unparsedNumericKeys}",
+            cfg.unparsedNumericKeys.contains("heartbeat_interval"))
+
+        // Jitter and size may legitimately be zero — no jitter, empty payload — so the floor
+        // there is 0, not 1, and this must NOT be flagged.
+        val noJitter = VpnConfig.fromIni(ini("heartbeat_jitter = 0", "heartbeat_size = 0"))
+        assertTrue(noJitter.unparsedNumericKeys.isEmpty())
+    }
+
+    /** Shaping values are durations and sizes: zero or negative is not a setting. */
+    @Test
+    fun `a non-positive shaping value is recorded`() {
+        val cfg = VpnConfig.fromIni(ini("shaping = true", "shaping_gap_mean = 0",
+            "shaping_min_size = -5", "shaping_budget = 0"))
+        assertTrue("all three must be recorded: ${cfg.unparsedNumericKeys}",
+            cfg.unparsedNumericKeys.containsAll(
+                listOf("shaping_gap_mean", "shaping_min_size", "shaping_budget")))
+        assertNotNull(runCatching { cfg.validate() }.exceptionOrNull())
+    }
+
     /** A profile that never carried them must not grow empty lines for them. */
     @Test
     fun `a profile without rust-only keys stays clean`() {

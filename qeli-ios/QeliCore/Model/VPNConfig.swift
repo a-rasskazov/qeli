@@ -575,19 +575,28 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.paddingMin = numAt("padding_min", default: 0)
         config.paddingMax = numAt("padding_max", default: 255)
         config.heartbeatEnabled = boolAt("heartbeat", default: true)
-        config.heartbeatIntervalMilliseconds = numAt("heartbeat_interval", default: 15_000)
-        config.heartbeatDataSize = numAt("heartbeat_size", default: 16)
-        config.heartbeatJitterMilliseconds = numAt("heartbeat_jitter", default: 2_000)
+        // Range-checked, matching the C# reader. Unbounded, `heartbeat_interval = -1` parsed
+        // cleanly and then disabled the heartbeat entirely while `heartbeat = true` still
+        // claimed it was on — a keepalive that silently is not one. Jitter and size may be 0
+        // (no jitter, empty payload are real choices); the interval may not.
+        config.heartbeatIntervalMilliseconds =
+            rangedNum("heartbeat_interval", default: 15_000, 1, Int.max)
+        config.heartbeatDataSize = rangedNum("heartbeat_size", default: 16, 0, Int.max)
+        config.heartbeatJitterMilliseconds =
+            rangedNum("heartbeat_jitter", default: 2_000, 0, Int.max)
 
         config.shapingEnabled = boolAt("shaping", default: false)
-        config.shapingGapMeanMilliseconds = numAt("shaping_gap_mean", default: 700)
-        config.shapingGapMinMilliseconds = numAt("shaping_gap_min", default: 40)
-        config.shapingGapMaxMilliseconds = numAt("shaping_gap_max", default: 6_000)
-        config.shapingBudgetBytesPerSecond = numAt("shaping_budget", default: 16_384)
-        config.shapingMinSize = numAt("shaping_min_size", default: 64)
-        config.shapingMaxSize = numAt("shaping_max_size", default: 1_024)
+        // Same floors as the C# reader: every one of these is a duration or a size, so zero or
+        // negative is not a setting but a value nothing can act on.
+        config.shapingGapMeanMilliseconds = rangedNum("shaping_gap_mean", default: 700, 1, Int.max)
+        config.shapingGapMinMilliseconds = rangedNum("shaping_gap_min", default: 40, 1, Int.max)
+        config.shapingGapMaxMilliseconds = rangedNum("shaping_gap_max", default: 6_000, 1, Int.max)
+        config.shapingBudgetBytesPerSecond =
+            rangedNum("shaping_budget", default: 16_384, 1, Int.max)
+        config.shapingMinSize = rangedNum("shaping_min_size", default: 64, 1, Int.max)
+        config.shapingMaxSize = rangedNum("shaping_max_size", default: 1_024, 1, Int.max)
         config.shapingStealth = boolAt("shaping_stealth", default: false)
-        config.shapingStealthRateMbps = numAt("shaping_stealth_mbps", default: 2)
+        config.shapingStealthRateMbps = rangedNum("shaping_stealth_mbps", default: 2, 1, Int.max)
 
         // Kept RAW, not coerced: `validate()` refuses an unknown value, the same way it does
         // for `proto` and `mode`. Coercing here silently turned `apps_mode = includ` into

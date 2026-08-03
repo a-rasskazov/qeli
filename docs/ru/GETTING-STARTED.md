@@ -140,15 +140,15 @@
 
 ```bash
 cd /tmp
-curl -fLO https://github.com/litvinovtd/qeli/releases/download/v0.7.12/qeli_0.7.12_amd64.deb
-# или scp с рабочей машины:  scp qeli_0.7.12_amd64.deb root@server:/tmp/
+curl -fLO https://github.com/litvinovtd/qeli/releases/download/v0.7.13/qeli_0.7.13_amd64.deb
+# или scp с рабочей машины:  scp qeli_0.7.13_amd64.deb root@server:/tmp/
 ```
 
 > **Почему `/tmp`.** `apt` скачивает и распаковывает от имени служебного пользователя
 > `_apt`, а `/root` и домашние каталоги ему недоступны. Из `/root` установка проходит, но
 > с предупреждением:
 > ```
-> N: Download is performed unsandboxed as root as file '/root/qeli_0.7.12_amd64.deb'
+> N: Download is performed unsandboxed as root as file '/root/qeli_0.7.13_amd64.deb'
 >    couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
 > ```
 > Это именно предупреждение (apt откатывается на работу от root), но из `/tmp` его
@@ -157,14 +157,14 @@ curl -fLO https://github.com/litvinovtd/qeli/releases/download/v0.7.12/qeli_0.7.
 #### A.2. Установить
 
 ```bash
-sudo apt install /tmp/qeli_0.7.12_amd64.deb     # ставит и подтягивает зависимости
+sudo apt install /tmp/qeli_0.7.13_amd64.deb     # ставит и подтягивает зависимости
 ```
 
 Указывайте **полный путь** (или `./имя.deb`) — без слэша apt будет искать пакет с таким
 именем в репозиториях. Альтернатива, если apt по какой-то причине недоступен:
 
 ```bash
-sudo dpkg -i /tmp/qeli_0.7.12_amd64.deb
+sudo dpkg -i /tmp/qeli_0.7.13_amd64.deb
 sudo apt-get -f install -y          # доустановить зависимости (iproute2, iptables, libcap2-bin)
 ```
 

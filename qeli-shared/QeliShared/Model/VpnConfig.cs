@@ -255,6 +255,22 @@ public sealed class VpnConfig : INotifyPropertyChanged
     public IReadOnlyDictionary<string, string> CarriedKeys { get; init; }
         = new Dictionary<string, string>();
 
+    /// <summary>The TEXT of every value this parse could not use, by key — the offending line
+    /// as the author wrote it.</summary>
+    /// <remarks>
+    /// The marker lists above say a value was wrong; this says WHAT it was, and that is what
+    /// makes the manual editor honest. Only this port needs it, because only this port stores
+    /// profiles as objects: Android and iOS keep the profile as text, so their editors show the
+    /// author's own file. Here "Manual edit" opens <c>BuildFromForm().ToIni()</c> — a
+    /// re-emission — and without the raw text the bad line is simply absent from what the user
+    /// is shown. They see a clean config, press OK, and the re-parse produces a clean object:
+    /// the typo is LAUNDERED and its line is gone from the profile, with the setting left at a
+    /// default nobody chose. Re-emitted by ToIni() so the round trip shows the mistake and a
+    /// re-parse re-derives the same markers.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> InvalidRawValues { get; init; }
+        = new Dictionary<string, string>();
+
     public int PaddingMin { get; init; }
     public int PaddingMax { get; init; } = 255;
     // heartbeat
@@ -434,6 +450,13 @@ public sealed class VpnConfig : INotifyPropertyChanged
             .Where(k => !EditorControlledNumericKeys.Contains(k))
             .ToArray(),
         UnknownKeys = UnknownKeys,
+        // The raw text behind those markers, minus the ones the form just resolved — a marker
+        // and its evidence have to disappear together, or ToIni would re-emit a bad line for a
+        // field the dialog has already fixed.
+        InvalidRawValues = InvalidRawValues
+            .Where(kv => !EditorControlledNumericKeys.Contains(kv.Key)
+                         && !EditorControlledBooleanKeys.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value),
         // Carried, MINUS whatever this form just rewrote.
         //
         // Carrying it wholesale was wrong in the other direction: the user fixes the offending
@@ -603,7 +626,39 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // lines on save. (Audit 2026-08-02, §4 of the follow-up.)
         foreach (var key in CarriedKeys.Keys.OrderBy(k => k, StringComparer.Ordinal))
             sb.AppendLine($"{IniSafe(key)} = {IniSafe(CarriedKeys[key])}");
-        return sb.ToString();
+        var text = sb.ToString();
+
+        // Put the UNUSABLE lines back exactly as the author wrote them.
+        //
+        // Everything above emits the value this port ENDED UP with, which for a bad line is the
+        // default — so `reconnect_base_delay = bad` came back as `= 1`, and `gatway = true`
+        // came back as nothing at all. That is what let the manual editor launder a typo: the
+        // dialog opens on this text, the user never sees their mistake, and OK re-parses a
+        // config that is clean because the evidence was dropped on the way out.
+        //
+        // Restored last so it overrides the modelled emission, and by rewriting the key's line
+        // rather than appending — appending would leave two lines for one key, which the parser
+        // reports as a duplicate: a second, invented complaint on top of the real one.
+        // (Audit 2026-08-02, §4 of the follow-up.)
+        return InvalidRawValues.Count == 0 ? text : RestoreInvalidLines(text);
+    }
+
+    /// <summary>Replace (or append) one line per <see cref="InvalidRawValues"/> entry.</summary>
+    private string RestoreInvalidLines(string ini)
+    {
+        var lines = ini.Replace("\r", "").Split('\n').ToList();
+        foreach (var (key, raw) in InvalidRawValues.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            var line = $"{IniSafe(key)} = {IniSafe(raw)}";
+            int at = lines.FindIndex(l =>
+            {
+                int eq = l.IndexOf('=');
+                return eq > 0 && l[..eq].Trim().Equals(key, StringComparison.OrdinalIgnoreCase);
+            });
+            if (at >= 0) lines[at] = line;
+            else lines.Insert(Math.Max(lines.Count - 1, 0), line);
+        }
+        return string.Join("\n", lines);
     }
 
     /// <summary>Deep copy (for "Duplicate"). Runtime-only fields reset to defaults.
@@ -896,6 +951,15 @@ public sealed class VpnConfig : INotifyPropertyChanged
             DuplicateKeys = dupKeys,
             UnparsedNumericKeys = badNums,
             UnknownKeys = q.Keys.Where(k => !KnownIniKeys.Contains(k)).OrderBy(k => k).ToArray(),
+            // The offending text itself, so ToIni can put the line back exactly as written.
+            // Keyed off the marker lists rather than collected at each reader: the port is
+            // recorded as `server (port)`, which is not an INI key and has no line of its own,
+            // so it is deliberately absent here — `server = host:99999` is re-emitted whole by
+            // the modelled path anyway.
+            InvalidRawValues = q
+                .Where(kv => badNums.Contains(kv.Key) || badBools.Contains(kv.Key)
+                             || !KnownIniKeys.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value),
             // Accepted but not modelled — kept so saving does not delete them.
             CarriedKeys = q.Where(kv => CarriedIniKeys.Contains(kv.Key))
                            .ToDictionary(kv => kv.Key, kv => kv.Value),
