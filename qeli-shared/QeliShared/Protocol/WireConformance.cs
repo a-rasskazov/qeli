@@ -270,6 +270,34 @@ public static class WireConformance
         catch (ArgumentException) { stillRefused = true; }
         check("ini-carry: the editor cannot launder a bad number or unknown key", stillRefused);
 
+        // ...and neither can the MANUAL editor, which is the same laundering one step later.
+        //
+        // "Manual edit" opens `BuildFromForm().ToIni()`. That text used to carry the value this
+        // port ENDED UP with, so `reconnect_base_delay = bad` came back as `= 1` and
+        // `gatway = true` was absent entirely: the user never saw the mistake, pressed OK, and
+        // the re-parse was clean because the evidence had been dropped on the way out. The
+        // typo's line was then gone from the profile with the setting at a default nobody
+        // chose. The round trip below is exactly that flow, and it must preserve BOTH markers.
+        var shown = savedDirty.ToIni();
+        check("ini-manual: the bad line is shown as written",
+            shown.Contains("reconnect_base_delay = bad"));
+        check("ini-manual: so is the unknown key", shown.Contains("gatway = true"));
+        var reparsed = Model.VpnConfig.Parse(shown);
+        check("ini-manual: re-parsing what was shown re-derives the number marker",
+            reparsed.UnparsedNumericKeys.Contains("reconnect_base_delay"));
+        check("ini-manual: and the unknown-key marker",
+            reparsed.UnknownKeys.Contains("gatway"));
+        check("ini-manual: no invented duplicate for the rewritten key",
+            reparsed.DuplicateKeys.Count == 0);
+        // Fixing the line by hand — what the dialog is FOR — must clear it.
+        var handFixed = Model.VpnConfig.Parse(
+            shown.Replace("reconnect_base_delay = bad", "reconnect_base_delay = 5")
+                 .Replace("gatway = true", "gateway = true"));
+        bool handFixedPasses = true;
+        try { handFixed.Validate(); }
+        catch (ArgumentException) { handFixedPasses = false; }
+        check("ini-manual: correcting the shown line clears the marker", handFixedPasses);
+
         // ...but a number the form DOES control must clear, or the dialog is a dead end.
         //
         // The mirror of the check above, and the reason it cannot simply carry everything:

@@ -473,10 +473,15 @@ class ConfigImportRangesTest {
                 c.unparsedNumericKeys.contains(key))
         }
 
-        // ...while a value that is merely OUT OF RANGE still falls back silently: that is a
-        // documented clamp, not a mistake.
+        // ...and so is a value that is merely OUT OF RANGE. This used to assert the opposite,
+        // on the grounds that the silent fallback was "a documented clamp, not a mistake". It
+        // is not a clamp: a clamp pins the value to the nearest bound, whereas this jumps to
+        // the DEFAULT, which is somewhere else entirely — `heartbeat_interval = -5` became
+        // 15 s, i.e. a setting the author never wrote. The C# reader was corrected on the same
+        // reasoning; this test was pinning the behaviour the fix removes.
         val ranged = VpnConfig.fromIni(ini("heartbeat_interval = -5"))
-        assertTrue(ranged.unparsedNumericKeys.isEmpty())
+        assertTrue("out of range must be recorded: ${ranged.unparsedNumericKeys}",
+            ranged.unparsedNumericKeys.contains("heartbeat_interval"))
 
         // An ABSENT key keeps its default silently — that is what a default is for.
         assertTrue(VpnConfig.fromIni(ini()).unparsedNumericKeys.isEmpty())
