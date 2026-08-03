@@ -156,7 +156,9 @@
          Wording rule: never overstate. A line may only claim what the profile (and, once
          connected, the tunnel snapshot) actually says; anything that narrows the tunnel
          gets its own warning line instead of being folded into the headline. -->
-    <string name="protection">Protection</string>
+    <!-- Header of the card and title of its detail sheet. Deliberately "properties", not
+         "protection": the block states how the tunnel is built, it does not vouch for it. -->
+    <string name="connection_properties">Connection properties</string>
     <string name="chevron">›</string>
     <string name="protection_apps">Apps</string>
     <string name="protection_always_on">Always-on</string>
@@ -171,6 +173,9 @@
     <!-- Detail bits -->
     <string name="protection_pq">Hybrid post-quantum</string>
     <string name="protection_classic">X25519 (no post-quantum)</string>
+    <!-- Same facts, sized for the one-line strip. -->
+    <string name="protection_pq_short">PQ</string>
+    <string name="protection_classic_short">X25519</string>
     <string name="protection_dns_tunnel">DNS through VPN</string>
     <string name="protection_dns_system">system DNS</string>
     <string name="protection_key_pinned">server key pinned</string>

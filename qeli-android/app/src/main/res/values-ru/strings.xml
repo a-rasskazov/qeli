@@ -168,7 +168,9 @@
          Правило формулировок: не преувеличивать. Строка вправе утверждать только то, что
          реально следует из профиля (и из снимка туннеля, когда подключено); всё, что
          сужает туннель, выносится в отдельное предупреждение, а не прячется в заголовке. -->
-    <string name="protection">Защита</string>
+    <!-- Заголовок карточки и название её детального листа. Именно «свойства», а не
+         «защита»: блок сообщает, как построен туннель, а не ручается за него. -->
+    <string name="connection_properties">Свойства соединения</string>
     <string name="chevron">›</string>
     <string name="protection_apps">Приложения</string>
     <string name="protection_always_on">Always-on</string>
@@ -181,6 +183,9 @@
     <string name="protection_invalid">Конфиг профиля некорректен</string>
     <string name="protection_pq">Гибридное постквантовое</string>
     <string name="protection_classic">X25519 (без постквантового)</string>
+    <!-- Те же факты, но в размер однострочной полосы. -->
+    <string name="protection_pq_short">PQ</string>
+    <string name="protection_classic_short">X25519</string>
     <string name="protection_dns_tunnel">DNS через VPN</string>
     <string name="protection_dns_system">системный DNS</string>
     <string name="protection_key_pinned">ключ сервера запинен</string>

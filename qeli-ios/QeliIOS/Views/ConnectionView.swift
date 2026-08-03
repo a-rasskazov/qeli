@@ -114,16 +114,17 @@ struct ConnectionView: View {
 
     /// What the active profile actually protects.
     ///
-    /// Mirrors the Android card decision for decision (both read `ProtectionSummary`), with
-    /// two platform differences that are real rather than cosmetic: per-app routing needs
-    /// MDM on iOS, and there is no Always-On switch an app may offer — VPN On Demand in
-    /// Settings is the closest equivalent. Both are stated, not hidden.
+    /// One line, deliberately without a verdict. This began as a card led by a bold
+    /// "All traffic is protected"; that is the strongest claim in the app, the easiest to get
+    /// subtly wrong, and it cost enough height to push the tab into a scroll. The facts were
+    /// the useful part, so the strip STATES them and the detail sheet carries the rest.
+    /// Mirrors the Android strip decision for decision — both read `ProtectionSummary`.
     @ViewBuilder
     private var protectionCard: some View {
         let config = model.activeProfile.flatMap { try? VPNConfig(parsing: $0.configText) }
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("PROTECTION")
+                Text("CONNECTION PROPERTIES")
                     .font(.system(size: 11, weight: .semibold))
                     .kerning(0.8)
                     .foregroundStyle(.secondary)
@@ -131,27 +132,30 @@ struct ConnectionView: View {
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
             }
             if let config {
-                let summary = ProtectionSummary(config: config)
-                let live = model.tunnelSnapshot.phase == .connected
-                Text(headline(summary, live: live))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(live && summary.carriesEverything ? QeliTheme.connected : .primary)
-                Text("\(Text(summary.postQuantum ? "Hybrid post-quantum" : "X25519 (no post-quantum)")) · \(Text(summary.dnsThroughTunnel ? "DNS through VPN" : "system DNS"))")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("\(config.wireMode) · \(config.protocolName.uppercased())\(config.quicEnabled ? " / QUIC" : "") · \(Text(summary.keyPinned ? "server key pinned" : "server key on trust (TOFU)"))")
-                    .font(.caption).foregroundStyle(.secondary)
+                // The app-wide LAN switch counts as much as the profile field — the tunnel
+                // carves the private ranges out on either. (Audit 2026-08-02, §13.)
+                let summary = ProtectionSummary(
+                    config: config, globalAllowLAN: model.settings.allowLAN)
                 if let warning = summary.warnings.first {
+                    // A carve-out is what the user needs to see first, and there is only one
+                    // line to say it in — so it replaces the facts and colours them.
                     Text(warningText(warning, count: summary.excludedRouteCount))
                         .font(.caption)
                         .foregroundStyle(QeliTheme.connecting)
+                } else {
+                    Text("\(config.wireMode) · \(config.protocolName.uppercased())\(config.quicEnabled ? " / QUIC" : "") · \(Text(summary.postQuantum ? "PQ" : "X25519")) · \(Text(summary.keyPinned ? "server key pinned" : "server key on trust (TOFU)"))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             } else {
                 Text(model.activeProfile == nil ? "No profile selected" : "Profile config is invalid")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+        .lineLimit(2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .qeliCard()
+        .qeliCard(padding: 13)
         .contentShape(Rectangle())
         .onTapGesture { if config != nil { showingProtectionDetails = true } }
         .sheet(isPresented: $showingProtectionDetails) {
@@ -163,7 +167,8 @@ struct ConnectionView: View {
     /// come from the tunnel snapshot and are simply omitted while disconnected — never
     /// guessed from the profile.
     private func protectionDetails(_ config: VPNConfig) -> some View {
-        let summary = ProtectionSummary(config: config)
+        let summary = ProtectionSummary(
+            config: config, globalAllowLAN: model.settings.allowLAN)
         let snapshot = model.tunnelSnapshot
         let live = snapshot.phase == .connected
         return NavigationStack {
@@ -196,7 +201,7 @@ struct ConnectionView: View {
                 detailRow("Auto-reconnect", config.reconnectEnabled
                     ? String(localized: "On") : String(localized: "Off"))
             }
-            .navigationTitle("PROTECTION")
+            .navigationTitle("CONNECTION PROPERTIES")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -224,18 +229,9 @@ struct ConnectionView: View {
         }
     }
 
-    private func headline(_ summary: ProtectionSummary, live: Bool) -> LocalizedStringKey {
-        guard live else { return "Will be used on connect" }
-        switch summary.scope {
-        case .onlySelected: return "Only selected apps are protected"
-        case .allExcept: return "All apps except the selected ones are protected"
-        case .splitRoutes: return "Split tunnel — only selected routes"
-        case .all:
-            // Full scope but something is carved out — the warning line says what, so the
-            // headline must not claim "everything".
-            return summary.carriesEverything ? "All traffic is protected" : "Split tunnel — only selected routes"
-        }
-    }
+    // `headline(_:live:)` lived here and rendered the verdict the strip no longer makes.
+    // Its wording survives in `routingText`, which the detail sheet still uses to describe
+    // the scope — as one row among many rather than as the headline.
 
     private func warningText(_ warning: ProtectionWarning, count: Int) -> LocalizedStringKey {
         switch warning {

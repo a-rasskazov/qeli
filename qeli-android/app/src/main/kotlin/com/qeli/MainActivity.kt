@@ -266,7 +266,7 @@ sni = www.microsoft.com
 
         // Reuses the existing per-app picker rather than a second entry point for the same
         // setting; it edits the ACTIVE profile, which is what the card describes.
-        binding.protectionCard.setOnClickListener { showProtectionDetails() }
+        binding.connectionInfoRow.setOnClickListener { showProtectionDetails() }
 
         binding.tvVersion.text = getString(R.string.version_label, appVersion())
         binding.tvVersion.setOnClickListener { showUpdatesDialog() }
@@ -789,7 +789,7 @@ sni = www.microsoft.com
         binding.tvActiveProfile.text = p?.name ?: "—"
         val ms = reach[activeIndex]
         applyReach(binding.activeReachDot, binding.tvActiveReach, p, ms)
-        renderProtection()
+        renderConnectionInfo()
     }
 
     /**
@@ -896,7 +896,7 @@ sni = www.microsoft.com
         box.addView(actions)
 
         MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.protection)
+            .setTitle(R.string.connection_properties)
             .setView(android.widget.ScrollView(this).apply { addView(box) })
             .setPositiveButton(R.string.close, null)
             .show()
@@ -912,55 +912,34 @@ sni = www.microsoft.com
             .getBoolean(PREF_ALLOW_LAN, false)
 
     /**
-     * Fill the protection card from the ACTIVE profile.
+     * Fill the one-line connection-info strip from the ACTIVE profile.
      *
-     * The card makes security claims, so it states only what [ProtectionSummary] can derive
-     * from the config, and everything that narrows the tunnel gets its own warning line
-     * instead of being folded into a reassuring headline. While disconnected the wording is
-     * future tense — the profile describes what *will* apply, not what is in force.
+     * This deliberately does NOT render a verdict. The card it replaced led with a bold
+     * "All traffic is protected", which is the strongest claim in the app and the easiest to
+     * get subtly wrong; the strip states the facts instead — mode, transport, key exchange,
+     * how the peer is trusted — and lets the detail sheet carry the rest.
+     *
+     * When something narrows the tunnel, the whole strip turns amber and shows THAT instead
+     * of the facts: a carve-out is what the user needs to see first, and there is only one
+     * line to say it in. [ProtectionSummary] still decides — including the app-wide LAN
+     * toggle, which the tunnel ORs with the profile's own.
      */
-    private fun renderProtection() {
+    private fun renderConnectionInfo() {
         val profile = current()
         val cfg = profile?.let { try { VpnConfig.parse(it.text) } catch (_: Exception) { null } }
+        val row = binding.connectionInfoRow
+        val text = binding.tvConnectionInfo
         if (cfg == null) {
-            binding.tvProtectionHeadline.text =
-                getString(if (profile == null) R.string.protection_no_profile else R.string.protection_invalid)
-            binding.tvProtectionCrypto.visibility = View.GONE
-            binding.tvProtectionMode.visibility = View.GONE
-            binding.tvProtectionWarning.visibility = View.GONE
+            text.text = getString(
+                if (profile == null) R.string.protection_no_profile else R.string.protection_invalid
+            )
+            text.setTextColor(getColor(R.color.text_secondary))
+            row.isClickable = false
             return
         }
-        binding.tvProtectionCrypto.visibility = View.VISIBLE
-        binding.tvProtectionMode.visibility = View.VISIBLE
+        row.isClickable = true
 
         val s = ProtectionSummary.of(cfg, globalAllowLan())
-        val live = isConnected
-        binding.tvProtectionHeadline.text = when {
-            !live -> getString(R.string.protection_idle)
-            s.scope == ProtectionScope.ONLY_SELECTED -> getString(R.string.protection_selected_apps, s.appCount)
-            s.scope == ProtectionScope.ALL_EXCEPT -> getString(R.string.protection_except_apps, s.appCount)
-            s.scope == ProtectionScope.SPLIT_ROUTES -> getString(R.string.protection_split)
-            s.carriesEverything -> getString(R.string.protection_all_traffic)
-            // Full scope but something is carved out — the warning line below says what,
-            // so the headline must not claim "everything".
-            else -> getString(R.string.protection_split)
-        }
-        binding.tvProtectionHeadline.setTextColor(
-            getColor(if (live && s.carriesEverything) R.color.status_connected else R.color.text_primary)
-        )
-        binding.tvProtectionCrypto.text = getString(
-            R.string.protection_sep,
-            getString(if (s.postQuantum) R.string.protection_pq else R.string.protection_classic),
-            getString(if (s.dnsThroughTunnel) R.string.protection_dns_tunnel else R.string.protection_dns_system),
-        )
-        binding.tvProtectionMode.text = getString(
-            R.string.protection_mode_line,
-            cfg.wireMode,
-            cfg.protocol.uppercase() + if (cfg.quicEnabled) " / QUIC" else "",
-            getString(if (s.keyPinned) R.string.protection_key_pinned else R.string.protection_key_tofu),
-        )
-        // One line, highest-impact first: what leaves the tunnel matters more than how the
-        // peer was trusted.
         val warning = s.warnings.firstOrNull()?.let {
             when (it) {
                 ProtectionWarning.LAN_OUTSIDE -> getString(R.string.protection_warn_lan)
@@ -970,8 +949,19 @@ sni = www.microsoft.com
                 ProtectionWarning.NO_PINNED_KEY -> getString(R.string.protection_warn_no_key)
             }
         }
-        binding.tvProtectionWarning.text = warning ?: ""
-        binding.tvProtectionWarning.visibility = if (warning != null) View.VISIBLE else View.GONE
+        if (warning != null) {
+            text.text = warning
+            text.setTextColor(getColor(R.color.status_connecting))
+            return
+        }
+        // `mode · TRANSPORT[/QUIC] · key exchange · how the peer is trusted`
+        text.text = listOf(
+            cfg.wireMode,
+            cfg.protocol.uppercase() + if (cfg.quicEnabled) " / QUIC" else "",
+            getString(if (s.postQuantum) R.string.protection_pq_short else R.string.protection_classic_short),
+            getString(if (s.keyPinned) R.string.protection_key_pinned else R.string.protection_key_tofu),
+        ).joinToString(" · ")
+        text.setTextColor(getColor(R.color.text_secondary))
     }
 
     private fun renderProfileList() {
@@ -1555,7 +1545,7 @@ sni = www.microsoft.com
         // lock stays visible after a disconnect (and invisible after a connect).
         if (wasLocked != (isConnected || isConnecting)) renderProfileList()
         // The protection card is worded in the present tense only while connected.
-        renderProtection()
+        renderConnectionInfo()
     }
 
     /** Live speed readout from the service's per-second stats broadcast. */

@@ -459,12 +459,16 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- What this profile actually protects. Everything here is derived from the
-                 profile config (and, once connected, from the tunnel snapshot) — never
-                 from parsing the log. Wording must never overstate: see
-                 MainActivity.renderProtection. -->
+            <!-- Connection properties: how this profile connects, stated as facts.
+                 This began as a card led by a bold "All traffic is protected"; that verdict
+                 was the strongest claim in the app, the easiest to get subtly wrong, and it
+                 cost ~127dp — enough to push this tab into a scroll once a tunnel came up.
+                 The card is back, the verdict is not: header plus one line of facts, ~63dp,
+                 with the whole picture one tap away in the detail sheet. Everything shown is
+                 derived from the profile (and, once connected, from the tunnel snapshot);
+                 never from parsing the log. See MainActivity.renderConnectionInfo. -->
             <com.google.android.material.card.MaterialCardView
-                android:id="@+id/protectionCard"
+                android:id="@+id/connectionInfoRow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 app:cardBackgroundColor="@color/surface"
@@ -480,7 +484,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:padding="13dp">
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -492,7 +496,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="@string/protection"
+                            android:text="@string/connection_properties"
                             android:textSize="11sp"
                             android:letterSpacing="0.08"
                             android:textAllCaps="true"
@@ -507,50 +511,15 @@
                     </LinearLayout>
 
                     <TextView
-                        android:id="@+id/tvProtectionHeadline"
+                        android:id="@+id/tvConnectionInfo"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:textSize="15sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_primary"
-                        tools:text="Весь трафик защищён" />
-
-                    <TextView
-                        android:id="@+id/tvProtectionCrypto"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="4dp"
                         android:textSize="12sp"
+                        android:maxLines="2"
+                        android:ellipsize="end"
                         android:textColor="@color/text_secondary"
-                        tools:text="Гибридное PQ · DNS через VPN" />
-
-                    <TextView
-                        android:id="@+id/tvProtectionMode"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:textSize="12sp"
-                        android:textColor="@color/text_secondary"
-                        tools:text="Reality-TLS · TCP · ключ запинен" />
-
-                    <!-- Shown only when something narrows the protection (split tunnel, LAN
-                         bypass, IPv6 left outside, excluded routes). Amber, never red: the
-                         tunnel works, it just carries less than everything. -->
-                    <TextView
-                        android:id="@+id/tvProtectionWarning"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:textSize="12sp"
-                        android:textColor="@color/status_connecting"
-                        android:visibility="gone"
-                        tools:text="IPv6 идёт мимо туннеля" />
-
-                    <!-- Apps / Always-on used to sit here as a button row. They were 60dp of
-                         a 186dp card and both only navigate elsewhere, which is exactly what
-                         the detail sheet is for — with them here the connection tab
-                         overflowed into a scroll the moment a tunnel came up. -->
+                        tools:text="fake-tls · UDP / QUIC · PQ · ключ запинен" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
           </LinearLayout>
