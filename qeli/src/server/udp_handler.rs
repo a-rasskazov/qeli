@@ -114,16 +114,37 @@ struct UdpClient {
     /// reported about itself, written here by the receive loop and read by `list-clients`
     /// through the session. `None` until authenticated; `None` inside means "never said".
     client_info: Option<crate::server::handler::ClientInfoCell>,
-    /// Cumulative anti-amplification budget for this session, in wire bytes.
+    /// Cumulative anti-amplification budget for this session — an APPROXIMATION of the wire,
+    /// deliberately, and read the next paragraph before trusting either number.
     ///
-    /// `handle_new_udp_client` bounds the FIRST exchange (a ≥1200 B floor plus an
-    /// explicit 3× check), but the idempotent re-emit path below it repeated neither:
-    /// a 6-byte datagram carrying the fragment magic re-sent the whole cached
-    /// ServerHello (~2-3.4 KB) for free, and could be repeated for the life of the
-    /// half-open session — a ~500× reflector for a spoofed source, i.e. exactly the
-    /// property the initial check exists to deny. Counting both directions and
-    /// refusing to exceed 3× received closes the gap for every reply path, present
-    /// and future, instead of re-deriving the bound at each of them.
+    /// `handle_new_udp_client` bounds the FIRST exchange (a ≥1200 B floor plus an explicit 3×
+    /// check), but the idempotent re-emit path below it repeated neither: a 6-byte datagram
+    /// carrying the fragment magic re-sent the whole cached ServerHello (~2-3.4 KB) for free,
+    /// and could be repeated for the life of the half-open session — a ~500× reflector for a
+    /// spoofed source, i.e. exactly the property the initial check exists to deny. Counting
+    /// both directions and refusing to exceed 3× received closes the gap for every reply path,
+    /// present and future, instead of re-deriving the bound at each of them.
+    ///
+    /// **What these actually count**, since it is not the same thing on both sides:
+    ///
+    /// * `amp_received` adds `data.len()` — the raw datagram as it came off the socket, before
+    ///   obfs-open and QUIC-unwrap. That is the payload the network delivered; the IP and UDP
+    ///   headers around it are not included.
+    /// * the seed for `amp_received` is the REASSEMBLED ClientHello, not the sum of the
+    ///   datagrams that carried it, so a fragmented one is undercounted by the per-fragment
+    ///   headers. **Undercounting received makes the budget stricter**, so this errs safe.
+    /// * `amp_sent` adds message bodies, not wrapped datagrams: the QUIC and obfs headers put
+    ///   around a ServerHello or an AuthOK fragment are not counted. **Undercounting sent
+    ///   makes the budget looser** — by roughly 20-30 bytes per datagram, against a 3× bound
+    ///   on kilobyte-scale messages.
+    ///
+    /// So the ratio is real but not exact, and it is not trying to be: the job is to deny a
+    /// large multiplier to an unverified source, not to meter traffic. Making it exact would
+    /// mean threading the emitted size back out of `send_handshake_response` and the AuthOK
+    /// send loop — changing signatures to sharpen a bound whose slack is a rounding error
+    /// against what it prevents. If that ever becomes worth doing, do it in those two places
+    /// and delete this paragraph; do not leave the doc claiming precision the code lacks,
+    /// which is what it did before. (Audit 2026-08-02, §7 of the follow-up.)
     amp_received: u64,
     amp_sent: u64,
     /// AuthOK re-emits already granted to this session, bounded by [`MAX_AUTH_OK_REEMITS`].
@@ -778,6 +799,8 @@ async fn handle_udp_datagram(
             // fresh-port reconnect. This never creates or mutates crypto state.
             // Everything this source sends counts toward its budget, including the
             // datagrams that trigger a re-emit — otherwise the trigger would be free.
+            // `data` is the raw datagram off the socket (pre obfs-open, pre QUIC-unwrap);
+            // see the note on `amp_received` for what the two counters do and do not include.
             client.amp_received = client.amp_received.saturating_add(data.len() as u64);
 
             let reemit_hello = matches!(client.state, UdpSessionState::AwaitingAuth)
@@ -793,6 +816,13 @@ async fn handle_udp_datagram(
                 let frag = client.hello_frag_mode;
                 let authok = client.auth_ok.clone();
                 // Every fragment goes back on the wire, so every fragment is charged.
+                //
+                // Note the asymmetry: the AuthOK is cached AS DATAGRAMS, so summing them is
+                // exact, while the ServerHello is cached as the MESSAGE and re-fragmented and
+                // re-wrapped on the way out — its charge therefore misses the per-datagram
+                // QUIC/obfs headers. Undercounting what we send is the loose direction; see
+                // the note on `amp_received` for why that slack is accepted rather than
+                // plumbed away.
                 let reply_len: u64 = if reemit_hello {
                     hello.len() as u64
                 } else {
@@ -1873,8 +1903,11 @@ async fn handle_new_udp_client(
             revoked: None,
             path_mtu: None,
             client_info: None,
-            // Seed the budget with the exchange that just happened, so the session
-            // starts already accounted for rather than with a free allowance.
+            // Seed the budget with the exchange that just happened, so the session starts
+            // already accounted for rather than with a free allowance. Both sides are the
+            // MESSAGE, not the datagrams: a fragmented ClientHello is undercounted by its
+            // fragment headers (stricter) and the ServerHello by its QUIC/obfs wrappers
+            // (looser). See the note on `amp_received`.
             amp_received: initial_packet.len() as u64,
             amp_sent: response.len() as u64,
             auth_ok_reemits: 0,
