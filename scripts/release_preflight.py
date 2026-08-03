@@ -284,10 +284,39 @@ try:
             failures.append(f"qeli-openwrt/Makefile: PKG_MIRROR_HASH is not a sha256 ({pkg_hash!r})")
 
         if head and pkg_sha != head:
-            failures.append(
-                f"qeli-openwrt/Makefile: PKG_SOURCE_VERSION pins {pkg_sha[:8]}, but the commit "
-                f"being released is {head[:8]} — the router package would build a different tree"
-            )
+            # The pin can never equal the commit that sets it: writing a SHA into this file
+            # produces a new commit with a different SHA. Demanding equality made this gate
+            # unsatisfiable, and an unsatisfiable gate gets bypassed — which is worse than a
+            # gate that asks the decidable question.
+            #
+            # What the check is FOR is that the router package compiles the sources being
+            # released. The package builds only qeli/ (Build/Compile cd's into
+            # $(PKG_BUILD_DIR)/qeli; the init/config files come from the feed clone, not the
+            # tarball), so the question is whether the pinned commit carries the same qeli/
+            # tree as the release. A pin left over from an earlier version still fails — that
+            # tree differs — which is the case this gate exists to catch.
+            def tree_of(rev):
+                p = subprocess.run(["git", "rev-parse", f"{rev}^{{tree}}"],
+                                   capture_output=True, text=True, cwd=ROOT)
+                return p.stdout.strip() if p.returncode == 0 else ""
+
+            pin_tree, head_tree = tree_of(f"{pkg_sha}:qeli"), tree_of("HEAD:qeli")
+            if not pin_tree:
+                failures.append(
+                    f"qeli-openwrt/Makefile: PKG_SOURCE_VERSION pins {pkg_sha[:8]}, which this "
+                    f"repository does not contain — the package would build an unknown tree"
+                )
+            elif not head_tree:
+                failures.append("cannot read HEAD:qeli — refusing to skip the OpenWrt pin comparison")
+            elif pin_tree != head_tree:
+                failures.append(
+                    f"qeli-openwrt/Makefile: PKG_SOURCE_VERSION pins {pkg_sha[:8]}, whose qeli/ "
+                    f"tree ({pin_tree[:8]}) is not the one being released ({head_tree[:8]}) — "
+                    f"the router package would build different sources"
+                )
+            else:
+                print(f"  pin {pkg_sha[:8]} != HEAD {head[:8]}, but its qeli/ tree matches "
+                      f"({pin_tree[:8]}) — the package builds the released sources")
 
         # The version in the feed Makefile has to name the release it ships.
         crate_ver = None
