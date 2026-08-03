@@ -873,7 +873,7 @@ impl ClientConfig {
                      client as a probe and proxies it to the decoy site"
                 );
             }
-            if sid.len() % 2 != 0
+            if !sid.len().is_multiple_of(2)
                 || sid.len() > 16
                 || !sid.chars().all(|c| c.is_ascii_hexdigit())
                 || sid.chars().all(|c| c == '0')
