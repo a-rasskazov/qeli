@@ -188,7 +188,37 @@ public sealed class VpnConfig : INotifyPropertyChanged
     ///
     /// Kept in sync by `RoundTripKeysAreAllKnown` in the conformance suite, which asserts that
     /// everything `ToIni` emits appears here.</summary>
-    private static readonly HashSet<string> KnownIniKeys = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>Keys this port ACCEPTS but does not model — read into <see cref="CarriedKeys"/>
+    /// and written back verbatim, so opening and saving a profile does not strip them.</summary>
+    /// <remarks>
+    /// They are on the allowlist because a profile carrying them must open here; they are in
+    /// THIS list because accepting a key without keeping it is how the open-and-save round trip
+    /// silently deleted hooks, security settings and — for the mobile keys — the whole per-app
+    /// selection. Allowlisting alone was the first half of the fix and, on its own, the more
+    /// dangerous half: it makes the profile open, which is exactly what leads someone to save
+    /// it. (Audit 2026-08-02, §4 of the follow-up; Android got both halves first.)
+    /// <para>
+    /// Declared BEFORE <c>KnownIniKeys</c>, which folds it in — static initialisers run in
+    /// declaration order, so the other way round hands <c>Union</c> a null set at class load.
+    /// </para>
+    /// </remarks>
+    public static readonly HashSet<string> CarriedIniKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
+        // "Что пушем НЕ передаётся" lists these as client file-only keys.
+        "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
+        "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
+        // Socket buffers (Linux-only in the Rust client) and the headless password sources.
+        "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
+        // Understood by the MOBILE ports only (per-app tunnelling, allow-LAN). Desktop has no
+        // per-app split, so `ToIni` never wrote them — which is exactly why
+        // `RoundTripKeysAreAllKnown` could not catch their absence: it only checks that what
+        // this port WRITES is accepted back. Now they are carried, so a profile that goes
+        // phone → desktop → phone keeps its app selection instead of losing it in the middle.
+        "allow_lan", "apps", "apps_mode",
+    };
+
+    private static readonly HashSet<string> KnownIniKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         // Read by this port.
         "allow_ipv6_leak", "awg", "bind_static", "dev", "dev_node", "dns", "exclude", "forward",
@@ -200,24 +230,7 @@ public sealed class VpnConfig : INotifyPropertyChanged
         "route_file", "route_local", "server", "shaping", "shaping_budget", "shaping_gap_max",
         "shaping_gap_mean", "shaping_gap_min", "shaping_max_size", "shaping_min_size",
         "shaping_stealth", "shaping_stealth_mbps", "sni", "timeout", "user",
-        // Understood by the RUST client only, and documented as such — docs/ru/CONFIG.md
-        // "Что пушем НЕ передаётся" lists these as client file-only keys. Carried through
-        // untouched, never a typo. A profile written for the CLI must open here.
-        "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
-        "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
-        // Socket buffers (Linux-only in the Rust client) and the headless password sources.
-        // This port reads none of them — it sizes its own receive buffer with a fixed 2 MB —
-        // but a client.conf carrying them is a valid CLI profile, and rejecting it as "likely
-        // misspelled" is the false alarm this list exists to prevent. (Audit 2026-08-02, §7.)
-        "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
-        // Understood by the MOBILE ports only (per-app tunnelling, allow-LAN). Desktop has no
-        // per-app split, so `ToIni` never writes them — which is exactly why
-        // `RoundTripKeysAreAllKnown` could not catch their absence: it only checks that what
-        // this port WRITES is accepted back. A key another port writes is not a typo, and
-        // omitting it does not degrade to "ignored" — it rejects the whole profile, so a
-        // config exported from Android or iOS would not open here at all.
-        "allow_lan", "apps", "apps_mode",
-    };
+    }.Union(CarriedIniKeys).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>`[qeli]` keys no qeli client understands — i.e. misspellings. The setting they
     /// were meant to change silently keeps its default, which is how `gatway = true` left a
@@ -231,6 +244,12 @@ public sealed class VpnConfig : INotifyPropertyChanged
     /// nothing said anywhere. Parsing still succeeds so an editor can open the profile;
     /// Validate() is what refuses. (Audit 2026-08-01, §P2.)</summary>
     public IReadOnlyList<string> UnparsedNumericKeys { get; init; } = Array.Empty<string>();
+
+    /// <summary>`[qeli]` keys accepted but not modelled (<see cref="CarriedIniKeys"/>), kept
+    /// verbatim so a save does not delete them. Re-emitted by ToIni() after the modelled
+    /// keys.</summary>
+    public IReadOnlyDictionary<string, string> CarriedKeys { get; init; }
+        = new Dictionary<string, string>();
 
     public int PaddingMin { get; init; }
     public int PaddingMax { get; init; } = 255;
@@ -529,6 +548,14 @@ public sealed class VpnConfig : INotifyPropertyChanged
         if (ShapingMaxSize != 1024) sb.AppendLine($"shaping_max_size = {ShapingMaxSize}");
         if (ShapingStealth) sb.AppendLine("shaping_stealth = true");
         if (ShapingStealthRateMbps != 2) sb.AppendLine($"shaping_stealth_mbps = {ShapingStealthRateMbps}");
+        // Re-emit the keys this port accepts but does not model, verbatim and in a stable
+        // order. Without this, opening a CLI or mobile profile here and saving it deleted its
+        // hooks (`post_up`/`post_down`), its TOFU setting, its routing policy and the whole
+        // per-app selection — silently, and as a side effect of merely opening it. `IniSafe`
+        // applies here too: a value with an embedded newline would otherwise forge config
+        // lines on save. (Audit 2026-08-02, §4 of the follow-up.)
+        foreach (var key in CarriedKeys.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            sb.AppendLine($"{IniSafe(key)} = {IniSafe(CarriedKeys[key])}");
         return sb.ToString();
     }
 
@@ -854,6 +881,9 @@ public sealed class VpnConfig : INotifyPropertyChanged
             DuplicateKeys = dupKeys,
             UnparsedNumericKeys = badNums,
             UnknownKeys = q.Keys.Where(k => !KnownIniKeys.Contains(k)).OrderBy(k => k).ToArray(),
+            // Accepted but not modelled — kept so saving does not delete them.
+            CarriedKeys = q.Where(kv => CarriedIniKeys.Contains(kv.Key))
+                           .ToDictionary(kv => kv.Key, kv => kv.Value),
             RoutingMode = fullTunnel ? "full-tunnel" : "split-tunnel",
             AddDefaultGateway = fullTunnel,
             DnsServers = dnsList ?? new List<string>(),  // empty when unset; fallback at connect time

@@ -9,8 +9,15 @@
 //!
 //! Fix: split those two messages ourselves into <=[`MAX_CHUNK`]-byte fragments, each
 //! in its own datagram that never needs IP fragmentation, and reassemble them at the
-//! peer. Only the ClientHello and the ServerHello are fragmented; the small
-//! post-handshake auth / auth-ok messages already fit one datagram.
+//! peer.
+//!
+//! Three messages are fragmented, and the third only sometimes. The ClientHello and the
+//! ServerHello always are — they are always too big. The **AuthOK** ([`MSG_AUTH_OK`]) is
+//! fragmented only when it exceeds [`MAX_CHUNK`], which happens when the profile pushes
+//! enough routes; below that it goes out as the single unframed datagram it always was, and
+//! that boundary is what keeps peers predating `MSG_AUTH_OK` working. The client's AUTH is
+//! never fragmented — instead the credentials that make up its size are bounded at config
+//! load (`config::client::ClientConfig::check_credential_size`).
 //!
 //! Layering: this sits on the cleartext handshake message, BELOW the QUIC-mask and
 //! obfs-XOR transforms — each fragment datagram is independently QUIC-wrapped / XORed.

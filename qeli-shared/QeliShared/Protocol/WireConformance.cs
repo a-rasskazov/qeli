@@ -176,6 +176,39 @@ public static class WireConformance
         check("ini-nums: out-of-range is refused by Validate", rangeRefused);
         check("ini-nums: an absent numeric key records nothing", absentStaysQuiet);
 
+        // Keys this port accepts but does not model must SURVIVE an open-and-save.
+        //
+        // They are on the allowlist so a CLI or mobile profile opens here — and then saving it
+        // deleted them, because nothing stored them. Hooks, the TOFU setting, the routing
+        // policy and the whole per-app selection vanished as a side effect of opening the
+        // file, which is worse than refusing it would have been. Allowlisting alone was the
+        // more dangerous half of the fix: it is what leads someone to press Save.
+        // (Audit 2026-08-02, §4 of the follow-up.)
+        var carried = Ini(
+            "post_up = /etc/qeli/up.sh", "post_down = /etc/qeli/down.sh",
+            "allow_unpinned_tofu = true", "gateway_nat = true", "exit_node = 10.9.0.7",
+            "recv_buffer_size = 8388608", "password_file = /etc/qeli/secret",
+            "apps_mode = include", "apps = com.example.a", "allow_lan = true");
+        var carriedBack = Model.VpnConfig.FromIni(carried.ToIni());
+        bool carriedSurvives = true;
+        foreach (var (k, want) in new[]
+                 {
+                     ("post_up", "/etc/qeli/up.sh"), ("post_down", "/etc/qeli/down.sh"),
+                     ("allow_unpinned_tofu", "true"), ("gateway_nat", "true"),
+                     ("exit_node", "10.9.0.7"), ("recv_buffer_size", "8388608"),
+                     ("password_file", "/etc/qeli/secret"), ("apps_mode", "include"),
+                     ("apps", "com.example.a"), ("allow_lan", "true"),
+                 })
+        {
+            carriedSurvives &= carriedBack.CarriedKeys.TryGetValue(k, out var got) && got == want;
+        }
+        check("ini-carry: rust-only and mobile keys survive an open-and-save", carriedSurvives);
+        // ...and the re-import must not then call them unknown — that would refuse the very
+        // profile this port just wrote.
+        check("ini-carry: the re-written profile still parses clean", carriedBack.UnknownKeys.Count == 0);
+        // A profile that never carried them must not grow lines for them.
+        check("ini-carry: a plain profile carries nothing", Ini().CarriedKeys.Count == 0);
+
         // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
         // change silently keeps its default — `gatway = true` left the tunnel split with
         // nothing said anywhere. The Rust client has always refused these; this port did not.

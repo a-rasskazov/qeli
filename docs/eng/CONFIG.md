@@ -1150,8 +1150,9 @@ An unknown key is **rejected, not ignored.** Every client refuses a config carry
 no qeli client understands, because being ignored is what made a misspelling invisible:
 `gatway = true` left the tunnel split with nothing said anywhere. "Unknown" means unknown to
 *all* of them — a key this client ignores but another one acts on (`post_up`, `exit_node`,
-the whole `—` column below) is carried through untouched, and on the GUI clients it is also
-written back out unchanged, so opening a CLI profile and saving it does not strip it.
+the whole `—` column below) is carried through untouched, and every GUI client also writes it
+back out unchanged, so opening a CLI profile and saving it does not strip its hooks, its
+routing policy or its per-app selection.
 
 Clients: **CLI** — Rust `qeli client` / `qeli-client` (Linux, routers, headless);
 **Win** — Windows desktop (C#); **mac** — macOS desktop (C#); **And** — Android (Kotlin);

@@ -724,6 +724,43 @@ impl ClientConfig {
     ///
     /// The server got this treatment in #23; the client parser was left accepting anything.
     /// (Audit 2026-07-30, #7.)
+    /// Refuse credentials that cannot fit the AUTH message in one datagram.
+    ///
+    /// The AUTH goes out UNFRAGMENTED, unlike the ClientHello beside it and the AuthOK coming
+    /// back. Its size was always small, so nobody bounded it — but nothing bounded the
+    /// credentials either, and they are what it carries. A long generated token used as a
+    /// password pushes the record past `MAX_CHUNK`, the datagram then needs IP fragmentation,
+    /// and a mobile or CGNAT path drops it. The symptom is an endless handshake timeout that
+    /// reproduces only on those networks: indistinguishable from a dead server, with nothing
+    /// in either log.
+    ///
+    /// **Called twice, and it has to be.** `validate()` runs at config load, where only an
+    /// inline `pass` exists; `password_file` and `password_command` are read at connect time,
+    /// long after. The first version of this check lived inline in `validate()` and therefore
+    /// bounded only the inline case — i.e. it covered the credential that is easy to eyeball
+    /// and missed the ones these keys exist for, headless setups feeding in a long secret.
+    /// `password` names which source is being judged so the error points at the right key.
+    /// (Audit 2026-08-02, §3 and §2 of the follow-up.)
+    ///
+    /// TCP has no such limit, but the bound applies to both: profiles move between transports,
+    /// and working on one while hanging on the other is the failure being removed here. The
+    /// budget is enormous next to any real credential — a 64-character password uses ~6 % of
+    /// it — so this rejects nothing legitimate.
+    pub fn check_credential_size(&self, password: &str, source: &str) -> anyhow::Result<()> {
+        // proof(32) + the optional [0x00 device_id(16)] prefix, then `user:pass`.
+        const AUTH_OVERHEAD: usize = 32 + 17;
+        let budget = crate::protocol::udp_frag::MAX_CHUNK - AUTH_OVERHEAD;
+        let len = self.auth.username.len() + password.len() + 1; // + the ':' separator
+        if len > budget {
+            anyhow::bail!(
+                "'user' + '{source}' are {len} bytes, over the {budget} a UDP AUTH datagram can \
+                 carry — the handshake would be dropped by any path that discards IP fragments \
+                 (mobile, CGNAT) and would look like an unreachable server. Shorten them."
+            );
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         fn check(field: &str, got: &str, allowed: &[&str]) -> anyhow::Result<()> {
             if allowed.contains(&got) {
@@ -745,35 +782,10 @@ impl ClientConfig {
             anyhow::bail!("'server' port must be 1..65535, got 0");
         }
 
-        // Credentials must leave the AUTH message inside one datagram on UDP.
-        //
-        // The AUTH goes out UNFRAGMENTED, unlike the ClientHello beside it and the AuthOK
-        // coming back — its size was always small, so nobody bounded it. But nothing bounded
-        // the credentials either, and they are what it carries: a long generated token used
-        // as a password pushes the record past `MAX_CHUNK`, the datagram then needs IP
-        // fragmentation, and a mobile or CGNAT path drops it. The symptom is an endless
-        // handshake timeout that reproduces only on those networks — indistinguishable from a
-        // dead server, with nothing in either log.
-        //
-        // Refusing here turns that into a config error naming the field. The budget is
-        // enormous compared to any real credential (a 64-char password uses ~6 % of it), so
-        // this rejects no legitimate profile. TCP has no such limit, but the bound is applied
-        // to both: a profile is routinely moved between transports, and silently working on
-        // one while hanging on the other is precisely the failure being removed here.
-        // (Audit 2026-08-02, §3.)
-        let cred_len =
-            self.auth.username.len() + self.auth.password.as_deref().map_or(0, str::len) + 1; // the ':' separator
-        const AUTH_OVERHEAD: usize = 32 + 17; // proof + optional [0x00 device_id]
-        let cred_budget = crate::protocol::udp_frag::MAX_CHUNK - AUTH_OVERHEAD;
-        if cred_len > cred_budget {
-            anyhow::bail!(
-                "'user' + 'pass' are {} bytes, over the {} the UDP AUTH datagram can carry — \
-                 the handshake would be dropped by any path that discards IP fragments \
-                 (mobile, CGNAT) and would look like an unreachable server. Shorten them.",
-                cred_len,
-                cred_budget
-            );
-        }
+        // Only the INLINE password can be judged here. `password_file` / `password_command`
+        // are resolved at connect time, so the client re-runs this on what they produced —
+        // see `check_credential_size`, which exists precisely so the two callers cannot drift.
+        self.check_credential_size(self.auth.password.as_deref().unwrap_or(""), "pass")?;
         // An IPv6 endpoint parses and round-trips, but no core can USE it: the Rust client
         // builds `host:port` unbracketed and binds an IPv4 UDP socket, and the desktop creates
         // InterNetwork sockets and discards AAAA. Accepting it produced a confusing failure at

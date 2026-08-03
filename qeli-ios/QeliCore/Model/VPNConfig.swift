@@ -61,13 +61,22 @@ struct VPNConfig: Codable, Equatable, Sendable {
         "route_file", "route_local", "server", "shaping", "shaping_budget", "shaping_gap_max",
         "shaping_gap_mean", "shaping_gap_min", "shaping_max_size", "shaping_min_size",
         "shaping_stealth", "shaping_stealth_mbps", "sni", "timeout", "user",
-        // Rust-client only. Carried through, never a typo.
+    ].union(carriedINIKeys)
+
+    /// Keys this port ACCEPTS but does not model — read into ``carriedKeys`` and written back
+    /// verbatim, so opening and saving a CLI profile does not strip them.
+    ///
+    /// They are on the allowlist because a desktop profile carrying them must open here; they
+    /// are in THIS list because accepting a key without keeping it is how the open-and-save
+    /// round trip silently deleted hooks and security settings. Allowlisting alone was the
+    /// first half of the fix and, on its own, the more dangerous half: it makes the profile
+    /// open, which is exactly what leads someone to save it. (Audit 2026-08-02, §4 of the
+    /// follow-up; Android got both halves first.)
+    static let carriedINIKeys: Set<String> = [
+        // Rust-client only, documented as such (docs/ru/CONFIG.md, "Что пушем НЕ передаётся").
         "allow_unpinned_tofu", "autostart", "dev_attach", "dns_servers", "exit_node",
         "gateway_nat", "keepalive", "lan_subnet", "post_down", "post_up", "tcp_nodelay",
         // Socket buffers (Linux-only in the Rust client) and the headless password sources.
-        // This port reads none of them, but a client.conf carrying them is a valid CLI
-        // profile — rejecting it as "likely misspelled" is the false alarm this list exists
-        // to prevent. (Audit 2026-08-02, §7.)
         "password_command", "password_file", "recv_buffer_size", "send_buffer_size",
     ]
 
@@ -156,6 +165,10 @@ struct VPNConfig: Codable, Equatable, Sendable {
     // consumer iOS requires MDM and is deliberately not attempted by the app.
     var appsMode = "all"
     var apps: [String] = []
+
+    /// `[qeli]` keys accepted but not modelled (``carriedINIKeys``), kept verbatim so a save
+    /// does not delete them. Written back by ``toINI()`` after the modelled keys.
+    var carriedKeys: [String: String] = [:]
 
     // [logging] passthrough. Not used by the app (its own log setting lives in
     // AppSettings); carried so a desktop/router client.conf opened and re-saved here keeps
@@ -292,6 +305,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
             ("apps_mode", appsMode)
         ]
         for (field, value) in scalarFields where Self.containsForbiddenINICharacters(value) {
+            throw VPNConfigError.invalid("\(field) contains a forbidden line break or NUL character")
+        }
+        // Carried keys are written back verbatim, so they need the same INI-forgery gate as
+        // everything else this port emits — a `post_up` with an embedded newline would
+        // otherwise inject arbitrary config lines on save.
+        for (field, value) in carriedKeys
+        where Self.containsForbiddenINICharacters(field) || Self.containsForbiddenINICharacters(value) {
             throw VPNConfigError.invalid("\(field) contains a forbidden line break or NUL character")
         }
         let listFields: [(String, [String])] = [
@@ -478,6 +498,8 @@ struct VPNConfig: Codable, Equatable, Sendable {
         config.unknownKeys = qeli.keys
             .filter { !Self.knownINIKeys.contains($0.lowercased()) }
             .sorted()
+        // Accepted but not modelled — kept so saving does not delete them.
+        config.carriedKeys = qeli.filter { Self.carriedINIKeys.contains($0.key.lowercased()) }
         return config
     }
 
@@ -750,6 +772,13 @@ struct VPNConfig: Codable, Equatable, Sendable {
         if reconnectBaseDelaySeconds != 1 { lines.append("reconnect_base_delay = \(reconnectBaseDelaySeconds)") }
         if reconnectMaxDelaySeconds != 60 { lines.append("reconnect_max_delay = \(reconnectMaxDelaySeconds)") }
         if connectionTimeoutSeconds != 30 { lines.append("timeout = \(connectionTimeoutSeconds)") }
+        // Re-emit the keys this port accepts but does not model, verbatim and in a stable
+        // order. Without this, opening a CLI profile here and saving it deleted its hooks
+        // (`post_up`/`post_down`), its TOFU setting and its routing policy — silently, and as
+        // a side effect of merely opening it. (Audit 2026-08-02, §4 of the follow-up.)
+        for key in carriedKeys.keys.sorted() {
+            if let value = carriedKeys[key] { lines.append("\(key) = \(value)") }
+        }
         // Re-emit [logging] so a desktop/router client.conf survives an edit on the phone.
         if loggingLevel?.nonEmpty != nil || loggingFile?.nonEmpty != nil || loggingTimeFormat?.nonEmpty != nil {
             lines.append("")

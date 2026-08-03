@@ -1532,17 +1532,8 @@ async fn handle_udp_auth(
             response_pkts.len()
         );
     }
-    // Charge what actually goes on the wire. This send used to be invisible to the budget,
-    // so `amp_sent` described a server that had replied with the ServerHello and nothing
-    // since — every later decision was made against a history missing its largest entry.
-    // (Audit 2026-08-02, §4.)
-    let sent_now: u64 = response_pkts.iter().map(|d| d.len() as u64).sum();
-    if let Some(client) = sessions.write().await.get_mut(&addr) {
-        client.amp_sent = client.amp_sent.saturating_add(sent_now);
-    }
-    for pkt in &response_pkts {
-        let _ = socket.send_to(pkt, addr).await;
-    }
+    // The AuthOK is NOT sent here. It is built and cached now, and goes on the wire only
+    // once `max_clients` has admitted this client — see the send below the capacity check.
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(4096);
     let writer_socket = socket.clone();
@@ -1646,13 +1637,18 @@ async fn handle_udp_auth(
             .release(&writer_session.device_key);
         // Drop the PER-WORKER entry too, not just the pool reservation.
         //
-        // This client was already switched to `Authenticated` and already received its
-        // AuthOK several steps above, before the cap was consulted. Releasing the IP
-        // while leaving the ingress entry in place meant the refused client kept
-        // decrypting into the TUN — with a `src_guard` built around an address the pool
-        // had just handed back and could immediately reissue to somebody else — until
-        // the reaper expired it 30-45 s later. Forget the peer here so the refusal takes
-        // effect on the very next datagram. (Audit 2026-07-27, A1.)
+        // Releasing the IP while leaving the ingress entry in place meant the refused client
+        // kept decrypting into the TUN — with a `src_guard` built around an address the pool
+        // had just handed back and could immediately reissue to somebody else — until the
+        // reaper expired it 30-45 s later. Forget the peer here so the refusal takes effect
+        // on the very next datagram. (Audit 2026-07-27, A1.)
+        //
+        // The client never saw an AuthOK: it is sent below this point now. Previously it went
+        // out several steps earlier, so a client refused by the cap had already been told it
+        // was authenticated — it configured its TUN, reported "connected", and then had every
+        // packet dropped by a server that had already forgotten it. A false success followed
+        // by silence is far worse to diagnose than a refusal, and it drove reconnect loops.
+        // (Audit 2026-08-02, §5 of the follow-up.)
         sessions.write().await.remove(&addr);
         log::warn!(
             "UDP: profile '{}' at max_clients ({}) — rejecting {}",
@@ -1662,6 +1658,20 @@ async fn handle_udp_auth(
         );
         return;
     }
+    // ADMITTED — only now does the client learn it is authenticated.
+    //
+    // Charge what actually goes on the wire first: this send used to be invisible to the
+    // budget, so `amp_sent` described a server that had replied with the ServerHello and
+    // nothing since, and every later decision was made against a history missing its largest
+    // entry. (Audit 2026-08-02, §4.)
+    let sent_now: u64 = response_pkts.iter().map(|d| d.len() as u64).sum();
+    if let Some(client) = sessions.write().await.get_mut(&addr) {
+        client.amp_sent = client.amp_sent.saturating_add(sent_now);
+    }
+    for pkt in &response_pkts {
+        let _ = socket.send_to(pkt, addr).await;
+    }
+
     // Link the per-worker ingress entry to the session's revocation flag, so a later
     // kick / quota cut-off / supersede stops this client's UPLOAD as well as its
     // download. Ingress is keyed by source address here, but every control action edits

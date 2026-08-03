@@ -244,9 +244,26 @@ try:
     pkg_hash = mk_var("PKG_MIRROR_HASH")
     pkg_sha = mk_var("PKG_SOURCE_VERSION")
     pkg_ver = mk_var("PKG_VERSION")
-    head = subprocess.run(
+    # A git failure must FAIL the check, not skip it.
+    #
+    # The exit code was ignored and only `stdout` read, so anything that stopped git from
+    # answering — a dubious-ownership refusal, a detached worktree, git missing from PATH —
+    # left `head` empty, and the `if head and ...` below then quietly skipped the comparison.
+    # The one gate that catches a stale PKG_SOURCE_VERSION was therefore disabled by an
+    # unrelated environment problem, and disabled SILENTLY: preflight printed the Makefile's
+    # SHA and reported no mismatch, which reads as "the pin is correct".
+    # (Audit 2026-08-02, §8 of the follow-up.)
+    head_proc = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT
-    ).stdout.strip()
+    )
+    head = head_proc.stdout.strip()
+    if head_proc.returncode != 0 or not head:
+        detail = head_proc.stderr.strip() or f"exit {head_proc.returncode}"
+        failures.append(
+            "release_preflight: cannot read HEAD via git "
+            f"({detail}) — refusing to skip the OpenWrt PKG_SOURCE_VERSION comparison, "
+            "which is the only check that catches the router package building an older tree"
+        )
 
     print(f"  PKG_VERSION={pkg_ver}  PKG_SOURCE_VERSION={(pkg_sha or '')[:8]}  "
           f"PKG_MIRROR_HASH={'<placeholder>' if pkg_hash == PLACEHOLDER_HASH else (pkg_hash or '')[:16]}")

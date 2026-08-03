@@ -182,6 +182,28 @@ impl UsersDb {
                         path.display()
                     )
                 })?;
+                // The WRITE path must be at least as strict as the load path.
+                //
+                // `load()` refuses a file with unreadable values, because a limit that will
+                // not parse falls back to 0 and 0 means NO LIMIT. This path only checked that
+                // the file was syntactically parseable — so a file the server would refuse to
+                // start on could still be opened here through the panel or `add-client`,
+                // silently converted (`max_sessions = ten` → 0), and then written BACK by the
+                // `save()` below. The unreadable value would be gone from the file and the
+                // restriction gone with it, having passed through the one code path that
+                // holds the write lock. A read-only refusal on one side and a rewrite on the
+                // other is worse than either being lenient. (Audit 2026-08-02, §3 of the
+                // follow-up.)
+                let bad = doc.bad_values();
+                if !bad.is_empty() {
+                    anyhow::bail!(
+                        "refusing to modify the users DB: '{}' has {} unreadable value(s), and \
+                         saving would replace them with defaults that mean NO LIMIT:\n  {}",
+                        path.display(),
+                        bad.len(),
+                        bad.join("\n  ")
+                    );
+                }
                 UsersDb::from_ini(&doc)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => UsersDb::default(),

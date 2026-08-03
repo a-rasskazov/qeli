@@ -104,6 +104,21 @@ pub async fn run_client(config_path: &str) -> anyhow::Result<()> {
             "auth.password, auth.password_file or auth.password_command required"
         ));
     };
+    // Bound the EFFECTIVE credential, not just the inline one.
+    //
+    // `config.validate()` above already checked `pass`, but it ran before this block — the
+    // file and command sources produce their secret only now, so a long token from either
+    // walked straight past the bound that exists for it. These are the sources most likely to
+    // carry one: nobody types a 1 KB password, a secret manager emits one without blinking.
+    // (Audit 2026-08-02, §2 of the follow-up.)
+    let pw_source = if config.auth.password.is_some() {
+        "pass"
+    } else if config.auth.password_file.is_some() {
+        "password_file"
+    } else {
+        "password_command"
+    };
+    config.check_credential_size(&password, pw_source)?;
 
     // Repair any DNS state left behind by a previous run that died without
     // restoring (SIGKILL / power loss / panic). Must run before we touch DNS.
