@@ -166,26 +166,39 @@ final class ParityHardeningTests: XCTestCase {
     /// SAME PQ ClientHello, so claiming post-quantum for them is correct.
     func testPostQuantumIsClaimedForEveryModeExceptPlain() throws {
         for mode in ["fake-tls", "obfs", "reality-tls"] {
-            // reality_sid is now REQUIRED with reality-tls (a profile without it is treated as
-            // a probe and proxied to the decoy site), so the fixture has to carry it. This test
-            // is about the post-quantum claim, not about that rule — it is covered on its own.
-            let config = try VPNConfig(parsing: minimalINI("mode = \(mode)\nobfs_key = k\nreality_sid = 0a1b"))
+            // reality-tls now requires BOTH reality_sid and a pinned key at parse time, so the
+            // fixture has to carry them. This test is about the post-quantum claim, not about
+            // those preconditions — they have their own coverage below.
+            let config = try VPNConfig(parsing: minimalINI(
+                "mode = \(mode)\nobfs_key = k\nreality_sid = 0a1b\nkey = "
+                    + String(repeating: "aa", count: 32)))
             XCTAssertTrue(ProtectionSummary(config: config).postQuantum, mode)
         }
         let plain = try VPNConfig(parsing: minimalINI("mode = plain"))
         XCTAssertFalse(ProtectionSummary(config: plain).postQuantum)
     }
 
-    /// A reality-tls profile with no pinned key must stay EDITABLE — the connect-time
-    /// precondition in `TunnelManager` is what refuses it, so parsing and saving such a
-    /// profile has to keep working while the user is still filling it in.
+    /// A reality-tls profile with no pinned key is REFUSED, at parse time.
     ///
-    /// (The refusal itself isn't covered here: exercising it means driving `TunnelManager`,
-    /// which talks to the system VPN stack and isn't safe to touch from a unit test.)
-    func testRealityWithoutPinnedKeyStillParsesAndSaves() throws {
-        let config = try VPNConfig(parsing: minimalINI("mode = reality-tls\nreality_sid = 0a1b"))
-        XCTAssertEqual(config.wireMode, "reality-tls")
-        XCTAssertNil(config.serverPublicKeyHex)
-        XCTAssertNoThrow(try config.toINI())
+    /// This inverts what the test asserted before: parsing used to accept such a profile and
+    /// the connect-time precondition in `TunnelManager` was what refused it, so a half-filled
+    /// profile stayed editable. The refusal moved into the config layer, because accepting the
+    /// profile is what makes the failure surface mid-handshake, where it reads as a server or
+    /// network fault rather than a missing field.
+    ///
+    /// The trade is real and recorded here rather than glossed over: an unfinished reality-tls
+    /// profile can no longer be saved from the editor, only completed or discarded. That is the
+    /// stricter of the two behaviours and matches the Rust client, which refuses at config load.
+    func testRealityWithoutPinnedKeyIsRefused() throws {
+        XCTAssertThrowsError(
+            try VPNConfig(parsing: minimalINI("mode = reality-tls\nreality_sid = 0a1b")),
+            "reality-tls without a pinned key must not parse: an unauthenticated peer is proxied "
+                + "to the decoy site, which a TOFU client cannot tell apart from the real server")
+
+        // With the key present the same profile parses and round-trips.
+        let ok = try VPNConfig(parsing: minimalINI(
+            "mode = reality-tls\nreality_sid = 0a1b\nkey = " + String(repeating: "aa", count: 32)))
+        XCTAssertEqual(ok.wireMode, "reality-tls")
+        XCTAssertNoThrow(try ok.toINI())
     }
 }
