@@ -231,6 +231,26 @@ public static class WireConformance
         check("ini-carry: and they reach the file it writes",
             edited.ToIni().Contains("post_up = /etc/qeli/up.sh"));
 
+        // The editor must not LAUNDER a typo either.
+        //
+        // A bad number or an unknown key parses to a default AND records a marker. Rebuilding
+        // the config without the marker made Validate() pass on something the operator never
+        // wrote, with the offending line gone from the file. The form has no control for
+        // either, so it cannot have resolved them. (Audit 2026-08-02, follow-up.)
+        var dirty = Ini("reconnect_base_delay = bad", "gatway = true");
+        var savedDirty = dirty.WithEditorFields(
+            name: null, serverAddress: "vpn.example.com", port: 443, protocol: "tcp",
+            wireMode: "fake-tls", obfsKey: "", obfsFronting: "websocket", realityShortId: null,
+            sni: null, quicEnabled: false, username: "u", password: "p",
+            serverPublicKeyHex: null, routingMode: "full-tunnel", addDefaultGateway: true,
+            routeLocalNetworks: false, mtu: 0, dnsServers: new List<string>(),
+            paddingEnabled: true, paddingMin: 0, paddingMax: 255,
+            heartbeatEnabled: true, heartbeatIntervalMs: 15000, heartbeatJitterMs: 2000);
+        bool stillRefused = false;
+        try { savedDirty.Validate(); }
+        catch (ArgumentException) { stillRefused = true; }
+        check("ini-carry: the editor cannot launder a bad number or unknown key", stillRefused);
+
         // A MISSPELLED key name is invisible: nothing reads it, so the setting it was meant to
         // change silently keeps its default — `gatway = true` left the tunnel split with
         // nothing said anywhere. The Rust client has always refused these; this port did not.

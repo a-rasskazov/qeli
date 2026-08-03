@@ -227,6 +227,13 @@ impl UsersDb {
                 // holds the write lock. A read-only refusal on one side and a rewrite on the
                 // other is worse than either being lenient. (Audit 2026-08-02, §3 of the
                 // follow-up.)
+                // ORDER MATTERS, and getting it wrong makes both checks silently vacuous:
+                // `bad_values` and the read-tracking behind `unread_keys` are populated BY the
+                // readers inside `from_ini`, so asking a freshly-parsed document reports
+                // nothing at all. The load path above has always done this correctly; this one
+                // asked first and answered into the void, which is worse than not checking —
+                // it looks checked.
+                let db = UsersDb::from_ini(&doc);
                 let bad = doc.bad_values();
                 if !bad.is_empty() {
                     anyhow::bail!(
@@ -237,7 +244,6 @@ impl UsersDb {
                         bad.join("\n  ")
                     );
                 }
-                let db = UsersDb::from_ini(&doc);
                 // Same reasoning as the value check above, and the same reason it belongs on
                 // the WRITE path too: a misspelled key is invisible to the codec that rewrites
                 // this file, so saving would drop the line and take the operator's last clue
@@ -351,6 +357,26 @@ mod load_tests {
         assert!(std::fs::read_to_string(&typo)
             .unwrap()
             .contains("max_session = 1"));
+
+        // An unreadable VALUE must be refused on the write path too.
+        //
+        // Its own check existed but ran BEFORE `from_ini`, and `bad_values` is populated BY the
+        // readers inside `from_ini` — so it asked a freshly-parsed document, got nothing, and
+        // passed. Vacuous rather than absent, which is the harder kind to notice: the code
+        // reads as though the case is covered. This assertion is what makes it real.
+        let bad_value = dir.join("bad-value.conf");
+        std::fs::write(
+            &bad_value,
+            "[user:alice]\npassword_hash = x\nmax_sessions = ten\n",
+        )
+        .unwrap();
+        let value_err = UsersDb::update_locked(&bad_value, |_| ())
+            .expect_err("an unreadable value must refuse the write")
+            .to_string();
+        assert!(value_err.contains("max_sessions"), "{value_err}");
+        assert!(std::fs::read_to_string(&bad_value)
+            .unwrap()
+            .contains("= ten"));
 
         // The correctly-spelled file still loads AND still writes — otherwise this would pass
         // against a check that simply refuses everything.

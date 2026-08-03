@@ -1362,7 +1362,7 @@ final class QeliTunnelEngine: @unchecked Sendable {
     /// PUSHED value — regardless of whether it was applied, so with `dns = off` or explicit
     /// resolvers it named a server the tunnel was not using. One function for the decision and
     /// the display means they cannot disagree again. (Audit 2026-08-02, follow-up.)
-    static func effectiveDNS(config: VPNConfig, session: TunnelSession) -> [String] {
+    static func effectiveDNS(config: VPNConfig, session: TunnelSessionConfiguration) -> [String] {
         guard config.dnsMode == "tunnel" else { return [] }
         if !config.dnsServers.isEmpty { return config.dnsServers }
         if !session.pushedDNS.isEmpty { return session.pushedDNS }

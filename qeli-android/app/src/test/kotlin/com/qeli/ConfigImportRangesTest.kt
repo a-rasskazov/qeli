@@ -130,11 +130,24 @@ class ConfigImportRangesTest {
         fun withDns(v: String) = VpnConfig.fromIni(
             "[qeli]\nserver = vpn.example.com:443\nuser = alice\npass = s3cret\ndns = $v\n"
         )
-        for (bad in listOf("::::", "1::2::3", "abcd:::", "of", "12345::1", "1:2:3:4:5:6:7")) {
+        for (bad in listOf(
+            "::::", "1::2::3", "abcd:::", "of", "12345::1", "1:2:3:4:5:6:7",
+            // The embedded IPv4 form stands for TWO groups, so this one is over-long. Counting
+            // it as a single group accepted it. (Audit 2026-08-02, follow-up.)
+            "1:2:3:4:5:6::192.0.2.1",
+            // `::` must stand for at least one OMITTED group.
+            "1:2:3:4:5:6:7:8::",
+        )) {
             val err = runCatching { withDns(bad).validate() }.exceptionOrNull()
             assertTrue("'$bad' must be refused", err?.message?.contains("dns") == true)
         }
-        for (ok in listOf("1.1.1.1", "::1", "2001:4860:4860::8888", "fe80::1", "::ffff:1.2.3.4")) {
+        for (ok in listOf(
+            "1.1.1.1", "::1", "2001:4860:4860::8888", "fe80::1", "::ffff:1.2.3.4",
+            // Eight groups exactly, with the last two written as IPv4 — valid, and the same
+            // miscount used to REJECT it.
+            "1:2:3:4:5:6:192.0.2.1",
+            "1:2:3:4:5:6:7:8",
+        )) {
             withDns(ok).validate()
         }
     }

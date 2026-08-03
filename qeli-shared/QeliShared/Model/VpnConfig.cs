@@ -393,6 +393,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
         // direct parse/serialize pair, so it stayed green throughout.
         // (Audit 2026-08-02, follow-up.)
         CarriedKeys = CarriedKeys,
+        // The other two typo markers must survive as well, for the same reason as the booleans
+        // below — and they were the ones still being laundered.
+        //
+        // `reconnect_base_delay = bad` parses to the default AND records the key. Opening the
+        // profile in the editor and pressing Save rebuilt the config without the marker, so
+        // Validate() then saw something clean and the setting sat at its default with the
+        // original line gone from the file. The form has no control for either of these, so it
+        // cannot have resolved them; dropping them is pure loss. An unknown key is the same
+        // case, and for a security flag it is a silent weakening.
+        // (Audit 2026-08-02, follow-up.)
+        UnparsedNumericKeys = UnparsedNumericKeys,
+        UnknownKeys = UnknownKeys,
         // Carried, MINUS whatever this form just rewrote.
         //
         // Carrying it wholesale was wrong in the other direction: the user fixes the offending

@@ -759,20 +759,25 @@ data class VpnConfig(
                 // `abcd:::`. Those are not addresses: the config validated and the failure
                 // surfaced later, when the TUN was built and the DNS entry was quietly not
                 // added. A structural check keeps the error where the value was written.
-                if (v.count { it == ':' } > 8) return false
-                // At most one `::`, and it is the only place an empty group may appear.
-                val doubleColons = Regex("::").findAll(v).count()
-                if (doubleColons > 1) return false
+                // Three or more colons in a row are never legal, and a NON-OVERLAPPING search
+                // for `::` does not see them: in `abcd:::` it matches one pair and resumes past
+                // it, leaving a lone colon it never counts. Reject the run directly.
+                if (":::" in v) return false
+                // A single leading or trailing colon is only legal as half of a `::`.
+                if (v.startsWith(":") && !v.startsWith("::")) return false
+                if (v.endsWith(":") && !v.endsWith("::")) return false
+                // At most one `::`, and it is the only place a run of groups may be omitted.
+                if (Regex("::").findAll(v).count() > 1) return false
+                val compressed = v.contains("::")
                 val groups = v.split(':')
-                if (doubleColons == 0 && groups.size != 8) return false
-                var seenEmpty = 0
+
+                // A trailing IPv4 form (`::ffff:1.2.3.4`) is legal only in the LAST group, and
+                // it stands for TWO 16-bit groups, not one. Counting it as one both rejected
+                // the valid `1:2:3:4:5:6:192.0.2.1` (seven groups by that arithmetic, eight in
+                // reality) and accepted the over-long `1:2:3:4:5:6::192.0.2.1`.
+                var groupCount = 0
                 for ((i, g) in groups.withIndex()) {
-                    if (g.isEmpty()) {
-                        // `::1` and `1::` produce a leading/trailing empty pair; count once.
-                        if (i != 0 && i != groups.lastIndex) seenEmpty++
-                        continue
-                    }
-                    // A trailing IPv4 form (`::ffff:1.2.3.4`) is legal only in the last group.
+                    if (g.isEmpty()) continue           // one side of `::`, or a leading/trailing pair
                     if ('.' in g) {
                         if (i != groups.lastIndex) return false
                         val quads = g.split('.')
@@ -780,11 +785,15 @@ data class VpnConfig(
                                 q.isNotEmpty() && q.length <= 3 && q.all(Char::isDigit) && q.toInt() <= 255
                             }
                         ) return false
+                        groupCount += 2
                         continue
                     }
                     if (g.length > 4 || !g.all { it.isDigit() || it in "abcdefABCDEF" }) return false
+                    groupCount++
                 }
-                return seenEmpty <= 1
+                // Exactly 8 without `::`; fewer than 8 with it — `::` must stand for at least
+                // one omitted group, so a "compressed" address that already has 8 is malformed.
+                return if (compressed) groupCount < 8 else groupCount == 8
             }
             val parts = v.split('.')
             return parts.size == 4 && parts.all { p ->
