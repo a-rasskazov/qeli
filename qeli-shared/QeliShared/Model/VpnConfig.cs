@@ -955,6 +955,18 @@ public sealed class VpnConfig : INotifyPropertyChanged
     ///
     /// Called at CONNECT, not at load: an editor must still be able to open a bad profile in
     /// order to fix it. Same split as the Rust client. (Audit 2026-07-31.)</summary>
+    /// <summary>Largest `user` + `:` + `pass`, in UTF-8 bytes, that still fits one AUTH
+    /// datagram.</summary>
+    /// <remarks>
+    /// The AUTH plaintext is <c>proof(32)</c> + the optional <c>[0x00 device_id(16)]</c> prefix
+    /// + <c>user:pass</c>, and the whole thing rides in one unfragmented datagram — so the
+    /// credentials are what decides whether it survives a path that drops IP fragments.
+    /// Derived from <see cref="Qeli.Shared.Protocol.UdpFrag.MaxChunk"/> rather than written
+    /// out, so it tracks the budget. Fully qualified: the bare namespace `Protocol` is
+    /// shadowed here by this class's own `Protocol` property (the tcp/udp string).
+    /// </remarks>
+    public static int AuthCredentialBudget => Qeli.Shared.Protocol.UdpFrag.MaxChunk - (32 + 17);
+
     /// <summary>True for a bare IPv4 or IPv6 literal.</summary>
     /// <remarks>
     /// Deliberately not <c>Dns.GetHostAddresses</c>: that RESOLVES anything which is not a
@@ -985,6 +997,28 @@ public sealed class VpnConfig : INotifyPropertyChanged
         {
             throw new ArgumentException(
                 $"dns mode must be off, tunnel or system — got '{DnsMode}'");
+        }
+        // Credentials must leave the AUTH message inside one datagram on UDP.
+        //
+        // AUTH goes out UNFRAGMENTED, unlike the ClientHello beside it and the AuthOK coming
+        // back, and its size IS the credentials — nothing else in it varies. A long generated
+        // token used as a password pushes the record past the fragment budget, the datagram
+        // then needs IP fragmentation, and a mobile or CGNAT path drops it. The symptom is a
+        // handshake that times out only on those networks: indistinguishable from an
+        // unreachable server, with nothing in any log. This bound exists in the Rust client;
+        // without it here the same profile worked on one client and hung on another.
+        //
+        // BYTES, not characters: the wire carries UTF-8, so a non-Latin password is longer
+        // than it looks. (Audit 2026-08-02, follow-up.)
+        int credentialBytes = Encoding.UTF8.GetByteCount(Username)
+            + Encoding.UTF8.GetByteCount(Password) + 1;  // + the ':' separator
+        if (credentialBytes > AuthCredentialBudget)
+        {
+            throw new ArgumentException(
+                $"'user' + 'pass' are {credentialBytes} bytes, over the {AuthCredentialBudget} "
+                + "a UDP AUTH datagram can carry — the handshake would be dropped by any path "
+                + "that discards IP fragments (mobile, CGNAT) and would look like an "
+                + "unreachable server. Shorten them.");
         }
         if (DuplicateKeys.Count > 0)
         {

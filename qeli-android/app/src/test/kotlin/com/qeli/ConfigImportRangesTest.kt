@@ -139,6 +139,33 @@ class ConfigImportRangesTest {
         }
     }
 
+    /**
+     * Credentials that do not fit one datagram are refused here, as they are in the CLI.
+     *
+     * AUTH goes out unfragmented and its size IS the credentials, so a long token used as a
+     * password needs IP fragmentation — which mobile and CGNAT paths drop. The Rust client
+     * bounded this; without the same bound here the identical profile worked on a laptop and
+     * hung on the phone. UTF-8 BYTES, not characters. (Audit 2026-08-02, follow-up.)
+     */
+    @Test
+    fun `credentials too large for one datagram are refused`() {
+        fun withPass(p: String) = VpnConfig.fromIni(
+            "[qeli]\nserver = vpn.example.com:443\nuser = alice\npass = $p\n"
+        )
+        // A realistic credential is nowhere near the bound.
+        withPass("x".repeat(64)).validate()
+
+        val err = runCatching { withPass("x".repeat(VpnConfig.AUTH_CRED_BUDGET)).validate() }
+            .exceptionOrNull()
+        assertTrue("must name the fields, got $err", err?.message?.contains("pass") == true)
+
+        // Counted in BYTES: a two-byte character halves how many fit, and a check that counted
+        // characters would let this through.
+        val cyrillic = "п".repeat(VpnConfig.AUTH_CRED_BUDGET / 2)
+        val err2 = runCatching { withPass(cyrillic).validate() }.exceptionOrNull()
+        assertTrue("UTF-8 length must be what counts, got $err2", err2 != null)
+    }
+
     /** An unknown `dns.mode` must fail, not silently become the widest option. */
     @Test
     fun `json refuses an unknown dns mode`() {

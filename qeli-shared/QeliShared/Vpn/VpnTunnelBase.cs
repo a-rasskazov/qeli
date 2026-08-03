@@ -1607,10 +1607,14 @@ public abstract class VpnTunnelBase
 
         // Leg 2, same treatment as the ClientHello above and bounded by the SAME hsDeadline, so
         // the whole UDP handshake still fits one connection_timeout_secs: a dropped auth datagram
-        // (client->server) recovers in ~1-2s instead of stalling the full timeout. A dropped
-        // AuthOK (server->client) is not repairable here — the server won't re-emit it for an
-        // already-authenticated session — so that falls through to the deadline and a fresh-port
-        // reconnect, which redoes the whole handshake cleanly.
+        // (client->server) recovers in ~1-2s instead of stalling the full timeout.
+        //
+        // A dropped AuthOK (server->client) is repaired by the SAME retransmit: the server caches
+        // it and re-emits on a byte-identical AUTH, up to a small per-session cap — which is why
+        // the identical inner bytes above matter, the server matches on them. Only once the cap is
+        // spent does this fall through to the deadline and a fresh-port reconnect, which redoes
+        // the whole handshake cleanly. (This used to say the server never re-emits; it has since
+        // 0.7.14.)
         var authResponse = dec.Decrypt(isUdp
             ? RecvUdpWithRetransmit(transport, authPacket, longHeader: false, config, hsDeadline,
                 "AuthOK", "auth")

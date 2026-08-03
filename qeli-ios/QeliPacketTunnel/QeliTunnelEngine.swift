@@ -238,18 +238,9 @@ final class QeliTunnelEngine: @unchecked Sendable {
             network.ipv6Settings = ipv6
         }
 
-        // `dns = off` / `system` means LEAVE THE DEVICE RESOLVER ALONE, and it wins over
-        // everything below — the server push included, matching the Android and desktop ports.
-        // The mode used to collapse into "no explicit resolvers", which the fallback below then
-        // read as "nothing chosen": a profile asking us not to touch DNS sent every lookup to
-        // Cloudflare and Google. (Audit 2026-08-02, §3.)
-        let dns: [String] = effectiveConfig.dnsMode != "tunnel"
-            ? []
-            : (!effectiveConfig.dnsServers.isEmpty
-                ? effectiveConfig.dnsServers
-                : (!session.pushedDNS.isEmpty
-                    ? session.pushedDNS
-                    : (effectiveConfig.isFullTunnel ? ["1.1.1.1", "8.8.8.8"] : [])))
+        // See `effectiveDNS(config:session:)` — one function for the decision and for what the
+        // card displays, so they cannot disagree.
+        let dns = Self.effectiveDNS(config: effectiveConfig, session: session)
         if !dns.isEmpty { network.dnsSettings = NEDNSSettings(servers: dns) }
         let effectiveMTU = effectiveConfig.mtu > 0
             ? effectiveConfig.mtu
@@ -768,10 +759,32 @@ final class QeliTunnelEngine: @unchecked Sendable {
             snapshot.downloadBytesPerSecond = 0
             // Negotiated values for the protection card — published here because this is the
             // moment they become true, and taken from the session rather than re-derived.
-            snapshot.pushedDNS = session.pushedDNS.first
+            // What the tunnel WILL USE, not what the server offered: with `dns = off` or
+            // explicit resolvers in the profile the push is ignored, and naming it here made
+            // the card claim a resolver that was never programmed. `nil` = the device's own
+            // resolvers are left alone, which the UI renders as "system DNS".
+            // (Audit 2026-08-02, follow-up.)
+            snapshot.pushedDNS = Self.effectiveDNS(config: config, session: session).first
             snapshot.appliedMTU = session.mtu > 0 ? session.mtu : nil
             snapshot.maxStreams = session.maxStreams
             snapshot.pushedRoutes = session.pushedRoutes.count
+            snapshot.pushed = PushedFacts(
+                // Only a sample is kept. A server may advertise a very long list (a
+                // country-sized prefix set is a legitimate split-tunnel setup), and both this
+                // snapshot and the detail sheet would otherwise scale with it.
+                routes: Array(session.pushedRoutes.prefix(PushedFacts.routeSample)),
+                routeCount: session.pushedRoutes.count,
+                multipathAdaptive: session.multipathAdaptive,
+                // Safe to read off the effective config here: both handshakes write the
+                // server's obfuscation INTO it and then clamp (unlike the Android client,
+                // where pushed padding goes straight to the codec and never lands in config).
+                paddingEnabled: effectiveConfig.paddingEnabled,
+                paddingMin: effectiveConfig.paddingMin,
+                paddingMax: effectiveConfig.paddingMax,
+                heartbeatEnabled: effectiveConfig.heartbeatEnabled,
+                heartbeatIntervalMilliseconds: effectiveConfig.heartbeatIntervalMilliseconds,
+                shapingEnabled: effectiveConfig.shapingEnabled
+            )
             sampledUpload = 0
             sampledDownload = 0
             lastStatsDate = Date()
@@ -1335,6 +1348,25 @@ final class QeliTunnelEngine: @unchecked Sendable {
         let bits = prefix == 0 ? UInt32(0) : UInt32.max << UInt32(32 - prefix)
         return [24, 16, 8, 0].map { String((bits >> UInt32($0)) & 0xff) }
             .joined(separator: ".")
+    }
+
+    /// Resolvers actually programmed on the tunnel, in priority order.
+    ///
+    /// `dns = off`/`system` means LEAVE THE DEVICE RESOLVER ALONE and wins over everything —
+    /// the server push included, matching Android and the desktop ports. The mode used to
+    /// collapse into "no explicit resolvers", which the fallback then read as "nothing
+    /// chosen": a profile asking us not to touch DNS sent every lookup to Cloudflare and
+    /// Google. (Audit 2026-08-02, §3.)
+    ///
+    /// Shared with the snapshot because the card used to publish `session.pushedDNS` — the
+    /// PUSHED value — regardless of whether it was applied, so with `dns = off` or explicit
+    /// resolvers it named a server the tunnel was not using. One function for the decision and
+    /// the display means they cannot disagree again. (Audit 2026-08-02, follow-up.)
+    static func effectiveDNS(config: VPNConfig, session: TunnelSession) -> [String] {
+        guard config.dnsMode == "tunnel" else { return [] }
+        if !config.dnsServers.isEmpty { return config.dnsServers }
+        if !session.pushedDNS.isEmpty { return session.pushedDNS }
+        return config.isFullTunnel ? ["1.1.1.1", "8.8.8.8"] : []
     }
 
     private static func ipv4Route(_ cidr: String) -> NEIPv4Route? {

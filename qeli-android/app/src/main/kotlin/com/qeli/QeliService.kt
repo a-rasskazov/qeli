@@ -1285,21 +1285,10 @@ class VpnServiceImpl : VpnService() {
             // e.g. dns.push_servers) > public fallback 1.1.1.1/8.8.8.8, and only on a full
             // tunnel (a split tunnel leaves the system resolver alone). The public fallback
             // lives here, NOT as a config default, so a config without DNS stays clean.
-            val dns = when {
-                // `dns = off` / `dns = system` means LEAVE THE DEVICE RESOLVER ALONE, and it
-                // has to win over everything below — including the public fallback, which is
-                // what the mode used to collapse into: the profile asked us not to touch DNS
-                // and every lookup went to Cloudflare and Google instead.
-                // (Audit 2026-08-02, §3.)
-                config.dnsMode != "tunnel" -> {
-                    broadcastLog("dns = ${config.dnsMode}: leaving the system resolver alone")
-                    emptyList()
-                }
-                config.dnsServers.isNotEmpty() -> config.dnsServers
-                session.dnsIp.isNotEmpty() -> listOf(session.dnsIp)
-                config.isFullTunnel -> listOf("1.1.1.1", "8.8.8.8")
-                else -> emptyList()
-            }.filter { it.isNotEmpty() }
+            if (config.dnsMode != "tunnel") {
+                broadcastLog("dns = ${config.dnsMode}: leaving the system resolver alone")
+            }
+            val dns = effectiveDns(config, session)
             dns.forEach { try { addDnsServer(it) } catch (e: Exception) { broadcastLog("bad dns $it: ${e.message}") } }
 
             // Per-app split tunnel. "include" = only the listed apps enter the tunnel;
@@ -1354,14 +1343,39 @@ class VpnServiceImpl : VpnService() {
      *  Without this you cannot tell "the server never sent it" from "the client dropped it"
      *  — from the outside both look identical (a missing route/DNS and no log at all). Each
      *  item says WHY it was not applied and which knob fixes it. */
-    private fun logServerPush(config: VpnConfig, session: Session) {
+    /**
+     * Resolvers actually programmed on the TUN, in priority order: `dns = off`/`system` wins
+     * over everything, then explicit `dnsServers`, then the server-pushed one, then the public
+     * fallback on a full tunnel only (a split tunnel leaves the system resolver alone). The
+     * fallback lives here and NOT as a config default, so a profile without DNS round-trips
+     * clean.
+     *
+     * Extracted because the card used to publish `session.dnsIp` — the PUSHED value —
+     * regardless of whether it had been applied. With `dns = off`, or with explicit resolvers
+     * in the profile, the card named a server the tunnel was not using. One function for the
+     * decision and the display means they cannot disagree again.
+     * (Audit 2026-08-02, follow-up.)
+     */
+    private fun effectiveDns(config: VpnConfig, session: Session): List<String> = when {
+        config.dnsMode != "tunnel" -> emptyList()
+        config.dnsServers.isNotEmpty() -> config.dnsServers
+        session.dnsIp.isNotEmpty() -> listOf(session.dnsIp)
+        config.isFullTunnel -> listOf("1.1.1.1", "8.8.8.8")
+        else -> emptyList()
+    }.filter { it.isNotEmpty() }
+
+    private fun logServerPush(config: VpnConfig, session: Session, pushed: PushedObf? = null) {
         val nRoutes = try {
             if (session.routesJson.isBlank()) 0 else JSONArray(session.routesJson).length()
         } catch (e: Exception) { 0 }
         // Publish the negotiated values for the protection card. Same numbers the log line
         // below prints — taken from the session directly, so the UI never has to read them
         // back out of text.
-        liveDns = session.dnsIp
+        // What the tunnel WILL USE, not what the server offered: with `dns = off` or explicit
+        // resolvers in the profile the push is ignored, and naming it here made the card claim
+        // a resolver that was never programmed. Empty = the device's own resolvers are left
+        // alone, which the UI renders as "system DNS".
+        liveDns = effectiveDns(config, session).firstOrNull() ?: ""
         liveMtu = effectiveMtu(config.mtu, session.pushedMtu)
         liveStreams = session.maxStreams
         liveRoutes = nRoutes
@@ -2144,6 +2158,11 @@ class VpnServiceImpl : VpnService() {
                 catch (e: Exception) { return false }   // EMSGSIZE: link < probe
                 val payload = t.recvRawPayload(220)
                 if (payload != null && UdpFrag.isMtuProbeAck(payload)
+                // Republish: `logServerPush` ran BEFORE the probe and could only know the
+                // pushed/config ceiling, so the card kept showing 1400 while the TUN and the
+                // data plane were on 1280. The probe is the last word on this number, so it
+                // has to be the one displayed. (Audit 2026-08-02, follow-up.)
+                liveMtu = probed
                     && UdpFrag.parseMtuProbe(payload) == Pair(id, outerSize)) return true
             }
             return false
@@ -2200,10 +2219,15 @@ class VpnServiceImpl : VpnService() {
      *  Rust client's hs_deadline / HS_RETRANSMIT_INTERVAL loop: the server's reassembler dedups
      *  duplicate ClientHello fragments, continuation fragments are not re-charged by its
      *  new-session rate limiter, and a duplicate auth packet is replay-dropped — so re-sending is
-     *  safe. The reverse direction (a dropped ServerHello / AuthOK) is NOT repairable here, since
-     *  the server won't re-emit for a session it already has; that falls through to the deadline
-     *  and a fresh-port reconnect, which redoes the whole handshake cleanly. Jitter keeps a fleet
-     *  reconnecting after a shared outage from phase-locking on exact 1.000s ticks. */
+     *  safe.
+     *
+     *  The reverse direction is repaired by the SAME retransmit: the server caches its
+     *  ServerHello and AuthOK and re-emits on a byte-identical request, the AuthOK up to a small
+     *  per-session cap. That is why [resend] must be the identical bytes — the server matches on
+     *  them. Only once the cap is spent does this fall through to the deadline and a fresh-port
+     *  reconnect, which redoes the whole handshake cleanly. (This used to say the server never
+     *  re-emits; it has since 0.7.14.) Jitter keeps a fleet reconnecting after a shared outage
+     *  from phase-locking on exact 1.000s ticks. */
     private fun recvUdpWithRetransmit(
         transport: Transport, resend: ByteArray, longHeader: Boolean, config: VpnConfig,
         deadline: Long, expected: String, what: String

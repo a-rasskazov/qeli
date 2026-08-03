@@ -1,5 +1,6 @@
 package com.qeli.model
 
+import com.qeli.protocol.UdpFrag
 import org.json.JSONObject
 import java.io.Serializable
 
@@ -265,6 +266,27 @@ data class VpnConfig(
         // opposite of `off`/`system` and sends every lookup through the VPN.
         require(dnsMode in setOf("off", "tunnel", "system")) {
             "dns mode must be off, tunnel or system — got '$dnsMode'"
+        }
+
+        // Credentials must leave the AUTH message inside one datagram on UDP.
+        //
+        // AUTH goes out UNFRAGMENTED, unlike the ClientHello beside it and the AuthOK coming
+        // back, and its size IS the credentials — nothing else in it varies. A long generated
+        // token used as a password pushes the record past the fragment budget, the datagram
+        // then needs IP fragmentation, and a mobile or CGNAT path drops it. The symptom is a
+        // handshake that times out only on those networks: indistinguishable from an
+        // unreachable server, with nothing in any log. This bound exists in the Rust client;
+        // without it here the same profile worked on a laptop and hung on the phone.
+        //
+        // BYTES, not characters: the wire carries UTF-8, so a non-Latin password is longer
+        // than it looks. (Audit 2026-08-02, follow-up.)
+        val credBytes = username.toByteArray(Charsets.UTF_8).size +
+            password.toByteArray(Charsets.UTF_8).size + 1 // + the ':' separator
+        require(credBytes <= AUTH_CRED_BUDGET) {
+            "'user' + 'pass' are $credBytes bytes, over the $AUTH_CRED_BUDGET a UDP AUTH " +
+                "datagram can carry — the handshake would be dropped by any path that " +
+                "discards IP fragments (mobile, CGNAT) and would look like an unreachable " +
+                "server. Shorten them."
         }
         // The flat INI spells the MODE and the RESOLVER LIST with the same `dns` key, so a
         // misspelled mode does not fall through to an error — it falls through to being read
@@ -709,6 +731,16 @@ data class VpnConfig(
          * Declared BEFORE [KNOWN_INI_KEYS], which folds it in — a companion object's property
          * initializers run in declaration order, so the other way round leaves it null.
          */
+        /**
+         * Largest `user` + `:` + `pass`, in UTF-8 bytes, that still fits one AUTH datagram.
+         *
+         * The AUTH plaintext is `proof(32)` + the optional `[0x00 device_id(16)]` prefix +
+         * `user:pass`, and the whole thing rides in one unfragmented datagram — so the
+         * credentials are what decides whether it survives a path that drops IP fragments.
+         * Derived from [UdpFrag.MAX_CHUNK] rather than written out, so it tracks the budget.
+         */
+        const val AUTH_CRED_BUDGET = UdpFrag.MAX_CHUNK - (32 + 17)
+
         /**
          * True for a bare IPv4 or IPv6 literal.
          *
