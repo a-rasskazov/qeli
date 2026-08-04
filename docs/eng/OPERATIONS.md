@@ -1,6 +1,6 @@
 # Qeli — operations: compatibility, upgrades, rollback, backup
 
-> **These docs describe 0.7.13** — the latest released version. `qeli --version` tells you
+> **These docs describe 0.7.14** — the latest released version. `qeli --version` tells you
 > what you actually have.
 
 Installation is covered in [GETTING-STARTED.md](GETTING-STARTED.md), config keys in
