@@ -99,8 +99,14 @@ def dev_version() -> str | None:
     return m.group(1) if m else None
 
 
-def apply(targets: list[tuple[str, str, str]], want: str, write: bool) -> None:
-    """Check (or rewrite) every occurrence the regexes select."""
+def apply(targets: list[tuple[str, str, str]], want: str, write: bool,
+          also_ok: str | None = None) -> None:
+    """Check (or rewrite) every occurrence the regexes select.
+
+    `also_ok` is a second value the CHECK accepts (``--write`` always stamps `want`). It
+    exists for the docs banner, which names the RELEASED version and therefore has two
+    legitimate values around a release cut — see main().
+    """
     for rel, pattern, label in targets:
         path = ROOT / rel
         if not path.exists():
@@ -117,7 +123,7 @@ def apply(targets: list[tuple[str, str, str]], want: str, write: bool) -> None:
             # file drift forever while the script reports success.
             problems.append(f"{rel}: pattern for {label} matched nothing — it needs updating")
             continue
-        stale = [v for v in found if v != want]
+        stale = [v for v in found if v != want and (also_ok is None or v != also_ok)]
         if not stale:
             continue
         if write:
@@ -139,6 +145,11 @@ def apply(targets: list[tuple[str, str, str]], want: str, write: bool) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--write", action="store_true", help="rewrite the files instead of only checking")
+    ap.add_argument(
+        "--releasing", action="store_true",
+        help="stamp the docs banner with the version being RELEASED (the crate version) "
+             "instead of the newest tag — use in the release cut, just before tagging",
+    )
     args = ap.parse_args()
 
     dev = dev_version()
@@ -185,7 +196,19 @@ def main() -> int:
         for lang in ("ru", "eng")
         for doc in BANNER_DOCS
     ]
-    apply(banners, rel, args.write)
+    # The banner names the version a reader actually installs, so it tracks the newest TAG —
+    # which makes it unsatisfiable exactly once per release. The commit being tagged cannot
+    # already quote a tag that does not exist yet, so `--write` stamps the PREVIOUS release
+    # into it; the moment the tag lands, that commit's own banner is one version behind and
+    # CI on the release branch goes red over a number that could not have been right. That is
+    # how v0.7.14 left `main` failing the docs job while every other check was green.
+    #
+    # So: `--releasing` stamps the version being cut (used in the release procedure, right
+    # before tagging), and the CHECK accepts either value. Both are true statements — "these
+    # docs describe the last release" and "…describe the release being cut" — and the drift
+    # this check exists to catch, a banner stuck several versions back, still fails.
+    banner_want = dev if args.releasing else rel
+    apply(banners, banner_want, args.write, also_ok=rel if args.releasing else dev)
 
     if problems:
         print(f"\n{len(problems)} problem(s):\n")
