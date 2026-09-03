@@ -6,7 +6,22 @@
 
 ## [0.8.1] — не выпущен
 
-Разработка следующей версии начнётся после публикации 0.8.0; новые изменения будут добавляться сюда.
+Разработка 0.8.1 ведётся в ветке `dev`.
+
+- Добавлен session-aware IPv6 NDP proxy для провайдеров, которые считают выделенный клиентский
+  префикс on-link и ищут каждый адрес через Neighbor Solicitation вместо обычного маршрута через
+  WAN-адрес сервера. В `routing.ipv6.mode = route` доступны
+  `routing.ipv6.ndp_proxy = off|auto|required` и отдельный uplink
+  `routing.ipv6.ndp_proxy_interface`. Сервер отвечает только за `/128`, реально выданные живым
+  сессиям, и за активные non-default IPv6 `client_subnet`; revoke, disconnect и замена сессии
+  сразу убирают ownership. Общий multicast в клиентские туннели не пересылается. NS проверяется
+  по hop-limit, ICMPv6 checksum, target и форме options; solicited proxy NA используют
+  `Override=0` по RFC 4861, а ответы ограничены bounded rate limiter.
+  Packet socket использует временную socket-local `PACKET_MR_ALLMULTI` membership, поэтому
+  принимает solicited-node multicast для не назначенных WAN-интерфейсу клиентских `/128`, не
+  меняя постоянный флаг интерфейса. Linux veth/netns smoke подтвердил fail-closed lifecycle:
+  до сессии адрес не разрешается, после
+  подключения проходит 3/3 IPv6 ping через туннель, после disconnect neighbor снова `INCOMPLETE`.
 
 - UDP datapath на Linux и Android получает до 32 уже ожидающих датаграмм одним `recvmmsg` на
   клиенте и сервере и передаёт каждую пачку через одно сообщение внутренней очереди без ожидания

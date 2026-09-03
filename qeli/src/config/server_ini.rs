@@ -462,6 +462,14 @@ fn profile_to(p: &ProfileConfig) -> Section {
     if !p.routing.ipv6.interface.is_empty() {
         put_str(&mut s, "routing.ipv6.interface", &p.routing.ipv6.interface);
     }
+    put(&mut s, "routing.ipv6.ndp_proxy", p.routing.ipv6.ndp_proxy);
+    if !p.routing.ipv6.ndp_proxy_interface.is_empty() {
+        put_str(
+            &mut s,
+            "routing.ipv6.ndp_proxy_interface",
+            &p.routing.ipv6.ndp_proxy_interface,
+        );
+    }
     if !p.routing.post_up.is_empty() {
         put_str(&mut s, "routing.post_up", &p.routing.post_up);
     }
@@ -875,6 +883,13 @@ fn profile_from(s: &Section) -> ProfileConfig {
     p.routing.ipv6.mode = s.parse_or("routing.ipv6.mode", base.routing.ipv6.mode);
     p.routing.ipv6.interface = s
         .str_or("routing.ipv6.interface", &base.routing.ipv6.interface)
+        .to_string();
+    p.routing.ipv6.ndp_proxy = s.parse_or("routing.ipv6.ndp_proxy", base.routing.ipv6.ndp_proxy);
+    p.routing.ipv6.ndp_proxy_interface = s
+        .str_or(
+            "routing.ipv6.ndp_proxy_interface",
+            &base.routing.ipv6.ndp_proxy_interface,
+        )
         .to_string();
     p.routing.post_up = s
         .str_or("routing.post_up", &base.routing.post_up)
@@ -1464,6 +1479,8 @@ pool.ipv6.exclude = fd71:e1:1234:1::10
 pool.ipv6.reservation.alice = fd71:e1:1234:1::50
 routing.ipv6.mode = nat66
 routing.ipv6.interface = eth0
+routing.ipv6.ndp_proxy = off
+routing.ipv6.ndp_proxy_interface = eth1
 dns.listen_ipv6 = fd71:e1:1234:1::1
 dns.push_servers = 10.9.0.1, fd71:e1:1234:1::1
 dns.upstream = 1.1.1.1, 2606:4700:4700::1111
@@ -1485,6 +1502,8 @@ route = 2001:db8:400::/48 gateway=fd71:e1:1234:1::1 metric=20
             Some("fd71:e1:1234:1::1")
         );
         assert_eq!(profile.routing.ipv6.mode, Ipv6RoutingMode::Nat66);
+        assert_eq!(profile.routing.ipv6.ndp_proxy, Ipv6NdpProxyMode::Off);
+        assert_eq!(profile.routing.ipv6.ndp_proxy_interface, "eth1");
         assert_eq!(profile.routing.advertised_routes.len(), 1);
         assert_eq!(
             original.auth.users[0].static_ipv6.as_deref(),
@@ -1495,6 +1514,35 @@ route = 2001:db8:400::/48 gateway=fd71:e1:1234:1::1 metric=20
         assert!(serialized.contains("tun.ip_mode = dual"));
         assert!(serialized.contains("pool.ipv6.cidr = fd71:e1:1234:1::/64"));
         assert!(serialized.contains("static_ipv6 = fd71:e1:1234:1::50"));
+        let reparsed = crate::config::parse_server_config(&serialized).unwrap();
+        assert_eq!(
+            serde_json::to_value(&original).unwrap(),
+            serde_json::to_value(&reparsed).unwrap()
+        );
+    }
+
+    #[test]
+    fn required_ndp_proxy_ini_is_valid_and_round_trips() {
+        let source = r#"
+[profile:on-link-v6]
+tun.ip_mode = ipv6
+tun.ipv6_address = 2001:db8:1200:10::1
+tun.mtu = 1280
+pool.ipv6.cidr = 2001:db8:1200:10::/64
+routing.ipv6.mode = route
+routing.ipv6.interface = ens3
+routing.ipv6.ndp_proxy = required
+routing.ipv6.ndp_proxy_interface = ens3
+"#;
+        let original = crate::config::parse_server_config(source).unwrap();
+        let profile = &original.profiles[0];
+        assert_eq!(profile.routing.ipv6.ndp_proxy, Ipv6NdpProxyMode::Required);
+        assert_eq!(profile.routing.ipv6.ndp_proxy_interface, "ens3");
+        crate::config::server::validate_ipv6_profile(profile).unwrap();
+
+        let serialized = original.to_ini_string();
+        assert!(serialized.contains("routing.ipv6.ndp_proxy = required"));
+        assert!(serialized.contains("routing.ipv6.ndp_proxy_interface = ens3"));
         let reparsed = crate::config::parse_server_config(&serialized).unwrap();
         assert_eq!(
             serde_json::to_value(&original).unwrap(),

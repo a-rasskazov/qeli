@@ -344,6 +344,9 @@
       'IPv6 forwarding / NAT66': 'Маршрутизация IPv6 / NAT66',
       'route preserves client source addresses; nat66 masquerades them on the selected IPv6 uplink':
         'route сохраняет исходные адреса клиентов; nat66 маскарадует их на выбранном IPv6-интерфейсе',
+      'Upstream IPv6 NDP proxy': 'Внешний IPv6 NDP proxy',
+      'Answer only for active client IPv6 addresses and client_subnet prefixes; needed when the provider treats the delegated prefix as on-link':
+        'Отвечает только за IPv6-адреса активных клиентов и префиксы client_subnet; нужен, когда провайдер считает делегированный префикс on-link',
       'IPv6 listen address': 'IPv6-адрес прослушивания',
       'Should match the IPv6 VPN gateway': 'Должен совпадать с IPv6-шлюзом VPN',
       'Tunnel addresses': 'Адреса туннеля',
@@ -1302,10 +1305,10 @@
       "Effective: no per-user override → this user gets the profile's advertised routes.":
         'Действует: индивидуальных переопределений нет → пользователь получает маршруты, анонсируемые профилем.',
       'Client subnets': 'Подсети клиента',
-      "(iroute — subnets/addresses BEHIND this client; the server routes INBOUND traffic to them into this client's tunnel)":
-        '(iroute — подсети/адреса ЗА этим клиентом; сервер направляет ВХОДЯЩИЙ трафик к ним в туннель этого клиента)',
+      '(iroute — subnets/addresses BEHIND this client; with profile NDP proxy they also become live upstream IPv6 ownership)':
+        '(iroute — подсети/адреса ЗА этим клиентом; с NDP proxy профиля они также становятся активной IPv6-зоной ответственности на uplink)',
       '+ Add subnet': '+ Добавить подсеть',
-      '192.168.50.0/24 or 10.20.0.7': '192.168.50.0/24 или 10.20.0.7',
+      '192.168.50.0/24 or 2001:db8:50::/64': '192.168.50.0/24 или 2001:db8:50::/64',
       'My VPN': 'Мой VPN',
 
       // ── browser-tab titles (rendered server-side into <title>) ──

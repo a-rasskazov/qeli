@@ -2350,6 +2350,11 @@ Ethernet-мост: VLAN, STP, LLDP, неизвестные EtherType и прои
 `routing.ipv6.interface` включает forwarding без `accept_ra`; если uplink найден или указан
 явно, qeli дополнительно арендует `accept_ra=2`, чтобы forwarding не уничтожил SLAAC.
 Для `nat66` найденный или явно заданный uplink обязателен.
+Для on-link префикса, который upstream разрешает через Neighbor Discovery, режим `route`
+может включить session-aware NDP proxy. Он отвечает только за точные IPv6 живых сессий и
+за их non-default IPv6 `client_subnet`, не пересылая multicast клиентам. `auto` допускает
+старт без responder с предупреждением, `required` работает fail-closed. Подробная схема,
+ограничения интерфейса и пример приведены в [IPV6.md](IPV6.md#on-link-префикс-и-ndp-proxy-081).
 
 ## Встроенный DNS-резолвер (`dns.*`)
 
@@ -2437,6 +2442,8 @@ IPv6-listener. qeli ставит узкие разрешения `INPUT` для 
 | `routing.nat.interface` | `eth0` | egress-интерфейс для NAT (автоопределение при дефолте) |
 | `routing.ipv6.mode` | `off` | IPv6 egress: fail-closed изоляция `off`, двунаправленный source-preserving `route` или stateful `nat66`; для любого IPv6-профиля нужен `ip6tables`, включая `off` |
 | `routing.ipv6.interface` | — | IPv6 uplink; пусто = определить по IPv6 default route, если он есть. Обязателен для `nat66`, необязателен для LAN-only `route` |
+| `routing.ipv6.ndp_proxy` | `off` | upstream NDP responder: `off`, best-effort `auto` или fail-closed `required`; только для `routing.ipv6.mode = route` |
+| `routing.ipv6.ndp_proxy_interface` | — | Ethernet uplink для NDP; пусто = использовать фактически выбранный IPv6 interface |
 | `route` | — | повторяемый: раздаваемый клиентам маршрут `<cidr> [gateway=<ip>] [metric=<n>]`; максимум 256 |
 | `routing.post_up` | — | команда после поднятия TUN+NAT профиля (Linux, root). **Только из доверенного файла** (панель/API не пишут — RCE-гейт). Env включает `QELI_PROFILE`, `QELI_TUN`, явные `QELI_POOL_IPV4`/`QELI_POOL_IPV6`, фактические `QELI_WAN_IPV4`/`QELI_WAN_IPV6`, `QELI_BIND_PORT`; старые `QELI_POOL`/`QELI_WAN` выбирают основное семейство профиля |
 | `routing.post_down` | — | команда при чистой остановке профиля/сервера (зеркало `routing.post_up`; краш не выполняет) |

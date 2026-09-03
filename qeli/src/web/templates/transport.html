@@ -107,7 +107,7 @@
                 <dt>TX queue</dt><dd x-text="selectedProfile.tunnel.tx_queue_len"></dd>
                 <dt>NAT</dt><dd x-text="yesNo(selectedProfile.routing.nat) + (selectedProfile.routing.nat ? ' · ' + selectedProfile.routing.nat_interface : '')"></dd>
                 <dt x-show="selectedProfile.tunnel.ip_mode !== 'ipv4'">IPv6 forwarding</dt>
-                <dd x-show="selectedProfile.tunnel.ip_mode !== 'ipv4'" x-text="selectedProfile.routing.ipv6_mode + (selectedProfile.routing.ipv6_interface ? ' · ' + selectedProfile.routing.ipv6_interface : ' · ' + qeliT('Automatic'))"></dd>
+                <dd x-show="selectedProfile.tunnel.ip_mode !== 'ipv4'" x-text="selectedProfile.routing.ipv6_mode + (selectedProfile.routing.ipv6_interface ? ' · ' + selectedProfile.routing.ipv6_interface : ' · ' + qeliT('Automatic')) + (selectedProfile.routing.ipv6_ndp_proxy !== 'off' ? ' · NDP ' + selectedProfile.routing.ipv6_ndp_proxy + (selectedProfile.routing.ipv6_ndp_proxy_interface ? '/' + selectedProfile.routing.ipv6_ndp_proxy_interface : '') : '')"></dd>
                 <dt>Advertised routes</dt><dd x-text="selectedProfile.routing.advertised_routes"></dd>
               </dl>
             </section>

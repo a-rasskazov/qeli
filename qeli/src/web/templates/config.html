@@ -768,7 +768,10 @@
                 <div class="text-xs text-slate-500">route preserves client source addresses; nat66 masquerades them on the selected IPv6 uplink</div>
               </div>
               <select class="inp inp-compact inp-fit flex-shrink-0"
-                x-model="cfg.profiles[activeTab].routing.ipv6.mode" @change="markDirty()">
+                x-model="cfg.profiles[activeTab].routing.ipv6.mode"
+                @change="[cfg.profiles[activeTab].routing.ipv6.mode !== 'route' && (cfg.profiles[activeTab].routing.ipv6.ndp_proxy = 'off'),
+                          cfg.profiles[activeTab].routing.ipv6.mode !== 'route' && (cfg.profiles[activeTab].routing.ipv6.ndp_proxy_interface = ''),
+                          markDirty()]">
                 <option value="off">off</option>
                 <option value="route">route</option>
                 <option value="nat66">nat66</option>
@@ -776,6 +779,22 @@
               <input x-show="cfg.profiles[activeTab].routing.ipv6.mode !== 'off'"
                 class="inp font-mono text-xs h-8 flex-shrink-0" style="width:8rem" type="text"
                 x-model="cfg.profiles[activeTab].routing.ipv6.interface" @input="markDirty()" placeholder="auto / ens18">
+            </div>
+            <div class="field-toggle"
+              x-show="cfg.profiles[activeTab].tun.ip_mode !== 'ipv4' && cfg.profiles[activeTab].routing.ipv6.mode === 'route'">
+              <div class="flex-1">
+                <div class="text-sm font-medium text-white">Upstream IPv6 NDP proxy</div>
+                <div class="text-xs text-slate-500">Answer only for active client IPv6 addresses and client_subnet prefixes; needed when the provider treats the delegated prefix as on-link</div>
+              </div>
+              <select class="inp inp-compact inp-fit flex-shrink-0"
+                x-model="cfg.profiles[activeTab].routing.ipv6.ndp_proxy" @change="markDirty()">
+                <option value="off">off</option>
+                <option value="auto">auto</option>
+                <option value="required">required</option>
+              </select>
+              <input x-show="cfg.profiles[activeTab].routing.ipv6.ndp_proxy !== 'off'"
+                class="inp font-mono text-xs h-8 flex-shrink-0" style="width:8rem" type="text"
+                x-model="cfg.profiles[activeTab].routing.ipv6.ndp_proxy_interface" @input="markDirty()" placeholder="auto / ens18">
             </div>
             <div class="field-toggle">
               <div class="toggle-wrap" @click="[cfg.profiles[activeTab].routing.forward_private = !cfg.profiles[activeTab].routing.forward_private, markDirty()]">
@@ -1918,7 +1937,7 @@ function configPage() {
       const skel = {
         bind: {}, tun: {}, pool: { ipv6: {} }, dns: {}, dhcp: {},
         roaming: { enabled: false, grace_secs: 30, max_orphaned: 256, max_orphan_bytes: 67108864 },
-        routing: { nat: {}, ipv6: {} },
+        routing: { nat: {}, ipv6: { ndp_proxy: 'off', ndp_proxy_interface: '' } },
         performance: { tcp: {}, tun: {}, connection: {} },
         obfuscation: {
           tls: { reality_proxy: {} },

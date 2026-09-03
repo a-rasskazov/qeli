@@ -6,6 +6,7 @@ pub mod dns;
 pub mod handler;
 pub mod metrics;
 pub mod nat;
+pub mod ndp_proxy;
 pub mod notify;
 pub mod pool;
 pub mod preflight;
@@ -477,6 +478,33 @@ impl SessionMap {
             .map(|route| &route.session)
     }
 
+    /// Whether an active session owns an IPv6 address for upstream NDP proxying.
+    ///
+    /// Exact tunnel leases win absolutely: a stale/revoked exact owner must not fall through
+    /// to a broader client route owned by somebody else. Delegated prefixes reuse the existing
+    /// `client_subnet`/iroute registry, skip `/0` exit routes, and use the same longest-prefix
+    /// ownership rule as the data plane.
+    pub(crate) fn owns_ipv6_neighbor_target(&self, target: std::net::Ipv6Addr) -> bool {
+        use std::sync::atomic::Ordering;
+
+        let active = |session: &SessionShared| {
+            !session.revoked.load(Ordering::Acquire) && !session.closing.load(Ordering::Acquire)
+        };
+        let address = std::net::IpAddr::V6(target);
+        if let Some(session) = self.by_address.get(&address) {
+            return active(session);
+        }
+        self.client_routes
+            .iter()
+            .filter(|route| {
+                route.prefix > 0
+                    && matches!(route.net, RouteNetwork::V6(_))
+                    && route.contains(address)
+            })
+            .max_by_key(|route| route.prefix)
+            .is_some_and(|route| active(&route.session))
+    }
+
     /// Remove and return the CIDRs of a client's kernel-programmed inbound iroutes (#13)
     /// when its
     /// session leaves `by_ip`. EVERY eviction path must call this — then tear down the
@@ -600,6 +628,32 @@ mod client_route_tests {
             vec!["2001:db8:50::/64"]
         );
         assert!(sessions.client_routes.is_empty());
+    }
+
+    #[test]
+    fn ndp_ownership_tracks_exact_leases_delegated_prefixes_and_session_state() {
+        use std::sync::atomic::Ordering;
+
+        let exact = session(1, "2001:db8:10::2".parse().unwrap());
+        let delegated = session(2, "2001:db8:10::3".parse().unwrap());
+        let mut sessions = empty_map();
+        sessions.insert(exact.clone());
+        sessions.client_routes.push(
+            ClientRoute::parse("2001:db8:200::/56", delegated.client_ip, delegated.clone())
+                .unwrap(),
+        );
+        sessions
+            .client_routes
+            .push(ClientRoute::parse("::/0", delegated.client_ip, delegated.clone()).unwrap());
+
+        assert!(sessions.owns_ipv6_neighbor_target("2001:db8:10::2".parse().unwrap()));
+        assert!(sessions.owns_ipv6_neighbor_target("2001:db8:200:ab::9".parse().unwrap()));
+        assert!(!sessions.owns_ipv6_neighbor_target("2001:db8:ffff::9".parse().unwrap()));
+
+        exact.revoked.store(true, Ordering::Release);
+        assert!(!sessions.owns_ipv6_neighbor_target("2001:db8:10::2".parse().unwrap()));
+        delegated.closing.store(true, Ordering::Release);
+        assert!(!sessions.owns_ipv6_neighbor_target("2001:db8:200:ab::9".parse().unwrap()));
     }
 }
 
@@ -1518,6 +1572,13 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
                 &p.name,
                 "routing.ipv6.interface",
                 &p.routing.ipv6.interface,
+            )?;
+        }
+        if p.routing.ipv6.ndp_proxy != crate::config::server::Ipv6NdpProxyMode::Off {
+            validate_configured_interface(
+                &p.name,
+                "routing.ipv6.ndp_proxy_interface",
+                &p.routing.ipv6.ndp_proxy_interface,
             )?;
         }
 
@@ -4992,6 +5053,42 @@ async fn run_profile_generation(
             wan_ipv6 = wan;
         }
     }
+    let ndp_proxy = if pcfg.routing.ipv6.ndp_proxy == crate::config::server::Ipv6NdpProxyMode::Off {
+        None
+    } else {
+        let configured = pcfg.routing.ipv6.ndp_proxy_interface.trim();
+        let interface = if configured.is_empty() {
+            wan_ipv6.trim()
+        } else {
+            configured
+        };
+        let result = if interface.is_empty() {
+            Err(anyhow::anyhow!(
+                "no IPv6 uplink was detected; set routing.ipv6.ndp_proxy_interface explicitly"
+            ))
+        } else {
+            ndp_proxy::NdpProxy::bind(interface)
+        };
+        match result {
+            Ok(proxy) => Some(proxy),
+            Err(error)
+                if pcfg.routing.ipv6.ndp_proxy
+                    == crate::config::server::Ipv6NdpProxyMode::Auto =>
+            {
+                log::warn!(
+                    "Profile '{}': IPv6 NDP proxy auto mode is unavailable: {} — continuing without it",
+                    name,
+                    error
+                );
+                None
+            }
+            Err(error) => anyhow::bail!(
+                "profile '{}': routing.ipv6.ndp_proxy = required but the responder could not start: {}",
+                name,
+                error
+            ),
+        }
+    };
 
     let hook_env = ProfileHookEnv::new(&pcfg, wan_ipv4, wan_ipv6);
     state
@@ -5323,6 +5420,17 @@ async fn run_profile_generation(
         .await
         .insert(name.clone(), profile.clone());
     teardown.registered_profile = Some(profile.clone());
+
+    if let Some(proxy) = ndp_proxy {
+        let ndp_profile = profile.clone();
+        let label = format!("profile '{}' IPv6 NDP proxy", name);
+        service_set.spawn(async move {
+            proxy
+                .run(ndp_profile)
+                .await
+                .map_err(|error| anyhow::anyhow!("{label} failed: {error}"))
+        });
+    }
 
     let is_tap = dev_type == DeviceType::Tap;
     let gateway_mac: [u8; 6] = if is_tap { TAP_GATEWAY_MAC } else { [0u8; 6] };

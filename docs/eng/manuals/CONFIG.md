@@ -2401,6 +2401,12 @@ routes (WAN, server LAN, its pool and authenticated dynamic IPv6 `client_subnet`
 empty `routing.ipv6.interface` enables forwarding without `accept_ra`; when an uplink is found
 or explicitly configured, qeli also leases `accept_ra=2` so enabling forwarding preserves SLAAC.
 `nat66` always requires a detected or explicit uplink.
+For an on-link prefix that the upstream resolves through Neighbor Discovery, `route` can enable
+the session-aware NDP proxy. It answers only for exact live-session IPv6 leases and their
+non-default IPv6 `client_subnet` ownership, without relaying multicast to clients. `auto`
+allows startup without the responder after a warning, while `required` fails closed. See
+[IPV6.md](IPV6.md#on-link-prefix-and-ndp-proxy-081) for the topology, link requirements, and
+configuration example.
 
 ## Built-in DNS resolver (`dns.*`)
 
@@ -2489,6 +2495,8 @@ Server-side routing for the profile (client-side routing keys are in the "Client
 | `routing.nat.interface` | `eth0` | NAT egress interface (auto-detected when left at default) |
 | `routing.ipv6.mode` | `off` | IPv6 egress: fail-closed isolated `off`, bidirectional source-preserving `route`, or stateful `nat66`; every IPv6 profile requires `ip6tables`, including `off` |
 | `routing.ipv6.interface` | — | IPv6 uplink; empty = detect it from the IPv6 default route when present. Required by `nat66`, optional for LAN-only `route` |
+| `routing.ipv6.ndp_proxy` | `off` | upstream NDP responder: `off`, best-effort `auto`, or fail-closed `required`; valid only with `routing.ipv6.mode = route` |
+| `routing.ipv6.ndp_proxy_interface` | — | Ethernet uplink for NDP; empty = reuse the effective IPv6 interface |
 | `route` | — | repeatable: a route advertised to clients, `<cidr> [gateway=<ip>] [metric=<n>]`; maximum 256 |
 | `routing.post_up` | — | command run after this profile's TUN+NAT are up (Linux, root). **File-only** (panel/API never write it — RCE guard). Env includes `QELI_PROFILE`, `QELI_TUN`, explicit `QELI_POOL_IPV4`/`QELI_POOL_IPV6`, actual `QELI_WAN_IPV4`/`QELI_WAN_IPV6`, `QELI_BIND_PORT`; legacy `QELI_POOL`/`QELI_WAN` select the profile's primary family |
 | `routing.post_down` | — | command run on a clean profile/server stop (mirrors `routing.post_up`; a crash doesn't run it) |

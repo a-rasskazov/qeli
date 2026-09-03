@@ -151,6 +151,8 @@ pub async fn health(
                 "nat_interface": profile.routing.nat.interface,
                 "ipv6_mode": profile.routing.ipv6.mode,
                 "ipv6_interface": profile.routing.ipv6.interface,
+                "ipv6_ndp_proxy": profile.routing.ipv6.ndp_proxy,
+                "ipv6_ndp_proxy_interface": profile.routing.ipv6.ndp_proxy_interface,
                 "client_to_client": profile.routing.client_to_client,
                 "advertised_routes": profile.routing.advertised_routes.len(),
             },

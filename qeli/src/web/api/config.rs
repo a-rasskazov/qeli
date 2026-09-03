@@ -788,7 +788,7 @@ fn configure_quickstart_ip_mode(
     host: Option<&crate::server::preflight::HostNet>,
     ipv6_firewall_available: bool,
 ) -> Result<(), String> {
-    use crate::config::server::{IpMode, Ipv6RoutingMode};
+    use crate::config::server::{IpMode, Ipv6NdpProxyMode, Ipv6RoutingMode};
 
     profile.tun.ip_mode = desired;
     if desired == IpMode::Ipv4 {
@@ -800,6 +800,8 @@ fn configure_quickstart_ip_mode(
         profile.tun.ipv6_address = None;
         profile.pool.ipv6 = Default::default();
         profile.routing.ipv6.mode = Ipv6RoutingMode::Off;
+        profile.routing.ipv6.ndp_proxy = Ipv6NdpProxyMode::Off;
+        profile.routing.ipv6.ndp_proxy_interface.clear();
         profile.routing.ipv6.interface.clear();
         profile.dns.listen_ipv6 = None;
         profile
@@ -848,6 +850,10 @@ fn configure_quickstart_ip_mode(
     // fields while ip_mode=ipv4 and mode=off; normalize those too instead of silently
     // reusing addressing with no egress (or failing later because DNS has no IPv6 listener).
     profile.routing.ipv6.mode = Ipv6RoutingMode::Nat66;
+    // Quick Start deliberately provisions NAT66. A stale source-preserving NDP policy from
+    // a manually routed profile is incompatible with NAT66 and must not survive conversion.
+    profile.routing.ipv6.ndp_proxy = Ipv6NdpProxyMode::Off;
+    profile.routing.ipv6.ndp_proxy_interface.clear();
     profile.dns.listen_ipv6 = profile.tun.ipv6_address.clone();
 
     if desired == IpMode::Ipv6 {
@@ -2844,7 +2850,7 @@ mod raw_secret_tests {
         .unwrap_err();
         assert!(error.contains("ip6tables"), "got: {error}");
 
-        let (profile, _, _, _) = quickstart_profile_for_current(
+        let (mut profile, _, _, _) = quickstart_profile_for_current(
             "fake-tls",
             &current,
             Some(&host),
@@ -2859,6 +2865,9 @@ mod raw_secret_tests {
             profile.routing.ipv6.mode,
             crate::config::server::Ipv6RoutingMode::Nat66
         );
+        profile.routing.ipv6.mode = crate::config::server::Ipv6RoutingMode::Route;
+        profile.routing.ipv6.ndp_proxy = crate::config::server::Ipv6NdpProxyMode::Required;
+        profile.routing.ipv6.ndp_proxy_interface = "eth9".into();
 
         current.profiles.push(profile);
         let (profile, _, _, reused) = quickstart_profile_for_current(
@@ -2879,6 +2888,11 @@ mod raw_secret_tests {
             profile.routing.ipv6.mode,
             crate::config::server::Ipv6RoutingMode::Off
         );
+        assert_eq!(
+            profile.routing.ipv6.ndp_proxy,
+            crate::config::server::Ipv6NdpProxyMode::Off
+        );
+        assert!(profile.routing.ipv6.ndp_proxy_interface.is_empty());
     }
 
     #[test]
@@ -2891,7 +2905,9 @@ mod raw_secret_tests {
         profile.tun.ip_mode = crate::config::server::IpMode::Dual;
         profile.tun.ipv6_address = Some("fd71:e1:42::1".into());
         profile.pool.ipv6.cidr = "fd71:e1:42::/64".into();
-        profile.routing.ipv6.mode = crate::config::server::Ipv6RoutingMode::Off;
+        profile.routing.ipv6.mode = crate::config::server::Ipv6RoutingMode::Route;
+        profile.routing.ipv6.ndp_proxy = crate::config::server::Ipv6NdpProxyMode::Required;
+        profile.routing.ipv6.ndp_proxy_interface = "eth9".into();
         profile.dns.listen_ipv6 = None;
         current.profiles.push(profile);
 
@@ -2911,6 +2927,11 @@ mod raw_secret_tests {
             normalized.routing.ipv6.mode,
             crate::config::server::Ipv6RoutingMode::Nat66
         );
+        assert_eq!(
+            normalized.routing.ipv6.ndp_proxy,
+            crate::config::server::Ipv6NdpProxyMode::Off
+        );
+        assert!(normalized.routing.ipv6.ndp_proxy_interface.is_empty());
         assert_eq!(normalized.dns.listen_ipv6, normalized.tun.ipv6_address);
     }
 

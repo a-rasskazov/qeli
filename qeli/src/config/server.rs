@@ -496,10 +496,21 @@ pub fn validate_ipv6_profile(profile: &ProfileConfig) -> Result<Option<Ipv6PoolS
         || !profile.pool.ipv6.exclude.is_empty()
         || !profile.pool.ipv6.static_reservations.is_empty();
 
-    if !carries_ipv6 && profile.routing.ipv6.mode != Ipv6RoutingMode::Off {
+    if !carries_ipv6
+        && (profile.routing.ipv6.mode != Ipv6RoutingMode::Off
+            || profile.routing.ipv6.ndp_proxy != Ipv6NdpProxyMode::Off)
+    {
         return Err(format!(
-            "routing.ipv6.mode = {} requires tun.ip_mode = dual or ipv6",
-            profile.routing.ipv6.mode
+            "IPv6 routing/NDP proxy requires tun.ip_mode = dual or ipv6 (routing.ipv6.mode = {}, routing.ipv6.ndp_proxy = {})",
+            profile.routing.ipv6.mode, profile.routing.ipv6.ndp_proxy
+        ));
+    }
+    if profile.routing.ipv6.ndp_proxy != Ipv6NdpProxyMode::Off
+        && profile.routing.ipv6.mode != Ipv6RoutingMode::Route
+    {
+        return Err(format!(
+            "routing.ipv6.ndp_proxy = {} requires routing.ipv6.mode = route; NDP proxy publishes source-preserving IPv6 addresses and must not be combined with off or NAT66",
+            profile.routing.ipv6.ndp_proxy
         ));
     }
 
@@ -834,6 +845,18 @@ mod ipv6_config_tests {
             .unwrap_err()
             .contains("requires tun.ip_mode"));
     }
+
+    #[test]
+    fn ndp_proxy_requires_source_preserving_ipv6_route_mode() {
+        let mut profile = dual_profile();
+        profile.routing.ipv6.ndp_proxy = Ipv6NdpProxyMode::Required;
+        assert!(validate_ipv6_profile(&profile)
+            .unwrap_err()
+            .contains("requires routing.ipv6.mode = route"));
+
+        profile.routing.ipv6.mode = Ipv6RoutingMode::Route;
+        assert!(validate_ipv6_profile(&profile).is_ok());
+    }
 }
 
 #[cfg(test)]
@@ -1120,6 +1143,47 @@ impl std::str::FromStr for Ipv6RoutingMode {
     }
 }
 
+/// Whether the server answers upstream Neighbor Solicitations for active tunnel addresses.
+///
+/// This is deliberately independent from forwarding: route mode works without it when the
+/// provider routes the prefix to the server's own address. NDP proxy is needed only when the
+/// upstream treats the delegated prefix as on-link and therefore asks for every client via NDP.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Ipv6NdpProxyMode {
+    #[default]
+    Off,
+    /// Try to attach to the selected uplink; log and continue if the host cannot support it.
+    Auto,
+    /// Refuse to start the profile unless the responder is active.
+    Required,
+}
+
+impl std::fmt::Display for Ipv6NdpProxyMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Required => "required",
+        })
+    }
+}
+
+impl std::str::FromStr for Ipv6NdpProxyMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Ok(Self::Off),
+            "auto" => Ok(Self::Auto),
+            "required" => Ok(Self::Required),
+            _ => Err(format!(
+                "expected one of off, auto, required; got '{value}'"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct Ipv6RoutingConfig {
     #[serde(default)]
@@ -1127,6 +1191,12 @@ pub struct Ipv6RoutingConfig {
     /// Empty means auto-detect the IPv6 uplink when the selected mode needs one.
     #[serde(default)]
     pub interface: String,
+    /// Session-aware NDP response policy for an upstream on-link delegated prefix.
+    #[serde(default)]
+    pub ndp_proxy: Ipv6NdpProxyMode,
+    /// Empty means use the resolved `routing.ipv6.interface` / IPv6 default-route uplink.
+    #[serde(default)]
+    pub ndp_proxy_interface: String,
 }
 
 /// DNS proxy resource bounds. Validation rejects larger file/panel values and the runtime

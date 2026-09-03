@@ -446,6 +446,11 @@ Rust-ядро и адаптеры Android, iOS, Windows, macOS и Linux. Адм�
 маршрутизацию и DNS, MTU/PMTU и UDP data fragmentation, kill switch, все системные/per-app
 клиенты, панель, Quick Start, установщик, пакеты и примеры.
 
+Расширение 0.8.1 добавляет session-aware NDP proxy для отдельного клиентского префикса,
+который upstream считает on-link. В source-preserving режиме `route` сервер отвечает только
+за адреса живых сессий и активные non-default IPv6 `client_subnet`; режимы `off|auto|required`
+не меняют безопасный дефолт существующих конфигов.
+
 Исходная реализация теперь относится к линии разработки 0.8.0. Автоматическая базовая
 Linux-матрица 2026-08-31 прошла 14/14 сочетаний outer/inner/transport, включая cross-family
 leak и cleanup. Остаются специальные DNS/PMTU/PTB/TAP/legacy-сценарии и physical/native-матрица.

@@ -479,6 +479,11 @@ independent outer IPv4/IPv6, inner `ipv4|dual|ipv6`, TUN and TAP, TCP/UDP/QUIC, 
 routing and DNS, MTU/PMTU and UDP data fragmentation, kill switch, every system/per-app
 client, panel, Quick Start, installer, packages, and examples.
 
+The 0.8.1 extension adds a session-aware NDP proxy for a separate client prefix which the
+upstream treats as on-link. In source-preserving `route` mode the server responds only for
+live-session addresses and active non-default IPv6 `client_subnet` prefixes; the
+`off|auto|required` modes preserve the safe default for existing configurations.
+
 The source implementation is now the 0.8.0 development line. The automated Linux base matrix
 passed 14/14 outer/inner/transport cases on 2026-08-31, including cross-family leak and cleanup
 checks. Special DNS/PMTU/PTB/TAP/legacy cases and the physical/native certification matrix remain.
