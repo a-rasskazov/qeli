@@ -91,15 +91,29 @@ nested causes appear as `  <- …` lines.
 
 ### 1.3 Android client
 
-Also logs everything into the **in-app Log tab** (index 3), with Clear / Copy /
-Autoscroll buttons, a 500-line buffer, and a `[HH:mm:ss.SSS]` prefix. **Since 0.7.12**
-the shape is configurable in Settings → Log timestamp (the same five variants; on Android
-the default is time-only, because a full date eats the screen width). Plus via `adb`:
+The VPN service keeps a private persistent journal even while the Activity is closed or its
+process UI is recreated. The newest 1,000 events are retained, capped at 512 KiB, and restored
+into the **in-app Log tab** (index 3) when Qeli opens. Disconnect and a new connection do not
+erase it; only **Clear** removes the durable history. **Copy** therefore includes events emitted
+while the screen was off. The file is held in Android's private no-backup directory and never
+contains the password, private keys, or the complete profile.
+
+The default Info level records session boundaries, stop reasons, network loss/reconnect,
+Android service redelivery/revoke and battery-optimization warnings. Debug/Trace additionally
+records screen-off/screen-on timing and detailed adapter events. Timestamps remain configurable
+in Settings → Log timestamp; restored entries keep their original event time. The default is
+time-only because a full date consumes phone width.
+
+An active user-requested VPN returns `START_REDELIVER_INTENT`; Android can therefore redeliver
+the exact connect request after killing the service process. Explicit Disconnect first clears
+the durable desired-state bit and is never restarted. OEM force-stop/background policies can
+still prevent any service restart, so exclude Qeli from battery optimization when diagnosing.
+The same process-level output is available via `adb`:
 ```bash
 adb logcat -s VpnSvc VpnMain
 ```
-`VpnSvc` — the VPN service (matches the Log tab), `VpnMain` — the activity. Pure
-`Log.e` crash lines go **only** to logcat (they are not broadcast to the panel).
+`VpnSvc` is the VPN service and `VpnMain` is the Activity. Uncaught Android runtime crash lines
+can still exist only in logcat; Qeli's own service diagnostics are written to the durable tab.
 
 ### 1.4 Packet trace (`QELI_TRACE`, Rust server and Rust client)
 

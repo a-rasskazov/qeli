@@ -2,7 +2,9 @@ package com.qeli
 
 import com.qeli.model.VpnConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidSessionContinuityTest {
@@ -44,6 +46,14 @@ class AndroidSessionContinuityTest {
         dataPlane = TransportCoreDataPlaneFacts(),
         connectionLog = emptyList(),
     )
+
+    @Test
+    fun `only a still-desired running service requests redelivery`() {
+        assertTrue(shouldRedeliverVpnService(stopping = false, connectionDesired = true))
+        assertFalse(shouldRedeliverVpnService(stopping = true, connectionDesired = true))
+        assertFalse(shouldRedeliverVpnService(stopping = false, connectionDesired = false))
+        assertFalse(shouldRedeliverVpnService(stopping = true, connectionDesired = false))
+    }
 
     @Test
     fun transportGenerationDoesNotForceTunReplacement() {

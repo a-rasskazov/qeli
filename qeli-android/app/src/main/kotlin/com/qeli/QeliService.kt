@@ -52,6 +52,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 class VpnServiceImpl : VpnService() {
 
@@ -128,6 +129,10 @@ class VpnServiceImpl : VpnService() {
 
     @Volatile
     private var stopping = false
+    @Volatile
+    private var diagnosticSessionEndingLogged = false
+    @Volatile
+    private var diagnosticSessionIdCache = ""
 
     // Timestamp of the last network-change forced reconnect, to debounce a flapping
     // default network (see forceReconnect).
@@ -176,6 +181,9 @@ class VpnServiceImpl : VpnService() {
         const val EXTRA_STATUS = "status"
         const val EXTRA_ERROR = "error"
         const val EXTRA_LOG = "log"
+        const val EXTRA_LOG_TIME_MS = "log_time_ms"
+        const val EXTRA_LOG_SESSION_ID = "log_session_id"
+        const val EXTRA_LOG_LEVEL = "log_level"
         const val EXTRA_IP = "ip"
         const val EXTRA_GATEWAY = "gateway"
         const val STATUS_CONNECTING = "connecting"
@@ -316,6 +324,7 @@ class VpnServiceImpl : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val redelivered = flags and START_FLAG_REDELIVERY != 0
         when (intent?.action) {
             ACTION_DEBUG_TUN_SELF_TEST -> {
                 if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
@@ -363,12 +372,17 @@ class VpnServiceImpl : VpnService() {
                         rejectForegroundConnect("Invalid profile: ${rejected.message}")
                     }
                     else -> {
+                        prepareDiagnosticSession("app", redelivered)
+                        if (redelivered) {
+                            broadcastLog("Android redelivered the active VPN service after process death")
+                        }
                         setConnectionDesired(true)
                         startTrustedAware(config)
                     }
                 }
             }
             ACTION_DISCONNECT -> {
+                broadcastLog("User requested VPN disconnect")
                 userRequestedDisconnect = true
                 setConnectionDesired(false)
                 pausedByTrustedWifi = false
@@ -378,6 +392,12 @@ class VpnServiceImpl : VpnService() {
                 stopVpn()
             }
             ACTION_REEVALUATE_TRUSTED -> {
+                if (redelivered && connectionDesired()) {
+                    prepareDiagnosticSession("trusted-wifi", redelivered = true)
+                    broadcastLog(
+                        "Android redelivered the trusted-network controller after process death"
+                    )
+                }
                 // Settings can enable Trusted Wi-Fi while an existing tunnel is already up.
                 // Re-publish its current notification while the Activity is visible so the
                 // service gains the location type before that Activity disappears.
@@ -420,7 +440,11 @@ class VpnServiceImpl : VpnService() {
                     stopSelf()
                     return START_NOT_STICKY
                 }
+                prepareDiagnosticSession("always-on", redelivered)
                 broadcastLog("Always-on VPN start requested by the system")
+                if (redelivered) {
+                    broadcastLog("Android redelivered the always-on VPN service after process death")
+                }
                 setConnectionDesired(true)
                 // Always-on is another connect entry point, not an exemption from the local
                 // Trusted Wi-Fi policy. Lockdown/kill_switch are still authoritative inside
@@ -433,21 +457,22 @@ class VpnServiceImpl : VpnService() {
                 // branch above (stopVpn) and produces exactly the stop-loop / zombie tunnel
                 // that comment warns about. REDELIVER_INTENT hands this same
                 // "android.net.VpnService" intent back instead, so the restart reconnects.
-                return START_REDELIVER_INTENT
+                return if (shouldRedeliverVpnService(stopping, connectionDesired())) {
+                    START_REDELIVER_INTENT
+                } else {
+                    START_NOT_STICKY
+                }
             }
             null -> stopVpn()
             // Anything else is not ours: do nothing rather than tearing a live tunnel down
             // on an unrecognised action (the missing branch above is what this costs).
             else -> Log.w("VpnSvc", "Ignoring unknown service action: ${intent?.action}")
         }
-        // While trusted-network automation is armed this foreground service is the durable
-        // controller. REDELIVER (never STICKY/null) restores either the original config or the
-        // active profile after low-memory process death. Manual Disconnect clears the desired
-        // bit first, so it remains NOT_STICKY and can never resurrect a user-stopped tunnel.
-        val trusted = trustedWifiSettings()
-        val automationArmed = pausedByTrustedWifi || trustedPauseInFlight ||
-            (trusted.enabled && trusted.ssids.isNotEmpty())
-        return if (!stopping && connectionDesired() && automationArmed) {
+        // Every user-requested foreground VPN is a durable controller, not only trusted-Wi-Fi
+        // automation. REDELIVER (never STICKY/null) restores the exact connect action after
+        // low-memory process death. Manual Disconnect synchronously clears the desired bit
+        // first, so it remains NOT_STICKY and cannot resurrect a user-stopped tunnel.
+        return if (shouldRedeliverVpnService(stopping, connectionDesired())) {
             START_REDELIVER_INTENT
         } else {
             START_NOT_STICKY
@@ -459,6 +484,7 @@ class VpnServiceImpl : VpnService() {
         // using our UI. Treat that as the same explicit intent so trusted-network automation
         // cannot resurrect the tunnel. Do not call VpnService's default stopSelf(); stopVpn()
         // first performs the joined native/TUN teardown and then stops the service.
+        broadcastLog("Android revoked the VPN service", level = "warn")
         userRequestedDisconnect = true
         setConnectionDesired(false)
         pausedByTrustedWifi = false
@@ -472,6 +498,14 @@ class VpnServiceImpl : VpnService() {
         // Normal destruction happens only after stopVpn has joined the native runner and called
         // stopSelf. If Android destroys us independently, do the strongest synchronous cleanup
         // available; process death is the final descriptor boundary after this callback.
+        if (!stopping && connectionDesired()) {
+            broadcastLog(
+                "VPN service destroyed while the connection is still desired; awaiting redelivery",
+                level = "warn",
+            )
+        } else {
+            debugLog("VPN service destroyed after an intentional stop")
+        }
         if (transportCore != null || vpnInterface != null) {
             val core = transportCore
             runCatching { core?.stop() }
@@ -657,10 +691,36 @@ class VpnServiceImpl : VpnService() {
             .getBoolean(MainActivity.PREF_CONNECTION_DESIRED, false)
 
     private fun setConnectionDesired(desired: Boolean) {
-        getSharedPreferences(MainActivity.PREFS_STATE, Context.MODE_PRIVATE)
+        val stored = getSharedPreferences(MainActivity.PREFS_STATE, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(MainActivity.PREF_CONNECTION_DESIRED, desired)
-            .apply()
+            .commit()
+        if (!stored) Log.e("VpnSvc", "Failed to persist connection_desired=$desired")
+    }
+
+    private fun diagnosticSessionId(): String {
+        if (diagnosticSessionIdCache.isNotBlank()) return diagnosticSessionIdCache
+        diagnosticSessionIdCache =
+            getSharedPreferences(MainActivity.PREFS_STATE, Context.MODE_PRIVATE)
+                .getString(MainActivity.PREF_DIAGNOSTIC_SESSION_ID, "")
+                .orEmpty()
+        return diagnosticSessionIdCache
+    }
+
+    private fun prepareDiagnosticSession(origin: String, redelivered: Boolean) {
+        val prefs = getSharedPreferences(MainActivity.PREFS_STATE, Context.MODE_PRIVATE)
+        val existing = diagnosticSessionId()
+        val hasLiveController = transportCore != null || vpnInterface != null ||
+            transportJob?.isActive == true || pausedByTrustedWifi || trustedPauseInFlight
+        val createNew = existing.isBlank() || (!redelivered && !hasLiveController)
+        if (!createNew) return
+        val sessionId = UUID.randomUUID().toString().substring(0, 8)
+        diagnosticSessionIdCache = sessionId
+        if (!prefs.edit().putString(MainActivity.PREF_DIAGNOSTIC_SESSION_ID, sessionId).commit()) {
+            Log.e("VpnSvc", "Failed to persist diagnostic session id")
+        }
+        diagnosticSessionEndingLogged = false
+        broadcastLog("=== VPN session $sessionId started ($origin) ===")
     }
 
     @Suppress("DEPRECATION")
@@ -947,6 +1007,7 @@ class VpnServiceImpl : VpnService() {
         // The guards above require the previous generation to be fully gone. This is
         // what prevents "Disconnect then Connect" from overlapping two scopes/TUNs.
         stopping = false
+        diagnosticSessionEndingLogged = false
         pausedByTrustedWifi = false
         trustedPauseInFlight = false
         liveTrustedSsid = ""
@@ -1031,6 +1092,18 @@ class VpnServiceImpl : VpnService() {
             "Connecting to ${logValue(config.serverAddress)}:${config.port} " +
                 "as user '${logValue(config.username)}'"
         )
+        val batteryUnrestricted = runCatching {
+            getSystemService(PowerManager::class.java)
+                ?.isIgnoringBatteryOptimizations(packageName) == true
+        }.getOrDefault(false)
+        if (batteryUnrestricted) {
+            debugLog("Background diagnostics: battery optimization is disabled for Qeli")
+        } else {
+            broadcastLog(
+                "Background warning: Android battery optimization may stop the VPN service",
+                level = "warn",
+            )
+        }
         acquireTunnelWakeLock()
 
         supervisor = SupervisorJob()
@@ -2326,12 +2399,17 @@ class VpnServiceImpl : VpnService() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> screenOffAt = SystemClock.elapsedRealtime()
+                    Intent.ACTION_SCREEN_OFF -> {
+                        screenOffAt = SystemClock.elapsedRealtime()
+                        debugLog("Screen turned off")
+                    }
                     Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
                         val sleptAt = screenOffAt
                         if (sleptAt == 0L) return
                         screenOffAt = 0L
-                        scheduleWakeReconnect(SystemClock.elapsedRealtime() - sleptAt)
+                        val screenOffMs = SystemClock.elapsedRealtime() - sleptAt
+                        debugLog("Screen turned on after ${screenOffMs / 1000}s")
+                        scheduleWakeReconnect(screenOffMs)
                     }
                 }
             }
@@ -2607,6 +2685,18 @@ class VpnServiceImpl : VpnService() {
     @Synchronized
     private fun stopVpn(finalError: String? = null) {
         if (stopping) return
+        if (!diagnosticSessionEndingLogged && diagnosticSessionId().isNotBlank()) {
+            diagnosticSessionEndingLogged = true
+            val reason = when {
+                finalError != null -> finalError
+                userRequestedDisconnect || !connectionDesired() -> "user disconnect"
+                else -> "service stop"
+            }
+            broadcastLog(
+                "=== VPN session ending: ${logValue(reason)} ===",
+                level = if (finalError == null) "info" else "error",
+            )
+        }
         stopping = true
         if (transportCore != null || vpnInterface != null || transportJob?.isActive == true) {
             broadcastStatus(STATUS_DISCONNECTING)
@@ -2667,11 +2757,29 @@ class VpnServiceImpl : VpnService() {
         })
     }
 
-    private fun broadcastLog(msg: String) {
-        Log.d("VpnSvc", msg)
+    private fun broadcastLog(msg: String, level: String = "info") {
+        val entry = runCatching {
+            DiagnosticLogStore.append(
+                directory = noBackupFilesDir,
+                message = msg,
+                sessionId = diagnosticSessionId(),
+                level = level,
+            )
+        }.getOrElse { error ->
+            Log.w("VpnSvc", "Unable to persist diagnostic log: ${error.message}")
+            DiagnosticLogEntry(System.currentTimeMillis(), diagnosticSessionId(), level, msg)
+        }
+        when (entry.level) {
+            "error" -> Log.e("VpnSvc", entry.message)
+            "warn" -> Log.w("VpnSvc", entry.message)
+            else -> Log.d("VpnSvc", entry.message)
+        }
         sendBroadcast(Intent(BROADCAST_STATUS).apply {
             setPackage(packageName)
-            putExtra(EXTRA_LOG, msg)
+            putExtra(EXTRA_LOG, entry.message)
+            putExtra(EXTRA_LOG_TIME_MS, entry.timestampMs)
+            putExtra(EXTRA_LOG_SESSION_ID, entry.sessionId)
+            putExtra(EXTRA_LOG_LEVEL, entry.level)
         })
     }
 
@@ -2689,7 +2797,7 @@ class VpnServiceImpl : VpnService() {
         effectiveLogLevel(config) != "info"
 
     private fun debugLog(message: String) {
-        if (detailedLog()) broadcastLog(message)
+        if (detailedLog()) broadcastLog(message, level = effectiveLogLevel())
     }
 
     private fun logValue(value: String): String = value

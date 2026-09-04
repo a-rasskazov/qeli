@@ -137,7 +137,7 @@ class MainActivity : AppCompatActivity() {
     private data class Profile(var name: String, var text: String)
 
     companion object {
-        private const val MAX_LOG_LINES = 500
+        private const val MAX_LOG_LINES = DiagnosticLogStore.MAX_ENTRIES
         private const val PREFS_NAME = "vpn"
         private const val KEY_PROFILES = "profiles_json"
         /** Intent extra: the Quick Settings tile ([QeliTileService]) sets this to true to ask
@@ -150,6 +150,7 @@ class MainActivity : AppCompatActivity() {
         const val PREF_TRUSTED_WIFI_ENABLED = "trusted_wifi_enabled"
         const val PREF_TRUSTED_WIFI_SSIDS = "trusted_wifi_ssids"
         const val PREF_CONNECTION_DESIRED = "connection_desired"
+        const val PREF_DIAGNOSTIC_SESSION_ID = "diagnostic_session_id"
         // Global LAN-bypass toggle (read by QeliService at establish; OR'd with the
         // profile's own allow_lan). Lets Wi-Fi/LAN devices stay reachable on a full tunnel.
         const val PREF_ALLOW_LAN = "allow_lan"
@@ -242,8 +243,22 @@ ipv6 = auto
             val status = intent.getStringExtra(VpnServiceImpl.EXTRA_STATUS)
             val error = intent.getStringExtra(VpnServiceImpl.EXTRA_ERROR)
             val log = intent.getStringExtra(VpnServiceImpl.EXTRA_LOG)
+            val logTimeMs = intent.getLongExtra(
+                VpnServiceImpl.EXTRA_LOG_TIME_MS,
+                System.currentTimeMillis(),
+            )
+            val logSessionId = intent.getStringExtra(VpnServiceImpl.EXTRA_LOG_SESSION_ID).orEmpty()
+            val logLevel = intent.getStringExtra(VpnServiceImpl.EXTRA_LOG_LEVEL) ?: "info"
             runOnUiThread {
-                log?.let { appendLog(it) }
+                log?.let {
+                    appendLog(
+                        msg = it,
+                        timestampMs = logTimeMs,
+                        persist = false,
+                        sessionId = logSessionId,
+                        level = logLevel,
+                    )
+                }
                 if (status == VpnServiceImpl.STATUS_STATS) {
                     updateSpeed(
                         intent.getLongExtra(VpnServiceImpl.EXTRA_UP, 0),
@@ -302,6 +317,7 @@ ipv6 = auto
         ContextCompat.registerReceiver(
             this, statusReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        restoreDiagnosticLog()
 
         binding.btnImport.setOnClickListener { showImportChooser() }
         binding.btnNewProfile.setOnClickListener { showEditor(-1) }
@@ -310,7 +326,12 @@ ipv6 = auto
         binding.ringConnect.setOnClickListener { onConnectTap(it) }
 
         // Log tab toolbar
-        binding.btnLogClear.setOnClickListener { binding.tvLog.text = ""; logLineCount = 0 }
+        binding.btnLogClear.setOnClickListener {
+            runCatching { DiagnosticLogStore.clear(noBackupFilesDir) }
+                .onFailure { error -> Log.w("VpnMain", "Unable to clear diagnostic log", error) }
+            binding.tvLog.text = ""
+            logLineCount = 0
+        }
         binding.btnLogCopy.setOnClickListener {
             val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("qeli log", binding.tvLog.text))
@@ -2252,12 +2273,12 @@ ipv6 = auto
     /// `util::log_timestamp` (and the server's `[logging] time_format`) value for
     /// value, so phone and server logs line up; an unknown value degrades to the
     /// default instead of throwing.
-    private fun logStamp(): String {
+    private fun logStamp(timestampMs: Long = System.currentTimeMillis()): String {
         // Cached field, not a prefs read: appendLog runs per line and a reconnect
         // storm is exactly the path this screen was hardened against.
         val fmt = logTimeFormat
         if (fmt == "none" || fmt == "off") return ""
-        val now = System.currentTimeMillis()
+        val now = timestampMs
         if (fmt == "epoch" || fmt == "unix") {
             return "${now / 1000}.${(now % 1000).toString().padStart(3, '0')}"
         }
@@ -2274,14 +2295,60 @@ ipv6 = auto
         return sdf.format(java.util.Date(now))
     }
 
-    private fun appendLog(msg: String) {
-        val ts = logStamp()
+    private fun currentDiagnosticSessionId(): String =
+        getSharedPreferences(PREFS_STATE, Context.MODE_PRIVATE)
+            .getString(PREF_DIAGNOSTIC_SESSION_ID, "")
+            .orEmpty()
+
+    private fun restoreDiagnosticLog() {
+        binding.tvLog.text = ""
+        logLineCount = 0
+        runCatching { DiagnosticLogStore.read(noBackupFilesDir) }
+            .onFailure { error -> Log.w("VpnMain", "Unable to restore diagnostic log", error) }
+            .getOrDefault(emptyList())
+            .forEach { entry ->
+                appendLog(
+                    msg = entry.message,
+                    timestampMs = entry.timestampMs,
+                    persist = false,
+                    sessionId = entry.sessionId,
+                    level = entry.level,
+                    updateConnectionStep = false,
+                )
+            }
+    }
+
+    private fun appendLog(
+        msg: String,
+        timestampMs: Long = System.currentTimeMillis(),
+        persist: Boolean = true,
+        sessionId: String = currentDiagnosticSessionId(),
+        level: String = "info",
+        updateConnectionStep: Boolean = true,
+    ) {
+        val entry = if (persist) {
+            runCatching {
+                DiagnosticLogStore.append(
+                    directory = noBackupFilesDir,
+                    message = msg,
+                    sessionId = sessionId,
+                    level = level,
+                    timestampMs = timestampMs,
+                )
+            }.getOrElse { error ->
+                Log.w("VpnMain", "Unable to persist diagnostic log", error)
+                DiagnosticLogEntry(timestampMs, sessionId, level, msg)
+            }
+        } else {
+            DiagnosticLogEntry(timestampMs, sessionId, level, msg)
+        }
+        val ts = logStamp(entry.timestampMs)
         val tv = binding.tvLog
         // append() upgrades the buffer to EDITABLE, so we can trim the oldest lines
         // IN PLACE below. The old split/join of the whole buffer ran on every line
         // (O(n) allocations); during a reconnect log storm that saturated the main
         // thread into an ANR. editableText.delete is O(chars removed) ≈ one line.
-        tv.append(if (ts.isEmpty()) "$msg\n" else "[$ts] $msg\n")
+        tv.append(if (ts.isEmpty()) "${entry.message}\n" else "[$ts] ${entry.message}\n")
         logLineCount++
         if (logLineCount > MAX_LOG_LINES) {
             (tv.text as? android.text.Editable)?.let { ed ->
@@ -2295,7 +2362,10 @@ ipv6 = auto
                 if (cut > 0) { ed.delete(0, cut); logLineCount = MAX_LOG_LINES }
             }
         }
-        binding.tvConnectionStep.text = msg; binding.tvConnectionStep.visibility = View.VISIBLE
+        if (updateConnectionStep) {
+            binding.tvConnectionStep.text = entry.message
+            binding.tvConnectionStep.visibility = View.VISIBLE
+        }
         // Coalesce autoscroll: queue at most one fullScroll per frame. Posting one per
         // log line queued a full layout pass per line and amplified the storm.
         if (logAutoScroll && !pendingLogScroll) {

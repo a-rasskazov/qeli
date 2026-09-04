@@ -2,6 +2,10 @@ package com.qeli
 
 import com.qeli.model.VpnConfig
 
+/** A user-requested VPN remains restartable until an explicit stop clears the desired bit. */
+internal fun shouldRedeliverVpnService(stopping: Boolean, connectionDesired: Boolean): Boolean =
+    !stopping && connectionDesired
+
 /**
  * Everything that affects the Android-owned TUN. Transport-only facts and the native
  * generation are deliberately absent: a full reconnect may attach a new Rust generation to
