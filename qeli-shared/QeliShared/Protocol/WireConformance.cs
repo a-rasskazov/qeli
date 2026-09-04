@@ -33,10 +33,85 @@ public static class WireConformance
         ok &= RunUdpFrag(check);
         ok &= RunCtrlFrame(check);
         ok &= RunMtuLadder(check);
+        ok &= RunRouteFileScale(check);
         ok &= RunIniBounds(check);
         ok &= RunEditorPresetSelection(check);
         NetworkPolicyConformance.Run(check);
         return ok;
+    }
+
+    /// <summary>Regression coverage for the 14,113-route files attached to issue #69.
+    /// The real files contain the same ordered networks in CIDR and OpenVPN-netmask forms;
+    /// generate the equivalent shape here so CI does not depend on mutable GitHub attachments.</summary>
+    private static bool RunRouteFileScale(Action<string, bool> check)
+    {
+        const int routeCount = 14_113;
+        var cidrLines = new string[routeCount];
+        var openVpnLines = new string[routeCount];
+        for (int i = 0; i < routeCount; i++)
+        {
+            string network = $"100.{i / 256}.{i % 256}.0";
+            cidrLines[i] = $"{network}/24";
+            openVpnLines[i] = $"route {network} 255.255.255.0";
+        }
+
+        IReadOnlyList<string> cidrRoutes = RouteFileParser.ParseLines(cidrLines, "all-cidrs");
+        IReadOnlyList<string> openVpnRoutes =
+            RouteFileParser.ParseLines(openVpnLines, "all-openvpn-routes");
+        bool equivalent = cidrRoutes.Count == routeCount
+            && openVpnRoutes.SequenceEqual(cidrRoutes)
+            && cidrRoutes.All(route => !route.EndsWith("/32", StringComparison.Ordinal));
+        check("route_file: issue #69 14,113-line CIDR/OpenVPN lists stay equivalent without invented /32 routes",
+            equivalent);
+
+        string tempDir = Path.Combine(Path.GetTempPath(), $"qeli-route-file-{Guid.NewGuid():N}");
+        bool multipleFilesDeduplicated = false;
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            string cidrPath = Path.Combine(tempDir, "All CIDRs.txt");
+            string openVpnPath = Path.Combine(tempDir, "All OpenVPN routes.txt");
+            File.WriteAllLines(cidrPath, cidrLines);
+            File.WriteAllLines(openVpnPath, openVpnLines);
+            var logs = new List<string>();
+            IReadOnlyList<string> loaded = RouteFileParser.Load(
+                new[] { cidrPath, openVpnPath }, CancellationToken.None, logs.Add);
+            multipleFilesDeduplicated = loaded.Count == routeCount
+                && loaded.SequenceEqual(cidrRoutes)
+                && logs.Any(line => line.Contains(
+                    $"Loaded {routeCount} unique route(s) from 2 route_file source(s)",
+                    StringComparison.Ordinal));
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+        check("route_file: two issue-sized files merge and deduplicate across sources",
+            multipleFilesDeduplicated);
+
+        using var cancellation = new CancellationTokenSource();
+        IEnumerable<string> CancelDuringEnumeration()
+        {
+            for (int i = 0; i < routeCount; i++)
+            {
+                if (i == 128) cancellation.Cancel();
+                yield return cidrLines[i];
+            }
+        }
+        bool cancelledMidFile = false;
+        try
+        {
+            RouteFileParser.ParseLines(
+                CancelDuringEnumeration(), "cancelled-route-file", cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            cancelledMidFile = true;
+        }
+        check("route_file: cancellation interrupts an issue-sized file during parsing",
+            cancelledMidFile);
+
+        return equivalent && multipleFilesDeduplicated && cancelledMidFile;
     }
 
     /// <summary>Manual INI values that do not match a visual preset must remain exact.

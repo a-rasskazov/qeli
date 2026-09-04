@@ -258,6 +258,22 @@ more than 250,000 total routes is an error. Reading and installation can be inte
 Disconnect. In full-tunnel mode `route_file` is unnecessary and is not applied (except desktop
 per-app mode).
 
+#### Distinguishing service routes from `route_file`
+
+An L3 TUN deliberately assigns the client address as a host prefix (`/32` for IPv4 and `/128`
+for IPv6), while the pool from `on_link_prefix_len` is installed as a separate connected route.
+For a `10.8.0.2` client, `10.8.0.1` gateway/DNS and `10.8.0.0/24` pool, Windows may therefore show:
+
+- `10.8.0.2/32` — the local client address;
+- `10.8.0.0/24` — the VPN pool's only on-link network;
+- a system pool host/broadcast route such as `10.8.0.255/32`, which Windows may synthesize;
+- `10.8.0.1/32` — a protected NetworkPlan DNS route, not a `route_file` result.
+
+An imported `1.0.0.0/24` line must produce exactly `1.0.0.0/24` through the authenticated
+tunnel gateway. An extra `1.0.0.255/32` or another network/broadcast host route for that imported
+network is a bug. When inspecting the table, keep VPN-pool service routes, protected DNS routes,
+and file-imported routes separate.
+
 Keepalive, graceful FIN on disconnect, the amber connecting indicator, ISO-8601 log timestamps and
 the per-profile Wintun adapter name work **automatically** — no configuration needed.
 

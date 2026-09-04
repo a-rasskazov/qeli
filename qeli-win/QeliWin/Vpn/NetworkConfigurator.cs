@@ -1386,6 +1386,42 @@ public sealed class NetworkConfigurator : IDisposable
         catch (InvalidOperationException) { commitRejected = true; }
         check("roaming routes: failed COMMIT restores already removed old routes",
             commitRejected && restored == 1 && rollbackOne.Active && rollbackFailure.Active);
+
+        const int issueRouteCount = 14_113;
+        int bulkDeletes = 0;
+        var bulkOwner = new NetworkConfigurator(_ => { });
+        for (int i = 0; i < issueRouteCount; i++)
+        {
+            var network = IPAddress.Parse($"100.{i / 256}.{i % 256}.0");
+            bulkOwner._ownedRoutes.Add(MakeOwnedRoute(network, 24, 9,
+                IPAddress.Parse("10.9.0.1"), false, $"route_file route {network}/24",
+                () => { bulkDeletes++; return true; }, () => true));
+        }
+        bulkOwner.Dispose();
+        check("route_file: disconnect cleanup releases all 14,113 owned Windows routes",
+            bulkDeletes == issueRouteCount && bulkOwner._ownedRoutes.Count == 0);
+
+        int cleanupAttempts = 0;
+        var retryOwner = new NetworkConfigurator(_ => { });
+        retryOwner._ownedRoutes.Add(MakeOwnedRoute(IPAddress.Parse("203.0.113.0"), 24, 9,
+            IPAddress.Parse("10.9.0.1"), false, "route_file retry fixture",
+            () => ++cleanupAttempts >= 2, () => true));
+        bool cleanupFailureReported = false;
+        try
+        {
+            retryOwner.Dispose();
+        }
+        catch (InvalidOperationException error)
+        {
+            cleanupFailureReported =
+                error.Message.Contains("platform cleanup will be retried", StringComparison.Ordinal)
+                && retryOwner._ownedRoutes.Count == 1
+                && retryOwner._ownedRoutes[0].Active;
+        }
+        retryOwner.Dispose();
+        check("route_file: failed route cleanup remains owned and succeeds on retry",
+            cleanupFailureReported && cleanupAttempts == 2
+            && retryOwner._ownedRoutes.Count == 0);
     }
 
     /// <summary>Collect an already-exited child's pipe text without ever blocking
