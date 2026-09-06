@@ -27,12 +27,8 @@ pub(super) fn validate_argon2_hash(hash: &str) -> Result<(), String> {
 /// is best-effort: on key failure we still return the hash (enc = None) so user
 /// creation isn't blocked — re-issue then needs a one-time reset.
 pub(crate) fn hash_and_enc(pw: &str) -> Result<(String, Option<String>), String> {
-    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = crate::crypto::password_hasher()
-        .hash_password(pw.as_bytes(), &salt)
-        .map_err(|e| format!("hashing failed: {}", e))?
-        .to_string();
+    let hash = crate::crypto::hash_password(pw.as_bytes())
+        .map_err(|e| format!("hashing failed: {}", e))?;
     let enc = match crate::crypto::secret::encrypt_password(pw) {
         Ok(e) => Some(e),
         Err(e) => {
