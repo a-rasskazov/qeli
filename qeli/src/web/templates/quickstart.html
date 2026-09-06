@@ -228,6 +228,7 @@ function quickstartPage() {
       const existingProfile = (cfg.profiles || []).find(p => p.name === m.id);
       const effectivePort = existingProfile?.bind?.port ?? m.port;
       const effectiveTransport = existingProfile?.bind?.transport || m.transport;
+      const effectiveTag = `${String(effectiveTransport).toUpperCase()} \u00b7 ${effectivePort}`;
 
       // A DIFFERENT profile already bound to the effective port+transport must be changed
       // first (re-launching the SAME mode re-enables its own profile, so that's allowed).
@@ -243,7 +244,7 @@ function quickstartPage() {
 
       const existing = !!existingProfile;
       if (!await qeliConfirm('Set up and restart',
-            qeliTf('Set up the "{}" server ({}) and restart now?', m.id, m.tag) + '\n\n'
+            qeliTf('Set up the "{}" server ({}) and restart now?', m.id, effectiveTag) + '\n\n'
               + qeliT(existing
                 ? (this.ipMode === 'auto'
                     ? 'This profile already exists. Quick Start will keep its credentials, IP mode and manual settings, enable it and restart the server.'
@@ -272,7 +273,7 @@ function quickstartPage() {
         this.qs.done = {
           id: m.id, name: m.name, profile: profile.name, ok,
           endpoint,
-          tcp: m.transport === 'tcp', sid, obfsKey,
+          tcp: (profile.bind?.transport || m.transport) === 'tcp', sid, obfsKey,
         };
         this.$dispatch('notify', { msg: ok ? qeliTf('{} server is live', m.name) : qeliT('Applied — server still coming up'), type: ok ? 'success' : 'warn' });
       } catch (e) {

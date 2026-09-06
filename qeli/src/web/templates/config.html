@@ -2216,9 +2216,28 @@ function configPage() {
       return (a.network & mask) === (b.network & mask);
     },
 
+    listenPort(value) {
+      const text = String(value || '').trim();
+      if (!text) return null;
+      const separator = text.startsWith('[')
+        ? (text.indexOf(']:') >= 0 ? text.indexOf(']:') + 1 : -1)
+        : text.lastIndexOf(':');
+      if (separator < 0) return null;
+      const port = Number(text.slice(separator + 1));
+      return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : null;
+    },
+
     freshProfileSlot() {
       const profiles = this.cfg.profiles || [];
-      const usedPorts = new Set(profiles.map(p => Number(p.bind?.port)).filter(Number.isInteger));
+      const usedPorts = new Set();
+      profiles.forEach(profile => {
+        const primary = Number(profile.bind?.port);
+        if (Number.isInteger(primary)) usedPorts.add(primary);
+        (profile.bind?.listen || []).forEach(listener => {
+          const port = this.listenPort(listener);
+          if (port !== null) usedPorts.add(port);
+        });
+      });
       const usedInterfaces = new Set(profiles.map(p => String(p.tun?.name || '').trim()).filter(Boolean));
       const usedCidrs = profiles.map(p => p.pool?.cidr).filter(Boolean);
       for (let n = 0; n < 256; n++) {
@@ -2287,10 +2306,15 @@ function configPage() {
       let name = (src.name || 'profile') + '-copy', k = 1;
       while (this.cfg.profiles.some(p => p.name === name)) { name = (src.name || 'profile') + '-copy' + k; k++; }
       c.name = name;
-      c.bind = c.bind || {}; c.bind.port = slot.port;
+      c.bind = c.bind || {}; c.bind.port = slot.port; c.bind.listen = [];
       c.tun = c.tun || {}; c.tun.name = slot.interfaceName; c.tun.address = slot.gateway;
       c.pool = c.pool || {}; c.pool.cidr = slot.cidr; c.pool.exclude = [slot.gateway];
+      c.pool.static_reservations = {};
       c.dns = c.dns || {}; c.dns.listen = slot.gateway;
+      c.dhcp = c.dhcp || {};
+      c.dhcp.listen = '';
+      c.dhcp.pool_start = null;
+      c.dhcp.pool_end = null;
       if ((c.tun.ip_mode || 'ipv4') !== 'ipv4') {
         const fresh6 = this.freshIpv6Network();
         c.tun.ipv6_address = fresh6.gateway;
@@ -2360,6 +2384,54 @@ function configPage() {
       this.markDirty();
     },
 
+    parseIpv6Cidr(value) {
+      const text = String(value || '').trim();
+      const slash = text.lastIndexOf('/');
+      if (slash <= 0) return null;
+      const prefix = Number(text.slice(slash + 1));
+      if (!Number.isInteger(prefix) || prefix < 0 || prefix > 128) return null;
+      const address = text.slice(0, slash);
+      if (address.includes('%')) return null;
+      const halves = address.split('::');
+      if (halves.length > 2) return null;
+      const parseHalf = half => {
+        if (!half) return [];
+        const words = [];
+        for (const token of half.split(':')) {
+          if (!token) return null;
+          if (token.includes('.')) {
+            const bytes = token.split('.').map(Number);
+            if (bytes.length !== 4 || bytes.some(b => !Number.isInteger(b) || b < 0 || b > 255)) return null;
+            words.push((bytes[0] << 8) | bytes[1], (bytes[2] << 8) | bytes[3]);
+          } else {
+            if (!/^[0-9a-fA-F]{1,4}$/.test(token)) return null;
+            words.push(Number.parseInt(token, 16));
+          }
+        }
+        return words;
+      };
+      const left = parseHalf(halves[0]);
+      const right = parseHalf(halves.length === 2 ? halves[1] : '');
+      if (!left || !right) return null;
+      const compressed = halves.length === 2;
+      const omitted = 8 - left.length - right.length;
+      if ((!compressed && omitted !== 0) || (compressed && omitted < 1)) return null;
+      const words = compressed ? [...left, ...Array(omitted).fill(0), ...right] : left;
+      if (words.length !== 8) return null;
+      let numeric = 0n;
+      words.forEach(word => { numeric = (numeric << 16n) | BigInt(word); });
+      const shift = BigInt(128 - prefix);
+      return { network: (numeric >> shift) << shift, prefix };
+    },
+
+    ipv6CidrsOverlap(left, right) {
+      const a = this.parseIpv6Cidr(left), b = this.parseIpv6Cidr(right);
+      if (!a || !b) return false;
+      const prefix = Math.min(a.prefix, b.prefix);
+      const shift = BigInt(128 - prefix);
+      return (a.network >> shift) === (b.network >> shift);
+    },
+
     // RFC 4193 locally-assigned /64: fd + a random 40-bit Global ID + a random 16-bit
     // subnet id. Cloning must never retain the source prefix, or server preflight correctly
     // rejects both profiles as overlapping.
@@ -2376,7 +2448,7 @@ function configPage() {
         ].join(':');
         const cidr = prefix + '::/64';
         const occupied = (this.cfg.profiles || []).some(p =>
-          String(p.pool?.ipv6?.cidr || '').toLowerCase() === cidr.toLowerCase());
+          this.ipv6CidrsOverlap(cidr, p.pool?.ipv6?.cidr));
         if (!occupied) return { cidr, gateway: prefix + '::1' };
       }
       throw new Error('could not allocate a unique RFC 4193 IPv6 prefix for the clone');
