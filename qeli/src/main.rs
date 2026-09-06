@@ -1125,14 +1125,8 @@ fn add_client(
     };
 
     // Argon2id hash with a fresh random salt (same scheme as the web API).
-    let password_hash = {
-        use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
-        let salt = SaltString::generate(&mut OsRng);
-        qeli::crypto::password_hasher()
-            .hash_password(plaintext.as_bytes(), &salt)
-            .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?
-            .to_string()
-    };
+    let password_hash = qeli::crypto::hash_password(plaintext.as_bytes())
+        .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?;
 
     let profile_list: Vec<String> = profiles
         .as_deref()
@@ -1277,14 +1271,8 @@ fn set_web_password(
     };
 
     // Argon2id with a fresh random salt (same scheme as the web API / add-client).
-    let password_hash = {
-        use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
-        let salt = SaltString::generate(&mut OsRng);
-        qeli::crypto::password_hasher()
-            .hash_password(plaintext.as_bytes(), &salt)
-            .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?
-            .to_string()
-    };
+    let password_hash = qeli::crypto::hash_password(plaintext.as_bytes())
+        .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?;
 
     let mut updates: Vec<(&str, String)> = vec![
         ("username", username.clone()),
@@ -1402,14 +1390,8 @@ fn share_link(
         ),
         None => {
             let new_pw = generate_password(20);
-            let hash = {
-                use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
-                let salt = SaltString::generate(&mut OsRng);
-                qeli::crypto::password_hasher()
-                    .hash_password(new_pw.as_bytes(), &salt)
-                    .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?
-                    .to_string()
-            };
+            let hash = qeli::crypto::hash_password(new_pw.as_bytes())
+                .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?;
             let enc2 = qeli::crypto::secret::encrypt_password(&new_pw).ok();
             // Re-read under the cross-process lock and edit THERE: a running worker holds
             // its own copy and rewrites the file on any control-socket change, so writing

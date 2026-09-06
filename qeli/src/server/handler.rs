@@ -3388,17 +3388,16 @@ fn dummy_password_hash() -> &'static str {
     use std::sync::OnceLock;
     static H: OnceLock<String> = OnceLock::new();
     H.get_or_init(|| {
-        use argon2::password_hash::{PasswordHasher, SaltString};
-        let salt = SaltString::encode_b64(b"qeli-dummy-salt!").expect("valid dummy salt");
+        use argon2::PasswordHasher;
         // Must use the SAME profile as real password hashing: this hash exists so an
         // unknown username costs the attacker exactly what a known one does. If the two
         // ever diverge — say the real cost is raised here but the dummy keeps the crate
         // default — the work gap becomes a username oracle again, which is the whole
         // thing this dummy prevents. (Audit 2026-07-27, H2.)
-        crate::crypto::password_hasher()
-            .hash_password(b"qeli-nonexistent-user", &salt)
-            .expect("hash dummy password")
-            .to_string()
+        let hash: argon2::PasswordHash = crate::crypto::password_hasher()
+            .hash_password_with_salt(b"qeli-nonexistent-user", b"qeli-dummy-salt!")
+            .expect("hash dummy password");
+        hash.to_string()
     })
 }
 
