@@ -464,10 +464,12 @@ fn icmpv6_checksum(source: Ipv6Addr, destination: Ipv6Addr, payload: &[u8]) -> u
 }
 
 fn add_words(mut sum: u32, bytes: &[u8]) -> u32 {
-    for chunk in bytes.chunks(2) {
-        let high = u16::from(chunk[0]) << 8;
-        let low = chunk.get(1).copied().map(u16::from).unwrap_or(0);
-        sum += u32::from(high | low);
+    let mut chunks = bytes.chunks_exact(2);
+    for chunk in &mut chunks {
+        sum += u32::from(u16::from_be_bytes([chunk[0], chunk[1]]));
+    }
+    if let Some(byte) = chunks.remainder().first() {
+        sum += u32::from(*byte) << 8;
     }
     sum
 }
