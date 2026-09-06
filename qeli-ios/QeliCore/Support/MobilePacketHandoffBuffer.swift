@@ -91,20 +91,49 @@ struct MobilePacketHandoffBuffer {
     }
 
     private static func timeToLive(for packet: Data) -> TimeInterval {
-        guard let first = packet.first else { return 0 }
-        let protocolNumber: UInt8?
-        switch first >> 4 {
-        case 4 where packet.count > 9:
-            protocolNumber = packet[packet.startIndex + 9]
-        case 6 where packet.count > 6:
-            protocolNumber = packet[packet.startIndex + 6]
-        default:
-            protocolNumber = nil
-        }
-        switch protocolNumber {
+        switch transportProtocol(for: packet) {
         case 6: return 120 // TCP: retain one pending retransmission across a longer outage.
         case 17: return 2 // UDP: never emit a long-delayed real-time/application datagram.
         default: return 5
+        }
+    }
+
+    /// Resolve the IPv6 upper-layer protocol through bounded extension-header traversal.
+    /// Fragment headers still carry the original Next Header even for non-first fragments, which
+    /// is sufficient for replay lifetime classification without parsing transport ports.
+    private static func transportProtocol(for packet: Data) -> UInt8? {
+        guard let first = packet.first else { return nil }
+        switch first >> 4 {
+        case 4 where packet.count > 9:
+            return packet[packet.startIndex + 9]
+        case 6 where packet.count >= 40:
+            var next = packet[packet.startIndex + 6]
+            var offset = 40
+            for _ in 0..<8 {
+                switch next {
+                case 0, 43, 60, 135, 139, 140: // Hop-by-Hop, Routing, Destination, mobility.
+                    guard packet.count >= offset + 2 else { return nil }
+                    next = packet[packet.startIndex + offset]
+                    let length = (Int(packet[packet.startIndex + offset + 1]) + 1) * 8
+                    guard length >= 8, packet.count >= offset + length else { return nil }
+                    offset += length
+                case 44: // Fragment.
+                    guard packet.count >= offset + 8 else { return nil }
+                    next = packet[packet.startIndex + offset]
+                    offset += 8
+                case 51: // Authentication Header: length is in 32-bit words minus two.
+                    guard packet.count >= offset + 2 else { return nil }
+                    next = packet[packet.startIndex + offset]
+                    let length = (Int(packet[packet.startIndex + offset + 1]) + 2) * 4
+                    guard length >= 8, packet.count >= offset + length else { return nil }
+                    offset += length
+                default:
+                    return next
+                }
+            }
+            return nil
+        default:
+            return nil
         }
     }
 }

@@ -86,6 +86,26 @@ class AndroidSessionContinuityTest {
             ),
         )
         assertNotEquals(
+            androidTunPlanFingerprint(
+                config(),
+                plan().copy(dnsServers = listOf(
+                    TransportCoreNetworkDns("1.1.1.1", 53),
+                    TransportCoreNetworkDns("8.8.8.8", 53),
+                )),
+                false,
+                35,
+            ),
+            androidTunPlanFingerprint(
+                config(),
+                plan().copy(dnsServers = listOf(
+                    TransportCoreNetworkDns("8.8.8.8", 53),
+                    TransportCoreNetworkDns("1.1.1.1", 53),
+                )),
+                false,
+                35,
+            ),
+        )
+        assertNotEquals(
             baseline,
             androidTunPlanFingerprint(
                 config(appsMode = "include", apps = listOf("org.example.app")),

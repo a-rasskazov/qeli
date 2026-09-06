@@ -3028,6 +3028,34 @@ impl ClientStreamSender {
     }
 }
 
+/// Pick the writer for an inner flow.
+///
+/// A resume-capable peer assigns stable logical slot ids. Hashing modulo the current Vec length
+/// would remap otherwise healthy flows whenever one carrier disappears or is restored. Hash over
+/// the negotiated width instead, then walk clockwise through the surviving slot ids. Legacy peers
+/// retain the historical modulo-current-width scheduler.
+fn select_tcp_stream_index(
+    streams: &[ClientStreamSender],
+    flow_hash: u64,
+    stable_width: Option<u32>,
+) -> Option<usize> {
+    if streams.is_empty() {
+        return None;
+    }
+    let Some(width) = stable_width.map(|width| width.max(1)) else {
+        return Some((flow_hash % streams.len() as u64) as usize);
+    };
+    let desired = (flow_hash % u64::from(width)) as u32;
+    streams
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, stream)| {
+            let slot = stream.logical_slot_id % width;
+            (slot + width - desired) % width
+        })
+        .map(|(index, _)| index)
+}
+
 #[cfg(feature = "experimental-roaming")]
 async fn send_tcp_close_session(outs: &Arc<std::sync::Mutex<Vec<ClientStreamSender>>>) {
     let senders = crate::util::lock_or_recover(outs, "client::outs").clone();
@@ -3115,9 +3143,10 @@ mod tcp_resume_client_tests {
     use super::{
         decode_hex_array, mark_tcp_slot_started, mark_tcp_slot_stopped, path_ack_future,
         path_ack_is_explicit_rejection, publish_tcp_path_handover, register_tcp_stream_task,
-        should_defer_tcp_resume_for_handover, tcp_handover_failure_action, ClientStreamSender,
-        PathCommandFailure, TcpActiveSlots, TcpHandoverCommitPhase, TcpHandoverFailureAction,
-        TcpResumeContext, TcpSecondaryAttach, PATH_ACK_TIMEOUT, TCP_HANDOVER_PREPARE_GRACE,
+        select_tcp_stream_index, should_defer_tcp_resume_for_handover, tcp_handover_failure_action,
+        ClientStreamSender, PathCommandFailure, TcpActiveSlots, TcpHandoverCommitPhase,
+        TcpHandoverFailureAction, TcpResumeContext, TcpSecondaryAttach, PATH_ACK_TIMEOUT,
+        TCP_HANDOVER_PREPARE_GRACE,
     };
     use portable_atomic::AtomicU64;
     use std::{sync::Arc, time::Duration};
@@ -3213,6 +3242,33 @@ mod tcp_resume_client_tests {
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].logical_slot_id, 0);
         assert!(old_zero_rx.is_closed() && old_one_rx.is_closed() && old_two_rx.is_closed());
+    }
+
+    #[test]
+    fn resume_scheduler_keeps_healthy_logical_slots_stable_when_a_carrier_changes() {
+        let (terminal_sender, _terminal_receiver) = tokio::sync::mpsc::channel(1);
+        let sender = |logical_slot_id| {
+            let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+            ClientStreamSender {
+                logical_slot_id,
+                sender,
+                terminal_sender: terminal_sender.clone(),
+            }
+        };
+        let mut outputs = vec![sender(0), sender(1), sender(2), sender(3)];
+        let selected_slot = |outputs: &[ClientStreamSender], hash| {
+            let index = select_tcp_stream_index(outputs, hash, Some(4)).unwrap();
+            outputs[index].logical_slot_id
+        };
+
+        assert_eq!(selected_slot(&outputs, 2), 2);
+        outputs.retain(|entry| entry.logical_slot_id != 1);
+        assert_eq!(selected_slot(&outputs, 2), 2);
+        assert_eq!(selected_slot(&outputs, 1), 2);
+        outputs.push(sender(1));
+        outputs.sort_unstable_by_key(|entry| entry.logical_slot_id);
+        assert_eq!(selected_slot(&outputs, 2), 2);
+        assert_eq!(selected_slot(&outputs, 1), 1);
     }
 
     #[tokio::test]
@@ -4747,6 +4803,11 @@ where
     } else {
         1
     };
+    // TCP_RESUME_V2 gives both peers the same stable logical-slot namespace. Keep that fixed
+    // width for flow placement even while the live carrier set temporarily shrinks or grows.
+    let stable_stream_width = tcp_resume
+        .as_ref()
+        .map(|_| u32::try_from(target).unwrap_or(u32::MAX).max(1));
     let token_bytes = hex_to_bytes(&session_token);
     let bonding = target > 1 && !token_bytes.is_empty();
     // The adaptive ramp decides the desired width; a separate maintainer restores
@@ -5366,18 +5427,21 @@ where
                     .tx_bytes
                     .fetch_add(ip_packet.len() as u64, Ordering::Relaxed);
                 // Pin by flow hash, lazily dropping any dead stream (closed channel)
-                // and re-pinning onto a live one. When the last stream is gone the
-                // per-stream death handler has already fired `dead_rx`.
+                // and re-pinning onto a live one. Resume-capable sessions hash over the
+                // negotiated stable slot namespace, so losing/restoring another carrier does
+                // not reorder healthy flows. Legacy sessions retain modulo-live-width.
                 let mut g = crate::util::lock_or_recover(&outs, "client::outs");
                 let h = crate::protocol::flow_hash(ip_packet.as_ref());
                 let mut pkt = ClientUplink::Tun(ip_packet);
                 while !g.is_empty() {
-                    let i = (h % g.len() as u64) as usize;
+                    let Some(i) = select_tcp_stream_index(&g, h, stable_stream_width) else {
+                        break;
+                    };
                     match g[i].try_send(pkt) {
                         Ok(()) => break,
                         // Backpressure on the pinned stream: drop (inner TCP retransmits).
                         Err(mpsc::error::TrySendError::Full(_)) => break,
-                        // Dead stream: remove it and re-pin (hash modulo the new len).
+                        // Dead stream: remove it and re-pin to the next stable live slot.
                         Err(mpsc::error::TrySendError::Closed(v)) => {
                             pkt = v;
                             g.remove(i);

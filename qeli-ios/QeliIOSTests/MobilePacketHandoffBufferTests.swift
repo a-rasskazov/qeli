@@ -9,6 +9,17 @@ final class MobilePacketHandoffBufferTests: XCTestCase {
         return packet
     }
 
+    private func ipv6Packet(extensionHeader: UInt8, protocolNumber: UInt8) -> Data {
+        var packet = Data(repeating: 0, count: 48)
+        packet[0] = 0x60
+        packet[6] = extensionHeader
+        packet[40] = protocolNumber
+        // Hop-by-Hop/Destination/Routing use Hdr Ext Len = 0 (8 bytes). Fragment also has a
+        // fixed eight-byte header, so the same fixture shape covers both forms.
+        packet[41] = 0
+        return packet
+    }
+
     func testTCPOutlivesShortUDPReplayWindow() {
         var buffer = MobilePacketHandoffBuffer()
         let tcp = ipv4Packet(protocolNumber: 6)
@@ -18,6 +29,17 @@ final class MobilePacketHandoffBufferTests: XCTestCase {
             .init(retained: 2, dropped: 0)
         )
         XCTAssertEqual(buffer.drain(continuityKey: "same", now: 103), [tcp])
+    }
+
+    func testIPv6ExtensionHeadersPreserveTransportSpecificReplayWindows() {
+        var buffer = MobilePacketHandoffBuffer()
+        let tcpFragment = ipv6Packet(extensionHeader: 44, protocolNumber: 6)
+        let udpHopByHop = ipv6Packet(extensionHeader: 0, protocolNumber: 17)
+        XCTAssertEqual(
+            buffer.retain([tcpFragment, udpHopByHop], continuityKey: "same", now: 100),
+            .init(retained: 2, dropped: 0)
+        )
+        XCTAssertEqual(buffer.drain(continuityKey: "same", now: 103), [tcpFragment])
     }
 
     func testChangedNetworkPlanCannotReplayOldPackets() {

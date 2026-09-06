@@ -807,8 +807,9 @@ negotiated peers; DATA_FRAG is record-layer splitting and is not counted as kern
 A single TCP connection (reality-tls/fake-tls/obfs) on a mobile network hits the
 "TCP over TCP" ceiling (~6 Mbps in production, while UDP/WireGuard does tens).
 Multipath opens **several parallel connections to the same :443 port**, and the
-server aggregates them into **ONE tunnel** (one tun-IP); outgoing IP packets are
-spread round-robin. DPI-clean — a browser also opens 6+ parallel TLS to an HTTPS
+server aggregates them into **ONE tunnel** (one tun-IP); a stable inner-flow hash pins each
+flow to one logical stream, so healthy flows are not remapped when another carrier disappears
+or returns. DPI-clean — a browser also opens 6+ parallel TLS to an HTTPS
 host; a single long-lived TCP with a continuous flow is actually more suspicious.
 
 **Settings — per-profile** (like `tun.mtu`/`padding`), the server pushes them to

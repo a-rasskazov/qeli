@@ -177,6 +177,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
     private let stateLock = NSLock()
     private let packetWriteLock = NSLock()
     private let settingsGate = NativeSettingsGate()
+    private let packetReadGate = NativeSettingsGate()
     private lazy var roamingController = IOSRoamingController(
         engine: self,
         serverAddress: config.serverAddress,
@@ -884,9 +885,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                         try await Task.sleep(nanoseconds: Self.emptyPullNanoseconds)
                         continue
                     }
-                    let protocols = packets.map { packet in
-                        NSNumber(value: packet.first.map { $0 >> 4 == 6 ? AF_INET6 : AF_INET } ?? AF_INET)
-                    }
+                    let protocols = Self.packetProtocols(packets)
                     let accepted = self.packetWriteLock.withLock {
                         self.provider.packetFlow.writePackets(packets, withProtocols: protocols)
                     }
@@ -1302,6 +1301,12 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         }
     }
 
+    private static func packetProtocols(_ packets: [Data]) -> [NSNumber] {
+        packets.map { packet in
+            NSNumber(value: packet.first.map { $0 >> 4 == 6 ? AF_INET6 : AF_INET } ?? AF_INET)
+        }
+    }
+
     /// Stable inner-network identity. Outer carrier addresses are intentionally absent:
     /// Wi-Fi/cellular changes must retain flows, while a changed address/route/DNS plan must
     /// discard packets captured for the previous tunnel.
@@ -1377,11 +1382,29 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             }
         }
 
+        // NEPacketTunnelFlow.readPackets has no cancellation API. The old generation therefore
+        // keeps this gate until its real callback arrives; a replacement waits instead of issuing
+        // a second concurrent read and rechecks the handoff buffer after acquiring the gate.
+        await packetReadGate.acquire()
+        if Task.isCancelled {
+            await packetReadGate.release()
+            return ([], [])
+        }
+        let retained = takePendingUplink(continuityKey: continuityKey)
+        if !retained.isEmpty {
+            await packetReadGate.release()
+            return (retained, Self.packetProtocols(retained))
+        }
+
         let box = ReadBox()
+        let readGate = packetReadGate
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard box.park(continuation) else {
                     continuation.resume(returning: ([], []))
+                    // Cancellation won before the continuation was parked, so no
+                    // NetworkExtension read was issued and the gate is safe to release now.
+                    Task { await readGate.release() }
                     return
                 }
                 provider.packetFlow.readPackets { [weak self] packets, protocols in
@@ -1390,9 +1413,13 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                             Self.ipPackets(packets, protocols: protocols),
                             continuityKey: continuityKey)
                     }
+                    Task { await readGate.release() }
                 }
             }
         } onCancel: {
+            // Resume the cancelled Swift task, but deliberately keep packetReadGate held. Only
+            // the non-cancellable NetworkExtension callback above may release it after retaining
+            // any packet that arrived for the old generation.
             box.finish(([], []))
         }
     }

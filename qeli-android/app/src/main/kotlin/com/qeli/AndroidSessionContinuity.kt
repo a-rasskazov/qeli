@@ -43,7 +43,9 @@ internal fun androidTunPlanFingerprint(
     mtu = plan.mtu,
     routes = plan.routes.map { "${it.cidr}:${it.gateway}:${it.metric}" }.sorted(),
     pushedRoutes = plan.pushedRoutes.sorted(),
-    dnsServers = plan.dnsServers.map { "${it.address}:${it.port}" }.sorted(),
+    // Android applies resolvers in Builder insertion order; primary/secondary reordering is a
+    // real NetworkPlan change and must rebuild the TUN rather than reuse the old resolver order.
+    dnsServers = plan.dnsServers.map { "${it.address}:${it.port}" },
     fullTunnel = plan.fullTunnel,
     killSwitch = plan.killSwitch,
     allowIpv4Leak = plan.allowIpv4Leak,
