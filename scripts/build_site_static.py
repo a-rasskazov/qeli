@@ -61,7 +61,7 @@ PAGES = {
         "crumbs": [("/install/", "Установка", "Installation")], "schema": "HowTo",
         "steps": [
             ("Проверить Docker и TUN", "Check Docker and TUN"),
-            ("Загрузить образ и Compose-файл", "Pull the image and get the Compose file"),
+            ("Собрать образ и получить Compose-файл", "Build the image and get the Compose file"),
             ("Запустить серверный контейнер", "Start the server container"),
             ("Создать пользователя и проверить журнал", "Create a user and verify the logs"),
         ],
@@ -184,6 +184,9 @@ RAW_ENGLISH = {
     "# 1. скачать скрипт": "# 1. download the script",
     "# 2. прочитать его — и только потом запускать от root": "# 2. review it, then run it as root",
     "# готовый мульти-arch образ из GHCR (собирать не нужно):": "# prebuilt multi-arch image from GHCR (no build required):",
+    "# получить исходники опубликованной версии 0.8.0:": "# get the published 0.8.0 sources:",
+    "# собрать локальный образ из закреплённого тега:": "# build a local image from the pinned tag:",
+    "# запустить сервер:": "# start the server:",
     "# имя, на которое ссылается compose": "# name referenced by Compose",
     "# либо собрать самому: docker buildx build -f release/docker/Dockerfile -t qeli:latest --load .": "# or build it: docker buildx build -f release/docker/Dockerfile -t qeli:latest --load .",
     "# скачать compose-файл (или склонировать репозиторий):": "# download the Compose file (or clone the repository):",
@@ -441,6 +444,16 @@ def rewrite_english_links(html: str) -> str:
     return re.sub(r'href="([^"]+)"', repl, html)
 
 
+def rewrite_github_docs_language(html: str, lang: str) -> str:
+    """Point GitHub documentation links at the static page language."""
+    folder = "eng" if lang == "en" else "ru"
+    return re.sub(
+        r'(href="https://github\.com/litvinovtd/qeli/(?:blob|tree)/[^"/]+/docs/)(?:ru|eng)(/)',
+        rf'\g<1>{folder}\2',
+        html,
+    )
+
+
 def translate_literal_english(html: str) -> str:
     for source, translated in RAW_ENGLISH.items():
         html = html.replace(source, translated)
@@ -598,6 +611,7 @@ def main() -> None:
             if lang == "en":
                 page = translate_literal_english(page)
                 page = rewrite_english_links(page)
+            page = rewrite_github_docs_language(page, lang)
             page = set_language_links(page, url_path, lang)
             page = insert_generated(page, url_path, meta, lang, title, desc)
             destination = source if lang == "ru" else SITE / localized_path(url_path, "en").strip("/") / "index.html"
