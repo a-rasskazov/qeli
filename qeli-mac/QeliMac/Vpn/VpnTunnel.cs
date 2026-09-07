@@ -57,7 +57,7 @@ public sealed partial class VpnTunnel : VpnTunnelBase
                     config.IncludeRoutes.Concat(EffectiveRouteFileRoutes(session)).ToArray(),
                     config.ExcludeRoutes, PushedRouteCidrs(session.PlannedRoutes),
                     PerAppTunnelSubnets(session),
-                    RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(retained.Name),
+                    RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(retained.Name, log: Log),
                     session.NetworkAddresses.Any(address => address.Family == "ipv4"),
                     session.NetworkAddresses.Any(address => address.Family == "ipv6"),
                     tunnelUp: true);
@@ -98,7 +98,7 @@ public sealed partial class VpnTunnel : VpnTunnelBase
         var localCaptureRoutes = config.RouteLocalNetworks
             && assigned.Any(address => address.Family == "ipv4")
             ? RouteLocalPolicy.BuildCapturePrefixes(
-                RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(dev),
+                RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(dev, log: Log),
                 config.ExcludeRoutes)
             : Array.Empty<string>();
         foreach (var address in assigned)
@@ -149,7 +149,7 @@ public sealed partial class VpnTunnel : VpnTunnelBase
                 config.IncludeRoutes.Concat(EffectiveRouteFileRoutes(session)).ToArray(),
                 config.ExcludeRoutes, PushedRouteCidrs(session.PlannedRoutes),
                 PerAppTunnelSubnets(session),
-                RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(dev),
+                RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(dev, log: Log),
                 assigned.Any(address => address.Family == "ipv4"),
                 assigned.Any(address => address.Family == "ipv6"),
                 tunnelUp: true);

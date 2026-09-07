@@ -349,7 +349,7 @@ public sealed class VpnTunnel : VpnTunnelBase
                     config.Protocol,
                     EffectiveMtu(config.Mtu, session.PushedMtu),
                     physicalLocalRoutes:
-                        RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes());
+                        RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(log: Log));
                 retained.SetTunnelUp(true);
             }
             return;
@@ -382,7 +382,7 @@ public sealed class VpnTunnel : VpnTunnelBase
                 tunnelMtu: EffectiveMtu(config.Mtu, session.PushedMtu),
                 log: Log,
                 physicalLocalRoutes:
-                    RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes());
+                    RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(log: Log));
             adapter.Open();
             cancellationToken.ThrowIfCancellationRequested();
             adapter.SetTunnelUp(true);
@@ -445,7 +445,7 @@ public sealed class VpnTunnel : VpnTunnelBase
         var localCaptureRoutes = config.RouteLocalNetworks
             && assigned.Any(address => address.Family == "ipv4")
             ? RouteLocalPolicy.BuildCapturePrefixes(
-                RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(alias, tunIndex),
+                RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(alias, tunIndex, Log),
                 config.ExcludeRoutes)
             : Array.Empty<string>();
 

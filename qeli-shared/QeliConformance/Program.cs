@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Text;
 using Qeli.Shared.Crypto;
@@ -120,6 +122,32 @@ public static class Program
                 new[] { "192.168.1.27/24" },
                 new[] { "192.168.1.0/25", "192.168.1.192/26" })
             .SequenceEqual(new[] { "192.168.1.128/25" }));
+        var routeDiscoveryWarnings = new List<string>();
+        var discoveredLocalRoutes = RouteLocalPolicy.DiscoverConnectedRfc1918PrefixesForTest(
+            new[]
+            {
+                new RouteLocalPolicy.Ipv4InterfaceProbe(
+                    "unsupported-filter",
+                    () => throw new NetworkInformationException(10043)),
+                new RouteLocalPolicy.Ipv4InterfaceProbe(
+                    "ethernet",
+                    () => new RouteLocalPolicy.Ipv4InterfaceSnapshot(
+                        7,
+                        new[]
+                        {
+                            new RouteLocalPolicy.Ipv4AddressSnapshot(
+                                IPAddress.Parse("192.168.50.27"), 24),
+                            new RouteLocalPolicy.Ipv4AddressSnapshot(
+                                IPAddress.Parse("203.0.113.27"), 24),
+                        })),
+            },
+            log: routeDiscoveryWarnings.Add);
+        Check("connected-route discovery skips an unsupported IPv4 interface",
+            discoveredLocalRoutes.SequenceEqual(new[] { "192.168.50.0/24" })
+            && routeDiscoveryWarnings.Count == 1
+            && routeDiscoveryWarnings[0].Contains(
+                "unsupported-filter", StringComparison.Ordinal)
+            && routeDiscoveryWarnings[0].Contains("10043", StringComparison.Ordinal));
 
         var mlKemEk = Enumerable.Range(0, 1184)
             .Select(i => unchecked((byte)(17 + i * 31))).ToArray();
