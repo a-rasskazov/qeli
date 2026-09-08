@@ -228,6 +228,19 @@ for marker in ("select.inp-fit, select[data-select-fit]", "--qeli-select-fit-wid
     if marker not in i18n_text:
         fail(I18N, 1, f"localized select auto-fitting is missing {marker!r}")
 
+# Placeholders are examples, not saved values. Keep a dedicated token for both themes and
+# apply it to every input/textarea; a class-only rule previously left some fields too dark.
+placeholder_block = re.search(
+    r"input::placeholder\s*,\s*textarea::placeholder\s*\{(?P<body>[^}]*)\}",
+    select_css,
+)
+if not placeholder_block or "color:var(--txt-placeholder)" not in placeholder_block.group("body"):
+    fail(SELECT_CSS, 1, "global input/textarea placeholder colour token is missing")
+if not placeholder_block or "opacity:1" not in placeholder_block.group("body"):
+    fail(SELECT_CSS, 1, "placeholder opacity must be normalized across browsers")
+if select_css.count("--txt-placeholder:") < 2:
+    fail(SELECT_CSS, 1, "placeholder token must be defined for dark and light themes")
+
 # Alpine evaluates x-text/x-title expressions as soon as its deferred script runs. qeliT must
 # already exist at that point or dynamic labels render empty until an unrelated state change.
 layout_path = TEMPLATES / "layout.html"

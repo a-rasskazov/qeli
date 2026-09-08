@@ -43,6 +43,7 @@
   --bg:#080b14; --bg-2:#0d1322; --bg-card:#111a2e; --bg-card-2:#16213e;
   --line:rgba(120,150,210,.14); --line-soft:rgba(120,150,210,.08);
   --txt:#e8edf7; --txt-mut:#93a2c0; --txt-dim:#6b7a9b;
+  --txt-placeholder:#53617f;
   --blue:#4a9eff; --blue-2:#6fb7ff; --teal:#16c8b6; --green:#00e676; --green-2:#4dffa0;
   --violet:#a78bfa; --amber:#ffb020; --red:#ff5d6c;
   --grad-3:linear-gradient(110deg,#4a9eff,#16c8b6 52%,#00e676);
@@ -175,7 +176,8 @@ code,pre,.mono,.font-mono{ font-family:'JetBrains Mono',ui-monospace,Menlo,monos
 .inp{ width:100%; background-color:var(--bg-2); border:1px solid var(--line); border-radius:10px; padding:9px 12px; font-size:.875rem; color:var(--txt); outline:none; transition:border-color .15s,box-shadow .15s,background-color .15s; }
 .inp:hover:not(:disabled){ border-color:rgba(120,150,210,.32); }
 .inp:focus{ border-color:rgba(74,158,255,.55); box-shadow:0 0 0 3px rgba(74,158,255,.12); }
-.inp::placeholder{ color:#4a5878; }
+/* A placeholder is guidance, never a value: keep it visibly quieter in every panel field. */
+input::placeholder,textarea::placeholder{ color:var(--txt-placeholder); opacity:1; }
 .inp:disabled{ cursor:not-allowed; opacity:.58; }
 /* Normalise platform-native dropdown/search controls. Without appearance:none,
    Chromium on Windows paints its own white arrow/button over the dark panel. */
@@ -346,6 +348,7 @@ html[data-theme=light]{
   --bg:#f3f6fb;--bg-2:#eaeef6;--bg-card:#ffffff;--bg-card-2:#f5f8fc;
   --line:rgba(31,58,110,.16);--line-soft:rgba(31,58,110,.09);
   --txt:#101a2c;--txt-mut:#475569;--txt-dim:#64748b;
+  --txt-placeholder:#9aa8bc;
   --blue:#2f7fe6;--blue-2:#1d6fe0;--teal:#0e9488;--green:#059669;--green-2:#047857;
   --violet:#7c3aed;--amber:#b45309;--red:#dc2626;
   --chrome-bg:rgba(255,255,255,.72);--log-bg:#ffffff;
