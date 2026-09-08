@@ -6,6 +6,36 @@ import XCTest
 /// differently on one platform.
 final class ParityHardeningTests: XCTestCase {
 
+    func testIOSSigningDiagnosticsRequireEverySharedCapability() {
+        let valid = IOSSigningDiagnostics.Entitlements(
+            networkExtensions: ["packet-tunnel-provider"],
+            appGroups: ["group.ru.qeli.app"],
+            keychainGroups: ["TEAMID.ru.qeli.app.shared"]
+        )
+        XCTAssertEqual(
+            IOSSigningDiagnostics.missingRequirements(
+                in: valid,
+                expectedAppGroup: "group.ru.qeli.app",
+                expectedKeychainGroup: "TEAMID.ru.qeli.app.shared"
+            ),
+            []
+        )
+
+        let genericSideload = IOSSigningDiagnostics.Entitlements(
+            networkExtensions: [],
+            appGroups: [],
+            keychainGroups: ["TEAMID.*"]
+        )
+        XCTAssertEqual(
+            IOSSigningDiagnostics.missingRequirements(
+                in: genericSideload,
+                expectedAppGroup: "group.ru.qeli.app",
+                expectedKeychainGroup: "ru.qeli.app.shared"
+            ),
+            [.packetTunnel, .appGroup, .keychainGroup]
+        )
+    }
+
     private func minimalINI(_ extra: String = "") -> String {
         """
         [qeli]

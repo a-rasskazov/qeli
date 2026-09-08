@@ -2,7 +2,12 @@
 
 ## Implemented foundation
 
-- Connection / Profiles / Log navigation and Qeli visual language.
+- Connection / Profiles / Log navigation and Qeli visual language. Qeli-owned iOS screens use
+  the same explicit light/dark palette, header dimensions, segmented pill navigation, card
+  outlines and status colours as Android instead of UIKit's grouped-list palette. The Profiles
+  action bar adapts to compact widths and Dynamic Type without truncating Russian labels; profile
+  rows use the Android card/menu model, including explicit Move up/down actions. Apple permission
+  prompts, share sheets, pickers and other operating-system surfaces deliberately remain native.
 - Profile CRUD, active-profile locking while connected (refused with an alert, and the
   rows that cannot be picked are dimmed), reorder and reachability — TCP by a connect
   probe, UDP through ABI 1.8 `qeli_client_udp_probe`, which invokes the same Rust
@@ -82,7 +87,9 @@
    device. Buffer/queue tuning is intentionally a separate performance pass after the
    architecture migration.
 4. Complete App Store signing/provisioning and Apple Network Extension entitlement
-   approval for the final bundle identifiers.
+   approval for the final bundle identifiers. A runtime capability check now turns an incorrectly
+   re-signed build into one actionable signing alert instead of consecutive Keychain/Network
+   Extension errors, and `scripts/verify_ios_ipa.py` rejects such an IPA before distribution.
 
 ## iOS restrictions (not implementable as a normal consumer app)
 

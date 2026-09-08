@@ -48,6 +48,7 @@ final class AppModel: ObservableObject {
     private var updateChecksSuspendedForTunnelTeardown = false
     private var queuedProbes: [Profile] = []
     private var queuedOrActiveProbeIDs = Set<UUID>()
+    private var startupSigningInvalid = false
     private var activeProbeCount = 0
     private static let maximumConcurrentProbes = 4
 
@@ -65,12 +66,24 @@ final class AppModel: ObservableObject {
         self.tunnelManager = TunnelManager(sharedStore: sharedTunnelStore)
         self.tunnelSnapshot = sharedTunnelStore.snapshot()
         self.logLines = sharedTunnelStore.logLines()
-        do {
-            self.archive = try profileStore.load()
-        } catch {
+        let missingSigningRequirements = IOSSigningDiagnostics.missingRequirements()
+        if !missingSigningRequirements.isEmpty {
             self.archive = .initial
-            self.alert = AppAlert(title: "Profile store error", message: error.localizedDescription,
-                                  isLiteralMessage: true)
+            self.startupSigningInvalid = true
+            self.alert = Self.invalidSigningAlert
+        } else {
+            do {
+                self.archive = try profileStore.load()
+            } catch {
+                self.archive = .initial
+                if (error as? KeychainError)?.isMissingEntitlement == true {
+                    self.startupSigningInvalid = true
+                    self.alert = Self.invalidSigningAlert
+                } else {
+                    self.alert = AppAlert(title: "Profile store error", message: error.localizedDescription,
+                                          isLiteralMessage: true)
+                }
+            }
         }
         profiles = archive.profiles
         if managedConfiguration.hasActiveProfilePolicy {
@@ -119,6 +132,7 @@ final class AppModel: ObservableObject {
 
         Task { [weak self] in
             guard let self else { return }
+            guard !startupSigningInvalid else { return }
             do {
                 try await tunnelManager.prepare()
                 tunnelSnapshot = tunnelManager.snapshot
@@ -137,6 +151,13 @@ final class AppModel: ObservableObject {
                 present(error, title: "VPN configuration")
             }
         }
+    }
+
+    private static var invalidSigningAlert: AppAlert {
+        AppAlert(
+            title: "Invalid iOS signing",
+            message: "This copy of Qeli is missing the Apple VPN, App Group or Keychain entitlements. Install a correctly signed build from TestFlight, the App Store, or an authorized Apple Developer team."
+        )
     }
 
     var activeProfile: Profile? {
@@ -293,6 +314,15 @@ final class AppModel: ObservableObject {
 
     func move(fromOffsets: IndexSet, toOffset: Int) {
         archive.profiles.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        persistArchive()
+    }
+
+    func move(_ id: UUID, by offset: Int) {
+        guard abs(offset) == 1,
+              let source = archive.profiles.firstIndex(where: { $0.id == id }) else { return }
+        let destination = source + offset
+        guard archive.profiles.indices.contains(destination) else { return }
+        archive.profiles.swapAt(source, destination)
         persistArchive()
     }
 

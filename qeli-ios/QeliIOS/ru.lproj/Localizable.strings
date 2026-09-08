@@ -39,6 +39,9 @@
 "Share" = "Поделиться";
 "Edit" = "Изменить";
 "Duplicate" = "Дублировать";
+"Move up" = "Переместить вверх";
+"Move down" = "Переместить вниз";
+"Profile actions" = "Действия с профилем";
 "Delete" = "Удалить";
 "Save" = "Сохранить";
 "New profile" = "Новый профиль";
@@ -93,6 +96,8 @@
 "Managed VPN policy" = "Политика управления VPN";
 "Managed profile" = "Управляемый профиль";
 "Private tunnel required" = "Нужен приватный туннель";
+"Invalid iOS signing" = "Некорректная подпись iOS";
+"This copy of Qeli is missing the Apple VPN, App Group or Keychain entitlements. Install a correctly signed build from TestFlight, the App Store, or an authorized Apple Developer team." = "В этой копии Qeli отсутствуют разрешения Apple для VPN, App Group или Keychain. Установите корректно подписанную сборку из TestFlight, App Store либо от авторизованной команды Apple Developer.";
 "Profile store error" = "Ошибка хранилища профилей";
 "Set up the profile" = "Настройте профиль";
 "Tunnel active" = "Туннель активен";

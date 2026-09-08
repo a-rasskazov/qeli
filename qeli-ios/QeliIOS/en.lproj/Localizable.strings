@@ -39,6 +39,9 @@
 "Share" = "Share";
 "Edit" = "Edit";
 "Duplicate" = "Duplicate";
+"Move up" = "Move up";
+"Move down" = "Move down";
+"Profile actions" = "Profile actions";
 "Delete" = "Delete";
 "Save" = "Save";
 "New profile" = "New profile";
@@ -93,6 +96,8 @@
 "Managed VPN policy" = "Managed VPN policy";
 "Managed profile" = "Managed profile";
 "Private tunnel required" = "Private tunnel required";
+"Invalid iOS signing" = "Invalid iOS signing";
+"This copy of Qeli is missing the Apple VPN, App Group or Keychain entitlements. Install a correctly signed build from TestFlight, the App Store, or an authorized Apple Developer team." = "This copy of Qeli is missing the Apple VPN, App Group or Keychain entitlements. Install a correctly signed build from TestFlight, the App Store, or an authorized Apple Developer team.";
 "Profile store error" = "Profile store error";
 "Set up the profile" = "Set up the profile";
 "Tunnel active" = "Tunnel active";

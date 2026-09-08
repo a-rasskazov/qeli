@@ -72,6 +72,11 @@ final class KeychainStore: @unchecked Sendable {
 enum KeychainError: LocalizedError {
     case status(OSStatus)
 
+    var isMissingEntitlement: Bool {
+        guard case .status(let status) = self else { return false }
+        return status == errSecMissingEntitlement
+    }
+
     var errorDescription: String? {
         switch self {
         case .status(let status):
