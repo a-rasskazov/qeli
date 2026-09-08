@@ -213,10 +213,11 @@ nothing parses `/proc` per request.
 
 - **Host load** — CPU % (and the core count), RAM % plus absolute used / total, load
   average (1/5/15), used-space percentage of `/`, a **qeli proc** line (the data-plane
-  worker's pid, its CPU % and RSS), **WAN net** — ↓/↑ Mbps across the host's physical
-  interfaces (`lo`, `vpn*`, `tun*` are skipped so the tunnel isn't counted twice), and
-  **conns · uptime** — established TCP sockets, UDP sockets and host uptime. If the
-  sampler is unreachable the heading shows "· unavailable".
+  worker's pid, its top-style CPU %, where 100% is one fully busy core, and RSS), **WAN net**
+  — ↓/↑ Mbps across the host's physical interfaces (`lo`, `vpn*`, `tun*` are skipped so the
+  tunnel isn't counted twice), and **conns · uptime** — established TCP sockets and UDP
+  sockets owned by that worker, plus host uptime. Unrelated services in the same network
+  namespace are not counted. If the sampler is unreachable the heading shows "· unavailable".
 - **Tunnel throughput** — the aggregate rate across all live sessions (↓ server→client,
   ↑ client→server) and a 5-minute chart labelled with the peak. The **load** button
   overlays host CPU % (dashed) and the client count (dotted).
@@ -268,6 +269,11 @@ The **⤓ Backup** and **⤒ Restore** buttons in the header of the *Host load* 
   on your machine. If any critical file (identity, `server.conf`, the users database)
   turned out to be unreadable, the download is **refused** with an
   explanation rather than handing you an archive that only looks complete.
+  The active config, external users database, per-profile identity keys and explicit panel
+  TLS files must all use normal absolute paths below `/etc/qeli`. Custom filenames and
+  subdirectories there are supported. If any active path is relative or outside that managed
+  root, both panel backup and restore are refused with HTTP 409 instead of silently producing
+  or applying a partial archive; use a manual backup that includes every external path.
   > **The archive holds secrets.** Private identity keys, argon2 password hashes, the
   > reversibly-encrypted `password_enc` values and client profiles with a plaintext
   > password in them. Treat it as key material — encrypted storage, not a shared drive and

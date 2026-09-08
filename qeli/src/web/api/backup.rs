@@ -4,13 +4,122 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
+use std::path::{Component, Path};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const MANAGED_BACKUP_ROOT: &str = "/etc/qeli";
+
+#[derive(Debug)]
+struct CriticalBackupPath {
+    archive_path: String,
+    reason: &'static str,
+}
+
+/// Map an active configuration path to the member name used by the portable panel archive.
+/// The panel archive deliberately has one managed root. Silently accepting a path outside
+/// that root is worse than refusing the operation: the resulting archive looks complete but
+/// cannot reproduce the running server.
+fn managed_archive_path(path: &str, label: &str) -> Result<String, String> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(format!(
+            "panel backup unavailable: active {label} path '{}' is relative; move it below {MANAGED_BACKUP_ROOT} or take a manual backup",
+            path.display()
+        ));
+    }
+    let relative = path.strip_prefix(MANAGED_BACKUP_ROOT).map_err(|_| {
+        format!(
+            "panel backup unavailable: active {label} path '{}' is outside {MANAGED_BACKUP_ROOT}; the panel will not claim that a partial archive is complete. Move it below {MANAGED_BACKUP_ROOT} or take a manual backup that includes the external path",
+            path.display()
+        )
+    })?;
+    if relative.as_os_str().is_empty()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "panel backup unavailable: active {label} path '{}' is not a normal file below {MANAGED_BACKUP_ROOT}",
+            path.display()
+        ));
+    }
+    Ok(format!(
+        "qeli/{}",
+        relative.to_string_lossy().replace('\\', "/")
+    ))
+}
+
+fn critical_backup_paths(
+    config: &crate::config::server::ServerConfig,
+    config_path: &str,
+) -> Result<Vec<CriticalBackupPath>, String> {
+    let mut paths = vec![CriticalBackupPath {
+        archive_path: managed_archive_path(config_path, "server config")?,
+        reason: "the active server configuration",
+    }];
+    if config.auth.users.is_empty() {
+        paths.push(CriticalBackupPath {
+            archive_path: managed_archive_path(&config.auth.users_file, "users database")?,
+            reason: "the active users database",
+        });
+    }
+    for profile in &config.profiles {
+        paths.push(CriticalBackupPath {
+            archive_path: managed_archive_path(
+                &crate::server::profile_identity_path(profile),
+                &format!("identity key for profile '{}'", profile.name),
+            )?,
+            reason: "a server identity key; restoring without it would break pinned clients",
+        });
+    }
+    if config.web.tls {
+        for (path, label) in [
+            (
+                if config.web.tls_cert.is_empty() {
+                    "/etc/qeli/web-tls-cert.pem"
+                } else {
+                    &config.web.tls_cert
+                },
+                "panel TLS certificate",
+            ),
+            (
+                if config.web.tls_key.is_empty() {
+                    "/etc/qeli/web-tls-key.pem"
+                } else {
+                    &config.web.tls_key
+                },
+                "panel TLS private key",
+            ),
+        ] {
+            paths.push(CriticalBackupPath {
+                archive_path: managed_archive_path(path, label)?,
+                reason: "the active panel TLS material",
+            });
+        }
+    }
+    paths.sort_by(|a, b| a.archive_path.cmp(&b.archive_path));
+    paths.dedup_by(|a, b| a.archive_path == b.archive_path);
+    Ok(paths)
+}
 
 /// Stream a gzip tarball of `/etc/qeli` (config + users file + identity keys) for
 /// off-box backup. Authed-admin only; a GET so the browser downloads it straight
 /// to disk carrying the session cookie. Restore = extract it back into `/etc`
 /// (`tar xzf qeli-backup-*.tar.gz -C /etc`) and restart.
-pub async fn download_backup(_guard: auth::AuthGuard) -> Result<Response, AuthError> {
+pub async fn download_backup(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::server::ServerState>>,
+    _guard: auth::AuthGuard,
+) -> Result<Response, AuthError> {
+    let config_path = state
+        .config_path
+        .lock()
+        .await
+        .clone()
+        .unwrap_or_else(|| "/etc/qeli/server.conf".to_string());
+    let critical_paths = match critical_backup_paths(&state.config, &config_path) {
+        Ok(paths) => paths,
+        Err(error) => return Ok((StatusCode::CONFLICT, error).into_response()),
+    };
     let out = tokio::task::spawn_blocking(|| {
         // `--ignore-failed-read`: the panel runs as the `qeli` user and some items
         // under /etc/qeli (e.g. root-owned client-links/, mode 0700) are unreadable
@@ -85,34 +194,24 @@ pub async fn download_backup(_guard: auth::AuthGuard) -> Result<Response, AuthEr
     // every panel session out. Any of those silently missing is worse than no backup,
     // so refuse the download instead of handing out an archive that looks complete. (S-13)
     let stderr = String::from_utf8_lossy(&o.stderr);
-    const CRITICAL: &[(&str, &str)] = &[
-        (
-            "qeli/identity",
-            "the server identity key(s) — a restore would change the server identity and \
-             break every pinned client",
-        ),
-        (
-            "qeli/server.conf",
-            "the server configuration — a restore would come up with no profiles",
-        ),
-        // NB: `panel-secret.key` is deliberately NOT here any more. It moved to
-        // /var/lib/qeli (machine-local state), precisely so it does NOT travel inside an
-        // unencrypted archive together with the `password_enc` values it decrypts — see
-        // crypto::secret::PANEL_KEY_PATH. tar over /etc therefore never sees it, and its
-        // absence from the archive is correct rather than a failure to report.
-        // (Audit 2026-08-04.)
-        (
-            "users.conf",
-            "a users database — a restore would come up with no accounts",
-        ),
-    ];
-    if let Some((path, why)) = CRITICAL.iter().find(|(p, _)| stderr.contains(p)) {
+    // Paths come from the live configuration, not conventional filenames. This catches
+    // custom config/users/identity/TLS names inside /etc/qeli; paths outside the managed
+    // archive root were rejected before tar ran.
+    if let Some(item) = critical_paths.iter().find(|item| {
+        stderr.contains(&item.archive_path)
+            || stderr.contains(&format!(
+                "{MANAGED_BACKUP_ROOT}/{}",
+                item.archive_path.trim_start_matches("qeli/")
+            ))
+    }) {
         return Ok((
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
-                "backup aborted: '{path}' was unreadable and would be MISSING from the \
-                 archive ({why}). Fix the permissions (`chown -R qeli:qeli /etc/qeli`) or \
+                "backup aborted: '{}' was unreadable and would be MISSING from the \
+                 archive ({}). Fix the permissions (`chown -R qeli:qeli /etc/qeli`) or \
                  take the backup as root. tar: {}",
+                item.archive_path,
+                item.reason,
                 stderr.trim()
             ),
         )
@@ -207,19 +306,26 @@ pub async fn restore_backup(
     axum::extract::Query(q): axum::extract::Query<RestoreQuery>,
     body: Bytes,
 ) -> Result<Response, AuthError> {
-    // A restore replaces the same files as Configuration/Quick Start. Keep it mutually
-    // exclusive with those read-modify-write operations so neither can publish a stale tree
-    // over the other while extraction and validation are in progress.
-    let _config_write_guard = state.config_write_lock.lock().await;
-    // The LIVE config path. The hook-overwrite gate used to read a hard-coded
-    // /etc/qeli/server.conf, so a server started with `-c <anything else>` had no hooks to
-    // protect and the gate did nothing at all. (Audit 2026-08-04.)
     let config_path = state
         .config_path
         .lock()
         .await
         .clone()
         .unwrap_or_else(|| "/etc/qeli/server.conf".to_string());
+    if let Err(error) = critical_backup_paths(&state.config, &config_path) {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "ok": false,
+                "error": format!("restore unavailable: {error}")
+            })),
+        )
+            .into_response());
+    }
+    // A restore replaces the same files as Configuration/Quick Start. Keep it mutually
+    // exclusive with those read-modify-write operations so neither can publish a stale tree
+    // over the other while extraction and validation are in progress.
+    let _config_write_guard = state.config_write_lock.lock().await;
     // `?exact=1` opts into deleting live files the archive does not contain. Default stays
     // OVERLAY: exact restore removes data, and that must never be what a plain "Restore"
     // click does. (Р1)
@@ -1090,6 +1196,37 @@ fn prune_pre_restore_snapshots(keep: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_backup_accepts_custom_managed_paths() {
+        let mut config = crate::config::server::ServerConfig::default();
+        config.auth.users_file = "/etc/qeli/auth/custom-users.ini".into();
+        let profile = crate::config::server::ProfileConfig {
+            name: "tcp".into(),
+            identity_key: Some("/etc/qeli/keys/tcp.key".into()),
+            ..Default::default()
+        };
+        config.profiles.push(profile);
+        let paths = critical_backup_paths(&config, "/etc/qeli/config/server.ini").unwrap();
+        let names: Vec<&str> = paths
+            .iter()
+            .map(|path| path.archive_path.as_str())
+            .collect();
+        assert!(names.contains(&"qeli/config/server.ini"));
+        assert!(names.contains(&"qeli/auth/custom-users.ini"));
+        assert!(names.contains(&"qeli/keys/tcp.key"));
+    }
+
+    #[test]
+    fn panel_backup_refuses_external_or_ambiguous_active_paths() {
+        let config = crate::config::server::ServerConfig::default();
+        let outside = critical_backup_paths(&config, "/srv/qeli/server.conf").unwrap_err();
+        assert!(outside.contains("outside /etc/qeli"));
+        let relative = critical_backup_paths(&config, "server.conf").unwrap_err();
+        assert!(relative.contains("relative"));
+        let traversal = critical_backup_paths(&config, "/etc/qeli/../secret.conf").unwrap_err();
+        assert!(traversal.contains("not a normal file"));
+    }
 
     /// Minimal server config; `hooks` is spliced into the profile verbatim.
     fn srv(hooks: &str) -> String {

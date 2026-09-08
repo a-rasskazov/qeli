@@ -1,8 +1,9 @@
 use crate::server::pool::{u32_from_ip, IpPool};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, RwLock};
+use tokio::time::{self, Duration, MissedTickBehavior};
 
 const DHCP_SERVER_PORT: u16 = 67;
 const DHCP_CLIENT_PORT: u16 = 68;
@@ -122,28 +123,56 @@ impl DhcpServer {
         )))
     }
 
-    /// Bind the DHCP socket, SEPARATELY from serving on it.
+    /// Bind the DHCP socket, separately from serving on it.
     ///
-    /// The bind used to happen inside the detached serve task, so a taken port, a bad address
-    /// or a refused `set_broadcast` surfaced as one log line while the profile came up and was
-    /// counted as running — clients then connected and never got a lease, with the cause buried
-    /// in the journal. Binding here lets the caller fail the profile BEFORE it claims to serve
-    /// DHCP. Same split as the DNS proxy, for the same reason. (Audit 2026-08-01, §2.)
-    pub async fn bind(bind_addr: &str) -> anyhow::Result<UdpSocket> {
-        // DHCP is unauthenticated; a listen on a non-private (or wildcard) address
-        // exposes the pool to anyone who can reach the port. Warn loudly so an
-        // operator who did not intend a public DHCP surface notices at startup.
-        let listen_ip = bind_addr
-            .rsplit_once(':')
-            .map_or(bind_addr, |(host, _)| host);
-        if let Ok(ip) = listen_ip.parse::<Ipv4Addr>() {
-            if ip.is_unspecified() || !(ip.is_private() || ip.is_loopback() || ip.is_link_local()) {
-                log::warn!(
-                    "DHCP listening on non-private address {} — unauthenticated clients on this network can request leases; bind to a private/internal address unless this is intended",
-                    ip
-                );
-            }
+    /// A DHCP client without an address sends DISCOVER/REQUEST to 255.255.255.255. A socket
+    /// bound only to the profile gateway address does not receive that traffic on Linux. Bind
+    /// UDP/67 to INADDR_ANY and scope it to the actual TAP/TUN device with SO_BINDTODEVICE:
+    /// this receives standards-compliant broadcast without exposing the unauthenticated server
+    /// on WAN. The configured address remains a validation/display value and supplies the port.
+    #[cfg(target_os = "linux")]
+    pub async fn bind(bind_addr: &str, interface_name: &str) -> anyhow::Result<UdpSocket> {
+        use socket2::{Domain, Protocol, Socket, Type};
+
+        let requested: SocketAddrV4 = bind_addr
+            .parse()
+            .map_err(|e| anyhow::anyhow!("DHCP invalid IPv4 listen address {bind_addr}: {e}"))?;
+        if interface_name.trim().is_empty() {
+            anyhow::bail!("DHCP cannot bind an empty profile interface name");
         }
+
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+            .map_err(|e| anyhow::anyhow!("DHCP cannot create UDP socket: {e}"))?;
+        socket
+            .set_reuse_address(true)
+            .map_err(|e| anyhow::anyhow!("DHCP cannot enable SO_REUSEADDR: {e}"))?;
+        socket
+            .bind_device(Some(interface_name.as_bytes()))
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "DHCP cannot restrict UDP/{} to interface '{}': {e}",
+                    requested.port(),
+                    interface_name
+                )
+            })?;
+        socket.set_broadcast(true).map_err(|e| {
+            anyhow::anyhow!("DHCP cannot enable broadcast on {interface_name}: {e}")
+        })?;
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| anyhow::anyhow!("DHCP cannot make socket nonblocking: {e}"))?;
+        let actual = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, requested.port());
+        socket.bind(&actual.into()).map_err(|e| {
+            anyhow::anyhow!(
+                "DHCP cannot bind {actual} on interface '{interface_name}' (requested {bind_addr}): {e}"
+            )
+        })?;
+        UdpSocket::from_std(socket.into())
+            .map_err(|e| anyhow::anyhow!("DHCP cannot register socket with Tokio: {e}"))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn bind(bind_addr: &str, _interface_name: &str) -> anyhow::Result<UdpSocket> {
         let socket = UdpSocket::bind(bind_addr)
             .await
             .map_err(|e| anyhow::anyhow!("DHCP cannot bind {bind_addr}: {e}"))?;
@@ -157,21 +186,32 @@ impl DhcpServer {
         log::info!("DHCP server bound to {}, starting recv loop", bind_addr);
 
         let mut buf = vec![0u8; 1500];
+        let mut reaper = time::interval(Duration::from_secs(Self::OFFER_RESERVATION_SECS));
+        reaper.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             log::trace!("DHCP waiting for packet...");
-            let (n, src) = match socket.recv_from(&mut buf).await {
-                Ok(v) => v,
-                Err(e) => {
-                    // A transient recv error (e.g. ICMP port-unreachable surfaced on the
-                    // UDP socket) must not kill the whole DHCP service for the profile.
-                    log::warn!("DHCP recv error: {} — continuing", e);
-                    continue;
+            tokio::select! {
+                _ = reaper.tick() => {
+                    let expired = self.reap_expired().await;
+                    if expired != 0 {
+                        log::info!("DHCP: released {expired} expired lease(s)");
+                    }
                 }
-            };
-            log::info!("DHCP received {} bytes from {}", n, src);
-            if let Err(e) = self.handle_packet(&buf[..n], &socket, &src).await {
-                log::debug!("DHCP error from {}: {}", src, e);
+                received = socket.recv_from(&mut buf) => {
+                    let (n, src) = match received {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // A transient recv error must not kill the profile DHCP service.
+                            log::warn!("DHCP recv error: {} — continuing", e);
+                            continue;
+                        }
+                    };
+                    log::info!("DHCP received {} bytes from {}", n, src);
+                    if let Err(e) = self.handle_packet(&buf[..n], &socket, &src).await {
+                        log::debug!("DHCP error from {}: {}", src, e);
+                    }
+                }
             }
         }
     }
@@ -453,6 +493,41 @@ impl DhcpServer {
     /// and bounds what an unauthenticated packet can hold. (Audit 2026-08-04.)
     const OFFER_RESERVATION_SECS: u64 = 30;
 
+    fn lease_key(mac: &MacAddr) -> String {
+        format!(
+            "dhcp:{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]
+        )
+    }
+
+    async fn reap_expired(&self) -> usize {
+        self.reap_expired_at(self.start_time.elapsed().as_secs())
+            .await
+    }
+
+    async fn reap_expired_at(&self, now_secs: u64) -> usize {
+        let mut leases = self.leases.write().await;
+        let mut expired_keys = Vec::new();
+        for slot in leases.iter_mut() {
+            if slot
+                .as_ref()
+                .is_some_and(|lease| now_secs >= lease.expires_at)
+            {
+                let lease = slot.take().expect("checked as Some");
+                expired_keys.push(Self::lease_key(&lease.mac));
+            }
+        }
+        if expired_keys.is_empty() {
+            return 0;
+        }
+        let count = expired_keys.len();
+        let mut pool = self.shared_pool.lock().await;
+        for key in expired_keys {
+            pool.release(&key);
+        }
+        count
+    }
+
     /// `offer_only` = this came from a DISCOVER: reserve briefly instead of committing a
     /// full lease. The REQUEST that follows re-runs the allocator and promotes it.
     async fn allocate_ip(
@@ -466,13 +541,10 @@ impl DhcpServer {
         } else {
             self.lease_time_secs as u64
         };
-        let mac_str = format!(
-            "dhcp:{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]
-        );
-
-        let mut leases = self.leases.write().await;
+        let mac_str = Self::lease_key(mac);
         let now_secs = self.start_time.elapsed().as_secs();
+        self.reap_expired_at(now_secs).await;
+        let mut leases = self.leases.write().await;
 
         // Reuse this MAC's active lease — but only if the SHARED POOL still agrees it is ours.
         //
@@ -490,7 +562,7 @@ impl DhcpServer {
         // fresh allocation instead of a collision. (Audit 2026-08-04.)
         for slot in leases.iter_mut() {
             let Some(lease) = slot else { continue };
-            if lease.mac.0 != mac.0 || now_secs > lease.expires_at {
+            if lease.mac.0 != mac.0 || now_secs >= lease.expires_at {
                 continue;
             }
             let still_ours = {
@@ -498,6 +570,14 @@ impl DhcpServer {
                 pool.get_ip_by_username(&mac_str) == Some(lease.ip)
             };
             if still_ours {
+                let requested_expiry = now_secs.saturating_add(hold_secs);
+                // A repeated DISCOVER must not shorten an already committed lease to the
+                // 30-second offer hold; REQUEST promotes an offer and renews a full lease.
+                lease.expires_at = if offer_only {
+                    lease.expires_at.max(requested_expiry)
+                } else {
+                    requested_expiry
+                };
                 return Some(lease.ip);
             }
             log::info!(
@@ -507,26 +587,6 @@ impl DhcpServer {
             );
             *slot = None;
             break;
-        }
-
-        // Release expired leases from the shared pool so their IPs become available again
-        for slot in leases.iter_mut() {
-            if let Some(lease) = slot {
-                if now_secs > lease.expires_at {
-                    let expired_mac = format!(
-                        "dhcp:{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-                        lease.mac.0[0],
-                        lease.mac.0[1],
-                        lease.mac.0[2],
-                        lease.mac.0[3],
-                        lease.mac.0[4],
-                        lease.mac.0[5]
-                    );
-                    let mut pool = self.shared_pool.lock().await;
-                    pool.release(&expired_mac);
-                    *slot = None;
-                }
-            }
         }
 
         // Try to honour the preferred IP if it falls in our DHCP range and is available
@@ -552,7 +612,7 @@ impl DhcpServer {
                         leases[idx] = Some(DhcpLease {
                             ip: pref,
                             mac: *mac,
-                            expires_at: now_secs + hold_secs,
+                            expires_at: now_secs.saturating_add(hold_secs),
                         });
                         return Some(pref);
                     }
@@ -578,7 +638,7 @@ impl DhcpServer {
                 leases[alloc_idx] = Some(DhcpLease {
                     ip: allocated,
                     mac: *mac,
-                    expires_at: now_secs + hold_secs,
+                    expires_at: now_secs.saturating_add(hold_secs),
                 });
                 return Some(allocated);
             }
@@ -805,5 +865,93 @@ mod tests {
     #[test]
     fn truncated_packet_returns_none() {
         assert_eq!(DhcpServer::find_dhcp_option_pub(&[0u8; 10], 53), None);
+    }
+
+    fn test_server(lease_time_secs: u32) -> DhcpServer {
+        let config = crate::config::server::PoolConfig {
+            cidr: "10.9.0.0/24".into(),
+            ..Default::default()
+        };
+        let pool = IpPool::new_with_tun(&config, Ipv4Addr::new(10, 9, 0, 1)).unwrap();
+        DhcpServer::new(
+            Ipv4Addr::new(10, 9, 0, 1),
+            Ipv4Addr::new(255, 255, 255, 0),
+            Ipv4Addr::new(10, 9, 0, 1),
+            vec![],
+            "qeli.test".into(),
+            lease_time_secs,
+            Ipv4Addr::new(10, 9, 0, 100),
+            Ipv4Addr::new(10, 9, 0, 110),
+            Arc::new(Mutex::new(pool)),
+        )
+    }
+
+    #[tokio::test]
+    async fn request_promotes_offer_and_renews_existing_lease() {
+        let server = test_server(3_600);
+        let mac = MacAddr([0x02, 0, 0, 0, 0, 1]);
+        let offered = server.allocate_ip(&mac, None, true).await.unwrap();
+        let offered_expiry = server
+            .leases
+            .read()
+            .await
+            .iter()
+            .flatten()
+            .find(|lease| lease.mac.0 == mac.0)
+            .unwrap()
+            .expires_at;
+        assert_eq!(offered_expiry, DhcpServer::OFFER_RESERVATION_SECS);
+
+        assert_eq!(
+            server.allocate_ip(&mac, Some(offered), false).await,
+            Some(offered)
+        );
+        let committed_expiry = server
+            .leases
+            .read()
+            .await
+            .iter()
+            .flatten()
+            .find(|lease| lease.mac.0 == mac.0)
+            .unwrap()
+            .expires_at;
+        assert_eq!(committed_expiry, 3_600);
+
+        // A later DISCOVER from the same client cannot shorten the committed lease.
+        assert_eq!(server.allocate_ip(&mac, None, true).await, Some(offered));
+        let after_discover = server
+            .leases
+            .read()
+            .await
+            .iter()
+            .flatten()
+            .find(|lease| lease.mac.0 == mac.0)
+            .unwrap()
+            .expires_at;
+        assert_eq!(after_discover, committed_expiry);
+    }
+
+    #[tokio::test]
+    async fn periodic_reaper_releases_expired_shared_pool_reservation() {
+        let server = test_server(3_600);
+        let mac = MacAddr([0x02, 0, 0, 0, 0, 2]);
+        let offered = server.allocate_ip(&mac, None, true).await.unwrap();
+        let key = DhcpServer::lease_key(&mac);
+        assert_eq!(
+            server.shared_pool.lock().await.get_ip_by_username(&key),
+            Some(offered)
+        );
+
+        assert_eq!(
+            server
+                .reap_expired_at(DhcpServer::OFFER_RESERVATION_SECS)
+                .await,
+            1
+        );
+        assert_eq!(
+            server.shared_pool.lock().await.get_ip_by_username(&key),
+            None
+        );
+        assert!(server.leases.read().await.iter().all(Option::is_none));
     }
 }

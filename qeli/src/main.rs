@@ -154,8 +154,9 @@ enum Commands {
         username: String,
         /// Password (plaintext). VISIBLE TO EVERY LOCAL USER in /proc/<pid>/cmdline and in
         /// the shell history — prefer --password-stdin, or omit it entirely and let a
-        /// strong random one be generated and printed once (it cannot be recovered later;
-        /// only the hash is stored).
+        /// strong random one be generated and printed once. The users database stores its
+        /// Argon2 hash and may also store a reversibly encrypted `password_enc` for panel
+        /// link/QR re-issue; protect `/var/lib/qeli/panel-secret.key` accordingly.
         #[arg(short, long)]
         password: Option<String>,
         /// Read the password from stdin (first line), so it never appears in the process
@@ -1203,7 +1204,7 @@ fn add_client(
     println!("Added client '{}' to {}", username, users_file);
     if generated {
         println!(
-            "Generated password (store it now — only the hash is kept):\n  {}",
+            "Generated password (store it securely; an Argon2 hash and a panel-encrypted recovery value are kept):\n  {}",
             plaintext
         );
     }

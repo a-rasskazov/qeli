@@ -260,6 +260,11 @@ def run_all(s, cl):
 
 
 def main():
+    if not PW:
+        raise SystemExit(
+            "QELI_LAB_PASS is required; refusing to contact the lab with an empty password. "
+            "Set it in the environment and retry."
+        )
     s = cl = None
     server_active_units = []
     client_active_units = []

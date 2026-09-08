@@ -279,9 +279,13 @@ return view.extend({
 		o.datatype = 'ipaddr';
 		o.depends('dns', 'tunnel');
 
-		o = s.option(form.Value, 'dev', _('TUN device'));
+		o = s.option(form.Value, 'dev', _('TUN device'),
+			_('Must use the reserved qeli* namespace; system interfaces such as br-lan and wan are rejected.'));
 		o.default = 'qeli0';
-		o.datatype = 'maxlength(15)';
+		o.validate = function(section_id, value) {
+			return /^qeli[A-Za-z0-9._-]{0,11}$/.test(value || '')
+				? true : _('Use qeli or qeli* with safe characters, maximum 15 characters.');
+		};
 
 		o = s.option(form.Value, 'mtu', _('MTU'), _('0 = auto (server-pushed).'));
 		o.datatype = 'uinteger';

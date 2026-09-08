@@ -17,6 +17,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// Sidecar config file (qeli-owned, beside the main config).
 pub const NOTIFY_PATH: &str = "/etc/qeli/notify.json";
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// High-resolution metadata plus size. Saving through this module updates the cache under
+/// the same lock, so same-size updates inside one filesystem timestamp tick apply atomically.
+type FileStamp = Option<(u128, u64)>;
+type NotifyCache = OnceLock<Mutex<Option<(FileStamp, NotifyConfig)>>>;
+static NOTIFY_CACHE: NotifyCache = OnceLock::new();
 
 /// Which events a single channel sends. Defaults to all-on, so a freshly enabled
 /// channel notifies everything until the admin trims it.
@@ -131,27 +136,44 @@ impl Event {
     }
 }
 
-/// Read the sidecar. Absent → defaults (normal). Present-but-unparsable →
-/// defaults too, but LOUD: a corrupt `notify.json` silently disabled every channel
-/// before, so the admin got no alert that alerting itself had stopped.
-pub fn load() -> NotifyConfig {
+/// Read the sidecar without hiding an I/O or parse failure. The panel uses this path so a
+/// failed GET can never be followed by a PUT layered over empty defaults that erases secrets.
+pub fn load_checked() -> Result<NotifyConfig, String> {
     let s = match std::fs::read_to_string(NOTIFY_PATH) {
         Ok(s) => s,
-        Err(_) => return NotifyConfig::default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(NotifyConfig::default());
+        }
+        Err(error) => return Err(format!("cannot read {NOTIFY_PATH}: {error}")),
     };
-    match serde_json::from_str(&s) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            log::warn!(
-                "notify: {NOTIFY_PATH} exists but is unparsable ({e}) — all notifications \
-                 DISABLED until it is fixed (using defaults)."
-            );
+    serde_json::from_str(&s).map_err(|error| format!("cannot parse {NOTIFY_PATH}: {error}"))
+}
+
+/// Runtime reads fail closed to disabled channels, but log loudly; unlike the panel they cannot
+/// return an error to an operator synchronously.
+pub fn load() -> NotifyConfig {
+    match load_checked() {
+        Ok(config) => config,
+        Err(error) => {
+            log::warn!("notify: {error} — all notifications DISABLED until it is fixed");
             NotifyConfig::default()
         }
     }
 }
 
-/// [`load`], but served from a cache that is refreshed only when the sidecar's mtime or
+fn file_stamp() -> FileStamp {
+    std::fs::metadata(NOTIFY_PATH).ok().map(|metadata| {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        (modified, metadata.len())
+    })
+}
+
+/// [`load`], but served from a cache that is refreshed when the sidecar's mtime or
 /// size changes.
 ///
 /// The config is read on every notification-worthy event, most of which fire from the
@@ -159,22 +181,8 @@ pub fn load() -> NotifyConfig {
 /// operator editing `notify.json` (or the panel saving it) still takes effect within one
 /// event because the metadata changes. (Audit 2026-07-27, S2.)
 pub fn load_cached() -> NotifyConfig {
-    use std::sync::Mutex as StdMutex;
-    /// (mtime_secs, size) of the sidecar when the cached copy was parsed; `None` when the
-    /// file was absent, so its appearance also invalidates the cache.
-    type FileStamp = Option<(i64, u64)>;
-    type Cache = OnceLock<StdMutex<Option<(FileStamp, NotifyConfig)>>>;
-    static CACHE: Cache = OnceLock::new();
-    let stamp = std::fs::metadata(NOTIFY_PATH).ok().map(|m| {
-        let mtime = m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        (mtime, m.len())
-    });
-    let cell = CACHE.get_or_init(|| StdMutex::new(None));
+    let stamp = file_stamp();
+    let cell = NOTIFY_CACHE.get_or_init(|| Mutex::new(None));
     let mut g = cell.lock().unwrap_or_else(|p| p.into_inner());
     if let Some((cached_stamp, cfg)) = g.as_ref() {
         if *cached_stamp == stamp {
@@ -190,7 +198,26 @@ pub fn load_cached() -> NotifyConfig {
 pub fn save(cfg: &NotifyConfig) -> anyhow::Result<()> {
     let json = serde_json::to_vec_pretty(cfg)
         .map_err(|error| anyhow::anyhow!("cannot encode notification config: {error}"))?;
-    crate::util::write_atomic_private(NOTIFY_PATH, &json)
+    let cell = NOTIFY_CACHE.get_or_init(|| Mutex::new(None));
+    let mut cached = cell.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    crate::util::write_atomic_private(NOTIFY_PATH, &json)?;
+    *cached = Some((file_stamp(), cfg.clone()));
+    Ok(())
+}
+
+/// Reject enabled channels that cannot deliver anything. Keeping disabled channel fields is
+/// allowed for the test-before-save flow; the API deliberately clears a disabled bot token.
+pub fn validate_enabled(cfg: &NotifyConfig) -> Result<(), String> {
+    if cfg.telegram_enabled && (cfg.telegram_token.is_empty() || cfg.telegram_chat_id.is_empty()) {
+        return Err("Telegram is enabled but the bot token or chat id is empty".into());
+    }
+    if cfg.webhook_enabled {
+        if cfg.webhook_url.is_empty() {
+            return Err("Webhook is enabled but its URL is empty".into());
+        }
+        parse_url(&cfg.webhook_url)?;
+    }
+    Ok(())
 }
 
 fn now_unix() -> i64 {
@@ -392,7 +419,8 @@ async fn http_post_inner(url: &str, content_type: &str, body: &[u8]) -> Result<u
     let stream = tokio::net::TcpStream::connect(addr)
         .await
         .map_err(|e| format!("connect {host}:{port}: {e}"))?;
-    let req = build_request(&host, &path, content_type, body);
+    let authority = host_header(&host, port, https);
+    let req = build_request(&authority, &path, content_type, body);
     if https {
         let connector = tls_connector()?;
         let name = rustls::pki_types::ServerName::try_from(host.clone())
@@ -477,9 +505,22 @@ pub(crate) fn tls_connector() -> Result<tokio_rustls::TlsConnector, String> {
     Ok(tokio_rustls::TlsConnector::from(Arc::new(cfg)))
 }
 
-fn build_request(host: &str, path: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
+fn host_header(host: &str, port: u16, https: bool) -> String {
+    let rendered_host = if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
+    if (https && port == 443) || (!https && port == 80) {
+        rendered_host
+    } else {
+        format!("{rendered_host}:{port}")
+    }
+}
+
+fn build_request(authority: &str, path: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
     let mut req = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: qeli\r\nAccept: */*\r\n\
+        "POST {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: qeli\r\nAccept: */*\r\n\
          Content-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     )
@@ -516,8 +557,7 @@ async fn read_status<S: tokio::io::AsyncRead + Unpin>(s: &mut S) -> Result<u16, 
         })
 }
 
-/// Split `scheme://host[:port][/path]` → (https?, host, port, path). IPv6 literals
-/// (bracketed) are not supported — notification endpoints are hostnames.
+/// Split `scheme://host[:port][/path]` → (https?, host, port, path).
 pub(crate) fn parse_url(url: &str) -> Result<(bool, String, u16, String), String> {
     // Reject control characters (incl. CR/LF/DEL) to prevent header injection
     // when the host/path are spliced into the raw HTTP request in build_request.
@@ -535,23 +575,45 @@ pub(crate) fn parse_url(url: &str) -> Result<(bool, String, u16, String), String
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    if authority.is_empty() {
+    if authority.is_empty() || authority.contains('@') {
         return Err("missing host".into());
     }
-    let (host, port) = match authority.rfind(':') {
-        Some(i)
-            if !authority[i + 1..].is_empty()
-                && authority[i + 1..].bytes().all(|b| b.is_ascii_digit()) =>
-        {
-            (
+    let default_port = if https { 443 } else { 80 };
+    let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
+        let close = bracketed
+            .find(']')
+            .ok_or_else(|| "unterminated IPv6 host".to_string())?;
+        let host = &bracketed[..close];
+        host.parse::<std::net::Ipv6Addr>()
+            .map_err(|_| "invalid IPv6 host".to_string())?;
+        let suffix = &bracketed[close + 1..];
+        let port = if suffix.is_empty() {
+            default_port
+        } else {
+            suffix
+                .strip_prefix(':')
+                .ok_or_else(|| "invalid authority after IPv6 host".to_string())?
+                .parse::<u16>()
+                .map_err(|_| "invalid port".to_string())?
+        };
+        (host.to_string(), port)
+    } else {
+        if authority.matches(':').count() > 1 {
+            return Err("IPv6 literals must be enclosed in brackets".into());
+        }
+        match authority.rfind(':') {
+            Some(i) => (
                 authority[..i].to_string(),
                 authority[i + 1..]
                     .parse::<u16>()
                     .map_err(|_| "invalid port".to_string())?,
-            )
+            ),
+            None => (authority.to_string(), default_port),
         }
-        _ => (authority.to_string(), if https { 443 } else { 80 }),
     };
+    if host.is_empty() || port == 0 {
+        return Err("invalid host or port".into());
+    }
     let path = if path.is_empty() {
         "/".into()
     } else {
@@ -583,7 +645,20 @@ mod tests {
             parse_url("https://example.com").unwrap(),
             (true, "example.com".into(), 443, "/".into())
         );
+        assert_eq!(
+            parse_url("https://[2001:4860:4860::8888]:9443/hook").unwrap(),
+            (true, "2001:4860:4860::8888".into(), 9443, "/hook".into())
+        );
+        assert_eq!(
+            host_header("hooks.example", 9443, true),
+            "hooks.example:9443"
+        );
+        assert_eq!(
+            host_header("2001:4860:4860::8888", 443, true),
+            "[2001:4860:4860::8888]"
+        );
         assert!(parse_url("ftp://nope").is_err());
+        assert!(parse_url("https://2001:db8::1/hook").is_err());
     }
 
     #[test]

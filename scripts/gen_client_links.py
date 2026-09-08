@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Convert the prod client JSON configs to the new qeli:// link format (the one
-the APK imports via paste / QR / file). Writes <name>.qeli (link) and <name>.png
-(QR) into /etc/qeli/client/ on prod, keeps local copies, prints the links."""
+"""Retired production migration helper.
+
+Modern qeli profiles are INI and the panel/CLI generate qeli:// links directly. Keeping this
+historical JSON-to-link script executable risks connecting to production with obsolete schema.
+"""
+raise SystemExit("RETIRED: generate qeli:// links with the current panel or qeli CLI.")
 import os
 import paramiko, json, io, os
 from pathlib import Path

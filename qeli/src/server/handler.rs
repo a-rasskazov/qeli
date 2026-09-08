@@ -3380,9 +3380,9 @@ pub fn build_server_auth_msg_with_capabilities(
 }
 
 /// A cached, valid Argon2id PHC hash of a throwaway password. Verifying a
-/// candidate password against it costs the same memory-hard work as a real
-/// user's hash, so the "user not found" path can spend that work too and not
-/// betray (by being fast) which usernames exist. Built once on first use with
+/// candidate password against it gives an empty-database fallback for the "user not found"
+/// path. When users exist, [`dummy_password_hash_for`] selects one of their real PHC cost
+/// profiles instead, so legacy/manual costs cannot become a username oracle. Built once with
 /// the crate's default params; the hashed value itself is irrelevant.
 fn dummy_password_hash() -> &'static str {
     use std::sync::OnceLock;
@@ -3399,6 +3399,52 @@ fn dummy_password_hash() -> &'static str {
             .expect("hash dummy password");
         hash.to_string()
     })
+}
+
+/// Select a stable, process-secret representative verifier for an unknown/disabled username.
+///
+/// A single current-profile dummy (`m=19456,t=2`) made unknown users measurably different from
+/// valid legacy (`m=16384,t=2`) and manually-created (`m=32768,t=3`) accounts. Selecting from
+/// the configured hashes makes an unknown name follow the same observed cost distribution as
+/// real accounts, while keeping exactly one Argon2 job per attempt. `RandomState` seeds the
+/// mapping per process, so a remote party cannot predict which profile an absent name should
+/// have and compare it with the measured result.
+fn dummy_password_hash_for(db: &crate::config::users::UsersDb, username: &str) -> String {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::sync::OnceLock;
+
+    let candidates: Vec<&str> = db
+        .users
+        .iter()
+        .map(|user| user.password_hash.as_str())
+        .filter(|hash| hash.starts_with("$argon2id$") && argon2::PasswordHash::new(hash).is_ok())
+        .collect();
+    if candidates.is_empty() {
+        return dummy_password_hash().to_string();
+    }
+
+    static SELECTOR: OnceLock<std::collections::hash_map::RandomState> = OnceLock::new();
+    let selector = SELECTOR.get_or_init(std::collections::hash_map::RandomState::new);
+    let mut hasher = selector.build_hasher();
+    b"qeli-argon2-anti-enumeration-v2".hash(&mut hasher);
+    username.hash(&mut hasher);
+    candidates[(hasher.finish() as usize) % candidates.len()].to_string()
+}
+
+#[cfg(test)]
+#[test]
+fn dummy_selector_is_stable_and_uses_configured_costs() {
+    let user = crate::config::users::UserEntry {
+        password_hash: "$argon2id$v=19$m=16384,t=2,p=1$cWVsaVNhbHRWYWw$CCYuTv8pvqQrvhrBQW3KjPpEN0MZaFfTKv3HOcGqB8w".into(),
+        ..Default::default()
+    };
+    let db = crate::config::users::UsersDb {
+        users: vec![user],
+        ..Default::default()
+    };
+    let first = dummy_password_hash_for(&db, "absent");
+    assert_eq!(first, dummy_password_hash_for(&db, "absent"));
+    assert!(first.contains("m=16384,t=2,p=1"));
 }
 
 /// Verify a client's authentication (after the parsed `[key_proof][user:pass]`).
@@ -3484,6 +3530,7 @@ pub async fn verify_client_auth(
                 user.expire_at,
             ),
             None => {
+                let selected_dummy = dummy_password_hash_for(&db, username);
                 log::warn!(
                     "AUTH FAIL {} {}: user={} — not found or disabled",
                     proto,
@@ -3506,7 +3553,7 @@ pub async fn verify_client_auth(
                     let _permit = crate::server::argon2_gate().acquire().await;
                     let _ = tokio::task::spawn_blocking(move || {
                         use argon2::PasswordVerifier;
-                        if let Ok(ph) = argon2::PasswordHash::new(dummy_password_hash()) {
+                        if let Ok(ph) = argon2::PasswordHash::new(&selected_dummy) {
                             let _ = argon2::Argon2::default().verify_password(&pw_bytes, &ph);
                         }
                     })

@@ -38,6 +38,21 @@ ini_sanitize() { printf '%s' "$1" | tr -d '\000-\037'; }
 # Append `key = value` to the INI only when value is non-empty.
 ini_kv() { [ -n "$2" ] && printf '%s = %s\n' "$1" "$(ini_sanitize "$2")" >> "$CONF"; }
 
+# qeli.main.dev is written into the root-owned firewall zone. Reserve a qeli-specific
+# namespace so LuCI write access to this package cannot repoint NAT/forwarding at br-lan,
+# wan or another service's TUN. Linux IFNAMSIZ leaves 15 visible bytes.
+valid_qeli_dev() {
+	local value="$1"
+	case "$value" in
+		qeli*) ;;
+		*) return 1 ;;
+	esac
+	case "$value" in
+		*[!A-Za-z0-9._-]*|"") return 1 ;;
+	esac
+	[ "${#value}" -le 15 ]
+}
+
 ensure_runtime_dir() {
 	mkdir -p "$RUNDIR" || return 1
 	chmod 700 "$RUNDIR" || return 1
@@ -140,6 +155,10 @@ render_conf() {
 	dns_servers=""
 	config_list_foreach main dns_servers append_dns_server
 	config_get dev        main dev        qeli0
+	valid_qeli_dev "$dev" || {
+		logger -t qeli "ERROR: qeli.main.dev='$dev' must be a qeli-owned interface name (qeli*, max 15 safe characters)"
+		return 1
+	}
 	config_get mtu        main mtu        0
 	config_get_bool route_local main route_local 0
 	config_get_bool kill_switch main kill_switch 0
@@ -244,16 +263,10 @@ sync_firewall_device() {
 	# A Linux interface name is at most 15 chars and cannot contain '/' or NUL; in practice
 	# these are alphanumerics plus '.', '-' and '_'. Anything else is not an interface name,
 	# so refuse rather than sanitise. (Audit 2026-08-04.)
-	case "$dev" in
-		*[!A-Za-z0-9._-]*|"")
-			logger -t qeli "refusing to sync the firewall zone: qeli.main.dev='$dev' is not a valid interface name"
-			return 0
-			;;
-	esac
-	if [ "${#dev}" -gt 15 ]; then
-		logger -t qeli "refusing to sync the firewall zone: qeli.main.dev='$dev' exceeds 15 chars"
-		return 0
-	fi
+	valid_qeli_dev "$dev" || {
+		logger -t qeli "ERROR: refusing firewall sync: qeli.main.dev='$dev' is outside the reserved qeli* namespace"
+		return 1
+	}
 
 	zone=""
 	find_zone() { [ "$(uci -q get firewall.$1.name)" = "qeli" ] && zone="$1"; }
@@ -298,7 +311,7 @@ start_service() {
 
 	render_conf || return 1
 	mkdir -p "$STATEDIR"
-	sync_firewall_device
+	sync_firewall_device || return 1
 
 	procd_open_instance qeli
 	procd_set_param command "$BIN" --config "$CONF"

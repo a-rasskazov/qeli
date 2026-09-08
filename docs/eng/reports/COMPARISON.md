@@ -103,7 +103,7 @@ audited code + a public CVE history → OpenVPN/WireGuard.
 |---|:---:|:---:|:---:|:---:|
 | Speed | ★★★★★ | ★★★ | ★★★ | ★★★★ |
 | Obfuscation by default | ✘ | ✘ | ★★★★ | ★★★★ |
-| Several wire modes | ✘ | ✘ | ★★★★ | ★★★★ (plain/fake-tls/obfs/reality/reality-tls) |
+| Several wire modes | ✘ | ✘ | ★★★★ | ★★★★ (plain/fake-tls/obfs/reality-tls) |
 | TLS masking | ✘ | real TLS | real TLS + REALITY | fake-TLS modes + REALITY TLS 1.3/H2 (`reality-tls`) |
 | Built-in admin | ✘ | ✘ | ✘ | ✅ |
 | Anti-brute-force (user+IP) | ✘ | a plugin | ✘ | ✅ |

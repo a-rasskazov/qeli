@@ -9,6 +9,15 @@
 . /lib/functions.sh
 
 DEV="$(uci -q get qeli.main.dev || echo qeli0)"
+case "$DEV" in
+	qeli*) ;;
+	*)
+		logger -t qeli "refusing firewall defaults: qeli.main.dev='$DEV' is outside the reserved qeli* namespace"
+		exit 1
+		;;
+esac
+case "$DEV" in *[!A-Za-z0-9._-]*|"") exit 1 ;; esac
+[ "${#DEV}" -le 15 ] || exit 1
 
 zone_exists=0
 check_zone() { [ "$(uci -q get firewall.$1.name)" = "qeli" ] && zone_exists=1; }

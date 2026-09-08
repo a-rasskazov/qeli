@@ -103,7 +103,7 @@ REALITY (qeli имеет cert-borrowing и PQ-гибрид, но его TLS/H2 b
 |---|:---:|:---:|:---:|:---:|
 | Скорость | ★★★★★ | ★★★ | ★★★ | ★★★★ |
 | Обфускация по умолчанию | ✘ | ✘ | ★★★★ | ★★★★ |
-| Несколько wire-режимов | ✘ | ✘ | ★★★★ | ★★★★ (plain/fake-tls/obfs/reality/reality-tls) |
+| Несколько wire-режимов | ✘ | ✘ | ★★★★ | ★★★★ (plain/fake-tls/obfs/reality-tls) |
 | TLS-маскировка | ✘ | реальный TLS | реальный TLS + REALITY | fake-TLS режимы + REALITY TLS 1.3/H2 (`reality-tls`) |
 | Встроенная админка | ✘ | ✘ | ✘ | ✅ |
 | Anti-brute-force (user+IP) | ✘ | плагин | ✘ | ✅ |

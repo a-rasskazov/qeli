@@ -6,9 +6,13 @@
 пунктами A1/UDP/C2 и т.п.) устарели — перечисленные ниже проблемы закрыты или
 переосмыслены.
 
-> **Примечание carrier 0.8.0.** Текущий `reality-tls` терминирует REALITY TLS 1.3,
-> согласует ALPN `h2` и несёт raw private qeli records через один настоящий долгоживущий HTTP/2
-> POST. PacketCodec AEAD остаётся defence-in-depth; прежнего второго fake-TLS handshake/framing нет.
+> **Примечание carrier 0.8.0.** Текущий `reality-tls` согласует TLS 1.3/ALPN `h2` и несёт
+> private qeli records через один настоящий долгоживущий HTTP/2 POST. Hand-rolled клиент
+> намеренно **не проверяет** внешний Certificate/CertificateVerify как браузер. Сервер
+> аутентифицируется внутренним proof статического ключа qeli и настроенным pin до отправки
+> credentials. Поэтому активный MITM может завершить внешний carrier и наблюдать его
+> timing/границы записей, но не может аутентифицировать внутренний сервер, получить пароль
+> или расшифровать PacketCodec-трафик. Прежнего второго fake-TLS framing нет.
 
 ## Криптографическое ядро
 
@@ -17,15 +21,17 @@
 | Обмен ключами | X25519 (эфемерный per-session), `x25519-dalek`; во всех режимах кроме `plain` — PQ-гибрид **X25519MLKEM768** (ML-KEM-768, `ml-kem`, ключи данных = `HKDF(x25519 ‖ mlkem)`, `derive_keys_hybrid`). `plain` — классический X25519. Секреты с `zeroize` |
 | AEAD | ChaCha20-Poly1305 (`chacha20poly1305`) на дата-плоскости qeli; в `reality-tls` внешний TLS 1.3 — AES-128/256-GCM (`aes-gcm`/rustls-ring) |
 | Вывод ключей | HKDF-SHA256, раздельные ключи `server→client` / `client→server` (в `reality-tls` для `TLS_AES_256_GCM` — SHA-384) |
-| Пароли | Argon2id (`argon2` 0.5.3), профиль **зафиксирован в коде** — `crypto::password_hasher()` строит `Params::new(19456, 2, 1, None)` (m=19456 KiB, t=2, p=1 — рекомендация OWASP), поэтому обновление крейта не изменит его молча. ПРОВЕРКА намеренно использует `Argon2::default()`: параметры существующего хеша берутся из его собственной PHC-строки, а не из наших — именно это позволяет старым хешам проверяться после смены параметров |
+| Пароли | Argon2id (`argon2` 0.6), профиль **зафиксирован в коде** — `crypto::password_hasher()` строит `Params::new(19456, 2, 1, None)` (m=19456 KiB, t=2, p=1 — рекомендация OWASP), поэтому обновление крейта не изменит его молча. ПРОВЕРКА намеренно использует `Argon2::default()`: параметры существующего хеша берутся из его собственной PHC-строки, а не из наших — именно это позволяет старым хешам проверяться после смены параметров |
 | Anti-replay | 2048-битное скользящее окно по счётчику в `protocol::packet` (размер как у WireGuard, с 0.7.1); отдельный replay-cache захваченного REALITY-ClientHello (анти-replay активного пробинга) |
 | Идентичность сервера | Долговременный X25519-ключ **на каждый профиль** в `/etc/qeli/identity/<name>.key` (0600) |
 
 ## Рукопожатие и аутентификация (порядок важен)
 
 1. **Carrier-specific обмен.** `fake-tls` использует TLS-shaped ClientHello и X25519 key_share.
-   `reality-tls` сначала аутентифицирует REALITY TLS 1.3 и устанавливает настоящий H2;
-   приватный qeli handshake и hybrid X25519MLKEM768 затем идут внутри этого carrier.
+   `reality-tls` устанавливает внешний TLS 1.3/H2 carrier без независимой проверки
+   одолженного сертификата; приватный qeli handshake и hybrid X25519MLKEM768 затем идут
+   внутри него, а фактическую аутентификацию сервера до отправки credentials обеспечивает
+   pinned proof статического ключа qeli.
 2. **Channel binding.** В auth_proof подмешивается `transcript_hash =
    SHA256(ClientHello‖ServerHello‖Cert‖Finished)`. Подмена любого сообщения
    в канале ломает proof (защита от split-handshake MITM).
@@ -42,12 +48,13 @@
 внешняя обёртка):
 - `plain` — без TLS-мимикрии: голый обмен 32-байтными X25519-ключами, записи
   `[len][nonce][ct]` (TCP-only).
-- `fake-tls` / `obfs` / `reality` — псевдо-TLS-1.3 ClientHello (см. выше).
+- `fake-tls` / `obfs` — псевдо-TLS-1.3 ClientHello (см. выше).
 - `reality-tls` — browser-shaped TLS 1.3 ClientHello с REALITY-токеном. Сервер опознаёт токен,
   терминирует TLS, согласует ALPN `h2` и принимает один двунаправленный HTTP/2 POST с private
   qeli stream и случайным batching. `handrolled=true` одалживает цепочку target и зеркалит JA3S;
-  неавторизованные подключения мостятся на target. Это снижает известные tells, но не означает
-  универсальный behavioral-паритет с Xray/браузером.
+  неавторизованные подключения мостятся на target. Клиент не валидирует одолженный внешний
+  сертификат; сервер позже аутентифицирует настроенный pin ключа qeli. Это снижает известные
+  tells, но не означает универсальный behavioral-паритет с Xray/браузером.
 
 ## Что реализовано для защиты
 

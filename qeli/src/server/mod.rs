@@ -6231,10 +6231,13 @@ async fn run_profile_generation(
         let dhcp_dns: Vec<std::net::Ipv4Addr> = if pcfg.dns.enabled {
             vec![server_ip]
         } else {
-            vec![
-                std::net::Ipv4Addr::new(1, 1, 1, 1),
-                std::net::Ipv4Addr::new(8, 8, 8, 8),
-            ]
+            // DHCP must follow this profile's configured resolver policy. Hard-coding public
+            // resolvers here leaked client DNS away from private/split-horizon deployments.
+            pcfg.dns
+                .push_servers
+                .iter()
+                .filter_map(|value| value.parse::<std::net::Ipv4Addr>().ok())
+                .collect()
         };
         let dhcp_listen = dhcp_bind_spec(&pcfg);
 
@@ -6254,7 +6257,7 @@ async fn run_profile_generation(
         // refused `set_broadcast` left the profile "running" while every client connected and
         // never got a lease — the cause a single ERROR line in the journal. Same treatment as
         // the DNS proxy. (Audit 2026-08-01, §2.)
-        let dhcp_socket = match dhcp::DhcpServer::bind(&dhcp_listen).await {
+        let dhcp_socket = match dhcp::DhcpServer::bind(&dhcp_listen, &ifname).await {
             Ok(s) => s,
             Err(e) => anyhow::bail!(
                 "profile '{}': {e}. Clients of this profile would get no lease at all. Free the \
@@ -6263,9 +6266,10 @@ async fn run_profile_generation(
             ),
         };
         log::info!(
-            "DHCP server for profile '{}' starting on {}",
+            "DHCP server for profile '{}' starting on {} (interface '{}'; Linux receives broadcast on device-scoped UDP/67)",
             name,
-            dhcp_listen
+            dhcp_listen,
+            ifname
         );
         let label = format!("profile '{name}' DHCP server on {dhcp_listen}");
         service_set.spawn(async move {

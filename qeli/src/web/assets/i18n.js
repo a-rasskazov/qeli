@@ -763,7 +763,7 @@
       'Enable DHCP server': 'Включить DHCP-сервер',
       'Automatically assign IPs via DHCP (mainly useful for TAP mode)': 'Автоматически выдавать IP по DHCP (в основном для режима TAP)',
       'DHCP listen address': 'Адрес прослушивания DHCP',
-      'Usually 0.0.0.0:67': 'Обычно 0.0.0.0:67',
+      'Leave empty for this profile interface on UDP/67': 'Оставьте пустым для интерфейса этого профиля на UDP/67',
       'Pool start IP': 'Начальный IP пула',
       'First IP to hand out via DHCP': 'Первый IP для выдачи по DHCP',
       'Pool end IP': 'Конечный IP пула',
@@ -1079,6 +1079,9 @@
       'Webhook notifications': 'Уведомления webhook',
       'Notify on': 'Уведомлять о',
       'Save changes': 'Сохранить изменения',
+      'Reload this page before saving.': 'Перезагрузите страницу перед сохранением.',
+      'Notification settings were not loaded:': 'Настройки уведомлений не загружены:',
+      'Notification settings were not loaded: ': 'Настройки уведомлений не загружены: ',
       'Test sent — see the result': 'Тест отправлен — см. результат',
       'Bot token': 'Токен бота',
       'Create a bot with @BotFather and paste its token. Write-only — leave blank to keep the current one.':

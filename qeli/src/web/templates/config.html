@@ -992,7 +992,7 @@
           <div x-show="cfg.profiles[activeTab].dhcp.enabled" class="grid grid-cols-3 gap-4">
             <div>
               <label class="field-label">DHCP listen address</label>
-              <p class="field-desc">Usually 0.0.0.0:67</p>
+              <p class="field-desc">Leave empty for this profile interface on UDP/67</p>
               <input class="inp font-mono" type="text" x-model="cfg.profiles[activeTab].dhcp.listen" @input="markDirty()">
             </div>
             <div>

@@ -59,6 +59,7 @@ public static class CliRunner
         }
 
         Console.WriteLine("qeli-mac platform self-test");
+        EncryptedEnvelope.RunSelfTests(Check);
         DnsJournal.RunSelfTests(Check);
         NetworkConfigurator.RunRouteLifecycleSelfTest(Check);
         NetworkConfigurator.RunRoamingRouteSelfTest(Check);

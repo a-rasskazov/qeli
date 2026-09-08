@@ -2455,14 +2455,21 @@ unreadable chain fails profile startup.
 An optional DHCP server on the profile's interface (for TAP/L2 setups; most
 deployments don't need it — IPs are handed out in AUTH). Disabled by default.
 Per-profile.
+On Linux the socket receives standard broadcast `DISCOVER`/`REQUEST` traffic on
+`0.0.0.0:67`, but is restricted to the profile's **actual TUN/TAP interface** with
+`SO_BINDTODEVICE`; the unauthenticated service is not exposed on WAN.
 
 | Key | Default | Purpose |
 |---|---|---|
 | `dhcp.enabled` | `false` | enable the DHCP server |
-| `dhcp.listen` | `0.0.0.0:67` | listen address:port |
+| `dhcp.listen` | empty (`tun.address:67`) | logical DHCP address and port; empty is recommended. Explicit `0.0.0.0` is rejected as unsafe |
 | `dhcp.pool_start` / `pool_end` | (none) | lease range (optional; else from `pool.cidr`) |
 | `dhcp.lease_time_secs` | `86400` | lease time |
 | `dhcp.domain_name` | `vpn` | domain name advertised to clients |
+
+With the built-in DNS proxy enabled, DHCP advertises the profile address. With the
+proxy disabled, it advertises IPv4 addresses from `dns.push_servers`; an empty list
+omits the DNS option. There is no hidden fallback to public `1.1.1.1`/`8.8.8.8`.
 
 > **`pool.cidr` is the subnet source of truth (since 0.7.15).** Its prefix configures the
 > server TUN, is pushed to every client, and defines the DHCP subnet (`/16` means

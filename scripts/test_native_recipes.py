@@ -445,6 +445,9 @@ class NativeRecipeTests(unittest.TestCase):
         root = Path(__file__).parent.parent
         defaults = (root / "qeli-openwrt/files/qeli.config").read_text(encoding="utf-8")
         init = (root / "qeli-openwrt/files/qeli.init").read_text(encoding="utf-8")
+        firewall_defaults = (root / "qeli-openwrt/files/qeli.firewall.uci-defaults").read_text(
+            encoding="utf-8"
+        )
         luci = (
             root
             / "qeli-openwrt/luci-app-qeli/htdocs/luci-static/resources/view/qeli/config.js"
@@ -460,6 +463,11 @@ class NativeRecipeTests(unittest.TestCase):
         self.assertIn("form.ListValue, 'dns'", luci)
         self.assertIn("form.DynamicList, 'dns_servers'", luci)
         self.assertIn("mtu >= 576 && mtu <= 16602", luci)
+        self.assertIn('valid_qeli_dev "$dev" ||', init)
+        self.assertIn('sync_firewall_device || return 1', init)
+        self.assertIn('qeli*) ;;', firewall_defaults)
+        self.assertIn("/^qeli[A-Za-z0-9._-]{0,11}$/", luci)
+        self.assertNotIn("o.datatype = 'maxlength(15)'", luci)
 
     def test_keenetic_attach_recipe_transfers_both_families_and_mtu_without_loop(self):
         hook = (
