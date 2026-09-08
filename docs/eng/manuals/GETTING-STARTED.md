@@ -424,10 +424,10 @@ By default users live in a **separate file** — `auth.users_file` (default
 `/etc/qeli/users.conf`). The example configs ship **without** inline users; add users
 with `qeli add-client` (step 6), which appends them to that file. Nothing else to do.
 
-> You *can* instead define users inline in `server.conf` as `[user:*]` sections, but
-> then `auth.users_file` is **ignored entirely** (inline takes precedence) — so don't
-> set both, or the server warns and the file is silently dropped. The separate file is
-> the recommended default; keep `[user:*]` out of `server.conf`.
+> You can instead define users inline in `server.conf` as `[user:*]` sections. If both
+> sources are configured, the server loads their **union**, and `auth.users_file` wins
+> duplicate names. Panel edits preserve the configured file path. Prefer the separate
+> file for dynamically managed users.
 
 ---
 
@@ -1107,8 +1107,8 @@ A detailed comparison, REALITY setup (short_ids, handrolled), multipath bonding 
   Fix with `sudo chown -R qeli:qeli /etc/qeli` + restart — full symptom list and modes in
   §2, "A.3. Fix ownership of `/etc/qeli`".
 - **Client passes "identity verified" but drops immediately / `AUTH FAIL … not found`.**
-  The user isn't where the server looks: `server.conf` has inline `[user:*]`, so
-  `users_file` is ignored (see §3.3). Keep users in one place.
+  Check the merged inline `[user:*]` plus `auth.users_file` view (see §3.3): a
+  same-named entry from the file takes precedence and can shadow the inline user.
 - **Connects, but no internet (full-tunnel).** Check that the profile has
   `routing.nat.enabled = true` and that **`iptables`** is installed on the server (`apt
   install iptables`) — without it the server can't add MASQUERADE (log: `NAT requested

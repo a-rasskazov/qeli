@@ -2176,7 +2176,7 @@ ip route add default dev "$QELI_TUN" table 100
 
 | Ключ | Дефолт | Назначение |
 |---|---|---|
-| `users_file` | `/etc/qeli/users.conf` | путь к standalone-базе пользователей (если нет инлайн `[user:*]`) |
+| `users_file` | `/etc/qeli/users.conf` | путь к standalone-базе; загружается вместе с инлайн `[user:*]` и побеждает при совпадении имени |
 | `brute_force.enabled` | `true` | главный выключатель ограничения для **VPN-аутентификации**; `false` = полностью выкл |
 | `brute_force.max_attempts` | `5` | порог неудачных попыток до локаута (по source-IP); допустимо `1..=10000` |
 | `brute_force.window_secs` | `300` | окно подсчёта неудач (сек); допустимо `1..=86400` (24ч) |

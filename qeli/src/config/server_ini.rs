@@ -158,9 +158,9 @@ impl ServerConfig {
             })
             .collect();
         if !users.is_empty() {
-            // Inline users win over an explicitly-set users_file — warn so it isn't a
-            // silent surprise (users_file has a non-empty default, so only flag an
-            // *explicit* key, not the default). (audit 1.9)
+            // Both sources are intentional: the worker merges them and the external file wins
+            // duplicate users/groups. Only flag an explicit path so operators can see the
+            // precedence rule without warning on the ordinary default.
             let explicit_users_file = doc
                 .section("auth")
                 .and_then(|s| s.get("users_file"))
@@ -168,7 +168,7 @@ impl ServerConfig {
             if explicit_users_file {
                 log::warn!(
                     "config: both inline [user:*] blocks and an explicit auth.users_file \
-                     are set — inline users take precedence; users_file is ignored"
+                     are set — both are loaded; users_file takes precedence on duplicates"
                 );
             }
             cfg.auth.users = users;
@@ -218,16 +218,10 @@ impl ServerConfig {
 
 fn auth_to(a: &AuthConfig) -> Section {
     let mut s = Section::new("auth", None);
-    // Emit `users_file` XOR inline `[user:*]`, never both. The separate users file is the
-    // default; the web panel manages users through it (users_db → users.save(users_file)),
-    // so a file-mode config carries no inline users (`a.users` is empty) and we write the
-    // path. Only a config that was hand-written with inline `[user:*]` has `a.users`
-    // populated — there `users_file` is dead weight (inline wins) and, if emitted, would
-    // trip the both-sources warning on reload; so we omit it and keep the inline blocks
-    // (written by `to_ini_string`). This keeps every serialized config single-source.
-    if a.users.is_empty() {
-        put_str(&mut s, "users_file", &a.users_file);
-    }
+    // Runtime loads both sources and merges them, with the external file authoritative on
+    // duplicate users/groups. Always preserve the configured path when serializing; dropping it
+    // from a mixed config silently changes the access-control list after a panel save/restart.
+    put_str(&mut s, "users_file", &a.users_file);
     put(
         &mut s,
         "require_client_key_proof",
@@ -1826,7 +1820,7 @@ max_sessions = 5
     }
 
     #[test]
-    fn serializes_users_file_xor_inline_users() {
+    fn serializes_users_file_together_with_inline_users() {
         // File mode (the default): no inline users → `users_file` is written, no [user:*].
         let file_mode =
             "[auth]\nusers_file = /etc/qeli/custom-users.conf\n\n[profile:tcp]\nbind.port = 443\n";
@@ -1838,15 +1832,15 @@ max_sessions = 5
             "file-mode config must not gain inline users"
         );
 
-        // Inline mode: inline users present → [user:*] written, NO `users_file` (it would be
-        // dead weight — inline wins — and would trip the both-sources warning on reload).
+        // Mixed mode: inline users and the configured users file are both preserved; runtime
+        // loads their union and lets the external file win duplicate names.
         let inline_mode = "[auth]\nusers_file = /etc/qeli/custom-users.conf\n\n[profile:tcp]\nbind.port = 443\n\n[user:alice]\npassword_hash = $argon2id$v=19$m=16384,t=2,p=1$abc$def\n";
         let cfg2 = ServerConfig::from_ini(&IniDoc::parse(inline_mode).unwrap()).unwrap();
         let out2 = cfg2.to_ini_string();
         assert!(out2.contains("[user:alice]"));
         assert!(
-            !out2.contains("users_file"),
-            "inline-mode config must not also emit users_file (single-source)"
+            out2.contains("users_file = /etc/qeli/custom-users.conf"),
+            "mixed config must preserve the authoritative users file"
         );
     }
 

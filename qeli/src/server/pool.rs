@@ -495,8 +495,23 @@ impl IpPool {
     /// Idempotent while the key's existing address is still inside the window, so a repeated
     /// DHCPREQUEST keeps its lease rather than consuming another address.
     pub fn allocate_in_range(&mut self, key: &str, lo: u32, hi: u32) -> Option<Ipv4Addr> {
+        self.allocate_in_range_excluding(key, lo, hi, &HashSet::new())
+    }
+
+    /// Allocate within a sub-range while temporarily excluding caller-owned addresses.
+    ///
+    /// DHCP uses this for DECLINE quarantine. The quarantine is intentionally not written to
+    /// the pool's permanent `excluded` set: after the DHCP hold expires the address becomes
+    /// eligible again without weakening administrator-configured exclusions.
+    pub fn allocate_in_range_excluding(
+        &mut self,
+        key: &str,
+        lo: u32,
+        hi: u32,
+        temporary_excluded: &HashSet<u32>,
+    ) -> Option<Ipv4Addr> {
         if let Some(&cur) = self.user_allocations.get(key) {
-            if cur >= lo && cur <= hi {
+            if cur >= lo && cur <= hi && !temporary_excluded.contains(&cur) {
                 return Some(ip_from_u32(cur));
             }
             // Held an address OUTSIDE the window (e.g. the VPN side allocated it first):
@@ -516,6 +531,7 @@ impl IpPool {
             if !self.excluded.contains(&ip_val)
                 && !self.reserved.contains(&ip_val)
                 && !self.allocated.contains(&ip_val)
+                && !temporary_excluded.contains(&ip_val)
             {
                 self.allocated.insert(ip_val);
                 self.user_allocations.insert(key.to_string(), ip_val);

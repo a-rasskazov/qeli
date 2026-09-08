@@ -234,8 +234,9 @@ final class AppModel: ObservableObject {
             }
             return
         }
+        let previous = archive
         archive.activeProfileID = id
-        persistArchive()
+        persistArchive(rollbackTo: previous)
     }
 
     func saveProfile(id: UUID?, name: String, configText: String) throws {
@@ -307,14 +308,16 @@ final class AppModel: ObservableObject {
             alert = AppAlert(title: "Tunnel active", message: "Disconnect before deleting the active profile.")
             return
         }
+        let previous = archive
         archive.profiles.remove(at: index)
         archive.normalize()
-        persistArchive()
+        persistArchive(rollbackTo: previous)
     }
 
     func move(fromOffsets: IndexSet, toOffset: Int) {
+        let previous = archive
         archive.profiles.move(fromOffsets: fromOffsets, toOffset: toOffset)
-        persistArchive()
+        persistArchive(rollbackTo: previous)
     }
 
     func move(_ id: UUID, by offset: Int) {
@@ -322,8 +325,9 @@ final class AppModel: ObservableObject {
               let source = archive.profiles.firstIndex(where: { $0.id == id }) else { return }
         let destination = source + offset
         guard archive.profiles.indices.contains(destination) else { return }
+        let previous = archive
         archive.profiles.swapAt(source, destination)
-        persistArchive()
+        persistArchive(rollbackTo: previous)
     }
 
     func updateSettings(_ update: (inout AppSettings) -> Void) {
@@ -548,9 +552,11 @@ final class AppModel: ObservableObject {
             alert = AppAlert(title: "Tunnel active", message: "Disconnect before restoring profiles.")
             return
         }
+        let previous = self.archive
         self.archive = archive
-        persistArchive()
-        reachability.removeAll()
+        if persistArchive(rollbackTo: previous) {
+            reachability.removeAll()
+        }
     }
 
     /// Resolve a localization key in the *selected* UI language.
@@ -714,16 +720,20 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func persistArchive() {
+    @discardableResult
+    private func persistArchive(rollbackTo previous: ProfileArchive) -> Bool {
         do {
             try commitArchive()
+            return true
         } catch {
-            if let stored = try? profileStore.load() {
-                archive = stored
-                profiles = stored.profiles
-                synchronizeActiveProfile()
-            }
+            // Roll back from the in-memory snapshot first. Reloading the store can fail for the
+            // same reason as the save; relying on that second I/O operation left `archive`
+            // mutated while the published profile list still described the old state.
+            archive = (try? profileStore.load()) ?? previous
+            profiles = archive.profiles
+            synchronizeActiveProfile()
             present(error, title: "Could not save profiles")
+            return false
         }
     }
 

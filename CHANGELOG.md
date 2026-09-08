@@ -7,6 +7,11 @@
 ## [0.8.1] — не выпущен
 
 Разработка 0.8.1 ведётся в ветке `dev`.
+- DHCP-сервер больше не резервирует скрытый fallback-адрес при NAK: REQUEST выдаёт только точно запрошенный адрес. Добавлены RELEASE, DECLINE с 10-минутным quarantine, корректные relay `giaddr`/flags и широковещательный NAK; `dhcp.listen` теперь fail-fast отклоняет IPv6, port 0, wildcard, multicast и неверный синтаксис.
+- Смешанная база пользователей (`auth.users_file` + inline `[user:*]`/`[group:*]`) сохраняется без смены семантики: оба источника загружаются, внешний файл побеждает дубликаты и его нестандартный путь переживает сохранение через панель. Unknown-user Argon2 cost-профили кэшируются при загрузке базы без сканирования всех PHC под read-lock на каждую попытку.
+- Panel backup/restore проверяет критические файлы по фактическому содержимому созданного tar, включает настроенный внешний users-файл даже при наличии inline-записей, исключает restore-снимки/uploads/history и legacy `/etc/qeli/panel-secret.key`, а восстановленные каталоги/файлы нормализует до `0700`/`0600`. Pre-restore snapshot больше не архивирует сам себя и предыдущие снимки.
+- Windows kill-switch включает начальные firewall allow-rules в транзакционный rollback и удаляет их только внутри группы `qeli_ks`. Notify-cache на Unix замечает chmod/chown и замену inode, а не только mtime/размер.
+- iOS атомарно откатывает модель профилей при ошибке сохранения, не предлагает JSON как формат импорта профиля и проверяет entitlements непосредственно внутри Packet Tunnel extension. Offline IPA verifier сверяет срок provisioning profile, Team ID, App ID и entitlements каждого bundle; недостижимая legacy JSON/SSH-реализация `gen_client_links.py` удалена.
 - В Android и iOS в «Свойствах соединения» отображаются фактически согласованные после handshake
   режимы Recordizer и roaming: `PACKET_MUX_V1` либо legacy packet-per-record, а также
   `UDP_ROAM_V1`, `TCP_RESUME_V2`, `TCP_HANDOVER_V2` либо fallback на обычное переподключение —

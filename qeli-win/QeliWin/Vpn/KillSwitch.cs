@@ -181,9 +181,9 @@ public static class KillSwitch
 
         // Add new firewall permits while the old strict gate still blocks them, atomically
         // swap the WinDivert generation, and only then retire obsolete firewall permits.
-        Ps(ServerRuleScript(add: added), critical: true);
         try
         {
+            Ps(ServerRuleScript(add: added), critical: true);
             ReplaceStrictGate(oldAlias, refreshed, nextDns);
         }
         catch (Exception gateError)
@@ -305,13 +305,17 @@ public static class KillSwitch
     {
         var script = new StringBuilder();
         foreach (var ip in remove ?? [])
-            script.AppendLine($"Remove-NetFirewallRule -DisplayName 'qeli kill-switch: server {ip}' " +
-                "-ErrorAction SilentlyContinue");
+            script.AppendLine(
+                $"Get-NetFirewallRule -Group '{Group}' -ErrorAction SilentlyContinue | " +
+                $"Where-Object {{ $_.DisplayName -eq 'qeli kill-switch: server {ip}' }} | " +
+                "Remove-NetFirewallRule -ErrorAction SilentlyContinue");
         foreach (var ip in add ?? [])
         {
             if (replaceAdded)
-                script.AppendLine($"Remove-NetFirewallRule -DisplayName 'qeli kill-switch: server {ip}' " +
-                    "-ErrorAction SilentlyContinue");
+                script.AppendLine(
+                    $"Get-NetFirewallRule -Group '{Group}' -ErrorAction SilentlyContinue | " +
+                    $"Where-Object {{ $_.DisplayName -eq 'qeli kill-switch: server {ip}' }} | " +
+                    "Remove-NetFirewallRule -ErrorAction SilentlyContinue");
             script.AppendLine($"New-NetFirewallRule -DisplayName 'qeli kill-switch: server {ip}' -Group '{Group}' " +
                 $"-Direction Outbound -RemoteAddress {ip} -Action Allow -Profile Any | Out-Null");
         }
@@ -468,6 +472,10 @@ public static class KillSwitch
 
     internal static string BuildRestoreScriptForTest(IReadOnlyDictionary<string, string> prior) =>
         BuildRestoreScript(prior);
+    internal static string ServerRuleScriptForTest(
+        IEnumerable<string>? add = null, IEnumerable<string>? remove = null) =>
+        ServerRuleScript(add, remove);
+
 
     private static string BuildRestoreScript(IReadOnlyDictionary<string, string> prior)
     {

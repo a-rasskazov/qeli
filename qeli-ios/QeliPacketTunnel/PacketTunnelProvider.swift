@@ -1,5 +1,6 @@
 import Foundation
 import NetworkExtension
+import Security
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let sharedStore = SharedTunnelStore()
@@ -37,6 +38,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             do {
                 try Task.checkCancellation()
                 guard isCurrent(state.generation) else { throw CancellationError() }
+                guard PacketTunnelSigningDiagnostics.hasRequiredEntitlements() else {
+                    throw PacketTunnelProviderError.invalidSigning
+                }
                 let archive = try ProfileStore().load()
                 let optionID = (options?["profileID"] as? NSString)
                     .map { $0 as String }
@@ -221,8 +225,42 @@ private final class ProviderStartCompletion: @unchecked Sendable {
     }
 }
 
+private enum PacketTunnelSigningDiagnostics {
+    static func hasRequiredEntitlements() -> Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        guard let task = SecTaskCreateFromSelf(nil),
+              let expectedAppGroup = Bundle.main.object(
+                  forInfoDictionaryKey: "QeliAppGroup"
+              ) as? String,
+              !expectedAppGroup.isEmpty,
+              !expectedAppGroup.contains("$("),
+              let expectedKeychainGroup = Bundle.main.object(
+                  forInfoDictionaryKey: "QeliKeychainAccessGroup"
+              ) as? String,
+              !expectedKeychainGroup.isEmpty,
+              !expectedKeychainGroup.contains("$(") else { return false }
+        let networkExtensions = values(
+            task: task,
+            key: "com.apple.developer.networking.networkextension"
+        )
+        let appGroups = values(task: task, key: "com.apple.security.application-groups")
+        let keychainGroups = values(task: task, key: "keychain-access-groups")
+        return networkExtensions.contains("packet-tunnel-provider")
+            && appGroups.contains(expectedAppGroup)
+            && keychainGroups.contains(expectedKeychainGroup)
+        #endif
+    }
+
+    private static func values(task: SecTask, key: String) -> [String] {
+        SecTaskCopyValueForEntitlement(task, key as CFString, nil) as? [String] ?? []
+    }
+}
+
 enum PacketTunnelProviderError: LocalizedError {
     case profileNotFound
+    case invalidSigning
     /// The engine reached a terminal failure before `startTunnel` could report success.
     case startFailed(String)
 
@@ -230,6 +268,8 @@ enum PacketTunnelProviderError: LocalizedError {
         switch self {
         case .profileNotFound:
             return "The active encrypted Qeli profile was not found."
+        case .invalidSigning:
+            return "The Qeli Packet Tunnel extension is missing its VPN, App Group, or Keychain entitlement. Install a correctly signed build."
         case .startFailed(let reason):
             return reason.isEmpty ? "The Qeli tunnel failed to start." : reason
         }

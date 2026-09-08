@@ -3409,26 +3409,31 @@ fn dummy_password_hash() -> &'static str {
 /// real accounts, while keeping exactly one Argon2 job per attempt. `RandomState` seeds the
 /// mapping per process, so a remote party cannot predict which profile an absent name should
 /// have and compare it with the measured result.
-fn dummy_password_hash_for(db: &crate::config::users::UsersDb, username: &str) -> String {
-    use std::hash::{BuildHasher, Hash, Hasher};
-    use std::sync::OnceLock;
-
-    let candidates: Vec<&str> = db
+pub(crate) fn dummy_password_hash_candidates(db: &crate::config::users::UsersDb) -> Vec<String> {
+    let candidates: Vec<String> = db
         .users
         .iter()
         .map(|user| user.password_hash.as_str())
         .filter(|hash| hash.starts_with("$argon2id$") && argon2::PasswordHash::new(hash).is_ok())
+        .map(str::to_owned)
         .collect();
     if candidates.is_empty() {
-        return dummy_password_hash().to_string();
+        vec![dummy_password_hash().to_string()]
+    } else {
+        candidates
     }
+}
+
+fn dummy_password_hash_for(candidates: &[String], username: &str) -> String {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::sync::OnceLock;
 
     static SELECTOR: OnceLock<std::collections::hash_map::RandomState> = OnceLock::new();
     let selector = SELECTOR.get_or_init(std::collections::hash_map::RandomState::new);
     let mut hasher = selector.build_hasher();
     b"qeli-argon2-anti-enumeration-v2".hash(&mut hasher);
     username.hash(&mut hasher);
-    candidates[(hasher.finish() as usize) % candidates.len()].to_string()
+    candidates[(hasher.finish() as usize) % candidates.len()].clone()
 }
 
 #[cfg(test)]
@@ -3442,8 +3447,9 @@ fn dummy_selector_is_stable_and_uses_configured_costs() {
         users: vec![user],
         ..Default::default()
     };
-    let first = dummy_password_hash_for(&db, "absent");
-    assert_eq!(first, dummy_password_hash_for(&db, "absent"));
+    let candidates = dummy_password_hash_candidates(&db);
+    let first = dummy_password_hash_for(&candidates, "absent");
+    assert_eq!(first, dummy_password_hash_for(&candidates, "absent"));
     assert!(first.contains("m=16384,t=2,p=1"));
 }
 
@@ -3530,7 +3536,6 @@ pub async fn verify_client_auth(
                 user.expire_at,
             ),
             None => {
-                let selected_dummy = dummy_password_hash_for(&db, username);
                 log::warn!(
                     "AUTH FAIL {} {}: user={} — not found or disabled",
                     proto,
@@ -3538,6 +3543,10 @@ pub async fn verify_client_auth(
                     crate::util::log_identity(username)
                 );
                 drop(db);
+                let selected_dummy = {
+                    let candidates = server_state.dummy_password_hashes.read().await;
+                    dummy_password_hash_for(&candidates, username)
+                };
                 // Spend the same Argon2 work as the wrong-password path below, so an
                 // unknown username is not distinguishable from a known one by how
                 // fast the server rejects it (anti-enumeration). Result discarded.

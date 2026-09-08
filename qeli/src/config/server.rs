@@ -305,7 +305,7 @@ pub struct AuthConfig {
     #[serde(default)]
     pub brute_force: BruteForceConfig,
     /// Users defined inline in the server config (with Argon2 password hashes).
-    /// If non-empty, these are used instead of `users_file`.
+    /// Runtime merges them with `users_file`; the external file wins duplicate names.
     #[serde(default)]
     pub users: Vec<crate::config::users::UserEntry>,
     /// Optional group templates for inline users.

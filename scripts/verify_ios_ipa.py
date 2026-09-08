@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -23,6 +24,15 @@ MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 NETWORK_EXTENSION_KEY = "com.apple.developer.networking.networkextension"
 APP_GROUP_KEY = "com.apple.security.application-groups"
 KEYCHAIN_GROUP_KEY = "keychain-access-groups"
+APPLICATION_ID_KEY = "application-identifier"
+TEAM_ID_KEY = "com.apple.developer.team-identifier"
+
+
+def _string_list(value: Any) -> list[str]:
+    """Return only a real plist array of strings; scalars must fail closed."""
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return []
+    return value
 
 
 def _plist(archive: zipfile.ZipFile, name: str, errors: list[str]) -> dict[str, Any]:
@@ -36,6 +46,83 @@ def _plist(archive: zipfile.ZipFile, name: str, errors: list[str]) -> dict[str, 
         return {}
     return value
 
+
+def _embedded_profile(
+    archive: zipfile.ZipFile, name: str, errors: list[str]
+) -> dict[str, Any]:
+    try:
+        data = archive.read(name)
+    except KeyError:
+        errors.append(f"{name}: embedded.mobileprovision is missing")
+        return {}
+    # A mobileprovision is CMS SignedData whose payload is normally an XML plist. Parsing
+    # that embedded plist is portable; macOS additionally verifies the enclosing code
+    # signatures below, so this is not treated as cryptographic verification on its own.
+    starts = [offset for token in (b"<?xml", b"<plist") if (offset := data.find(token)) >= 0]
+    start = min(starts) if starts else -1
+    end = data.rfind(b"</plist>")
+    if start < 0 or end < start:
+        errors.append(f"{name}: provisioning profile payload is not a readable plist")
+        return {}
+    try:
+        value = plistlib.loads(data[start : end + len(b"</plist>")])
+    except (plistlib.InvalidFileException, ValueError) as error:
+        errors.append(f"{name}: cannot parse provisioning profile: {error}")
+        return {}
+    if not isinstance(value, dict):
+        errors.append(f"{name}: provisioning profile root is not a dictionary")
+        return {}
+    return value
+
+
+def _validate_profile(
+    profile_name: str,
+    profile: dict[str, Any],
+    *,
+    bundle_id: str,
+    app_group: str,
+    keychain_group: str,
+    needs_vpn: bool,
+    needs_keychain: bool,
+    expected_team: str,
+    errors: list[str],
+) -> None:
+    if not profile:
+        return
+    expiration = profile.get("ExpirationDate")
+    if not isinstance(expiration, datetime):
+        errors.append(f"{profile_name}: provisioning profile expiration is missing")
+    else:
+        expiry = expiration if expiration.tzinfo else expiration.replace(tzinfo=timezone.utc)
+        if expiry <= datetime.now(timezone.utc):
+            errors.append(f"{profile_name}: provisioning profile has expired")
+    teams = profile.get("TeamIdentifier", [])
+    if not isinstance(teams, list) or expected_team not in teams:
+        errors.append(f"{profile_name}: provisioning TeamIdentifier does not match {expected_team}")
+    entitlements = profile.get("Entitlements")
+    if not isinstance(entitlements, dict):
+        errors.append(f"{profile_name}: provisioning entitlements are missing")
+        return
+    if entitlements.get(TEAM_ID_KEY) != expected_team:
+        errors.append(f"{profile_name}: provisioning Team ID entitlement does not match")
+    expected_application_id = f"{expected_team}.{bundle_id}"
+    if entitlements.get(APPLICATION_ID_KEY) != expected_application_id:
+        errors.append(
+            f"{profile_name}: provisioning App ID must be {expected_application_id}"
+        )
+    prefixes = profile.get("ApplicationIdentifierPrefix", [])
+    if not isinstance(prefixes, list) or expected_team not in prefixes:
+        errors.append(f"{profile_name}: provisioning App ID prefix does not match")
+    if app_group not in _string_list(entitlements.get(APP_GROUP_KEY)):
+        errors.append(f"{profile_name}: provisioning App Group entitlement is missing")
+    if needs_vpn and "packet-tunnel-provider" not in _string_list(
+        entitlements.get(NETWORK_EXTENSION_KEY)
+    ):
+        errors.append(f"{profile_name}: provisioning packet-tunnel entitlement is missing")
+    if needs_keychain and keychain_group not in _string_list(
+        entitlements.get(KEYCHAIN_GROUP_KEY)
+    ):
+        errors.append(f"{profile_name}: provisioning shared-Keychain entitlement is missing")
 
 def validate_archive(path: Path) -> tuple[list[str], dict[str, str]]:
     errors: list[str] = []
@@ -125,13 +212,36 @@ def validate_archive(path: Path) -> tuple[list[str], dict[str, str]]:
             if widget[1].get("QeliAppGroup") != app_group:
                 errors.append("container and Widget App Group values differ")
 
-        roots = [main_root]
-        roots.extend(value for key, value in facts.items() if key.endswith("_root") and key != "main_root")
-        for root in dict.fromkeys(roots):
-            if root + "embedded.mobileprovision" not in names:
-                errors.append(f"{root}: embedded.mobileprovision is missing")
+        components: list[tuple[str, str, dict[str, Any], bool, bool]] = [
+            ("main_root", main_root, main, True, True)
+        ]
+        if tunnel is not None:
+            components.append(("tunnel_root", tunnel[0], tunnel[1], True, True))
+        if widget is not None:
+            components.append(("widget_root", widget[0], widget[1], False, False))
+
+        expected_team = keychain_group.split(".", 1)[0] if isinstance(keychain_group, str) else ""
+        for root_key, root, info, needs_vpn, needs_keychain in components:
+            component_bundle_id = info.get("CFBundleIdentifier")
+            facts[root_key + "_bundle_id"] = str(component_bundle_id or "")
+            profile_name = root + "embedded.mobileprovision"
+            profile = _embedded_profile(archive, profile_name, errors)
+            if isinstance(component_bundle_id, str) and component_bundle_id and expected_team:
+                _validate_profile(
+                    profile_name,
+                    profile,
+                    bundle_id=component_bundle_id,
+                    app_group=str(app_group or ""),
+                    keychain_group=str(keychain_group or ""),
+                    needs_vpn=needs_vpn,
+                    needs_keychain=needs_keychain,
+                    expected_team=expected_team,
+                    errors=errors,
+                )
             if root + "_CodeSignature/CodeResources" not in names:
                 errors.append(f"{root}: code signature is missing")
+        if not expected_team:
+            errors.append("cannot derive Apple Team ID from QeliKeychainAccessGroup")
     return errors, facts
 
 
@@ -185,6 +295,7 @@ def validate_signatures(path: Path, facts: dict[str, str]) -> list[str]:
 
         expected_group = facts["app_group"]
         expected_keychain = facts["keychain_group"]
+        expected_team = expected_keychain.split(".", 1)[0]
         for root_key, needs_vpn, needs_keychain in (
             ("main_root", True, True),
             ("tunnel_root", True, True),
@@ -198,12 +309,24 @@ def validate_signatures(path: Path, facts: dict[str, str]) -> list[str]:
             if error:
                 errors.append(error)
                 continue
-            if expected_group not in entitlements.get(APP_GROUP_KEY, []):
+            if expected_group not in _string_list(entitlements.get(APP_GROUP_KEY)):
                 errors.append(f"{bundle.name}: signed App Group entitlement is missing")
-            if needs_vpn and "packet-tunnel-provider" not in entitlements.get(NETWORK_EXTENSION_KEY, []):
+            if needs_vpn and "packet-tunnel-provider" not in _string_list(
+                entitlements.get(NETWORK_EXTENSION_KEY)
+            ):
                 errors.append(f"{bundle.name}: signed packet-tunnel-provider entitlement is missing")
-            if needs_keychain and expected_keychain not in entitlements.get(KEYCHAIN_GROUP_KEY, []):
+            if needs_keychain and expected_keychain not in _string_list(
+                entitlements.get(KEYCHAIN_GROUP_KEY)
+            ):
                 errors.append(f"{bundle.name}: signed shared-Keychain entitlement is missing")
+            expected_bundle_id = facts.get(root_key + "_bundle_id", "")
+            expected_application_id = f"{expected_team}.{expected_bundle_id}"
+            if entitlements.get(TEAM_ID_KEY) != expected_team:
+                errors.append(f"{bundle.name}: signed Team ID entitlement does not match")
+            if entitlements.get(APPLICATION_ID_KEY) != expected_application_id:
+                errors.append(
+                    f"{bundle.name}: signed App ID must be {expected_application_id}"
+                )
     return errors
 
 

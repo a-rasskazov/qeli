@@ -75,7 +75,7 @@ struct ProfilesView: View {
         }
         .fileImporter(
             isPresented: $showingFileImporter,
-            allowedContentTypes: [.plainText, .json, .data],
+            allowedContentTypes: [.plainText, .data],
             allowsMultipleSelection: false
         ) { result in
             Task { @MainActor in

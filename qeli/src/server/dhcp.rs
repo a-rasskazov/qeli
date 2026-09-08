@@ -1,4 +1,5 @@
 use crate::server::pool::{u32_from_ip, IpPool};
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -11,8 +12,10 @@ const DHCP_CLIENT_PORT: u16 = 68;
 const BOOTP_REPLY: u8 = 2;
 const DHCP_OPTION_MSG_TYPE: u8 = 53;
 const DHCP_MSG_TYPE_OFFER: u8 = 2;
+const DHCP_MSG_TYPE_DECLINE: u8 = 4;
 const DHCP_MSG_TYPE_ACK: u8 = 5;
 const DHCP_MSG_TYPE_NAK: u8 = 6;
+const DHCP_MSG_TYPE_RELEASE: u8 = 7;
 const DHCP_OPTION_END: u8 = 255;
 const DHCP_OPTION_SUBNET_MASK: u8 = 1;
 const DHCP_OPTION_ROUTER: u8 = 3;
@@ -51,6 +54,9 @@ pub struct DhcpServer {
     pool_start: u32,
     pool_end: u32,
     leases: RwLock<Vec<Option<DhcpLease>>>,
+    /// Addresses reported as conflicting by a client. They are held out of dynamic allocation
+    /// for a bounded interval, then automatically become eligible again.
+    declined: RwLock<HashMap<Ipv4Addr, u64>>,
     start_time: std::time::Instant,
     /// Shared IP pool — DHCP allocates through it to prevent overlap with VPN sessions
     shared_pool: Arc<Mutex<IpPool>>,
@@ -97,6 +103,7 @@ impl DhcpServer {
             pool_start: start,
             pool_end: end,
             leases: RwLock::new(leases),
+            declined: RwLock::new(HashMap::new()),
             start_time: std::time::Instant::now(),
             shared_pool,
             // 60 packets per 10s window per source IP: comfortably above a
@@ -258,6 +265,8 @@ impl DhcpServer {
         match msg_type {
             Some(1) => self.handle_discover(data, socket).await,
             Some(3) => self.handle_request(data, socket).await,
+            Some(DHCP_MSG_TYPE_DECLINE) => self.handle_decline(data).await,
+            Some(DHCP_MSG_TYPE_RELEASE) => self.handle_release(data).await,
             other => {
                 log::warn!("DHCP: unsupported message type {:?}", other);
                 Err(anyhow::anyhow!("unsupported DHCP message type"))
@@ -282,7 +291,7 @@ impl DhcpServer {
             requested_ip
         );
 
-        let offered_ip = match self.allocate_ip(&mac, requested_ip, true).await {
+        let offered_ip = match self.allocate_ip(&mac, requested_ip, true, true).await {
             Some(ip) => ip,
             None => {
                 log::error!("DHCP: no IP available in pool for allocation");
@@ -378,6 +387,25 @@ impl DhcpServer {
         broadcast
     }
 
+    /// RFC 2131 requires a DHCPNAK to be broadcast unless it came through a relay.
+    /// In particular, `ciaddr` must never turn a NAK into a unicast response.
+    fn nak_destination(data: &[u8]) -> std::net::SocketAddr {
+        let broadcast = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::BROADCAST),
+            DHCP_CLIENT_PORT,
+        );
+        if data.len() < 28 {
+            return broadcast;
+        }
+        let giaddr = Ipv4Addr::new(data[24], data[25], data[26], data[27]);
+        if !giaddr.is_unspecified()
+            && (giaddr.is_private() || giaddr.is_link_local() || giaddr.is_loopback())
+        {
+            return std::net::SocketAddr::new(std::net::IpAddr::V4(giaddr), DHCP_SERVER_PORT);
+        }
+        broadcast
+    }
+
     /// True when Option 54 (Server Identifier) names a DIFFERENT server.
     ///
     /// A client in SELECTING state puts the server it chose in the DHCPREQUEST it broadcasts.
@@ -415,7 +443,7 @@ impl DhcpServer {
             });
 
         // Relay-aware, and unicast to a RENEWING client that asked for it.
-        let broadcast = Self::reply_destination(data);
+        let destination = Self::reply_destination(data);
 
         // Never ACK an address just because the client asked for it. Run the
         // request through the real allocator (which honours this MAC's existing
@@ -423,11 +451,12 @@ impl DhcpServer {
         // allocator agrees with the requested address; otherwise NAK so the
         // client restarts with DISCOVER. Previously the requested IP was echoed
         // straight into an ACK, letting a client claim any address it named.
-        let granted = self.allocate_ip(&mac, requested_ip, false).await;
+        // REQUEST is exact: falling back would send a NAK while leaking the fallback lease.
+        let granted = self.allocate_ip(&mac, requested_ip, false, false).await;
         match (requested_ip, granted) {
             (Some(req), Some(ip)) if ip == req => {
                 let reply = self.build_reply(data, ip, DHCP_MSG_TYPE_ACK)?;
-                socket.send_to(&reply, broadcast).await?;
+                socket.send_to(&reply, destination).await?;
                 log::info!(
                     "DHCP ACK {} to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                     ip,
@@ -443,7 +472,7 @@ impl DhcpServer {
                 log::warn!("DHCP NAK: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} requested {} but pool grants {:?}",
                     mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5], req, granted);
                 let reply = self.build_nak(data);
-                socket.send_to(&reply, broadcast).await?;
+                socket.send_to(&reply, Self::nak_destination(data)).await?;
             }
             (None, _) => {
                 log::warn!("DHCP REQUEST without requested-IP option from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -452,6 +481,63 @@ impl DhcpServer {
         }
 
         Ok(())
+    }
+    async fn handle_release(&self, data: &[u8]) -> anyhow::Result<()> {
+        if Self::addressed_to_other_server(data, self.server_ip) {
+            return Ok(());
+        }
+        let mac = MacAddr::from_bytes(&data[28..34]);
+        let ciaddr = Ipv4Addr::new(data[12], data[13], data[14], data[15]);
+        if ciaddr.is_unspecified() {
+            log::debug!("DHCP RELEASE without ciaddr ignored");
+            return Ok(());
+        }
+        self.release_client_address(&mac, ciaddr, false).await;
+        Ok(())
+    }
+
+    async fn handle_decline(&self, data: &[u8]) -> anyhow::Result<()> {
+        if Self::addressed_to_other_server(data, self.server_ip) {
+            return Ok(());
+        }
+        let mac = MacAddr::from_bytes(&data[28..34]);
+        let Some(address) = Self::find_dhcp_option(data, 50)
+            .and_then(|opt| opt.get(2..6))
+            .map(|b| Ipv4Addr::new(b[0], b[1], b[2], b[3]))
+        else {
+            log::debug!("DHCP DECLINE without requested address ignored");
+            return Ok(());
+        };
+        self.release_client_address(&mac, address, true).await;
+        Ok(())
+    }
+
+    async fn release_client_address(&self, mac: &MacAddr, address: Ipv4Addr, quarantine: bool) {
+        const DECLINE_QUARANTINE_SECS: u64 = 600;
+        let key = Self::lease_key(mac);
+        let now = self.start_time.elapsed().as_secs();
+        let mut leases = self.leases.write().await;
+        let Some(slot) = leases.iter_mut().find(|slot| {
+            slot.as_ref()
+                .is_some_and(|lease| lease.mac.0 == mac.0 && lease.ip == address)
+        }) else {
+            log::warn!("DHCP: ignoring release/decline for unowned address {address}");
+            return;
+        };
+        *slot = None;
+
+        // Keep the lock order consistent with allocation: leases -> declined -> shared pool.
+        let mut declined = self.declined.write().await;
+        let mut pool = self.shared_pool.lock().await;
+        if pool.get_ip_by_username(&key) == Some(address) {
+            pool.release(&key);
+        }
+        if quarantine {
+            declined.insert(address, now.saturating_add(DECLINE_QUARANTINE_SECS));
+            log::warn!("DHCP: {address} declined; quarantined for {DECLINE_QUARANTINE_SECS}s");
+        } else {
+            log::info!("DHCP: released {address}");
+        }
     }
 
     /// Minimal DHCPNAK (message-type + server-id, yiaddr = 0.0.0.0). Sent when a
@@ -463,8 +549,10 @@ impl DhcpServer {
         reply[1] = 1;
         reply[2] = 6;
         reply[4..8].copy_from_slice(&request[4..8]); // xid
-                                                     // yiaddr stays 0.0.0.0
+        reply[8..12].copy_from_slice(&request[8..12]); // secs, flags; ciaddr stays zero
+                                                       // yiaddr stays 0.0.0.0
         reply[20..24].copy_from_slice(&self.server_ip.octets());
+        reply[24..28].copy_from_slice(&request[24..28]); // giaddr
         reply[28..34].copy_from_slice(&request[28..34]); // client MAC
         reply[236] = 99;
         reply[237] = 130;
@@ -517,6 +605,10 @@ impl DhcpServer {
                 expired_keys.push(Self::lease_key(&lease.mac));
             }
         }
+        self.declined
+            .write()
+            .await
+            .retain(|_, expires_at| now_secs < *expires_at);
         if expired_keys.is_empty() {
             return 0;
         }
@@ -535,6 +627,7 @@ impl DhcpServer {
         mac: &MacAddr,
         preferred: Option<Ipv4Addr>,
         offer_only: bool,
+        allow_fallback: bool,
     ) -> Option<Ipv4Addr> {
         let hold_secs = if offer_only {
             Self::OFFER_RESERVATION_SECS
@@ -570,6 +663,9 @@ impl DhcpServer {
                 pool.get_ip_by_username(&mac_str) == Some(lease.ip)
             };
             if still_ours {
+                if !allow_fallback && preferred != Some(lease.ip) {
+                    return None;
+                }
                 let requested_expiry = now_secs.saturating_add(hold_secs);
                 // A repeated DISCOVER must not shorten an already committed lease to the
                 // 30-second offer hold; REQUEST promotes an offer and renews a full lease.
@@ -590,9 +686,20 @@ impl DhcpServer {
         }
 
         // Try to honour the preferred IP if it falls in our DHCP range and is available
+        let quarantined: HashSet<u32> = self
+            .declined
+            .read()
+            .await
+            .keys()
+            .copied()
+            .map(u32_from_ip)
+            .collect();
         if let Some(pref) = preferred {
             let pref_u32 = u32_from_ip(pref);
-            if pref_u32 >= self.pool_start && pref_u32 <= self.pool_end {
+            if pref_u32 >= self.pool_start
+                && pref_u32 <= self.pool_end
+                && !quarantined.contains(&pref_u32)
+            {
                 let idx = (pref_u32 - self.pool_start) as usize;
                 if idx < leases.len() && leases[idx].is_none() {
                     let mut pool = self.shared_pool.lock().await;
@@ -621,6 +728,10 @@ impl DhcpServer {
         }
 
         // Dynamic allocation, constrained to the DHCP window.
+        if !allow_fallback {
+            return None;
+        }
+
         //
         // This used to call the plain `pool.allocate()` and then reject anything outside the
         // window — which did not just waste the call, it DEADLOCKED the service. The rejected
@@ -631,7 +742,9 @@ impl DhcpServer {
         // an address IN the window removes the reject-and-retry loop altogether.
         // (Audit 2026-08-01, §1.)
         let mut pool = self.shared_pool.lock().await;
-        if let Some(allocated) = pool.allocate_in_range(&mac_str, self.pool_start, self.pool_end) {
+        if let Some(allocated) =
+            pool.allocate_in_range_excluding(&mac_str, self.pool_start, self.pool_end, &quarantined)
+        {
             let alloc_u32 = u32_from_ip(allocated);
             let alloc_idx = (alloc_u32 - self.pool_start) as usize;
             if alloc_idx < leases.len() {
@@ -666,9 +779,11 @@ impl DhcpServer {
         reply[3] = 0; // hops
 
         reply[4..8].copy_from_slice(&request[4..8]); // xid
+        reply[8..12].copy_from_slice(&request[8..12]); // secs, flags; ciaddr stays zero
 
         reply[16..20].copy_from_slice(&offered_ip.octets());
         reply[20..24].copy_from_slice(&self.server_ip.octets());
+        reply[24..28].copy_from_slice(&request[24..28]); // giaddr
         reply[28..34].copy_from_slice(&request[28..34]); // client MAC
 
         reply[236] = 99;
@@ -890,7 +1005,7 @@ mod tests {
     async fn request_promotes_offer_and_renews_existing_lease() {
         let server = test_server(3_600);
         let mac = MacAddr([0x02, 0, 0, 0, 0, 1]);
-        let offered = server.allocate_ip(&mac, None, true).await.unwrap();
+        let offered = server.allocate_ip(&mac, None, true, true).await.unwrap();
         let offered_expiry = server
             .leases
             .read()
@@ -903,7 +1018,7 @@ mod tests {
         assert_eq!(offered_expiry, DhcpServer::OFFER_RESERVATION_SECS);
 
         assert_eq!(
-            server.allocate_ip(&mac, Some(offered), false).await,
+            server.allocate_ip(&mac, Some(offered), false, false).await,
             Some(offered)
         );
         let committed_expiry = server
@@ -918,7 +1033,10 @@ mod tests {
         assert_eq!(committed_expiry, 3_600);
 
         // A later DISCOVER from the same client cannot shorten the committed lease.
-        assert_eq!(server.allocate_ip(&mac, None, true).await, Some(offered));
+        assert_eq!(
+            server.allocate_ip(&mac, None, true, true).await,
+            Some(offered)
+        );
         let after_discover = server
             .leases
             .read()
@@ -935,7 +1053,7 @@ mod tests {
     async fn periodic_reaper_releases_expired_shared_pool_reservation() {
         let server = test_server(3_600);
         let mac = MacAddr([0x02, 0, 0, 0, 0, 2]);
-        let offered = server.allocate_ip(&mac, None, true).await.unwrap();
+        let offered = server.allocate_ip(&mac, None, true, true).await.unwrap();
         let key = DhcpServer::lease_key(&mac);
         assert_eq!(
             server.shared_pool.lock().await.get_ip_by_username(&key),
@@ -953,5 +1071,98 @@ mod tests {
             None
         );
         assert!(server.leases.read().await.iter().all(Option::is_none));
+    }
+    #[tokio::test]
+    async fn exact_request_rejection_does_not_consume_a_fallback_lease() {
+        let server = test_server(3_600);
+        let holder = MacAddr([0x02, 0, 0, 0, 0, 3]);
+        let requester = MacAddr([0x02, 0, 0, 0, 0, 4]);
+        let held = Ipv4Addr::new(10, 9, 0, 100);
+        assert_eq!(
+            server.allocate_ip(&holder, Some(held), true, true).await,
+            Some(held)
+        );
+
+        assert_eq!(
+            server
+                .allocate_ip(&requester, Some(held), false, false)
+                .await,
+            None
+        );
+        let requester_key = DhcpServer::lease_key(&requester);
+        assert_eq!(
+            server
+                .shared_pool
+                .lock()
+                .await
+                .get_ip_by_username(&requester_key),
+            None
+        );
+        assert_eq!(server.leases.read().await.iter().flatten().count(), 1);
+
+        assert_eq!(
+            server
+                .allocate_ip(&requester, Some(Ipv4Addr::new(192, 0, 2, 10)), false, false,)
+                .await,
+            None
+        );
+        assert_eq!(server.leases.read().await.iter().flatten().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn release_returns_address_and_decline_quarantines_it() {
+        let server = test_server(3_600);
+        let first = MacAddr([0x02, 0, 0, 0, 0, 5]);
+        let second = MacAddr([0x02, 0, 0, 0, 0, 6]);
+        let third = MacAddr([0x02, 0, 0, 0, 0, 7]);
+
+        let released = server.allocate_ip(&first, None, false, true).await.unwrap();
+        server.release_client_address(&first, released, false).await;
+        assert_eq!(
+            server.allocate_ip(&second, None, false, true).await,
+            Some(released)
+        );
+
+        server.release_client_address(&second, released, true).await;
+        let replacement = server.allocate_ip(&third, None, false, true).await.unwrap();
+        assert_ne!(replacement, released);
+        assert!(server.declined.read().await.contains_key(&released));
+
+        server.reap_expired_at(600).await;
+        assert!(!server.declined.read().await.contains_key(&released));
+    }
+
+    #[test]
+    fn replies_preserve_bootp_routing_fields_and_naks_broadcast() {
+        let server = test_server(3_600);
+        let mut request = dhcp_base();
+        request[8..10].copy_from_slice(&[0x12, 0x34]);
+        request[10..12].copy_from_slice(&[0x80, 0x01]);
+        request[12..16].copy_from_slice(&[10, 9, 0, 100]);
+        request[24..28].copy_from_slice(&[10, 9, 0, 2]);
+
+        let reply = server
+            .build_reply(&request, Ipv4Addr::new(10, 9, 0, 100), DHCP_MSG_TYPE_ACK)
+            .unwrap();
+        let nak = server.build_nak(&request);
+        assert_eq!(&reply[8..12], &request[8..12]);
+        assert_eq!(&reply[12..16], &[0, 0, 0, 0]);
+        assert_eq!(&reply[24..28], &request[24..28]);
+        assert_eq!(&nak[8..12], &request[8..12]);
+        assert_eq!(&nak[12..16], &[0, 0, 0, 0]);
+        assert_eq!(&nak[24..28], &request[24..28]);
+        assert_eq!(
+            DhcpServer::nak_destination(&request),
+            std::net::SocketAddr::new(
+                std::net::IpAddr::V4(Ipv4Addr::new(10, 9, 0, 2)),
+                DHCP_SERVER_PORT,
+            )
+        );
+
+        request[24..28].fill(0);
+        assert_eq!(
+            DhcpServer::nak_destination(&request),
+            std::net::SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::BROADCAST), DHCP_CLIENT_PORT,)
+        );
     }
 }

@@ -1001,6 +1001,10 @@ pub enum WorkerCmd {
 pub struct ServerState {
     pub config: ServerConfig,
     pub users_db: Arc<RwLock<UsersDb>>,
+    /// Valid representative Argon2 hashes for unknown-user verification. Rebuilt only when
+    /// the users database changes, so hostile unknown logins cannot scan and parse every PHC
+    /// entry while holding the live users read-lock.
+    pub dummy_password_hashes: Arc<RwLock<Vec<String>>>,
     pub config_path: Mutex<Option<String>>,
     /// Serializes every panel read-modify-write of the server config. Atomic rename keeps
     /// each individual write crash-safe, but without a process-level lock two panel tabs
@@ -1328,17 +1332,64 @@ fn bind_hosts_overlap(left: &str, right: &str) -> bool {
 /// to `0.0.0.0:67`, publishing an unauthenticated service on every interface for anyone who
 /// merely set `dhcp.enabled = true`. One helper so the preflight collision check and
 /// `run_profile` cannot drift apart on what the value means. (Audit 2026-08-04.)
-fn dhcp_bind_spec(p: &crate::config::server::ProfileConfig) -> String {
-    let host = if p.dhcp.listen.trim().is_empty() {
+fn dhcp_bind_addr(
+    p: &crate::config::server::ProfileConfig,
+) -> anyhow::Result<std::net::SocketAddrV4> {
+    let configured = p.dhcp.listen.trim();
+    let raw = if configured.is_empty() {
         p.tun.address.trim()
     } else {
-        p.dhcp.listen.trim()
+        configured
     };
-    if host.contains(':') {
-        host.to_string()
+    let shown = if configured.is_empty() {
+        format!("<default:{}>", p.tun.address.trim())
     } else {
-        format!("{host}:67")
+        configured.to_string()
+    };
+
+    let address = if let Ok(ip) = raw.parse::<std::net::Ipv4Addr>() {
+        std::net::SocketAddrV4::new(ip, 67)
+    } else {
+        match raw.parse::<std::net::SocketAddr>() {
+            Ok(std::net::SocketAddr::V4(address)) => address,
+            Ok(std::net::SocketAddr::V6(_)) => anyhow::bail!(
+                "profile '{}': dhcp.listen = '{}' must be an IPv4 address with optional port",
+                p.name,
+                shown
+            ),
+            Err(error) => anyhow::bail!(
+                "profile '{}': invalid dhcp.listen = '{}': {error}; expected IPv4 or IPv4:port",
+                p.name,
+                shown
+            ),
+        }
+    };
+    if address.port() == 0 {
+        anyhow::bail!(
+            "profile '{}': dhcp.listen = '{}' uses invalid port 0",
+            p.name,
+            shown
+        );
     }
+    if address.ip().is_unspecified() {
+        anyhow::bail!(
+            "profile '{}': dhcp.listen = '{}' publishes an unauthenticated DHCP server on every interface",
+            p.name,
+            shown
+        );
+    }
+    if address.ip().is_multicast() || address.ip().is_broadcast() {
+        anyhow::bail!(
+            "profile '{}': dhcp.listen = '{}' is not a bindable unicast IPv4 address",
+            p.name,
+            shown
+        );
+    }
+    Ok(address)
+}
+
+fn dhcp_bind_spec(p: &crate::config::server::ProfileConfig) -> anyhow::Result<String> {
+    Ok(dhcp_bind_addr(p)?.to_string())
 }
 
 /// Split an already-form-validated `addr:port` spec into a comparable (host, port).
@@ -1779,7 +1830,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
             // map exists to catch — two profiles on the DHCP default — slipped through
             // whenever the operator wrote the address without a port.
             // (Audit 2026-08-01, §2.)
-            let spec = dhcp_bind_spec(p);
+            let spec = dhcp_bind_spec(p)?;
             if let Some((host, port)) = split_listen_spec(&spec) {
                 profile_endpoints.push((host, port, "udp".to_string(), format!("dhcp {spec}")));
             }
@@ -2743,25 +2794,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // the profile's pool, its mask, gateway and DNS servers. Same class of exposure,
         // same treatment. (Audit 2026-08-04.)
         if p.dhcp.enabled {
-            let host = p
-                .dhcp
-                .listen
-                .rsplit_once(':')
-                .map_or(p.dhcp.listen.as_str(), |(h, _)| h);
-            match host.trim().parse::<std::net::IpAddr>() {
-                Ok(ip) if ip.is_unspecified() => anyhow::bail!(
-                    "profile '{}': dhcp.listen = {} publishes an UNAUTHENTICATED DHCP server on every interface, including any public one. Bind it to the profile's tun address ({}), or to the TAP bridge address if this profile bridges.",
-                    p.name,
-                    p.dhcp.listen,
-                    p.tun.address
-                ),
-                Ok(ip) if ip.is_multicast() => anyhow::bail!(
-                    "profile '{}': dhcp.listen = {} is not a bindable address",
-                    p.name,
-                    p.dhcp.listen
-                ),
-                Ok(_) | Err(_) => {}
-            }
+            let _ = dhcp_bind_addr(p)?;
         }
     }
     // This depends on the complete enabled-profile/listener/queue set, so it cannot be
@@ -3349,6 +3382,9 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
             udp_buffer_budget.auto_max_recv_bytes / 1024
         );
     }
+    let dummy_password_hashes = Arc::new(RwLock::new(handler::dummy_password_hash_candidates(
+        &users_db,
+    )));
     let users_db = Arc::new(RwLock::new(users_db));
 
     // Identity keys are per-profile now (loaded in run_profile), so there is no
@@ -3366,6 +3402,7 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let state = Arc::new(ServerState {
         config,
         users_db,
+        dummy_password_hashes,
         config_path: Mutex::new(Some(cfg_path.to_string())),
         config_write_lock: Mutex::new(()),
         profiles: Arc::new(RwLock::new(HashMap::new())),
@@ -3907,7 +3944,11 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // list in the panel and let them "fix" it by re-creating accounts — writing a fresh file
     // over the one that failed to load. The supervisor must fail the same way the worker
     // does. (Audit 2026-08-02, §5.)
-    let users_db = Arc::new(RwLock::new(load_users_db_for_runtime(&config)?));
+    let loaded_users = load_users_db_for_runtime(&config)?;
+    let dummy_password_hashes = Arc::new(RwLock::new(handler::dummy_password_hash_candidates(
+        &loaded_users,
+    )));
+    let users_db = Arc::new(RwLock::new(loaded_users));
 
     // Supervisor (web panel) — governs admin-login brute-force: `[web] brute_force`,
     // a policy independent of the VPN-auth one the worker enforces above.
@@ -3926,6 +3967,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let state = Arc::new(ServerState {
         config,
         users_db,
+        dummy_password_hashes,
         config_path: Mutex::new(Some(cfg_path.to_string())),
         config_write_lock: Mutex::new(()),
         profiles: Arc::new(RwLock::new(HashMap::new())),
@@ -4206,7 +4248,9 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
     match load_users_db_for_runtime(&new_config) {
         Ok(db) => {
             let count = db.users.len();
+            let dummy_password_hashes = handler::dummy_password_hash_candidates(&db);
             *state.users_db.write().await = db;
+            *state.dummy_password_hashes.write().await = dummy_password_hashes;
             log::info!("SIGHUP: reloaded users database ({} users)", count);
         }
         Err(e) => {
@@ -6239,7 +6283,7 @@ async fn run_profile_generation(
                 .filter_map(|value| value.parse::<std::net::Ipv4Addr>().ok())
                 .collect()
         };
-        let dhcp_listen = dhcp_bind_spec(&pcfg);
+        let dhcp_listen = dhcp_bind_spec(&pcfg)?;
 
         let dhcp_server = Arc::new(dhcp::DhcpServer::new(
             server_ip,
@@ -7281,6 +7325,37 @@ pool.cidr = 10.{net}.0.0/24
         }
     }
 
+    #[test]
+    fn dhcp_listen_is_validated_before_worker_start() {
+        let mut profile = crate::config::server::ProfileConfig {
+            name: "dhcp".into(),
+            tun: crate::config::server::TunConfig {
+                address: "10.9.0.1".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        profile.dhcp.listen.clear();
+        assert_eq!(dhcp_bind_spec(&profile).unwrap(), "10.9.0.1:67");
+        profile.dhcp.listen = "10.9.0.2:1067".into();
+        assert_eq!(dhcp_bind_spec(&profile).unwrap(), "10.9.0.2:1067");
+
+        for value in [
+            "not-an-address",
+            "[::1]:67",
+            "10.9.0.1:0",
+            "0.0.0.0:67",
+            "224.0.0.1:67",
+            "255.255.255.255:67",
+        ] {
+            profile.dhcp.listen = value.into();
+            let error = dhcp_bind_spec(&profile)
+                .expect_err("invalid DHCP bind must fail check-config")
+                .to_string();
+            assert!(error.contains("dhcp.listen"), "{value}: {error}");
+        }
+    }
     /// A device name the kernel would truncate, or one two profiles share.
     ///
     /// TUNSETIFF copies at most 15 bytes, so a longer name created a device under a DIFFERENT

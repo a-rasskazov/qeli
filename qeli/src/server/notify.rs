@@ -17,9 +17,27 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// Sidecar config file (qeli-owned, beside the main config).
 pub const NOTIFY_PATH: &str = "/etc/qeli/notify.json";
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
-/// High-resolution metadata plus size. Saving through this module updates the cache under
-/// the same lock, so same-size updates inside one filesystem timestamp tick apply atomically.
-type FileStamp = Option<(u128, u64)>;
+/// Metadata that changes on content replacement and, on Unix, chmod/chown/inode changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStampValue {
+    modified_ns: u128,
+    len: u64,
+    #[cfg(unix)]
+    changed_secs: i64,
+    #[cfg(unix)]
+    changed_ns: i64,
+    #[cfg(unix)]
+    mode: u32,
+    #[cfg(unix)]
+    uid: u32,
+    #[cfg(unix)]
+    gid: u32,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+type FileStamp = Option<FileStampValue>;
 type NotifyCache = OnceLock<Mutex<Option<(FileStamp, NotifyConfig)>>>;
 static NOTIFY_CACHE: NotifyCache = OnceLock::new();
 
@@ -161,20 +179,45 @@ pub fn load() -> NotifyConfig {
     }
 }
 
-fn file_stamp() -> FileStamp {
-    std::fs::metadata(NOTIFY_PATH).ok().map(|metadata| {
-        let modified = metadata
+fn file_stamp_for(path: &std::path::Path) -> FileStamp {
+    std::fs::metadata(path).ok().map(|metadata| {
+        let modified_ns = metadata
             .modified()
             .ok()
             .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|value| value.as_nanos())
             .unwrap_or(0);
-        (modified, metadata.len())
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            FileStampValue {
+                modified_ns,
+                len: metadata.len(),
+                changed_secs: metadata.ctime(),
+                changed_ns: metadata.ctime_nsec(),
+                mode: metadata.mode(),
+                uid: metadata.uid(),
+                gid: metadata.gid(),
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            FileStampValue {
+                modified_ns,
+                len: metadata.len(),
+            }
+        }
     })
 }
 
-/// [`load`], but served from a cache that is refreshed when the sidecar's mtime or
-/// size changes.
+fn file_stamp() -> FileStamp {
+    file_stamp_for(std::path::Path::new(NOTIFY_PATH))
+}
+
+/// [`load`], but served from a cache refreshed whenever content or access metadata changes.
+/// On Unix this includes chmod/chown and inode replacement, not only mtime/size.
 ///
 /// The config is read on every notification-worthy event, most of which fire from the
 /// session hot path. Stat-and-maybe-read is far cheaper than read-and-parse, and an
@@ -711,5 +754,19 @@ mod tests {
                 "{s} must be allowed"
             );
         }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn notify_stamp_changes_when_only_permissions_change() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!("qeli-notify-stamp-{}", std::process::id()));
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let before = file_stamp_for(&path);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let after = file_stamp_for(&path);
+        assert_ne!(before, after);
+        let _ = std::fs::remove_file(path);
     }
 }

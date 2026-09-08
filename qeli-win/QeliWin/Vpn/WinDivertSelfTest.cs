@@ -305,6 +305,18 @@ internal static class WinDivertSelfTest
             && restoreScript.Contains("-Name Private -DefaultOutboundAction Allow", StringComparison.Ordinal)
             && restoreScript.Contains("-Name Public -DefaultOutboundAction NotConfigured", StringComparison.Ordinal)
             && removeRulesAt > restoreScript.LastIndexOf("Set-NetFirewallProfile", StringComparison.Ordinal));
+        string serverRuleScript = KillSwitch.ServerRuleScriptForTest(
+            add: new[] { "203.0.113.8" },
+            remove: new[] { "203.0.113.7" });
+        check("kill-switch refresh: removal is scoped to qeli firewall group",
+            serverRuleScript.Contains("Get-NetFirewallRule -Group 'qeli_ks'", StringComparison.Ordinal)
+            && serverRuleScript.Contains(
+                "$_.DisplayName -eq 'qeli kill-switch: server 203.0.113.7'",
+                StringComparison.Ordinal)
+            && !serverRuleScript.Contains(
+                "Remove-NetFirewallRule -DisplayName",
+                StringComparison.Ordinal));
+
 
         var syn = new byte[44];
         syn[0] = 0x45; syn[9] = 6;

@@ -2736,8 +2736,10 @@ mod tests {
 
     #[test]
     fn negotiated_mobile_ui_modes_are_explicit_and_serializable() {
-        let mut recordizer = crate::config::RecordizerConfig::default();
-        recordizer.policy = "prefer".into();
+        let recordizer = crate::config::RecordizerConfig {
+            policy: "prefer".into(),
+            ..Default::default()
+        };
         let mut facts = NetworkDataPlaneFacts::default();
         facts.set_negotiated_modes(
             Some(&recordizer),

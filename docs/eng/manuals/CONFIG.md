@@ -2225,7 +2225,7 @@ Beyond pinning / H-1 (above), the `[auth]` section carries:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `users_file` | `/etc/qeli/users.conf` | path to the standalone user database (when there are no inline `[user:*]`) |
+| `users_file` | `/etc/qeli/users.conf` | standalone user database; merged with inline `[user:*]` and wins duplicate names |
 | `brute_force.enabled` | `true` | master switch for **VPN-auth** rate-limiting; `false` = off entirely |
 | `brute_force.max_attempts` | `5` | failed-attempt threshold before lockout (per source IP); allowed `1..=10000` |
 | `brute_force.window_secs` | `300` | window for counting failures (seconds); allowed `1..=86400` (24h) |
