@@ -149,6 +149,40 @@ code,pre,.mono,.font-mono{ font-family:'JetBrains Mono',ui-monospace,Menlo,monos
   .config-profile-nav-head{ align-items:flex-start; }
 }
 
+/* Identity rows must accommodate a full bracketed IPv6 endpoint without hiding the
+   port. Details stack before either the endpoint or the pinned key becomes cramped. */
+.identity-card{
+  padding:.625rem; border:1px solid var(--line); border-radius:.5rem; background:var(--bg-2);
+}
+.identity-card-head{
+  display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.5rem;
+}
+.identity-card-profile{
+  min-width:0; color:var(--txt); font-size:.875rem; font-weight:600; overflow-wrap:anywhere;
+}
+.identity-card-details{
+  display:grid; grid-template-columns:minmax(18rem,.8fr) minmax(24rem,1.2fr); gap:.625rem;
+}
+.identity-card-field{ min-width:0; }
+.identity-card-label{
+  margin:0 0 .25rem .125rem; color:var(--txt-dim); font-size:.65rem; font-weight:600;
+  line-height:1.2; text-transform:uppercase; letter-spacing:.045em;
+}
+.identity-card-value-row{ display:flex; align-items:stretch; gap:.5rem; min-width:0; }
+.identity-card-endpoint{
+  display:flex; align-items:center; flex:1 1 auto; min-width:0; min-height:2.5rem; padding:.55rem .75rem;
+  border:1px solid var(--line); border-radius:10px; background:var(--bg-card); color:var(--txt-mut);
+  font-size:.75rem; line-height:1.35; overflow-wrap:anywhere; word-break:break-word;
+}
+.identity-card-key{ min-width:0; }
+@media (max-width:1100px){
+  .identity-card-details{ grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:639px){
+  .identity-card-head{ align-items:flex-start; }
+  .identity-card-value-row{ flex-wrap:wrap; }
+  .identity-card-value-row>.btn{ margin-left:auto; }
+}
 /* ── buttons ── */
 .btn{ display:inline-flex; align-items:center; gap:7px; padding:8px 15px; border-radius:10px; font-size:.8125rem; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .2s var(--ease); line-height:1.4; white-space:nowrap; }
 .btn:disabled{ opacity:.5; cursor:not-allowed; }

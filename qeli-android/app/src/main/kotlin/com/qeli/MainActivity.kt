@@ -1321,6 +1321,18 @@ ipv6 = auto
         }
         if (live) {
             val pushed = VpnServiceImpl.livePushed
+            pushed.familyMode?.let { family ->
+                rows += R.string.detail_ip_family to getString(when (family) {
+                    "ipv4" -> R.string.detail_ipv4
+                    "ipv6" -> R.string.detail_ipv6
+                    else -> R.string.detail_dual_stack
+                })
+            }
+            pushed.carrierAddress?.let { address ->
+                val endpoint = if (address.contains(':')) "[$address]:${properties.port}"
+                else "$address:${properties.port}"
+                rows += R.string.detail_carrier to endpoint
+            }
             rows += R.string.detail_tunnel_ip to VpnServiceImpl.liveAddresses.ifEmpty { VpnServiceImpl.liveIp }
             // `liveDns` is the resolver the tunnel ACTUALLY programmed, and empty is a real
             // answer: it means none was installed and the device keeps its own.
@@ -1338,6 +1350,24 @@ ipv6 = auto
             if (VpnServiceImpl.liveMtu > 0) {
                 rows += R.string.detail_mtu to
                     "${VpnServiceImpl.liveMtu}${if (properties.configuredMtu > 0) "" else " (auto)"}"
+            }
+            pushed.recordizerMode?.let { mode ->
+                val displayMode = when (mode) {
+                    "packet_mux_v1" -> "PACKET_MUX_V1"
+                    else -> getString(R.string.detail_legacy_packet_record)
+                }
+                rows += R.string.detail_recordizer to negotiatedModeText(
+                    displayMode, pushed.recordizerPolicy)
+            }
+            pushed.roamingMode?.let { mode ->
+                val displayMode = when (mode) {
+                    "udp_roam_v1" -> "UDP_ROAM_V1"
+                    "tcp_resume_v2" -> "TCP_RESUME_V2"
+                    "tcp_handover_v2" -> "TCP_HANDOVER_V2 + TCP_RESUME_V2"
+                    else -> getString(R.string.detail_reconnect_fallback)
+                }
+                rows += R.string.detail_roaming to negotiatedModeText(
+                    displayMode, pushed.roamingPolicy)
             }
             if (VpnServiceImpl.liveStreams > 1) {
                 rows += R.string.detail_multipath to (
@@ -1456,6 +1486,10 @@ ipv6 = auto
                 getString(R.string.protection_warn_excluded, excludedRouteCount)
             ProtectionWarning.NO_PINNED_KEY -> getString(R.string.protection_warn_no_key)
         }
+
+    private fun negotiatedModeText(mode: String, policy: String?): String =
+        if (policy.isNullOrBlank()) mode
+        else getString(R.string.detail_mode_policy, mode, policy)
 
     /**
      * Fill the one-line connection-info strip from the live generation snapshot.

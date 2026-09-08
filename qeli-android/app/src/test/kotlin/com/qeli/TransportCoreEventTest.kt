@@ -148,6 +148,7 @@ class TransportCoreEventTest {
             "prefix_len":24,
             "mtu":1400,
             "tunnel_gateway":"10.8.0.1",
+            "carrier_address":"2001:db8::20",
             "routes":[{"cidr":"10.20.0.0/16","gateway":"10.8.0.1","metric":100}],
             "pushed_routes":["10.20.0.0/16"],
             "dns_servers":[{"address":"10.8.0.1","port":53}],
@@ -160,7 +161,9 @@ class TransportCoreEventTest {
             "data_plane":{
                 "padding_enabled":true,"padding_min":8,"padding_max":64,
                 "heartbeat_enabled":true,"heartbeat_interval_ms":15000,
-                "shaping_enabled":true
+                "shaping_enabled":true,
+                "recordizer_mode":"packet_mux_v1","recordizer_policy":"prefer",
+                "roaming_mode":"udp_roam_v1","roaming_policy":"auto"
             },
             "connection_log":["server push: mtu 1400 ACCEPTED"]
         }""".trimIndent().toByteArray()
@@ -173,6 +176,7 @@ class TransportCoreEventTest {
         assertEquals("10.8.0.2", plan.tunnelAddress)
         assertEquals(24, plan.prefixLength)
         assertEquals(1400, plan.mtu)
+        assertEquals("2001:db8::20", plan.carrierAddress)
         assertEquals("10.20.0.0/16", plan.routes.single().cidr)
         assertEquals(listOf("10.20.0.0/16"), plan.pushedRoutes)
         assertEquals("10.8.0.1", plan.dnsServers.single().address)
@@ -181,6 +185,10 @@ class TransportCoreEventTest {
         assertEquals(true, plan.adaptive)
         assertEquals(true, plan.dataPlane.paddingEnabled)
         assertEquals(15000L, plan.dataPlane.heartbeatIntervalMs)
+        assertEquals("packet_mux_v1", plan.dataPlane.recordizerMode)
+        assertEquals("prefer", plan.dataPlane.recordizerPolicy)
+        assertEquals("udp_roam_v1", plan.dataPlane.roamingMode)
+        assertEquals("auto", plan.dataPlane.roamingPolicy)
         assertEquals(listOf("server push: mtu 1400 ACCEPTED"), plan.connectionLog)
     }
 
@@ -211,6 +219,9 @@ class TransportCoreEventTest {
         assertEquals(32, plan.addresses[0].prefixLength)
         assertEquals(128, plan.addresses[1].prefixLength)
         assertEquals(64, plan.addresses[1].onLinkPrefixLength)
+        assertEquals(null, plan.carrierAddress)
+        assertEquals(null, plan.dataPlane.recordizerMode)
+        assertEquals(null, plan.dataPlane.roamingMode)
     }
 
     @Test

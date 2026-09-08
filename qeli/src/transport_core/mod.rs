@@ -385,6 +385,22 @@ pub struct NetworkAddress {
     pub gateway: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkRecordizerMode {
+    LegacyPacketPerRecord,
+    PacketMuxV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkRoamingMode {
+    Reconnect,
+    UdpRoamV1,
+    TcpResumeV2,
+    TcpHandoverV2,
+}
+
 /// Effective post-authentication data-plane facts exposed to platform status UIs.
 ///
 /// They are descriptive only: Rust already owns and applies these settings. Keeping them in
@@ -400,6 +416,16 @@ pub struct NetworkDataPlaneFacts {
     pub heartbeat_enabled: bool,
     pub heartbeat_interval_ms: u64,
     pub shaping_enabled: bool,
+    /// Present only when the shared transport completed capability negotiation. Older cores
+    /// omit these fields, allowing platform UIs to distinguish "unknown" from legacy mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recordizer_mode: Option<NetworkRecordizerMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recordizer_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roaming_mode: Option<NetworkRoamingMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roaming_policy: Option<String>,
 }
 
 impl NetworkDataPlaneFacts {
@@ -424,7 +450,27 @@ impl NetworkDataPlaneFacts {
             heartbeat_enabled: config.heartbeat.enabled,
             heartbeat_interval_ms: config.heartbeat.interval_ms,
             shaping_enabled: config.traffic_shaping.enabled,
+            recordizer_mode: None,
+            recordizer_policy: None,
+            roaming_mode: None,
+            roaming_policy: None,
         }
+    }
+
+    pub(crate) fn set_negotiated_modes(
+        &mut self,
+        recordizer: Option<&crate::config::RecordizerConfig>,
+        roaming_mode: NetworkRoamingMode,
+        roaming_policy: crate::config::client::ClientRoamingPolicy,
+    ) {
+        self.recordizer_mode = Some(if recordizer.is_some() {
+            NetworkRecordizerMode::PacketMuxV1
+        } else {
+            NetworkRecordizerMode::LegacyPacketPerRecord
+        });
+        self.recordizer_policy = recordizer.map(|value| value.policy.to_ascii_lowercase());
+        self.roaming_mode = Some(roaming_mode);
+        self.roaming_policy = Some(roaming_policy.to_string());
     }
 }
 
@@ -2686,6 +2732,35 @@ mod tests {
         let uri_core = ClientCore::new(&uri, CoreOptions::default()).unwrap();
         assert_eq!(uri_core.config.auth.username, "test");
         assert!(ClientCore::new("[qeli]\nserver = broken", CoreOptions::default()).is_err());
+    }
+
+    #[test]
+    fn negotiated_mobile_ui_modes_are_explicit_and_serializable() {
+        let mut recordizer = crate::config::RecordizerConfig::default();
+        recordizer.policy = "prefer".into();
+        let mut facts = NetworkDataPlaneFacts::default();
+        facts.set_negotiated_modes(
+            Some(&recordizer),
+            NetworkRoamingMode::UdpRoamV1,
+            crate::config::client::ClientRoamingPolicy::Auto,
+        );
+
+        let json = serde_json::to_value(&facts).unwrap();
+        assert_eq!(json["recordizer_mode"], "packet_mux_v1");
+        assert_eq!(json["recordizer_policy"], "prefer");
+        assert_eq!(json["roaming_mode"], "udp_roam_v1");
+        assert_eq!(json["roaming_policy"], "auto");
+
+        facts.set_negotiated_modes(
+            None,
+            NetworkRoamingMode::Reconnect,
+            crate::config::client::ClientRoamingPolicy::Off,
+        );
+        let legacy = serde_json::to_value(&facts).unwrap();
+        assert_eq!(legacy["recordizer_mode"], "legacy_packet_per_record");
+        assert!(legacy.get("recordizer_policy").is_none());
+        assert_eq!(legacy["roaming_mode"], "reconnect");
+        assert_eq!(legacy["roaming_policy"], "off");
     }
 
     #[test]

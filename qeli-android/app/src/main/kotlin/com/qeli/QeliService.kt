@@ -1453,6 +1453,12 @@ class VpnServiceImpl : VpnService() {
                 heartbeatEnabled = plan.dataPlane.heartbeatEnabled,
                 heartbeatIntervalMs = plan.dataPlane.heartbeatIntervalMs,
                 shapingEnabled = plan.dataPlane.shapingEnabled,
+                familyMode = plan.familyMode,
+                carrierAddress = plan.carrierAddress,
+                recordizerMode = plan.dataPlane.recordizerMode,
+                recordizerPolicy = plan.dataPlane.recordizerPolicy,
+                roamingMode = plan.dataPlane.roamingMode,
+                roamingPolicy = plan.dataPlane.roamingPolicy,
             )
             liveLockdown = currentOwnerLockdownState().second
             broadcastLog(

@@ -186,6 +186,12 @@ struct ConnectionView: View {
                     )
                 }
                 if live {
+                    if let facts = snapshot.pushed, let family = facts.familyMode {
+                        detailRow("IP family", familyModeText(family))
+                    }
+                    if let facts = snapshot.pushed, let carrier = facts.carrierAddress {
+                        detailRow("Carrier", endpoint(carrier, port: properties.port))
+                    }
                     if let addresses = snapshot.tunnelAddresses, !addresses.isEmpty {
                         detailRow("Tunnel addresses", addresses.joined(separator: ", "))
                     } else if let address = snapshot.clientAddress {
@@ -219,6 +225,14 @@ struct ConnectionView: View {
                     // most misleading thing it could say. Showing nothing is honest; the rows
                     // reappear on the next connection. (Audit 2026-08-02, follow-up.)
                     if let pushed = snapshot.pushed {
+                        if let mode = pushed.recordizerMode {
+                            detailRow("Packet recordizer", negotiatedModeText(
+                                recordizerModeText(mode), policy: pushed.recordizerPolicy))
+                        }
+                        if let mode = pushed.roamingMode {
+                            detailRow("Session roaming", negotiatedModeText(
+                                roamingModeText(mode), policy: pushed.roamingPolicy))
+                        }
                         // Only a sample is ever held or shown: a server may advertise a very
                         // long list. The count is the honest part; the sample makes it concrete.
                         if pushed.routeCount > 0 {
@@ -249,6 +263,38 @@ struct ConnectionView: View {
                 }
             }
         }
+    }
+
+    private func endpoint(_ address: String, port: Int) -> String {
+        address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)"
+    }
+
+    private func familyModeText(_ mode: String) -> String {
+        switch mode {
+        case "ipv4": return "IPv4"
+        case "ipv6": return "IPv6"
+        default: return String(localized: "Dual-stack")
+        }
+    }
+
+    private func recordizerModeText(_ mode: String) -> String {
+        mode == "packet_mux_v1"
+            ? "PACKET_MUX_V1"
+            : String(localized: "Legacy packet-per-record")
+    }
+
+    private func roamingModeText(_ mode: String) -> String {
+        switch mode {
+        case "udp_roam_v1": return "UDP_ROAM_V1"
+        case "tcp_resume_v2": return "TCP_RESUME_V2"
+        case "tcp_handover_v2": return "TCP_HANDOVER_V2 + TCP_RESUME_V2"
+        default: return String(localized: "Reconnect fallback")
+        }
+    }
+
+    private func negotiatedModeText(_ mode: String, policy: String?) -> String {
+        guard let policy, !policy.isEmpty else { return mode }
+        return "\(mode) (\(policy))"
     }
 
     private func detailRow(_ label: LocalizedStringKey, _ value: String) -> some View {

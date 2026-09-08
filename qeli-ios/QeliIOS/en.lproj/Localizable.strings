@@ -150,6 +150,12 @@
 "Warning" = "Warning";
 "DNS" = "DNS";
 "MTU" = "MTU";
+"IP family" = "IP family";
+"Dual-stack" = "Dual-stack";
+"Carrier" = "Carrier";
+"Packet recordizer" = "Packet recordizer";
+"Legacy packet-per-record" = "Legacy packet-per-record";
+"Reconnect fallback" = "Reconnect fallback";
 "Multipath" = "Multipath";
 "up to %lld streams" = "up to %lld streams";
 "Pushed routes" = "Pushed routes";

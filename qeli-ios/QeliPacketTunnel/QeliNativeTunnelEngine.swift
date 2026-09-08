@@ -65,6 +65,10 @@ private struct NativeDataPlaneFacts: Decodable, Sendable {
     var heartbeatEnabled: Bool
     var heartbeatIntervalMs: Int
     var shapingEnabled: Bool
+    var recordizerMode: String?
+    var recordizerPolicy: String?
+    var roamingMode: String?
+    var roamingPolicy: String?
 }
 
 private struct NativeServerIdentity: Decodable, Sendable {
@@ -956,7 +960,11 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                 paddingMax: 0,
                 heartbeatEnabled: false,
                 heartbeatIntervalMs: 0,
-                shapingEnabled: false
+                shapingEnabled: false,
+                recordizerMode: nil,
+                recordizerPolicy: nil,
+                roamingMode: nil,
+                roamingPolicy: nil
             ),
             connectionLog: []
         )
@@ -1269,7 +1277,13 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                     paddingMax: plan.dataPlane.paddingMax,
                     heartbeatEnabled: plan.dataPlane.heartbeatEnabled,
                     heartbeatIntervalMilliseconds: plan.dataPlane.heartbeatIntervalMs,
-                    shapingEnabled: plan.dataPlane.shapingEnabled
+                    shapingEnabled: plan.dataPlane.shapingEnabled,
+                    familyMode: plan.familyMode,
+                    carrierAddress: plan.carrierAddress,
+                    recordizerMode: plan.dataPlane.recordizerMode,
+                    recordizerPolicy: plan.dataPlane.recordizerPolicy,
+                    roamingMode: plan.dataPlane.roamingMode,
+                    roamingPolicy: plan.dataPlane.roamingPolicy
                 )
                 snapshot.privateUpdatePath = privateUpdatePath
                 snapshot.liveConnectionProperties = liveConnectionProperties

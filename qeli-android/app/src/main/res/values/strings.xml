@@ -225,6 +225,16 @@
     <string name="detail_warning">Warning</string>
     <string name="detail_dns">DNS</string>
     <string name="detail_mtu">MTU</string>
+    <string name="detail_ip_family">IP family</string>
+    <string name="detail_ipv4">IPv4</string>
+    <string name="detail_ipv6">IPv6</string>
+    <string name="detail_dual_stack">Dual-stack</string>
+    <string name="detail_carrier">Carrier</string>
+    <string name="detail_recordizer">Packet recordizer</string>
+    <string name="detail_roaming">Session roaming</string>
+    <string name="detail_legacy_packet_record">Legacy packet-per-record</string>
+    <string name="detail_reconnect_fallback">Reconnect fallback</string>
+    <string name="detail_mode_policy">%1$s (%2$s)</string>
     <string name="detail_multipath">Multipath</string>
     <string name="detail_streams">up to %1$d streams</string>
     <string name="detail_pushed_routes">Pushed routes</string>

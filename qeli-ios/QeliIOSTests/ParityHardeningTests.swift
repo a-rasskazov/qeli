@@ -231,6 +231,36 @@ final class ParityHardeningTests: XCTestCase {
         XCTAssertEqual(ProtectionSummary(live: live).warnings,
                        ProtectionSummary(config: config, globalAllowLAN: true).warnings)
 
+        var negotiated = TunnelSnapshot()
+        negotiated.pushed = PushedFacts(
+            familyMode: "dual",
+            carrierAddress: "2001:db8::20",
+            recordizerMode: "packet_mux_v1",
+            recordizerPolicy: "prefer",
+            roamingMode: "udp_roam_v1",
+            roamingPolicy: "auto"
+        )
+        let negotiatedRoundTrip = try JSONDecoder().decode(
+            TunnelSnapshot.self, from: JSONEncoder().encode(negotiated))
+        XCTAssertEqual(negotiatedRoundTrip.pushed?.familyMode, "dual")
+        XCTAssertEqual(negotiatedRoundTrip.pushed?.carrierAddress, "2001:db8::20")
+        XCTAssertEqual(negotiatedRoundTrip.pushed?.recordizerMode, "packet_mux_v1")
+        XCTAssertEqual(negotiatedRoundTrip.pushed?.recordizerPolicy, "prefer")
+        XCTAssertEqual(negotiatedRoundTrip.pushed?.roamingMode, "udp_roam_v1")
+        XCTAssertEqual(negotiatedRoundTrip.pushed?.roamingPolicy, "auto")
+
+        let legacyFacts = Data(#"""
+        {"routes":[],"routeCount":0,"routesInstalled":0,
+         "multipathAdaptive":false,"paddingEnabled":false,"paddingMin":0,
+         "paddingMax":0,"heartbeatEnabled":false,
+         "heartbeatIntervalMilliseconds":0,"shapingEnabled":false}
+        """#.utf8)
+        let decodedLegacyFacts = try JSONDecoder().decode(PushedFacts.self, from: legacyFacts)
+        XCTAssertNil(decodedLegacyFacts.familyMode)
+        XCTAssertNil(decodedLegacyFacts.carrierAddress)
+        XCTAssertNil(decodedLegacyFacts.recordizerMode)
+        XCTAssertNil(decodedLegacyFacts.roamingMode)
+
         var ipv6 = config
         ipv6.serverAddress = "2001:db8::10"
         XCTAssertEqual(

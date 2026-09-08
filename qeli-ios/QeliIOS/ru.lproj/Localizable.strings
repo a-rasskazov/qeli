@@ -150,6 +150,12 @@
 "Warning" = "Предупреждение";
 "DNS" = "DNS";
 "MTU" = "MTU";
+"IP family" = "Семейство IP";
+"Dual-stack" = "IPv4 + IPv6";
+"Carrier" = "Внешний канал";
+"Packet recordizer" = "Рекордайзер пакетов";
+"Legacy packet-per-record" = "Устаревший пакет на запись";
+"Reconnect fallback" = "Обычное переподключение";
 "Multipath" = "Multipath";
 "up to %lld streams" = "до %lld потоков";
 "Pushed routes" = "Маршрутов от сервера";

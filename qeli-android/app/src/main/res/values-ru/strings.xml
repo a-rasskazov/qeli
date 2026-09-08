@@ -224,6 +224,16 @@
     <string name="detail_warning">Предупреждение</string>
     <string name="detail_dns">DNS</string>
     <string name="detail_mtu">MTU</string>
+    <string name="detail_ip_family">Семейство IP</string>
+    <string name="detail_ipv4">IPv4</string>
+    <string name="detail_ipv6">IPv6</string>
+    <string name="detail_dual_stack">IPv4 + IPv6</string>
+    <string name="detail_carrier">Внешний канал</string>
+    <string name="detail_recordizer">Рекордайзер пакетов</string>
+    <string name="detail_roaming">Роуминг сессии</string>
+    <string name="detail_legacy_packet_record">Устаревший пакет на запись</string>
+    <string name="detail_reconnect_fallback">Обычное переподключение</string>
+    <string name="detail_mode_policy">%1$s (%2$s)</string>
     <string name="detail_multipath">Multipath</string>
     <string name="detail_streams">до %1$d потоков</string>
     <string name="detail_pushed_routes">Маршрутов от сервера</string>

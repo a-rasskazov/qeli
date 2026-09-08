@@ -79,6 +79,10 @@ internal data class TransportCoreDataPlaneFacts(
     val heartbeatEnabled: Boolean = false,
     val heartbeatIntervalMs: Long = 0,
     val shapingEnabled: Boolean = false,
+    val recordizerMode: String? = null,
+    val recordizerPolicy: String? = null,
+    val roamingMode: String? = null,
+    val roamingPolicy: String? = null,
 )
 
 internal data class TransportCoreNetworkPlan(
@@ -89,6 +93,7 @@ internal data class TransportCoreNetworkPlan(
     val prefixLength: Int,
     val mtu: Int,
     val tunnelGateway: String,
+    val carrierAddress: String? = null,
     val routes: List<TransportCoreNetworkRoute>,
     val pushedRoutes: List<String>,
     val dnsServers: List<TransportCoreNetworkDns>,
@@ -378,6 +383,8 @@ internal object TransportCoreEventCodec {
         val prefixLength = payload.getInt("prefix_len")
         val mtu = payload.getInt("mtu")
         val tunnelGateway = payload.getString("tunnel_gateway")
+        val carrierAddress = payload.optString("carrier_address")
+            .takeIf { it.isNotBlank() }
         require(tunnelAddress.isNotBlank() && tunnelAddress.length <= 128) {
             "invalid network plan tunnel address"
         }
@@ -396,7 +403,7 @@ internal object TransportCoreEventCodec {
         require("ipv6" !in addressFamilies || mtu >= 1280) {
             "IPv6 network plan MTU is below 1280"
         }
-        payload.optString("carrier_address").takeIf { it.isNotBlank() }?.let(::parseIpLiteral)
+        carrierAddress?.let(::parseIpLiteral)
 
         val routeJson = payload.getJSONArray("routes")
         require(routeJson.length() <= 256) { "network plan contains too many routes" }
@@ -448,6 +455,26 @@ internal object TransportCoreEventCodec {
         }
 
         val dataPlaneJson = payload.optJSONObject("data_plane")
+        val recordizerMode = dataPlaneJson?.optString("recordizer_mode")
+            ?.takeIf { it.isNotBlank() }
+        val recordizerPolicy = dataPlaneJson?.optString("recordizer_policy")
+            ?.takeIf { it.isNotBlank() }
+        val roamingMode = dataPlaneJson?.optString("roaming_mode")
+            ?.takeIf { it.isNotBlank() }
+        val roamingPolicy = dataPlaneJson?.optString("roaming_policy")
+            ?.takeIf { it.isNotBlank() }
+        require(recordizerMode == null || recordizerMode in setOf(
+            "legacy_packet_per_record", "packet_mux_v1"
+        )) { "invalid negotiated recordizer mode" }
+        require(recordizerPolicy == null || recordizerPolicy in setOf("prefer", "required")) {
+            "invalid negotiated recordizer policy"
+        }
+        require(roamingMode == null || roamingMode in setOf(
+            "reconnect", "udp_roam_v1", "tcp_resume_v2", "tcp_handover_v2"
+        )) { "invalid negotiated roaming mode" }
+        require(roamingPolicy == null || roamingPolicy in setOf("off", "auto", "required")) {
+            "invalid negotiated roaming policy"
+        }
         val dataPlane = TransportCoreDataPlaneFacts(
             paddingEnabled = dataPlaneJson?.optBoolean("padding_enabled", false) ?: false,
             paddingMin = dataPlaneJson?.optInt("padding_min", 0) ?: 0,
@@ -455,6 +482,10 @@ internal object TransportCoreEventCodec {
             heartbeatEnabled = dataPlaneJson?.optBoolean("heartbeat_enabled", false) ?: false,
             heartbeatIntervalMs = dataPlaneJson?.optLong("heartbeat_interval_ms", 0) ?: 0,
             shapingEnabled = dataPlaneJson?.optBoolean("shaping_enabled", false) ?: false,
+            recordizerMode = recordizerMode,
+            recordizerPolicy = recordizerPolicy,
+            roamingMode = roamingMode,
+            roamingPolicy = roamingPolicy,
         )
 
         val connectionLogJson = payload.optJSONArray("connection_log")
@@ -480,6 +511,7 @@ internal object TransportCoreEventCodec {
             prefixLength = prefixLength,
             mtu = mtu,
             tunnelGateway = tunnelGateway,
+            carrierAddress = carrierAddress,
             routes = routes,
             pushedRoutes = pushedRoutes,
             dnsServers = dnsServers,

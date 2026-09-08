@@ -1,10 +1,11 @@
 package com.qeli.model
 
 /**
- * What the SERVER pushed for this session, as the client applied it.
+ * Negotiated, display-safe runtime facts for the active session.
  *
  * Only knowable after the handshake, so it lives beside the tunnel rather than in the
- * profile. Two deliberate limits:
+ * profile. It includes both server-pushed settings and capability-negotiated transport
+ * modes. Two deliberate limits:
  *
  * * [routes] is CAPPED at [ROUTE_SAMPLE] entries with [routeCount] carrying the real total.
  *   A server may advertise an arbitrarily long list — an operator pushing a country-sized
@@ -38,6 +39,12 @@ data class PushedFacts(
     val heartbeatEnabled: Boolean = false,
     val heartbeatIntervalMs: Long = 0,
     val shapingEnabled: Boolean = false,
+    val familyMode: String? = null,
+    val carrierAddress: String? = null,
+    val recordizerMode: String? = null,
+    val recordizerPolicy: String? = null,
+    val roamingMode: String? = null,
+    val roamingPolicy: String? = null,
 ) {
     companion object {
         /** How many pushed routes the UI ever holds or renders. */

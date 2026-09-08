@@ -4486,6 +4486,23 @@ where
     plan.max_streams = max_streams;
     plan.adaptive = adaptive;
     plan.data_plane = crate::transport_core::NetworkDataPlaneFacts::from_obfuscation(&eff_obf);
+    #[cfg(feature = "experimental-roaming")]
+    let negotiated_roaming_mode = if tcp_handover_enabled {
+        crate::transport_core::NetworkRoamingMode::TcpHandoverV2
+    } else if tcp_resume.is_some() {
+        crate::transport_core::NetworkRoamingMode::TcpResumeV2
+    } else {
+        crate::transport_core::NetworkRoamingMode::Reconnect
+    };
+    #[cfg(not(feature = "experimental-roaming"))]
+    let negotiated_roaming_mode = crate::transport_core::NetworkRoamingMode::Reconnect;
+    plan.data_plane.set_negotiated_modes(
+        pushed_obf
+            .as_ref()
+            .and_then(|obfuscation| obfuscation.recordizer.as_ref()),
+        negotiated_roaming_mode,
+        config.roaming,
+    );
     plan.connection_log = server_push_log_lines(
         config,
         &plan,
@@ -9042,6 +9059,21 @@ pub(crate) async fn run_udp_tunnel(
     plan.max_streams = max_streams_udp;
     plan.adaptive = adaptive_udp;
     plan.data_plane = crate::transport_core::NetworkDataPlaneFacts::from_obfuscation(&eff_obf);
+    #[cfg(feature = "experimental-roaming")]
+    let negotiated_roaming_mode = if udp_roaming_session_id.is_some() {
+        crate::transport_core::NetworkRoamingMode::UdpRoamV1
+    } else {
+        crate::transport_core::NetworkRoamingMode::Reconnect
+    };
+    #[cfg(not(feature = "experimental-roaming"))]
+    let negotiated_roaming_mode = crate::transport_core::NetworkRoamingMode::Reconnect;
+    plan.data_plane.set_negotiated_modes(
+        pushed_obf
+            .as_ref()
+            .and_then(|obfuscation| obfuscation.recordizer.as_ref()),
+        negotiated_roaming_mode,
+        config.roaming,
+    );
     plan.connection_log = server_push_log_lines(
         config,
         &plan,
