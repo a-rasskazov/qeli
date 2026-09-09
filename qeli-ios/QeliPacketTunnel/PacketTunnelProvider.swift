@@ -1,6 +1,5 @@
 import Foundation
 import NetworkExtension
-import Security
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let sharedStore = SharedTunnelStore()
@@ -230,8 +229,7 @@ private enum PacketTunnelSigningDiagnostics {
         #if targetEnvironment(simulator)
         return true
         #else
-        guard let task = SecTaskCreateFromSelf(nil),
-              let expectedAppGroup = Bundle.main.object(
+        guard let expectedAppGroup = Bundle.main.object(
                   forInfoDictionaryKey: "QeliAppGroup"
               ) as? String,
               !expectedAppGroup.isEmpty,
@@ -241,20 +239,13 @@ private enum PacketTunnelSigningDiagnostics {
               ) as? String,
               !expectedKeychainGroup.isEmpty,
               !expectedKeychainGroup.contains("$(") else { return false }
-        let networkExtensions = values(
-            task: task,
-            key: "com.apple.developer.networking.networkextension"
-        )
-        let appGroups = values(task: task, key: "com.apple.security.application-groups")
-        let keychainGroups = values(task: task, key: "keychain-access-groups")
-        return networkExtensions.contains("packet-tunnel-provider")
-            && appGroups.contains(expectedAppGroup)
-            && keychainGroups.contains(expectedKeychainGroup)
+        // Reaching this process proves that iOS accepted the packet-tunnel entitlement.
+        // Probe the remaining shared capabilities through public APIs so re-signed builds
+        // fail with a useful diagnostic instead of using the private SecTask API.
+        return FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: expectedAppGroup
+        ) != nil && KeychainStore.canAccess(group: expectedKeychainGroup)
         #endif
-    }
-
-    private static func values(task: SecTask, key: String) -> [String] {
-        SecTaskCopyValueForEntitlement(task, key as CFString, nil) as? [String] ?? []
     }
 }
 

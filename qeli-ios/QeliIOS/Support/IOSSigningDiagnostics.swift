@@ -1,11 +1,10 @@
 import Foundation
-import Security
 
-/// Verifies the effective entitlements embedded in the running app's code signature.
+/// Verifies the effective shared-container capabilities of the running app.
 ///
 /// An unsigned archive can be re-signed by a generic sideloading tool and still launch, while
 /// lacking every capability that makes it a VPN. Checking the source `.entitlements` file is
-/// insufficient: iOS authorizes only the values in the final signature and provisioning profile.
+/// insufficient: the public APIs below probe what iOS actually authorizes for this process.
 enum IOSSigningDiagnostics {
     enum Requirement: String, CaseIterable, Equatable {
         case packetTunnel
@@ -45,27 +44,22 @@ enum IOSSigningDiagnostics {
         #if targetEnvironment(simulator)
         return []
         #else
-        guard let task = SecTaskCreateFromSelf(nil) else { return Requirement.allCases }
-        let entitlements = Entitlements(
-            networkExtensions: stringValues(
-                task: task,
-                key: "com.apple.developer.networking.networkextension"
-            ),
-            appGroups: stringValues(
-                task: task,
-                key: "com.apple.security.application-groups"
-            ),
-            keychainGroups: stringValues(task: task, key: "keychain-access-groups")
-        )
-        return missingRequirements(
-            in: entitlements,
-            expectedAppGroup: AppConstants.appGroupIdentifier,
-            expectedKeychainGroup: AppConstants.keychainAccessGroup
-        )
+        var missing: [Requirement] = []
+        let appGroup = AppConstants.appGroupIdentifier
+        if appGroup.isEmpty || appGroup.contains("$(")
+            || FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: appGroup
+            ) == nil {
+            missing.append(.appGroup)
+        }
+        guard let keychainGroup = AppConstants.keychainAccessGroup,
+              KeychainStore.canAccess(group: keychainGroup) else {
+            missing.append(.keychainGroup)
+            return missing
+        }
+        // NetworkExtension itself performs the packet-tunnel entitlement check when a manager
+        // is saved or started. If the provider launches, that capability is already authorized.
+        return missing
         #endif
-    }
-
-    private static func stringValues(task: SecTask, key: String) -> [String] {
-        SecTaskCopyValueForEntitlement(task, key as CFString, nil) as? [String] ?? []
     }
 }
