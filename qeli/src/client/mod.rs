@@ -540,12 +540,15 @@ use tokio::sync::mpsc;
 pub(crate) type IdentityFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'static>>;
 pub(crate) type IdentityVerifier = Arc<dyn Fn([u8; 32]) -> IdentityFuture + Send + Sync + 'static>;
+#[cfg(target_os = "linux")]
 pub(crate) struct PendingLifecycleHook {
     command: String,
     environment: Vec<(String, String)>,
     positional_arguments: Vec<String>,
     context_json: String,
 }
+#[cfg(not(target_os = "linux"))]
+pub(crate) struct PendingLifecycleHook;
 
 /// Stable, secret-free process-lifecycle snapshot supplied to Linux client hooks.
 ///
