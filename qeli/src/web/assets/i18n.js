@@ -968,7 +968,6 @@
 
       // ── dashboard: host metrics + per-user usage (Tier) ──
       'Host load': 'Нагрузка хоста',
-      'Operating normally': 'Работает штатно',
       'Attention required': 'Требует внимания',
       'Metrics unavailable': 'Метрики недоступны',
       'Collecting metrics…': 'Сбор метрик…',

@@ -15,10 +15,11 @@
     <div class="card host-load-card">
       <div class="host-load-header">
         <div class="host-load-heading">
-          <span class="host-load-state" :class="hostHealthClass" aria-hidden="true"></span>
+          <span x-show="hostHealthState !== 'healthy'" class="host-load-state"
+            :class="hostHealthClass" aria-hidden="true"></span>
           <div class="min-w-0">
             <h3 class="host-load-title">Host load</h3>
-            <div class="host-load-status" x-text="hostHealthLabel"></div>
+            <div x-show="hostHealthLabel" class="host-load-status" x-text="hostHealthLabel"></div>
           </div>
         </div>
         <div class="host-load-actions">
@@ -44,7 +45,7 @@
           <div class="host-load-ring">
             <svg viewBox="0 0 80 80" role="img" :aria-label="'RAM ' + memoryLabel">
               <circle cx="40" cy="40" r="30" fill="none" stroke="var(--line)" stroke-width="8"/>
-              <circle cx="40" cy="40" r="30" fill="none" stroke="var(--amber)" stroke-width="8" stroke-linecap="round"
+              <circle cx="40" cy="40" r="30" fill="none" stroke="var(--host-memory,#f59e0b)" stroke-width="8" stroke-linecap="round"
                 transform="rotate(-90 40 40)" stroke-dasharray="188.5"
                 :stroke-dashoffset="memoryDashOffset"/>
               <text x="40" y="38" text-anchor="middle" class="host-load-ring-value" x-text="memoryLabel"></text>
@@ -459,13 +460,13 @@ function dashboard() {
       return values.some(value => value >= 90) ? 'warning' : 'healthy';
     },
     get hostHealthLabel() {
+      if (this.hostHealthState === 'healthy') return '';
       const labels = {
         loading: 'Collecting metrics…',
         unavailable: 'Metrics unavailable',
         warning: 'Attention required',
-        healthy: 'Operating normally',
       };
-      return this.qeliT(labels[this.hostHealthState]);
+      return this.qeliT(labels[this.hostHealthState] || '');
     },
     get hostHealthClass() { return 'host-load-state-' + this.hostHealthState; },
     get cpuPercent() { return this.metricPercent(this.sys.cpu_pct); },
