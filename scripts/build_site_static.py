@@ -13,7 +13,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SITE = REPO / "site"
 BASE = "https://qeli.ru"
-UPDATED = "2026-09-10"
+UPDATED = "2026-09-14"
 SITE_CONFIG = json.loads((SITE / "assets" / "site.json").read_text(encoding="utf-8"))
 SCHEMA_VERSION = SITE_CONFIG["versionJsonLd"]
 SCHEMA_DOWNLOAD_URL = f"https://github.com/litvinovtd/qeli/releases/tag/v{SCHEMA_VERSION}"

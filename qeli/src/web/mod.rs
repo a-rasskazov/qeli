@@ -10,7 +10,7 @@ use axum::{
     extract::{ConnectInfo, State},
     http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{Redirect, Response},
     Router,
 };
 use std::net::{IpAddr, SocketAddr};
@@ -33,6 +33,17 @@ fn base_href(prefix: &str) -> String {
         "/".to_string()
     } else {
         format!("{prefix}/")
+    }
+}
+
+/// Canonical panel-root URL used by the Dashboard navigation link. Unlike
+/// [`base_href`], a non-root prefix must not end in `/`: axum's `Router::nest`
+/// mounts the nested `/` route at `/qeli`, while `/qeli/` is a distinct path.
+fn base_root(prefix: &str) -> String {
+    if prefix.is_empty() {
+        "/".to_string()
+    } else {
+        prefix.to_string()
     }
 }
 
@@ -105,8 +116,9 @@ fn req_prefix(
 
 /// Make the panel work under a reverse-proxy sub-path without touching handlers:
 /// fill `{{basehref}}` in HTML pages with the request's prefix (so relative
-/// asset/API/nav URLs re-root via `<base href>`), and prepend the prefix to
-/// root-absolute `Location` redirects (which `<base>` cannot re-root).
+/// asset/API/nav URLs re-root via `<base href>`), fill `{{baseroot}}` with the
+/// canonical slashless panel root, and prepend the prefix to root-absolute
+/// `Location` redirects (which `<base>` cannot re-root).
 async fn base_path_rewrite(
     State(state): State<Arc<ServerState>>,
     req: Request<Body>,
@@ -149,7 +161,9 @@ async fn base_path_rewrite(
         Ok(b) => b,
         Err(_) => return Response::from_parts(parts, Body::empty()),
     };
-    let mut html = String::from_utf8_lossy(&bytes).replace("{{basehref}}", &base_href(&prefix));
+    let mut html = String::from_utf8_lossy(&bytes)
+        .replace("{{basehref}}", &base_href(&prefix))
+        .replace("{{baseroot}}", &base_root(&prefix));
     // Stamp the CSP nonce onto every script tag so the nonce-based policy set upstream
     // actually lets the panel's own scripts run. A plain `<script` prefix match is safe
     // here: these templates are ours, every tag is either `<script>` or
@@ -160,6 +174,31 @@ async fn base_path_rewrite(
     }
     parts.headers.remove(header::CONTENT_LENGTH);
     Response::from_parts(parts, Body::from(html))
+}
+
+/// Mount the panel below its configured base path. axum deliberately treats
+/// `/qeli` and `/qeli/` as different paths for a nested router, so accept the
+/// accidental trailing-slash spelling too and redirect it to the canonical
+/// root instead of returning a surprising 404.
+fn mount_at_base<S>(routes: Router<S>, base: &str) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    if base.is_empty() {
+        routes
+    } else {
+        let slash_path = format!("{base}/");
+        let canonical = base.to_string();
+        Router::new()
+            .route(
+                &slash_path,
+                axum::routing::get(move || {
+                    let canonical = canonical.clone();
+                    async move { Redirect::permanent(&canonical) }
+                }),
+            )
+            .nest(base, routes)
+    }
 }
 
 /// Normalize a configured origin (`host`, `host:port`, or a full
@@ -702,11 +741,7 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
         );
         String::new()
     };
-    let routes = if base.is_empty() {
-        routes
-    } else {
-        Router::new().nest(&base, routes)
-    };
+    let routes = mount_at_base(routes, &base);
 
     let app = routes
         // Innermost: post-processes handler responses for the sub-path.
@@ -834,6 +869,56 @@ mod tests {
         assert!(!super::is_safe_prefix("a>b"));
         assert!(!super::is_safe_prefix("a b"));
         assert!(!super::is_safe_prefix(&"x".repeat(129)));
+    }
+
+    #[test]
+    fn panel_base_urls_keep_directory_and_root_semantics_distinct() {
+        assert_eq!(super::base_href(""), "/");
+        assert_eq!(super::base_root(""), "/");
+        assert_eq!(super::base_href("/qeli"), "/qeli/");
+        assert_eq!(super::base_root("/qeli"), "/qeli");
+
+        let layout = include_str!("templates/layout.html");
+        assert!(
+            layout.contains("<a href=\"{{baseroot}}\" class=\"nav-link\""),
+            "Dashboard must use the canonical panel root, not '.'/basehref"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_base_redirects_trailing_slash_to_canonical_root() {
+        use axum::body::Body;
+        use axum::http::{header, Request, StatusCode};
+        use tower::ServiceExt;
+
+        let app: Router = super::mount_at_base(
+            Router::new().route("/", get(|| async { "dashboard" })),
+            "/custom",
+        );
+
+        let canonical = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/custom")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(canonical.status(), StatusCode::OK);
+
+        let trailing = app
+            .oneshot(
+                Request::builder()
+                    .uri("/custom/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(trailing.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(trailing.headers()[header::LOCATION], "/custom");
     }
 
     /// The header only counts from a configured trusted proxy — a directly-exposed
