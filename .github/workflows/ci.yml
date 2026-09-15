@@ -330,6 +330,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          # Command-line tools are installed by the action itself. The legacy SDK
+          # package named `tools` was removed from Google's current repository.
+          packages: platform-tools
       # `gradle-wrapper.jar` is a BINARY committed to this repo, and every Gradle step below
       # executes it. Nothing verified it: a tampered wrapper (or a `distributionUrl` pointed
       # somewhere else) would run attacker code inside the job that builds and signs the

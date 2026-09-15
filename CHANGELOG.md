@@ -34,7 +34,7 @@
 - Кроссплатформенная сборка native cores снова проходит строгий `-D warnings`: Linux-only payload
   lifecycle-хуков исключён из Windows/macOS/Android-сборок без подавления предупреждений.
 - Обновлены поддерживающие зависимости транспорта и клиентов: `tokio-rustls 0.26.5`, `h2 0.4.19`,
-  `ipnet 2.12.2`, `rustls 0.23.44`, Windows service packages `10.0.12` и `setup-java 6.0.1`.
+  `ipnet 2.12.2`, `rustls 0.23.45`, Windows service packages `10.0.12` и `setup-java 6.0.1`.
   Совместимость подтверждена полным CI и воспроизводимыми A/B-сборками нативных ядер для Windows,
   macOS и Android.
 
