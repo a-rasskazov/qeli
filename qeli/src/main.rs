@@ -558,6 +558,9 @@ async fn main() -> anyhow::Result<()> {
                 // so `check-config` and a real start agree.
                 #[cfg(target_os = "linux")]
                 server::validate_profiles(&cfg)?;
+                #[cfg(target_os = "linux")]
+                qeli::web::tls::check_config_files(&cfg.web)
+                    .map_err(|e| anyhow::anyhow!("{}: panel TLS: {}", path, e))?;
                 if let Some(source) = &server_source {
                     source.validate_users_file_trust(&cfg)?;
                     for profile in &cfg.profiles {

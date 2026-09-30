@@ -34,12 +34,28 @@ fn resolve_paths(web: &WebConfig) -> (String, String) {
 /// use when none is configured.
 pub fn build_server_config(web: &WebConfig) -> anyhow::Result<Arc<rustls::ServerConfig>> {
     let (cert_path, key_path) = resolve_paths(web);
-
     ensure_cert_pair(web, &cert_path, &key_path)?;
+    build_existing_pair(&cert_path, &key_path)
+}
 
-    let certs = load_certs(&cert_path)?;
-    let key = load_key(&key_path)?;
+/// Check TLS files without creating the default self-signed pair.
+pub fn check_config_files(web: &WebConfig) -> anyhow::Result<()> {
+    if !web.enabled || !web.tls {
+        return Ok(());
+    }
+    let (cert_path, key_path) = resolve_paths(web);
+    if pair_present(web, &cert_path, &key_path)? {
+        build_existing_pair(&cert_path, &key_path)?;
+    }
+    Ok(())
+}
 
+fn build_existing_pair(
+    cert_path: &str,
+    key_path: &str,
+) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+    let certs = load_certs(cert_path)?;
+    let key = load_key(key_path)?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let cfg = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
@@ -59,10 +75,18 @@ fn pem_path_present(path: &str) -> anyhow::Result<bool> {
 }
 
 fn ensure_cert_pair(web: &WebConfig, cert_path: &str, key_path: &str) -> anyhow::Result<()> {
+    if pair_present(web, cert_path, key_path)? {
+        return Ok(());
+    }
+    generate_self_signed(web, cert_path, key_path)
+}
+
+/// Return false only for a wholly absent default pair, which startup may generate.
+fn pair_present(web: &WebConfig, cert_path: &str, key_path: &str) -> anyhow::Result<bool> {
     let cert_present = pem_path_present(cert_path)?;
     let key_present = pem_path_present(key_path)?;
     if cert_present && key_present {
-        return Ok(());
+        return Ok(true);
     }
     if !web.tls_cert.is_empty() || !web.tls_key.is_empty() {
         anyhow::bail!(
@@ -78,7 +102,7 @@ fn ensure_cert_pair(web: &WebConfig, cert_path: &str, key_path: &str) -> anyhow:
             key_path
         );
     }
-    generate_self_signed(web, cert_path, key_path)
+    Ok(false)
 }
 
 /// Bound PEM reads and reject devices/FIFOs before parsing. O_NONBLOCK makes
@@ -305,6 +329,69 @@ mod tests {
         );
         std::fs::remove_file(link).unwrap();
         std::fs::remove_file(target).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn absent_default_pair_is_valid_without_generation() {
+        let dir = fixture();
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        assert!(!pair_present(
+            &WebConfig::default(),
+            cert.to_str().unwrap(),
+            key.to_str().unwrap()
+        )
+        .unwrap());
+        assert!(!cert.exists());
+        assert!(!key.exists());
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn check_config_rejects_invalid_explicit_pem_without_writing() {
+        let dir = fixture();
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        std::fs::write(&cert, b"not a certificate").unwrap();
+        std::fs::write(&key, b"not a private key").unwrap();
+        let mut web = WebConfig::default();
+        web.enabled = true;
+        web.tls = true;
+        web.tls_cert = cert.to_str().unwrap().into();
+        web.tls_key = key.to_str().unwrap().into();
+        let error = check_config_files(&web).unwrap_err();
+        assert!(error.to_string().contains("no certificates"), "{error}");
+        assert_eq!(std::fs::read(&cert).unwrap(), b"not a certificate");
+        assert_eq!(std::fs::read(&key).unwrap(), b"not a private key");
+        std::fs::remove_file(cert).unwrap();
+        std::fs::remove_file(key).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn check_config_accepts_valid_explicit_pair_without_writing() {
+        let dir = fixture();
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        generate_self_signed(
+            &WebConfig::default(),
+            cert.to_str().unwrap(),
+            key.to_str().unwrap(),
+        )
+        .unwrap();
+        let cert_before = std::fs::read(&cert).unwrap();
+        let key_before = std::fs::read(&key).unwrap();
+        let mut web = WebConfig::default();
+        web.enabled = true;
+        web.tls = true;
+        web.tls_cert = cert.to_str().unwrap().into();
+        web.tls_key = key.to_str().unwrap().into();
+        check_config_files(&web).unwrap();
+        assert_eq!(std::fs::read(&cert).unwrap(), cert_before);
+        assert_eq!(std::fs::read(&key).unwrap(), key_before);
+        std::fs::remove_file(cert).unwrap();
+        std::fs::remove_file(key).unwrap();
         std::fs::remove_dir(dir).unwrap();
     }
 }

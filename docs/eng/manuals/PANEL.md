@@ -102,6 +102,9 @@ needed.
   files are rejected without waiting. If only one auto-generated file remains,
   the panel refuses HTTPS and preserves it: restore the other file from backup,
   or remove **both** files to deliberately generate a new pair.
+  `qeli check-config` validates an existing pair with the same TLS loader. When
+  the auto-generated pair does not yet exist, it permits first startup without
+  creating files.
 - With `tls = true` the session cookie automatically gets `Secure`.
 
 > Alternative to publishing: keep `bind = 127.0.0.1`, `tls = false` and reach the

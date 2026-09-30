@@ -288,3 +288,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F145: SIGHUP and restart for users_file](reports/AUDIT-Q25-SERVER-USERS-SIGHUP-RESTART.md)
 - [Q25-F146: concurrent server INI writes](reports/AUDIT-Q25-SERVER-CONCURRENT-WRITES.md)
 - [Q25-F147: TLS PEM and incomplete auto pair](reports/AUDIT-Q25-SERVER-TLS-PEM.md)
+- [Q25-F148: TLS validation in check-config](reports/AUDIT-Q25-SERVER-TLS-CHECK-CONFIG.md)
