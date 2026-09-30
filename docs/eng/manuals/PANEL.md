@@ -326,6 +326,10 @@ The **⤓ Backup** and **⤒ Restore** buttons in the header of the *Host load* 
 - Two restores never run at once — the second is refused with "another restore is already
   in progress". After a successful restore you **must restart** to apply it, and a
   *Config restored* notification fires.
+- Panel saves, `qeli set-web-password`, and restore share a server-INI sidecar
+  lock. Exact restore preserves `.lock` files, and old archived lock files are
+  not published over active ones. A manual SSH editor does not take this lock:
+  do not edit the INI concurrently with a panel or CLI save.
 
 Backup/Restore preparation shares 60 seconds across config-lock admission, all tar
 commands and preflight. Portable gzip is limited to 16 MiB, pre-restore gzip to 64 MiB;

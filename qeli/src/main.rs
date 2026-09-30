@@ -1266,6 +1266,12 @@ fn set_web_password(
     enable: bool,
     config: PathBuf,
 ) -> anyhow::Result<()> {
+    // The panel uses this same sidecar lock around its read-modify-write.
+    // Canonicalize so a CLI alias cannot acquire a different lock name.
+    let config = std::fs::canonicalize(&config)
+        .map_err(|e| anyhow::anyhow!("cannot resolve server config {}: {}", config.display(), e))?;
+    let _file_write_guard =
+        qeli::util::FileLock::acquire_timeout(&config, std::time::Duration::from_secs(5))?;
     let cfg_str = server::read_config_text(&config)
         .map_err(|e| anyhow::anyhow!("cannot read server config {}: {}", config.display(), e))?;
     // Validate the existing file parses before we touch it, so we never overwrite

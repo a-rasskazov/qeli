@@ -286,3 +286,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F143: trust for identity_key and logging.file](reports/AUDIT-Q25-SERVER-IDENTITY-TRUST.md)
 - [Q25-F144: trust for custom auth.users_file](reports/AUDIT-Q25-SERVER-USERS-PATH-TRUST.md)
 - [Q25-F145: SIGHUP and restart for users_file](reports/AUDIT-Q25-SERVER-USERS-SIGHUP-RESTART.md)
+- [Q25-F146: concurrent server INI writes](reports/AUDIT-Q25-SERVER-CONCURRENT-WRITES.md)

@@ -286,3 +286,4 @@
 - [Q25-F143: доверие к identity_key и logging.file](reports/AUDIT-Q25-SERVER-IDENTITY-TRUST.md)
 - [Q25-F144: доверие к нестандартному auth.users_file](reports/AUDIT-Q25-SERVER-USERS-PATH-TRUST.md)
 - [Q25-F145: SIGHUP и рестарт при смене users_file](reports/AUDIT-Q25-SERVER-USERS-SIGHUP-RESTART.md)
+- [Q25-F146: конкурентная запись серверного INI](reports/AUDIT-Q25-SERVER-CONCURRENT-WRITES.md)

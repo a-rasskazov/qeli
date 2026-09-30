@@ -13,6 +13,18 @@ use std::sync::Arc;
 const CONFIG_HISTORY_DIR: &str = ".config-history";
 const CONFIG_HISTORY_KEEP: usize = 10;
 
+/// Serialize Qeli CLI and panel writers through the same sidecar lock. Acquire
+/// it off the async runtime before reading the INI and hold it through rename.
+pub(super) async fn lock_server_config(path: &FsPath) -> Result<crate::util::FileLock, String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        crate::util::FileLock::acquire_timeout(&path, std::time::Duration::from_secs(5))
+    })
+    .await
+    .map_err(|error| format!("config writer lock task failed: {error}"))?
+    .map_err(|error| format!("cannot lock server config for writing: {error}"))
+}
+
 fn read_config_text(path: impl AsRef<FsPath>) -> std::io::Result<String> {
     crate::server::read_config_text(path)
 }
@@ -24,17 +36,6 @@ pub(super) fn config_revision(raw: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
-}
-
-/// A configured path must never fall back to the startup snapshot after a
-/// read error: that would bypass the revision check and could overwrite a
-/// hand-edited or oversized INI with stale panel state.
-fn read_revision_source(state: &ServerState, path: Option<&str>) -> Result<String, String> {
-    match path {
-        Some(path) => read_config_text(path)
-            .map_err(|error| format!("cannot read current server config '{path}': {error}")),
-        None => Ok(state.config.to_ini_string()),
-    }
 }
 
 fn revision_conflict(body: &Value, current_raw: &str) -> Option<Value> {
@@ -1122,6 +1123,10 @@ pub async fn apply_quickstart_profile(
         Ok(path) => path,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
+    let _file_write_guard = match lock_server_config(&canon).await {
+        Ok(guard) => guard,
+        Err(error) => return Ok(Json(super::err_json(error))),
+    };
     let current_raw = match read_config_text(&canon) {
         Ok(raw) => raw,
         Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
@@ -1233,9 +1238,26 @@ pub async fn put_config(
         Err(error) => return Ok(Json(super::err_json(error))),
     };
     let revision_path = state.config_path.lock().await.clone();
-    let current_raw_for_revision = match read_revision_source(&state, revision_path.as_deref()) {
+    let (_file_write_guard, locked_config_path) = match revision_path.as_deref() {
+        Some(path) => {
+            let canon = match validate_in_whitelist(path, ALLOWED_CONFIG_DIRS) {
+                Ok(path) => path,
+                Err(error) => return Ok(Json(super::err_json(error))),
+            };
+            match lock_server_config(&canon).await {
+                Ok(guard) => (guard, canon),
+                Err(error) => return Ok(Json(super::err_json(error))),
+            }
+        }
+        None => {
+            return Ok(Json(super::err_json(
+                "config_path not set — running from in-memory config",
+            )))
+        }
+    };
+    let current_raw_for_revision = match read_config_text(&locked_config_path) {
         Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(error))),
+        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
     };
     if let Some(conflict) = revision_conflict(&body, &current_raw_for_revision) {
         return Ok(Json(conflict));
@@ -1437,6 +1459,12 @@ pub async fn put_config(
             })));
         }
     };
+
+    if canon != locked_config_path {
+        return Ok(Json(super::err_json(
+            "config path changed while this save was being prepared; reload and retry",
+        )));
+    }
 
     // SECURITY: post_up/post_down run arbitrary commands as root. They are
     // FILE-ONLY — the panel/API must never set or change them, or a panel
@@ -1895,9 +1923,26 @@ pub async fn put_config_raw(
         Err(error) => return Ok(Json(super::err_json(error))),
     };
     let revision_path = state.config_path.lock().await.clone();
-    let current_raw_for_revision = match read_revision_source(&state, revision_path.as_deref()) {
+    let (_file_write_guard, locked_config_path) = match revision_path.as_deref() {
+        Some(path) => {
+            let canon = match validate_in_whitelist(path, ALLOWED_CONFIG_DIRS) {
+                Ok(path) => path,
+                Err(error) => return Ok(Json(super::err_json(error))),
+            };
+            match lock_server_config(&canon).await {
+                Ok(guard) => (guard, canon),
+                Err(error) => return Ok(Json(super::err_json(error))),
+            }
+        }
+        None => {
+            return Ok(Json(super::err_json(
+                "config_path not set — running from in-memory config",
+            )))
+        }
+    };
+    let current_raw_for_revision = match read_config_text(&locked_config_path) {
         Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(error))),
+        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
     };
     if let Some(conflict) = revision_conflict(&body, &current_raw_for_revision) {
         return Ok(Json(conflict));
@@ -1908,13 +1953,7 @@ pub async fn put_config_raw(
     // (worse) persist the placeholder and lock the operator out. Restoration is keyed by
     // (section, key), so hashes cannot be swapped between users. (Audit 2026-07-27, P1.)
     let raw = {
-        let path = state.config_path.lock().await.clone();
-        let Some(path) = path else {
-            return Ok(Json(super::err_json(
-                "config_path not set — running from in-memory config",
-            )));
-        };
-        let on_disk = match read_config_text(&path) {
+        let on_disk = match read_config_text(&locked_config_path) {
             Ok(raw) => raw,
             Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
         };
@@ -2000,6 +2039,12 @@ pub async fn put_config_raw(
             ))));
         }
     };
+
+    if canon != locked_config_path {
+        return Ok(Json(super::err_json(
+            "config path changed while this save was being prepared; reload and retry",
+        )));
+    }
 
     // SECURITY: post_up/post_down are file-only (they execute commands as root).
     // The raw editor must not introduce or change them — reject if the submitted
@@ -2182,6 +2227,10 @@ pub async fn restore_config_history(
         Ok(path) => path,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
+    let _file_write_guard = match lock_server_config(&canon).await {
+        Ok(guard) => guard,
+        Err(error) => return Ok(Json(super::err_json(error))),
+    };
     let current_raw = match read_config_text(&canon) {
         Ok(raw) => raw,
         Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
@@ -2310,6 +2359,44 @@ mod raw_secret_tests {
         assert_ne!(a, config_revision("# comment\n[web]\nport = 8080\n"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn config_writer_lock_serializes_a_second_process_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-config-lock-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        std::fs::write(&path, b"[web]\n").unwrap();
+
+        let first = lock_server_config(&path).await.unwrap();
+        let second_path = path.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let second = tokio::spawn(async move {
+            let _ = started_tx.send(());
+            let _guard = lock_server_config(&second_path).await.unwrap();
+            read_config_text(&second_path).unwrap()
+        });
+        started_rx.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !second.is_finished(),
+            "second writer bypassed the sidecar lock"
+        );
+        write_server_config(&path, "[web]\nusername = newer\n").unwrap();
+        drop(first);
+        assert_eq!(
+            second.await.unwrap(),
+            "[web]\nusername = newer\n",
+            "the next writer must read the committed revision"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(format!("{}.lock", path.display())).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
     #[test]
     fn expected_revision_detects_a_stale_editor() {
         let current = "[web]\nport = 8080\n";
@@ -2341,16 +2428,14 @@ mod raw_secret_tests {
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("server.conf");
         std::fs::write(&path, b"[web]\n").unwrap();
-        let state =
-            crate::server::test_api_state(crate::config::server::ServerConfig::default(), &path);
         std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
             .unwrap()
             .set_len(crate::server::MAX_SERVER_INI_BYTES + 1)
             .unwrap();
-        let error = read_revision_source(&state, Some(path.to_str().unwrap())).unwrap_err();
-        assert!(error.contains("maximum is 16777216"));
+        let error = read_config_text(&path).unwrap_err();
+        assert!(error.to_string().contains("maximum is 16777216"));
         assert!(external_write_conflict(&path, "[web]\n").is_err());
         let large = "x".repeat(crate::server::MAX_SERVER_INI_BYTES as usize + 1);
         let error = snapshot_before_changed_write(&path, "[web]\n", &large).unwrap_err();

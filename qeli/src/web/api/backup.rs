@@ -51,6 +51,8 @@ async fn archive_lock(
     Ok(guard)
 }
 const TRANSIENT_TAR_EXCLUDES: &[&str] = &[
+    // Advisory lock inodes are local coordination state, never archive data.
+    "qeli/*.lock",
     "qeli/.pre-restore-*.tgz",
     "qeli/.restore-upload-*.tgz",
     "qeli/.restore-staging-*",
@@ -553,9 +555,8 @@ static RESTORE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 ///    bad exact restore. Deleting our own safety net would be self-defeating.
 ///  * `.restore-upload-*` / `.restore-staging-*` — in-flight artefacts of this or a
 ///    concurrent operation, never part of a backup.
-///  * dotfiles in general are left alone: they are operational state, and no backup
-///    contains them (the tarball excludes them), so "absent from the archive" says
-///    nothing about whether they are wanted.
+///  * dotfiles and *.lock files are left alone: they are operational state, and
+///    a backup has no authority to unlink an active advisory-lock inode.
 ///
 /// Returns the number of entries removed. Errors are collected, not fatal: a partial
 /// cleanup with a warning beats aborting after the files were already published.
@@ -585,8 +586,8 @@ fn prune_absent(
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue; // snapshots, in-flight restore artefacts, operational dotfiles
+        if name.starts_with('.') || name.ends_with(".lock") {
+            continue; // snapshots, in-flight artefacts and sidecar writer locks
         }
         if archive_names.contains(&name) {
             continue; // present in the archive — keep (publish already overwrote it)
@@ -619,6 +620,16 @@ fn restore_blocking(
     if data.len() < 3 || data[0] != 0x1f || data[1] != 0x8b {
         return Err("not a gzip archive".into());
     }
+    // Share the INI sidecar with panel saves and set-web-password for the
+    // entire staging and publication transaction. The restore already runs on
+    // a blocking worker; waiting here does not stall the async executor.
+    let lock_path = std::fs::canonicalize(config_path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(config_path));
+    let lock_wait = until
+        .saturating_duration_since(Instant::now())
+        .min(Duration::from_secs(5));
+    let _config_file_guard = crate::util::FileLock::acquire_timeout(&lock_path, lock_wait)
+        .map_err(|error| format!("cannot lock server config for restore: {error}"))?;
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1280,6 +1291,11 @@ fn vet_publish_shape(
 fn publish_staged_tree(root: &str, dest: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(root)?.flatten() {
+        // A restored lock inode would split flock participants across two files
+        // while a save or restore is in progress. Locks are operational state.
+        if entry.file_name().to_string_lossy().ends_with(".lock") {
+            continue;
+        }
         let from = entry.path();
         let to = format!("{dest}/{}", entry.file_name().to_string_lossy());
         if entry.metadata()?.is_dir() {
@@ -1694,7 +1710,12 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let dest = dir.to_string_lossy().to_string();
-        for f in ["server.conf", "users.conf", "leftover.conf"] {
+        for f in [
+            "server.conf",
+            "users.conf",
+            "leftover.conf",
+            "server.conf.lock",
+        ] {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
         std::fs::write(dir.join(".pre-restore-1.tgz"), b"x").unwrap();
@@ -1727,6 +1748,10 @@ mod tests {
             dir.join(".pre-restore-1.tgz").exists(),
             "the pre-restore snapshot is the only way back — it must never be pruned"
         );
+        assert!(
+            dir.join("server.conf.lock").exists(),
+            "an exact restore must not unlink the writer's active lock inode"
+        );
 
         // An empty/unreadable archive list must prune NOTHING rather than everything.
         let (removed2, errors2) = prune_absent(&std::collections::HashSet::new(), &dest);
@@ -1737,6 +1762,29 @@ mod tests {
         assert!(!errors2.is_empty(), "and it must say why");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_publication_does_not_replace_writer_lock_inode() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-restore-lock-{}-{}",
+            std::process::id(),
+            RESTORE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let staged = dir.join("staged");
+        let live = dir.join("live");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::write(staged.join("server.conf"), b"new").unwrap();
+        std::fs::write(staged.join("server.conf.lock"), b"archive lock").unwrap();
+        std::fs::write(live.join("server.conf.lock"), b"active lock").unwrap();
+        publish_staged_tree(staged.to_str().unwrap(), live.to_str().unwrap()).unwrap();
+        assert_eq!(std::fs::read(live.join("server.conf")).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(live.join("server.conf.lock")).unwrap(),
+            b"active lock"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

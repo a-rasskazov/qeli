@@ -588,6 +588,10 @@ pub async fn set_blocked_settings(
                 ))));
             }
         };
+    let _file_write_guard = match super::config::lock_server_config(&canon).await {
+        Ok(guard) => guard,
+        Err(error) => return Ok(Json(super::err_json(error))),
+    };
     let mut raw = match crate::server::read_config_text(&canon) {
         Ok(s) => s,
         Err(e) => return Ok(Json(super::err_json(format!("read error: {}", e)))),
