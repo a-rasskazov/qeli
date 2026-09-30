@@ -18,11 +18,40 @@ fn validate_restart_candidate(
     })
 }
 
+/// Restart preflight must use one config snapshot for both values and file-path trust.
+async fn current_restart_config(
+    state: &Arc<ServerState>,
+) -> Result<crate::config::server::ServerConfig, String> {
+    let Some(path) = state.config_path.lock().await.clone() else {
+        return Ok(state.config.clone());
+    };
+    let source = crate::server::read_config_source(&path)
+        .map_err(|error| format!("cannot read current server config '{path}': {error}"))?;
+    let (config, findings) = crate::config::parse_server_config_reporting(source.text())
+        .map_err(|error| format!("cannot parse current server config '{path}': {error}"))?;
+    if !findings.is_empty() {
+        return Err(format!(
+            "current server config '{path}' has {} unreadable or ambiguous value(s): {}",
+            findings.len(),
+            findings.join("; ")
+        ));
+    }
+    source
+        .validate_users_file_trust(&config)
+        .map_err(|error| error.to_string())?;
+    for profile in &config.profiles {
+        source
+            .validate_identity_key_trust(profile)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(config)
+}
+
 async fn preflight_restart(
     state: &Arc<ServerState>,
 ) -> Result<tokio::sync::OwnedMutexGuard<()>, String> {
     let (guard, observed) = super::preflight::lock(state, false).await?;
-    let config = super::current_server_config(state)
+    let config = current_restart_config(state)
         .await
         .map_err(|error| format!("restart refused: {error}"))?;
     validate_restart_candidate(&config, |config| observed.check(config))?;
@@ -46,15 +75,15 @@ pub async fn restart(
         Ok(value) => value,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
-    let config = match super::current_server_config(&state).await {
+    let config = match current_restart_config(&state).await {
         Ok(config) => config,
         Err(error) => return Ok(Json(super::err_json(format!("restart refused: {error}")))),
     };
-    if super::config::needs_full_restart(&state.config.web, &config.web) {
+    if super::config::needs_full_restart_for_config(&state.config, &config) {
         return Ok(Json(json!({
             "ok": false,
             "kind": "full_restart_required",
-            "error": "The saved panel settings require a full process restart; a worker restart cannot apply them.",
+            "error": "A startup-only setting changed (panel listener, session-key source or auth.users_file); a worker restart cannot apply it. Restart the full qeli process.",
         })));
     }
     if let Err(error) = validate_restart_candidate(&config, |config| observed.check(config)) {
@@ -75,8 +104,8 @@ pub async fn restart(
     }
 }
 
-/// FULL process restart via systemd — needed for changes the worker restart can't apply
-/// (the panel's own socket: `web.bind` / `web.port` / `web.tls*` / `web.enabled`). The panel
+/// FULL process restart via systemd — needed for startup-only settings the worker
+/// cannot apply (panel listener, session-key source and auth.users_file). The panel
 /// session survives when `web.persist_session_key` is on (the default).
 ///
 /// Before firing, we PRE-FLIGHT so a restart that cannot work fails *loudly* with an
@@ -200,14 +229,14 @@ pub async fn full_restart(
             "error": if container {
                 "This server runs inside a container — systemctl is not available here, so \
                  \"Apply & Restart\" cannot restart the process. Profile / data-plane changes apply \
-                 with the in-process worker restart. To change the panel socket \
-                 (web.bind / web.port / web.tls / web.enabled), recreate the container \
-                 (e.g. `docker restart <name>`) after saving."
+                 with the in-process worker restart. To change startup-only settings \
+                 (panel listener, session-key source or auth.users_file), recreate the \
+                 container (e.g. `docker restart <name>`) after saving."
                     .to_string()
             } else {
                 "Not running under systemd — the panel cannot restart the process itself. Profile / \
-                 data-plane changes apply with the worker restart; for panel-socket changes restart \
-                 the qeli process the way you started it."
+                 data-plane changes apply with the worker restart; for startup-only settings \
+                 restart the qeli process the way you started it."
                     .to_string()
             },
         }))),
@@ -461,6 +490,62 @@ mod restart_validation_tests {
             "{response}"
         );
         assert!(response.get("unit").is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn full_restart_refuses_untrusted_custom_users_path_before_dispatch() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-full-restart-users-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        let mut candidate = crate::config::server::ServerConfig::default();
+        candidate
+            .profiles
+            .push(crate::config::server::ProfileConfig::baseline());
+        let users = dir.join("other-users.conf");
+        candidate.auth.users_file = users.to_string_lossy().into_owned();
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let state =
+            crate::server::test_api_state(crate::config::server::ServerConfig::default(), &path);
+        let response = full_restart(State(state), auth::AuthGuard).await.unwrap().0;
+        assert_eq!(response["ok"], false, "{response}");
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap()
+                .contains("auth.users_file"),
+            "{response}"
+        );
+        assert!(response.get("unit").is_none());
+        assert!(!users.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_restart_refuses_changed_users_file_before_dispatch() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-worker-restart-users-path-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        let mut startup = crate::config::server::ServerConfig::default();
+        startup
+            .profiles
+            .push(crate::config::server::ProfileConfig::baseline());
+        let mut candidate = startup.clone();
+        candidate.auth.users_file = dir.join("other-users.conf").to_string_lossy().into_owned();
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+        let state = crate::server::test_api_state(startup, &path);
+        let response = restart(State(state), auth::AuthGuard).await.unwrap().0;
+        assert_eq!(response["kind"], "full_restart_required", "{response}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

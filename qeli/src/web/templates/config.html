@@ -2233,8 +2233,9 @@ function configPage() {
     // Save (respecting the current view) and then restart the server so the
     // change goes live immediately.
     // Save (if dirty) then a FULL systemd restart (systemctl restart qeli). One button for
-    // all changes — including panel-socket ones (web.bind/port/tls/enabled) a worker-only
-    // restart couldn't apply. The login session survives when web.persist_session_key is on.
+    // all changes — including startup-only panel listener, session-key and users-file
+    // settings a worker-only restart cannot apply. The login session survives when
+    // web.persist_session_key is on.
     async applyRestart() {
       if (!this.loaded || this.loading || this.saving || this.restarting) return;
       if (this.dirty) {

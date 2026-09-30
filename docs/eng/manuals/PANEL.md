@@ -491,7 +491,7 @@ must be inside `/var/log/qeli`; `auth.users_file`, `identity_key` and
 hash (the hand editor is the easiest place to lock yourself out with a typo);
 `routing.post_up`/`post_down` can neither be introduced nor changed through the panel;
 and the config must pass the same profile validation the server runs at startup. Panel
-settings apply live, profile/bind/tun changes need a restart.
+settings apply live; changing `auth.users_file` or `web.persist_session_key` requires a full supervisor restart through `Apply & Restart` (or `systemctl restart qeli`). Profile/bind/tun changes also need a restart.
 
 ### Server identity: show & rotate
 **Config → Global → Server identity keys** (`GET /api/identity`) lists each profile with

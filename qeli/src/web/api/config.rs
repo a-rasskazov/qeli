@@ -186,6 +186,16 @@ pub(super) fn needs_full_restart(
         || current.tls_cert != next.tls_cert
         || current.tls_key != next.tls_key
         || current.base_path != next.base_path
+        || current.persist_session_key != next.persist_session_key
+}
+
+/// The supervisor retains the startup users path; SIGHUP deliberately cannot
+/// switch it while panel/control writers still target the old path.
+pub(super) fn needs_full_restart_for_config(
+    current: &crate::config::server::ServerConfig,
+    next: &crate::config::server::ServerConfig,
+) -> bool {
+    needs_full_restart(&current.web, &next.web) || current.auth.users_file != next.auth.users_file
 }
 
 pub async fn get_config(
@@ -223,7 +233,7 @@ pub async fn get_config(
         }
         return Ok(Json(json!({
             "ok": true,
-            "needs_full_restart": needs_full_restart(&state.config.web, &config.web),
+            "needs_full_restart": needs_full_restart_for_config(&state.config, &config),
             "config": config,
             "revision": config_revision(&raw),
         })));
@@ -1492,10 +1502,9 @@ pub async fn put_config(
     // UI cannot preserve hand-written comments — for comment-heavy configs, edit
     // the file directly. We serialize the validated struct so the output is a
     // faithful, lossless round-trip of the config.
-    // Did the PANEL's own socket change (web.bind/port/tls/enabled)? Those are bound by the
-    // supervisor at startup and NOT reapplied by the worker restart — they need a FULL restart.
-    // Compare against config.web, the boot-time snapshot = what the panel is bound to now.
-    let needs_full_restart = needs_full_restart(&state.config.web, &parsed.web);
+    // Panel listener, session-key source and users-file path are bound at supervisor startup.
+    // A worker-only restart cannot apply them; compare with the boot-time snapshot.
+    let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
 
     let config_str = parsed.to_ini_string();
     // Fail-closed defense-in-depth: never write a config we can't read back. The
@@ -1608,9 +1617,9 @@ pub async fn put_config(
     state.reload_web_settings().await;
 
     let message = if needs_full_restart {
-        "config saved. This changes the PANEL socket (web.bind/port/tls/enabled/base_path) — \
-         apply it with a FULL restart: the `Apply & Restart` button does one, or run \
-         `systemctl restart qeli`. Other changes are picked up by the worker restart."
+        "config saved. A startup-only setting changed (panel listener, session-key source or \
+         auth.users_file) — apply it with a FULL restart using `Apply & Restart` or \
+         `systemctl restart qeli`."
     } else {
         "config saved — web/panel settings applied live; restart to apply profile/bind/tun changes"
     };
@@ -1659,7 +1668,7 @@ pub async fn get_config_raw(
         Ok(raw) => Ok(Json(json!({
             "ok": true,
             "needs_full_restart": crate::config::parse_server_config(&raw)
-                .map(|config| needs_full_restart(&state.config.web, &config.web)).unwrap_or(true),
+                .map(|config| needs_full_restart_for_config(&state.config, &config)).unwrap_or(true),
             "raw": mask_raw_secrets(&raw),
             "path": canon.display().to_string(),
             "masked": RAW_SECRET_MASK,
@@ -2064,14 +2073,12 @@ pub async fn put_config_raw(
     // for profile/bind/tun/TLS.
     state.reload_web_settings().await;
 
-    // Report whether the PANEL's own socket changed, exactly as the structured path does.
-    // Without it the raw editor always claimed a worker restart would suffice, so an
-    // operator who moved web.port there restarted the worker, watched the panel stay on
-    // the old port, and had nothing pointing at the cause. (Audit 2026-07-27, C2.)
-    let needs_full_restart = needs_full_restart(&state.config.web, &parsed.web);
+    // Report startup-only changes exactly as the structured editor does. A worker-only
+    // restart cannot change the panel listener, session-key source or users-file path.
+    let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
 
     let message = if needs_full_restart {
-        "raw config saved (comments preserved). This changes the PANEL socket (web.bind/port/tls/enabled/base_path); apply it with a FULL restart: the `Apply & Restart` button does one, or run `systemctl restart qeli`."
+        "raw config saved (comments preserved). A startup-only setting changed (panel listener, session-key source or auth.users_file); apply it with a FULL restart using `Apply & Restart` or `systemctl restart qeli`."
     } else {
         "raw config saved (comments preserved) — web/panel settings applied live; restart to apply profile/bind/tun changes"
     };
@@ -2278,7 +2285,7 @@ pub async fn restore_config_history(
         ))));
     }
     state.reload_web_settings().await;
-    let needs_full_restart = needs_full_restart(&state.config.web, &parsed.web);
+    let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
     Ok(Json(json!({
         "ok": true,
         "message": "Configuration snapshot restored — restart to apply it.",
@@ -2455,6 +2462,20 @@ mod raw_secret_tests {
         next = current.clone();
         next.username = "another-admin".into();
         assert!(!needs_full_restart(&current, &next));
+        next = current.clone();
+        next.persist_session_key = !current.persist_session_key;
+        assert!(needs_full_restart(&current, &next));
+
+        let current_config = crate::config::parse_server_config("[profile:a]\n").unwrap();
+        let mut next_config = current_config.clone();
+        next_config.auth.users_file = "/etc/qeli/alternate-users.conf".into();
+        assert!(needs_full_restart_for_config(&current_config, &next_config));
+        next_config = current_config.clone();
+        next_config.web.username = "another-admin".into();
+        assert!(!needs_full_restart_for_config(
+            &current_config,
+            &next_config
+        ));
     }
 
     #[test]

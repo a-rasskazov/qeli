@@ -4397,13 +4397,15 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
 
     // Like startup, reload rejects every parser finding. A rejected reload keeps
     // the currently running configuration and reports the problem to the operator.
-    let new_config: ServerConfig = match crate::config_source::load(&cfg_path)
-        .map(|snapshot| snapshot.into_parts().0)
+    let (new_config, new_trust) = match crate::config_source::load(&cfg_path)
+        .map(|snapshot| snapshot.into_parts())
         .map_err(|e| anyhow::anyhow!("{}", e))
-        .and_then(|s| crate::config::parse_server_config_reporting(&s))
-    {
-        Ok((c, findings)) if findings.is_empty() => c,
-        Ok((_, findings)) => {
+        .and_then(|(text, trust)| {
+            crate::config::parse_server_config_reporting(&text)
+                .map(|(config, findings)| (config, findings, trust))
+        }) {
+        Ok((config, findings, trust)) if findings.is_empty() => (config, trust),
+        Ok((_, findings, _)) => {
             log::error!(
                 "SIGHUP: refusing to apply '{}' — {} problem(s) whose defaults would be \
                  substituted silently; keeping the running config:\n  {}",
@@ -4428,6 +4430,18 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
     // must not apply a new brute-force policy when either half is invalid.
     if let Err(error) = validate_profiles(&new_config) {
         log::error!("SIGHUP: invalid server configuration: {error} — keeping current auth state");
+        return;
+    }
+    if new_config.auth.users_file != state.config.auth.users_file {
+        log::error!(
+            "SIGHUP: auth.users_file changed from '{}' to '{}' — restart required; keeping current auth state",
+            state.config.auth.users_file,
+            new_config.auth.users_file
+        );
+        return;
+    }
+    if let Err(error) = ensure_users_file_trust(&new_config, &new_trust) {
+        log::error!("SIGHUP: {error} — keeping current auth state");
         return;
     }
     let db = match load_users_db_for_runtime(&new_config) {
@@ -8748,9 +8762,10 @@ pool.cidr = 10.{net}.0.0/24
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("server.conf");
         let users = dir.join("users.conf");
-        let state = test_api_state(ServerConfig::default(), &path);
-        let mut candidate = ServerConfig::default();
-        candidate.auth.users_file = users.to_string_lossy().into_owned();
+        let mut startup = ServerConfig::default();
+        startup.auth.users_file = users.to_string_lossy().into_owned();
+        let state = test_api_state(startup.clone(), &path);
+        let mut candidate = startup;
         candidate.auth.brute_force.max_attempts = 2;
         candidate.auth.users.push(UserEntry {
             username: "alice".into(),
@@ -8792,6 +8807,51 @@ pool.cidr = 10.{net}.0.0/24
         assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sighup_keeps_auth_state_when_users_path_changes_or_config_becomes_untrusted() {
+        use crate::config::users::UserEntry;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-sighup-users-path-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        let original = dir.join("original-users.conf");
+        let redirected = dir.join("redirected-users.conf");
+        let mut startup = ServerConfig::default();
+        startup.auth.users_file = original.to_string_lossy().into_owned();
+        let state = test_api_state(startup.clone(), &path);
+        let mut candidate = startup;
+        candidate.profiles.push(ProfileConfig::baseline());
+        candidate.auth.brute_force.max_attempts = 2;
+        candidate.auth.users.push(UserEntry {
+            username: "alice".into(),
+            password_hash: "$argon2id$x".into(),
+            ..Default::default()
+        });
+        candidate.auth.users_file = redirected.to_string_lossy().into_owned();
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+        reload_on_sighup(&state).await;
+        assert!(state.users_db.read().await.users.is_empty());
+        assert_eq!(state.failed_auth.lock().await.thresholds().1, 5);
+        assert!(!redirected.exists());
+
+        candidate.auth.users_file = original.to_string_lossy().into_owned();
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        reload_on_sighup(&state).await;
+        assert!(state.users_db.read().await.users.is_empty());
+        assert_eq!(state.failed_auth.lock().await.thresholds().1, 5);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        reload_on_sighup(&state).await;
+        assert_eq!(state.users_db.read().await.users[0].username, "alice");
+        assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
