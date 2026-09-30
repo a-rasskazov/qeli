@@ -220,6 +220,42 @@ fn render_qr_svg(data: &str) -> Option<String> {
 mod tests {
     use super::render_qr_svg;
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn share_rejects_untrusted_identity_path_before_key_or_password_work() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-share-path-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let key = dir.join("profile.key");
+        let config_path = dir.join("server.conf");
+        let raw = format!("[profile:p]\nidentity_key = {}\n", key.display());
+        std::fs::write(&config_path, &raw).unwrap();
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let config = crate::config::parse_server_config(&raw).unwrap();
+        let state = crate::server::test_api_state(config, &config_path);
+        let params = std::collections::HashMap::from([
+            ("profile".into(), "p".into()),
+            ("host".into(), "fixture.invalid".into()),
+            ("user".into(), "alice".into()),
+            ("allow_reset".into(), "true".into()),
+        ]);
+        let response = super::share_link(
+            axum::extract::State(state),
+            crate::server::web::auth::AuthGuard,
+            axum::Json(params),
+        )
+        .await
+        .0;
+        assert_eq!(response["ok"], false);
+        assert!(response["error"].as_str().unwrap().contains("identity_key"));
+        assert!(!key.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn identity_failure_never_resets_the_users_password() {
         let dir = std::env::temp_dir().join(format!(

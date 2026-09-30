@@ -160,9 +160,9 @@ pub(super) async fn current_server_config(
     let Some(path) = path else {
         return Ok(state.config.clone());
     };
-    let text = crate::server::read_config_text(&path)
+    let source = crate::server::read_config_source(&path)
         .map_err(|error| format!("cannot read current server config '{}': {error}", path))?;
-    let (config, findings) = crate::config::parse_server_config_reporting(&text)
+    let (config, findings) = crate::config::parse_server_config_reporting(source.text())
         .map_err(|error| format!("cannot parse current server config '{}': {error}", path))?;
     if !findings.is_empty() {
         return Err(format!(
@@ -171,6 +171,17 @@ pub(super) async fn current_server_config(
             findings.len(),
             findings.join("; ")
         ));
+    }
+    source
+        .validate_users_file_trust(&config)
+        .map_err(|error| error.to_string())?;
+    source
+        .validate_tls_paths_trust(&config)
+        .map_err(|error| error.to_string())?;
+    for profile in &config.profiles {
+        source
+            .validate_identity_key_trust(profile)
+            .map_err(|error| error.to_string())?;
     }
     Ok(config)
 }
@@ -227,6 +238,29 @@ mod current_state_tests {
             enabled,
             ..Default::default()
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn panel_rejects_untrusted_custom_users_file_from_current_ini() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-panel-users-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let users = dir.join("users.conf");
+        let config_path = dir.join("server.conf");
+        let raw = format!("[auth]\nusers_file = {}\n[profile:p]\n", users.display());
+        std::fs::write(&config_path, &raw).unwrap();
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let config = crate::config::parse_server_config(&raw).unwrap();
+        let state = crate::server::test_api_state(config, &config_path);
+        let error = super::current_server_config(&state).await.unwrap_err();
+        assert!(error.contains("auth.users_file"), "{error}");
+        assert!(!users.exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

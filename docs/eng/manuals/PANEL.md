@@ -513,6 +513,9 @@ settings apply live; changing `auth.users_file` or `web.persist_session_key` req
 **Config → Global → Server identity keys** (`GET /api/identity`) lists each profile with
 its bind string and its **pinned public key** (hex) — the panel equivalent of
 `qeli show-identity`; the key file is created on first read if it doesn't exist yet.
+The panel reads a bounded snapshot of the current INI and refuses identity listing,
+rotation, and Share when an explicit `identity_key` comes from an untrusted file.
+It also refuses a custom `auth.users_file` from that snapshot for user operations.
 
 **Rotate** (`POST /api/identity/{profile}/rotate`) generates a new key for that profile.
 **The running worker keeps using the OLD key until a restart**, and after the restart

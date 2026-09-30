@@ -39,6 +39,9 @@ async fn current_restart_config(
     source
         .validate_users_file_trust(&config)
         .map_err(|error| error.to_string())?;
+    source
+        .validate_tls_paths_trust(&config)
+        .map_err(|error| error.to_string())?;
     for profile in &config.profiles {
         source
             .validate_identity_key_trust(profile)
