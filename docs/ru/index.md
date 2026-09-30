@@ -287,3 +287,4 @@
 - [Q25-F144: доверие к нестандартному auth.users_file](reports/AUDIT-Q25-SERVER-USERS-PATH-TRUST.md)
 - [Q25-F145: SIGHUP и рестарт при смене users_file](reports/AUDIT-Q25-SERVER-USERS-SIGHUP-RESTART.md)
 - [Q25-F146: конкурентная запись серверного INI](reports/AUDIT-Q25-SERVER-CONCURRENT-WRITES.md)
+- [Q25-F147: TLS PEM и неполная автопара](reports/AUDIT-Q25-SERVER-TLS-PEM.md)

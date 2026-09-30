@@ -97,6 +97,11 @@ needed.
   tls_cert = /etc/letsencrypt/live/vpn.example.com/fullchain.pem
   tls_key  = /etc/letsencrypt/live/vpn.example.com/privkey.pem
   ```
+- Each PEM must be a regular file no larger than 4 MiB. Symlinks to regular
+  files, including Let's Encrypt's, remain supported. FIFOs and other special
+  files are rejected without waiting. If only one auto-generated file remains,
+  the panel refuses HTTPS and preserves it: restore the other file from backup,
+  or remove **both** files to deliberately generate a new pair.
 - With `tls = true` the session cookie automatically gets `Secure`.
 
 > Alternative to publishing: keep `bind = 127.0.0.1`, `tls = false` and reach the

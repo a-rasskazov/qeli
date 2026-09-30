@@ -7,12 +7,13 @@
 //! rest of the crate uses ring; aws-lc-rs needs cmake which the build host lacks).
 
 use crate::config::server::WebConfig;
-use std::io::BufReader;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
 const DEFAULT_CERT: &str = "/etc/qeli/web-tls-cert.pem";
 const DEFAULT_KEY: &str = "/etc/qeli/web-tls-key.pem";
+const MAX_TLS_PEM_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Resolve the cert/key paths (operator-provided or the self-signed defaults).
 fn resolve_paths(web: &WebConfig) -> (String, String) {
@@ -34,18 +35,7 @@ fn resolve_paths(web: &WebConfig) -> (String, String) {
 pub fn build_server_config(web: &WebConfig) -> anyhow::Result<Arc<rustls::ServerConfig>> {
     let (cert_path, key_path) = resolve_paths(web);
 
-    if !(Path::new(&cert_path).exists() && Path::new(&key_path).exists()) {
-        // A *configured* cert that's missing is a config error; only the default
-        // (self-signed) location is auto-generated.
-        if !web.tls_cert.is_empty() || !web.tls_key.is_empty() {
-            anyhow::bail!(
-                "web.tls_cert/tls_key set but file(s) missing: {} / {}",
-                cert_path,
-                key_path
-            );
-        }
-        generate_self_signed(web, &cert_path, &key_path)?;
-    }
+    ensure_cert_pair(web, &cert_path, &key_path)?;
 
     let certs = load_certs(&cert_path)?;
     let key = load_key(&key_path)?;
@@ -58,10 +48,82 @@ pub fn build_server_config(web: &WebConfig) -> anyhow::Result<Arc<rustls::Server
     Ok(Arc::new(cfg))
 }
 
+/// Presence is based on the directory entry, not Path::exists(): a dangling
+/// symlink is not permission to overwrite an operator-managed PEM path.
+fn pem_path_present(path: &str) -> anyhow::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(anyhow::anyhow!("inspect TLS PEM {}: {}", path, error)),
+    }
+}
+
+fn ensure_cert_pair(web: &WebConfig, cert_path: &str, key_path: &str) -> anyhow::Result<()> {
+    let cert_present = pem_path_present(cert_path)?;
+    let key_present = pem_path_present(key_path)?;
+    if cert_present && key_present {
+        return Ok(());
+    }
+    if !web.tls_cert.is_empty() || !web.tls_key.is_empty() {
+        anyhow::bail!(
+            "web.tls_cert/tls_key set but file(s) missing: {} / {}",
+            cert_path,
+            key_path
+        );
+    }
+    if cert_present || key_present {
+        anyhow::bail!(
+            "incomplete auto-generated panel TLS pair: {} / {}; restore the missing file, or remove both to rotate the pair",
+            cert_path,
+            key_path
+        );
+    }
+    generate_self_signed(web, cert_path, key_path)
+}
+
+/// Bound PEM reads and reject devices/FIFOs before parsing. O_NONBLOCK makes
+/// opening a FIFO safe even if the configured path changes after presence check.
+/// Symlinks remain supported for operator-managed certificate rotations.
+fn read_pem(path: &str, kind: &str) -> anyhow::Result<Vec<u8>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| anyhow::anyhow!("open TLS {kind} {path}: {error}"))?;
+    let metadata = file.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "TLS {kind} {} is not a regular file",
+        path
+    );
+    anyhow::ensure!(
+        metadata.len() <= MAX_TLS_PEM_BYTES,
+        "TLS {kind} {} is {} bytes; maximum is {}",
+        path,
+        metadata.len(),
+        MAX_TLS_PEM_BYTES
+    );
+    let mut input = file.take(MAX_TLS_PEM_BYTES + 1);
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    input.read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_TLS_PEM_BYTES,
+        "TLS {kind} {} exceeds {} bytes while reading",
+        path,
+        MAX_TLS_PEM_BYTES
+    );
+    Ok(bytes)
+}
+
 fn load_certs(path: &str) -> anyhow::Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
-    let f = std::fs::File::open(path).map_err(|e| anyhow::anyhow!("open cert {}: {}", path, e))?;
-    let mut r = BufReader::new(f);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut r).collect::<Result<_, _>>()?;
+    let pem = read_pem(path, "certificate")?;
+    let mut input = pem.as_slice();
+    let certs: Vec<_> = rustls_pemfile::certs(&mut input).collect::<Result<_, _>>()?;
     if certs.is_empty() {
         anyhow::bail!("no certificates in {}", path);
     }
@@ -69,9 +131,9 @@ fn load_certs(path: &str) -> anyhow::Result<Vec<rustls::pki_types::CertificateDe
 }
 
 fn load_key(path: &str) -> anyhow::Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let f = std::fs::File::open(path).map_err(|e| anyhow::anyhow!("open key {}: {}", path, e))?;
-    let mut r = BufReader::new(f);
-    rustls_pemfile::private_key(&mut r)?
+    let pem = read_pem(path, "private key")?;
+    let mut input = pem.as_slice();
+    rustls_pemfile::private_key(&mut input)?
         .ok_or_else(|| anyhow::anyhow!("no private key in {}", path))
 }
 
@@ -119,4 +181,130 @@ fn generate_self_signed(web: &WebConfig, cert_path: &str, key_path: &str) -> any
         cert_path
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-web-tls-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn both_missing_auto_pems_generate_a_readable_private_pair() {
+        let dir = fixture();
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        ensure_cert_pair(
+            &WebConfig::default(),
+            cert.to_str().unwrap(),
+            key.to_str().unwrap(),
+        )
+        .unwrap();
+        assert!(!load_certs(cert.to_str().unwrap()).unwrap().is_empty());
+        load_key(key.to_str().unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_file(cert).unwrap();
+        std::fs::remove_file(key).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn missing_cert_does_not_replace_the_surviving_auto_key() {
+        let dir = fixture();
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        std::fs::write(&key, b"existing private key").unwrap();
+        let error = ensure_cert_pair(
+            &WebConfig::default(),
+            cert.to_str().unwrap(),
+            key.to_str().unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("incomplete auto-generated"),
+            "{error}"
+        );
+        assert!(!cert.exists());
+        assert_eq!(std::fs::read(&key).unwrap(), b"existing private key");
+        std::fs::remove_file(key).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn oversized_tls_pem_is_rejected_before_parsing() {
+        let dir = fixture();
+        let cert = dir.join("cert.pem");
+        let file = std::fs::File::create(&cert).unwrap();
+        file.set_len(MAX_TLS_PEM_BYTES + 1).unwrap();
+        let error = read_pem(cert.to_str().unwrap(), "certificate").unwrap_err();
+        assert!(error.to_string().contains("maximum is 4194304"), "{error}");
+        std::fs::remove_file(cert).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_is_rejected_without_waiting_for_a_writer() {
+        use std::os::unix::{ffi::OsStrExt, fs::OpenOptionsExt};
+        let dir = fixture();
+        let fifo = dir.join("cert.fifo");
+        let cpath = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+        let path = fifo.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let _ = tx.send(read_pem(path.to_str().unwrap(), "certificate").map(|_| ()));
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+        if result.is_err() {
+            let _wake = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo)
+                .unwrap();
+            reader.join().unwrap();
+            panic!("TLS PEM open waited for a FIFO writer");
+        }
+        reader.join().unwrap();
+        assert!(result
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file"));
+        std::fs::remove_file(fifo).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn regular_symlinked_pem_remains_supported() {
+        let dir = fixture();
+        let target = dir.join("target.pem");
+        let link = dir.join("cert.pem");
+        std::fs::write(&target, b"operator-managed PEM").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(
+            read_pem(link.to_str().unwrap(), "certificate").unwrap(),
+            b"operator-managed PEM"
+        );
+        std::fs::remove_file(link).unwrap();
+        std::fs::remove_file(target).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 }
