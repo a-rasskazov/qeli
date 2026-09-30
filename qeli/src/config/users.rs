@@ -408,7 +408,7 @@ impl UsersDb {
             }
             for profile in &user.profiles {
                 if !crate::util::is_valid_profile_name(profile) {
-                    anyhow::bail!("user {:?}: invalid profile name {:?}; commas are not allowed in profile names", user.username, profile);
+                    anyhow::bail!("user {:?}: invalid profile name {:?}; commas and path separators are not allowed in profile names", user.username, profile);
                 }
             }
             if !usernames.insert(user.username.as_str()) {

@@ -36,10 +36,11 @@ Saving changed panel-login thresholds through the form or INI editor applies the
 existing IP lockouts remain when thresholds are unchanged.
 
 Repeated `[profile:<name>]`, `[user:<name>]`, and `[group:<name>]` sections in one file
-are rejected before applying changes. Profile names cannot contain commas because commas
-separate entries in a user's `profiles` list. Rename any existing such profiles and their
-references before upgrading; no automatic renaming is performed. The same username may
-still appear in both inline config and the external users_file; the external entry wins.
+are rejected before applying changes. Profile names cannot contain commas, `/`,
+or `\`: commas separate entries in a user's `profiles` list, and the name is also part of the default identity key
+path. Rename affected profiles and their references before upgrading; there is
+no automatic rename. To keep an existing key after renaming, explicitly set
+`identity_key` to its old absolute path. The same username may still appear in both inline config and the external users_file; the external entry wins.
 In the INI editor, `<unchanged>` preserves a secret. If the original value cannot be found,
 saving fails and a new value must be entered explicitly.
 
@@ -1197,8 +1198,9 @@ when the UI does not expose a dedicated control.
 **Each profile has its own** long-term static key (X25519) — it is bound to the
 profile's interface. The private keys live in `/etc/qeli/identity/<profile>.key`
 (permissions `0600`, directory `0700`); the path can be overridden with the profile
-field `identity_key`. The public key is derived from the private one, and the
-client pins it.
+field `identity_key`. Profile names with path separators `/` or `\` are
+rejected so a name cannot move the key outside the default directory. The
+public key is derived from the private one, and the client pins it.
 
 On the profile's first start the key is generated automatically (if the file is
 absent) and saved. Logged:

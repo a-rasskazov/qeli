@@ -121,7 +121,7 @@ impl ServerConfig {
                     anyhow::bail!("server config: duplicate [{kind}:{name}] section");
                 }
                 if kind == "profile" && !crate::util::is_valid_profile_name(name) {
-                    anyhow::bail!("server config: invalid profile name {name:?}; commas are not allowed in profile names");
+                    anyhow::bail!("server config: invalid profile name {name:?}; commas and path separators are not allowed in profile names");
                 }
                 if !crate::util::is_valid_ident(name) {
                     anyhow::bail!(

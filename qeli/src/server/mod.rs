@@ -1306,10 +1306,21 @@ fn prepare_identity_parent(path: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_identity_profile_name(pcfg: &ProfileConfig) -> anyhow::Result<()> {
+    if !crate::util::is_valid_profile_name(&pcfg.name) {
+        anyhow::bail!(
+            "profile name {:?} cannot be used for an identity key",
+            pcfg.name
+        );
+    }
+    Ok(())
+}
+
 /// Load a profile's identity key, or generate+persist a fresh one on first use.
 /// Each profile (interface) has its own identity so clients pin a key specific
 /// to the interface they connect to.
 pub fn load_or_generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<StaticKeypair> {
+    validate_identity_profile_name(pcfg)?;
     let path = profile_identity_path(pcfg);
     let path_ref = std::path::Path::new(&path);
 
@@ -1346,6 +1357,7 @@ pub fn load_or_generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<Stat
 /// Generate a fresh identity key for a profile and persist it (0600), creating
 /// the identity directory (0700) if needed. Overwrites any existing key.
 pub fn generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<StaticKeypair> {
+    validate_identity_profile_name(pcfg)?;
     let path = profile_identity_path(pcfg);
     let path_ref = std::path::Path::new(&path);
     prepare_identity_parent(path_ref)?;
@@ -1598,7 +1610,7 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         }
         if !crate::util::is_valid_profile_name(&p.name) {
             anyhow::bail!(
-                "profile name {:?} is invalid (must be 1..=128 bytes, without commas, edge whitespace or control characters)",
+                "profile name {:?} is invalid (must be 1..=128 bytes, without commas, path separators, edge whitespace or control characters)",
                 p.name
             );
         }
@@ -8491,6 +8503,24 @@ pool.cidr = 10.{net}.0.0/24
         let db = load_users_db(&config).unwrap();
         assert_eq!(db.users.len(), 1);
         assert_eq!(db.users[0].username, "solo");
+    }
+
+    #[test]
+    fn identity_key_helpers_reject_unsafe_profile_name_before_filesystem_access() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-invalid-identity-name-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let mut profile = ProfileConfig::baseline();
+        profile.name = "../escape".into();
+        profile.identity_key = Some(dir.join("key").to_string_lossy().into_owned());
+        assert!(load_or_generate_profile_key(&profile).is_err());
+        assert!(generate_profile_key(&profile).is_err());
+        assert!(
+            !dir.exists(),
+            "invalid profile must not create a key directory"
+        );
     }
 
     #[test]

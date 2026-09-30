@@ -1259,7 +1259,7 @@ pub async fn put_config(
         .find(|p| !crate::util::is_valid_profile_name(&p.name))
         .map(|p| {
             format!(
-                "{}; profile names must not contain commas",
+                "{}; profile names must not contain commas or path separators",
                 name_err("profile name", &p.name)
             )
         })
@@ -1691,7 +1691,7 @@ fn validate_config_structure(parsed: &crate::config::server::ServerConfig) -> Op
         .find(|p| !crate::util::is_valid_profile_name(&p.name))
     {
         return Some(format!(
-            "{}; profile names must not contain commas",
+            "{}; profile names must not contain commas or path separators",
             name_err("profile name", &p.name)
         ));
     }

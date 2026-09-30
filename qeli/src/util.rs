@@ -115,14 +115,30 @@ pub fn is_valid_ident(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && !s.chars().any(|c| c.is_control()) && s.trim() == s
 }
 
-/// Profile names also appear as elements of comma-separated access-control lists.
+/// Profile names appear in comma-separated access-control lists and, unless an
+/// explicit identity_key is set, in the filename of a private server key.
 pub fn is_valid_profile_name(s: &str) -> bool {
-    is_valid_ident(s) && !s.contains(',')
+    is_valid_ident(s) && !s.chars().any(|c| matches!(c, ',' | '/' | '\\'))
 }
 
 #[cfg(test)]
 mod route_validate_tests {
     use super::{is_valid_cidr, is_valid_gateway};
+
+    #[test]
+    fn profile_names_cannot_escape_identity_directory() {
+        assert!(super::is_valid_profile_name("edge-west"));
+        assert!(super::is_valid_profile_name("edge@example.com"));
+        for name in [
+            "../escape",
+            "edge/backup",
+            "..\\escape",
+            "edge\\backup",
+            "edge,backup",
+        ] {
+            assert!(!super::is_valid_profile_name(name), "accepted {name:?}");
+        }
+    }
 
     #[test]
     fn cidr_accepts_real_networks() {
