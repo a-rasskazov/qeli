@@ -291,3 +291,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F148: TLS validation in check-config](reports/AUDIT-Q25-SERVER-TLS-CHECK-CONFIG.md)
 - [Q25-F149: TLS path trust and Let's Encrypt panel saves](reports/AUDIT-Q25-SERVER-TLS-PATH-TRUST.md)
 - [Q25-F150: INI trust in panel identity and Share](reports/AUDIT-Q25-SERVER-PANEL-SNAPSHOT-TRUST.md)
+- [Q25-F151: panel saves and INI trust](reports/AUDIT-Q25-SERVER-PANEL-SAVE-TRUST.md)

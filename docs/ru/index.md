@@ -291,3 +291,4 @@
 - [Q25-F148: проверка TLS в check-config](reports/AUDIT-Q25-SERVER-TLS-CHECK-CONFIG.md)
 - [Q25-F149: доверие к TLS-путям и Let's Encrypt в панели](reports/AUDIT-Q25-SERVER-TLS-PATH-TRUST.md)
 - [Q25-F150: доверие к INI в панельных identity и Share](reports/AUDIT-Q25-SERVER-PANEL-SNAPSHOT-TRUST.md)
+- [Q25-F151: панель и доверие к сохраняемому INI](reports/AUDIT-Q25-SERVER-PANEL-SAVE-TRUST.md)

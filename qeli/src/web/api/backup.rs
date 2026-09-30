@@ -943,11 +943,7 @@ fn vet_staged_tree(root: &str, config_path: &str) -> Result<(), String> {
         if staged_path.is_file() {
             let staged = crate::server::read_config_text(&staged_path)
                 .map_err(|e| format!("cannot read staged '{}': {e}", relative.display()))?;
-            let live = match crate::server::read_config_text(config_path) {
-                Ok(raw) => raw,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-                Err(error) => return Err(format!("cannot read live server config: {error}")),
-            };
+            let live = read_live_config_for_restore(&staged, std::path::Path::new(config_path))?;
             vet_server_config(&relative.to_string_lossy(), &staged, &live)?;
 
             // The restored main config is authoritative. Runtime merges its external users
@@ -1025,7 +1021,11 @@ fn vet_staged_tree(root: &str, config_path: &str) -> Result<(), String> {
     crate::config::notify::load_path(&std::path::Path::new(root).join("notify.ini"))
         .map_err(|error| format!("refused: restored notification config is invalid: {error}"))?;
     let hook_files = hook_referenced_files(config_path);
-    vet_staged_dir(std::path::Path::new(root), &hook_files)
+    vet_staged_dir(
+        std::path::Path::new(root),
+        std::path::Path::new("/etc/qeli"),
+        &hook_files,
+    )
 }
 
 #[cfg(unix)]
@@ -1051,6 +1051,7 @@ fn normalize_staged_permissions(_root: &std::path::Path) -> std::io::Result<()> 
 }
 fn vet_staged_dir(
     root: &std::path::Path,
+    live_root: &std::path::Path,
     hook_files: &std::collections::HashSet<String>,
 ) -> Result<(), String> {
     let entries = std::fs::read_dir(root).map_err(|e| format!("staged tree unreadable: {e}"))?;
@@ -1069,7 +1070,7 @@ fn vet_staged_dir(
         };
         if md.is_dir() {
             // identity/ and friends: recurse, same rules.
-            vet_staged_dir(&path, hook_files)?;
+            vet_staged_dir(&path, &live_root.join(&name), hook_files)?;
             continue;
         }
         #[cfg(unix)]
@@ -1089,10 +1090,55 @@ fn vet_staged_dir(
             Ok(t) => t,
             Err(e) => return Err(format!("cannot read staged '{name}': {e}")),
         };
-        let live = std::fs::read_to_string(format!("/etc/qeli/{name}")).unwrap_or_default();
+        let live_path = live_root.join(&name);
+        let live = read_live_config_for_restore(&text, &live_path)?;
         vet_config_file(&name, &text, &live)?;
     }
     Ok(())
+}
+
+/// Restoring a file with an unchanged hook still changes its trust: the staged
+/// file is normalized to mode 0600. The live command must have come from a
+/// trusted inode, or a writable/symlinked live config could authorize itself.
+fn read_live_config_for_restore(
+    staged: &str,
+    live_path: &std::path::Path,
+) -> Result<String, String> {
+    let server_commands = crate::config::parse_server_config(staged).is_ok_and(|config| {
+        config.profiles.iter().any(|profile| {
+            !profile.routing.post_up.is_empty() || !profile.routing.post_down.is_empty()
+        })
+    });
+    let client_commands = crate::config::parse_client_config_strict(staged).is_ok_and(|config| {
+        config
+            .auth
+            .password_command
+            .as_deref()
+            .is_some_and(|cmd| !cmd.is_empty())
+            || !config.routing.post_up.is_empty()
+            || !config.routing.post_down.is_empty()
+    });
+    if !server_commands && !client_commands {
+        // The live file only authorizes unchanged commands. Without staged
+        // commands, even a corrupt or missing live config can be repaired.
+        return Ok(String::new());
+    }
+    let source = match crate::server::read_config_source(live_path) {
+        Ok(source) => source,
+        // The existing hook-diff check rejects a command with no live counterpart
+        // and gives the operator the more useful post_up/password_command error.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => {
+            return Err(format!(
+                "refused: cannot trust live command source '{}': {error}",
+                live_path.display()
+            ))
+        }
+    };
+    source
+        .require_trusted_file_output("restoring unchanged config commands")
+        .map_err(|error| format!("refused: {error}"))?;
+    Ok(source.text().to_owned())
 }
 
 /// Apply the hook/validation rules to one staged `.conf`, given the file it would
@@ -1831,6 +1877,54 @@ mod tests {
         // server whose operator set hooks in the file would always fail.
         let same = srv("routing.post_up = /opt/site/up.sh\n");
         assert!(vet_config_file("server.conf", &same, &same).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_cannot_promote_hooks_from_untrusted_live_ini() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-restore-hook-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let live_path = dir.join("server.conf");
+        let same = srv("routing.post_up = /opt/site/up.sh\n");
+        std::fs::write(&live_path, &same).unwrap();
+        std::fs::set_permissions(&live_path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(vet_config_file("server.conf", &same, &same).is_ok());
+        let error = read_live_config_for_restore(&same, &live_path).unwrap_err();
+        assert!(error.contains("group/world-writable"), "{error}");
+        std::fs::set_permissions(&live_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_live_config_for_restore(&same, &live_path).unwrap() == same);
+        std::fs::remove_file(live_path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_matches_nested_commands_to_their_nested_live_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-restore-nested-hook-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let staged = dir.join("staged");
+        let live = dir.join("live");
+        std::fs::create_dir_all(staged.join("nested")).unwrap();
+        std::fs::create_dir_all(live.join("nested")).unwrap();
+        let same = srv("routing.post_up = /opt/site/up.sh\n");
+        std::fs::write(staged.join("nested/server.conf"), &same).unwrap();
+        std::fs::write(live.join("server.conf"), &same).unwrap();
+        let hooks = std::collections::HashSet::new();
+        assert!(
+            vet_staged_dir(&staged, &live, &hooks).is_err(),
+            "a top-level config cannot authorize commands in a nested file"
+        );
+        std::fs::write(live.join("nested/server.conf"), &same).unwrap();
+        assert!(vet_staged_dir(&staged, &live, &hooks).is_ok());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -592,9 +592,12 @@ pub async fn set_blocked_settings(
         Ok(guard) => guard,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
-    let mut raw = match crate::server::read_config_text(&canon) {
-        Ok(s) => s,
-        Err(e) => return Ok(Json(super::err_json(format!("read error: {}", e)))),
+    let mut raw = match super::config::read_trusted_config_text(
+        std::path::Path::new(&target),
+        "panel brute-force save",
+    ) {
+        Ok(raw) => raw,
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
 
     let checked_raw = raw.clone();
@@ -616,9 +619,9 @@ pub async fn set_blocked_settings(
             e
         ))));
     }
-    let old_raw = match crate::server::read_config_text(&canon) {
+    let old_raw = match super::config::read_trusted_config_text(&canon, "panel brute-force save") {
         Ok(raw) => raw,
-        Err(e) => return Ok(Json(super::err_json(format!("read error: {}", e)))),
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
     if old_raw != checked_raw {
         return Ok(Json(super::err_json(

@@ -30,6 +30,17 @@ fn read_config_text(path: impl AsRef<FsPath>) -> std::io::Result<String> {
     crate::server::read_config_text(path)
 }
 
+/// A panel save publishes a new private inode. Never promote bytes from a file
+/// whose hooks and explicit paths the worker would refuse to trust.
+pub(super) fn read_trusted_config_text(path: &FsPath, label: &str) -> Result<String, String> {
+    let source = crate::server::read_config_source(path)
+        .map_err(|error| format!("read config {}: {error}", path.display()))?;
+    source
+        .require_trusted_file_output(label)
+        .map_err(|error| error.to_string())?;
+    Ok(source.text().to_owned())
+}
+
 /// Revision of the exact file bytes, comments included. Structured and raw editors therefore
 /// share one optimistic-concurrency token and a hand edit is detected just like a panel edit.
 pub(super) fn config_revision(raw: &str) -> String {
@@ -63,8 +74,7 @@ fn external_write_conflict(
     config_path: &FsPath,
     checked_raw: &str,
 ) -> Result<Option<Value>, String> {
-    let actual_raw = read_config_text(config_path)
-        .map_err(|error| format!("re-read config {}: {error}", config_path.display()))?;
+    let actual_raw = read_trusted_config_text(config_path, "panel config save")?;
     let checked_revision = config_revision(checked_raw);
     let current_revision = config_revision(&actual_raw);
     Ok((checked_revision != current_revision).then(|| {
@@ -1128,9 +1138,9 @@ pub async fn apply_quickstart_profile(
         Ok(guard) => guard,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
-    let current_raw = match read_config_text(&canon) {
+    let current_raw = match read_trusted_config_text(FsPath::new(&target), "panel config save") {
         Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
     if let Some(conflict) = revision_conflict(&body, &current_raw) {
         return Ok(Json(conflict));
@@ -1239,27 +1249,29 @@ pub async fn put_config(
         Err(error) => return Ok(Json(super::err_json(error))),
     };
     let revision_path = state.config_path.lock().await.clone();
-    let (_file_write_guard, locked_config_path) = match revision_path.as_deref() {
-        Some(path) => {
-            let canon = match validate_in_whitelist(path, ALLOWED_CONFIG_DIRS) {
-                Ok(path) => path,
-                Err(error) => return Ok(Json(super::err_json(error))),
-            };
-            match lock_server_config(&canon).await {
-                Ok(guard) => (guard, canon),
-                Err(error) => return Ok(Json(super::err_json(error))),
+    let (_file_write_guard, locked_config_path, original_config_path) =
+        match revision_path.as_deref() {
+            Some(path) => {
+                let canon = match validate_in_whitelist(path, ALLOWED_CONFIG_DIRS) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(Json(super::err_json(error))),
+                };
+                match lock_server_config(&canon).await {
+                    Ok(guard) => (guard, canon, path.to_string()),
+                    Err(error) => return Ok(Json(super::err_json(error))),
+                }
             }
-        }
-        None => {
-            return Ok(Json(super::err_json(
-                "config_path not set — running from in-memory config",
-            )))
-        }
-    };
-    let current_raw_for_revision = match read_config_text(&locked_config_path) {
-        Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
-    };
+            None => {
+                return Ok(Json(super::err_json(
+                    "config_path not set — running from in-memory config",
+                )))
+            }
+        };
+    let current_raw_for_revision =
+        match read_trusted_config_text(FsPath::new(&original_config_path), "panel config save") {
+            Ok(raw) => raw,
+            Err(error) => return Ok(Json(super::err_json(error))),
+        };
     if let Some(conflict) = revision_conflict(&body, &current_raw_for_revision) {
         return Ok(Json(conflict));
     }
@@ -1472,9 +1484,9 @@ pub async fn put_config(
     // compromise becomes RCE. Restore each profile's hooks from the current
     // on-disk config (discarding whatever the request sent). A failed read
     // aborts the edit; an unparseable file cannot authorize new hooks.
-    let current_for_secrets = match read_config_text(&canon) {
+    let current_for_secrets = match read_trusted_config_text(&canon, "panel config save") {
         Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
     match crate::config::parse_server_config(&current_for_secrets).ok() {
         Some(cur) => {
@@ -1924,27 +1936,29 @@ pub async fn put_config_raw(
         Err(error) => return Ok(Json(super::err_json(error))),
     };
     let revision_path = state.config_path.lock().await.clone();
-    let (_file_write_guard, locked_config_path) = match revision_path.as_deref() {
-        Some(path) => {
-            let canon = match validate_in_whitelist(path, ALLOWED_CONFIG_DIRS) {
-                Ok(path) => path,
-                Err(error) => return Ok(Json(super::err_json(error))),
-            };
-            match lock_server_config(&canon).await {
-                Ok(guard) => (guard, canon),
-                Err(error) => return Ok(Json(super::err_json(error))),
+    let (_file_write_guard, locked_config_path, original_config_path) =
+        match revision_path.as_deref() {
+            Some(path) => {
+                let canon = match validate_in_whitelist(path, ALLOWED_CONFIG_DIRS) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(Json(super::err_json(error))),
+                };
+                match lock_server_config(&canon).await {
+                    Ok(guard) => (guard, canon, path.to_string()),
+                    Err(error) => return Ok(Json(super::err_json(error))),
+                }
             }
-        }
-        None => {
-            return Ok(Json(super::err_json(
-                "config_path not set — running from in-memory config",
-            )))
-        }
-    };
-    let current_raw_for_revision = match read_config_text(&locked_config_path) {
-        Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
-    };
+            None => {
+                return Ok(Json(super::err_json(
+                    "config_path not set — running from in-memory config",
+                )))
+            }
+        };
+    let current_raw_for_revision =
+        match read_trusted_config_text(FsPath::new(&original_config_path), "panel config save") {
+            Ok(raw) => raw,
+            Err(error) => return Ok(Json(super::err_json(error))),
+        };
     if let Some(conflict) = revision_conflict(&body, &current_raw_for_revision) {
         return Ok(Json(conflict));
     }
@@ -1954,9 +1968,9 @@ pub async fn put_config_raw(
     // (worse) persist the placeholder and lock the operator out. Restoration is keyed by
     // (section, key), so hashes cannot be swapped between users. (Audit 2026-07-27, P1.)
     let raw = {
-        let on_disk = match read_config_text(&locked_config_path) {
+        let on_disk = match read_trusted_config_text(&locked_config_path, "panel config save") {
             Ok(raw) => raw,
-            Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
+            Err(error) => return Ok(Json(super::err_json(error))),
         };
         match unmask_raw_secrets(&raw, &on_disk) {
             Ok(raw) => raw,
@@ -2050,9 +2064,9 @@ pub async fn put_config_raw(
     // SECURITY: post_up/post_down are file-only (they execute commands as root).
     // The raw editor must not introduce or change them — reject if the submitted
     // config's hooks differ from what's currently on disk.
-    let current_for_hooks = match read_config_text(&canon) {
+    let current_for_hooks = match read_trusted_config_text(&canon, "panel config save") {
         Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
     let on_disk = crate::config::parse_server_config(&current_for_hooks).ok();
     for p in &parsed.profiles {
@@ -2232,9 +2246,9 @@ pub async fn restore_config_history(
         Ok(guard) => guard,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
-    let current_raw = match read_config_text(&canon) {
+    let current_raw = match read_trusted_config_text(FsPath::new(&target), "panel config save") {
         Ok(raw) => raw,
-        Err(error) => return Ok(Json(super::err_json(format!("read config: {error}")))),
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
     if let Some(conflict) = revision_conflict(&body, &current_raw) {
         return Ok(Json(conflict));
@@ -2275,13 +2289,9 @@ pub async fn restore_config_history(
             "config snapshot is unexpectedly large",
         )));
     }
-    let raw = match read_config_text(&snapshot_path) {
+    let raw = match read_trusted_config_text(&snapshot_path, "panel config snapshot restore") {
         Ok(raw) => raw,
-        Err(error) => {
-            return Ok(Json(super::err_json(format!(
-                "read config snapshot {id}: {error}"
-            ))))
-        }
+        Err(error) => return Ok(Json(super::err_json(error))),
     };
     let (parsed, findings) = match crate::config::parse_server_config_reporting(&raw) {
         Ok(parsed) => parsed,
@@ -2472,6 +2482,45 @@ mod raw_secret_tests {
         std::fs::remove_dir(dir).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn panel_save_cannot_promote_untrusted_ini_or_history_snapshot() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-config-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        let raw = "[profile:default]\nrouting.post_up = echo untrusted\n";
+        std::fs::write(&path, raw).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let error = read_trusted_config_text(&path, "panel config save").unwrap_err();
+        assert!(error.contains("group/world-writable"), "{error}");
+        assert!(external_write_conflict(&path, raw).is_err());
+        assert!(
+            read_trusted_config_text(&path, "panel config snapshot restore").is_err(),
+            "a tampered history entry cannot become a trusted server config"
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.join("server-link.conf");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(
+            read_trusted_config_text(&link, "panel config save").is_err(),
+            "canonicalizing the configured path must not make a symlink trusted"
+        );
+        assert_eq!(
+            read_trusted_config_text(&path, "panel config save").unwrap(),
+            raw
+        );
+        std::fs::remove_file(link).unwrap();
+        assert!(external_write_conflict(&path, raw).unwrap().is_none());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[cfg(unix)]
     #[test]
     fn second_disk_read_detects_a_hand_edit_during_validation() {
         let unique = format!(
