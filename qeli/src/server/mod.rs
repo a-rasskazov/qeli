@@ -1294,6 +1294,10 @@ impl ConfigSourceSnapshot {
         ensure_users_file_trust(config, &self.trust)
     }
 
+    pub fn validate_tls_paths_trust(&self, config: &ServerConfig) -> anyhow::Result<()> {
+        ensure_tls_paths_trust(config, &self.trust)
+    }
+
     pub fn require_trusted_file_output(&self, label: &str) -> anyhow::Result<()> {
         if let Err(reason) = self.trust.check() {
             anyhow::bail!("{label} requires a trusted config file: {reason}");
@@ -1365,6 +1369,21 @@ fn ensure_users_file_trust(
     if config.auth.users_file != crate::config::server::DEFAULT_USERS_FILE {
         if let Err(reason) = trust.check() {
             anyhow::bail!("auth.users_file requires a trusted server config: {reason}");
+        }
+    }
+    Ok(())
+}
+
+/// Operator-specified TLS material may control the panel identity. Bind these
+/// paths to the same trusted INI snapshot used for other file-backed settings.
+fn ensure_tls_paths_trust(
+    config: &ServerConfig,
+    trust: &crate::config_source::CommandTrust,
+) -> anyhow::Result<()> {
+    let web = &config.web;
+    if web.enabled && web.tls && (!web.tls_cert.is_empty() || !web.tls_key.is_empty()) {
+        if let Err(reason) = trust.check() {
+            anyhow::bail!("web.tls_cert/tls_key require a trusted server config: {reason}");
         }
     }
     Ok(())
@@ -3530,6 +3549,7 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         crate::config::parse_server_config_reporting(&config_content)?;
     reject_bad_config_values(&bad_values)?;
     ensure_users_file_trust(&config, &config_command_trust)?;
+    ensure_tls_paths_trust(&config, &config_command_trust)?;
     for profile in &config.profiles {
         ensure_identity_key_trust(profile, &config_command_trust)?;
     }
@@ -4166,6 +4186,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
         crate::config::parse_server_config_reporting(&config_content)?;
     reject_bad_config_values(&bad_values)?;
     ensure_users_file_trust(&config, &config_command_trust)?;
+    ensure_tls_paths_trust(&config, &config_command_trust)?;
     for profile in &config.profiles {
         ensure_identity_key_trust(profile, &config_command_trust)?;
     }
@@ -8680,6 +8701,45 @@ pool.cidr = 10.{net}.0.0/24
         default_path.auth.users_file = crate::config::server::DEFAULT_USERS_FILE.into();
         untrusted.validate_users_file_trust(&default_path).unwrap();
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn explicit_tls_paths_use_original_config_snapshot_trust() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-tls-path-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        std::fs::write(
+            &path,
+            "[profile:edge]\n[web]\nenabled = true\ntls = true\ntls_cert = /etc/letsencrypt/live/example/fullchain.pem\ntls_key = /etc/letsencrypt/live/example/privkey.pem\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let untrusted = read_config_source(&path).unwrap();
+        let mut config = crate::config::parse_server_config(untrusted.text()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let error = untrusted.validate_tls_paths_trust(&config).unwrap_err();
+        assert!(
+            error.to_string().contains("web.tls_cert/tls_key"),
+            "{error}"
+        );
+        read_config_source(&path)
+            .unwrap()
+            .validate_tls_paths_trust(&config)
+            .unwrap();
+        config.web.tls_cert.clear();
+        config.web.tls_key.clear();
+        untrusted.validate_tls_paths_trust(&config).unwrap();
+        config.web.tls_cert = "/etc/qeli/cert.pem".into();
+        config.web.tls_key = "/etc/qeli/key.pem".into();
+        config.web.tls = false;
+        untrusted.validate_tls_paths_trust(&config).unwrap();
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 
     #[test]

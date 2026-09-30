@@ -226,7 +226,7 @@ fn critical_backup_paths(
             reason: "a server identity key; restoring without it would break pinned clients",
         });
     }
-    if config.web.tls {
+    if config.web.enabled && config.web.tls {
         for (path, label) in [
             (
                 if config.web.tls_cert.is_empty() {
@@ -1405,6 +1405,31 @@ mod tests {
             .iter()
             .any(|path| !members.contains(&path.archive_path)));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn backup_only_requires_tls_material_for_an_active_https_panel() {
+        let mut config = crate::config::server::ServerConfig::default();
+        config.auth.users_file = "/etc/qeli/users.conf".into();
+        config.web.enabled = false;
+        config.web.tls = true;
+        config.web.tls_cert = "/etc/letsencrypt/live/example/fullchain.pem".into();
+        config.web.tls_key = "/etc/letsencrypt/live/example/privkey.pem".into();
+        let paths = critical_backup_paths(&config, "/etc/qeli/server.conf").unwrap();
+        assert!(!paths
+            .iter()
+            .any(|path| path.reason == "the active panel TLS material"));
+
+        config.web.enabled = true;
+        let error = critical_backup_paths(&config, "/etc/qeli/server.conf").unwrap_err();
+        assert!(error.contains("outside /etc/qeli"), "{error}");
+        config.web.tls_cert = "/etc/qeli/cert.pem".into();
+        config.web.tls_key = "/etc/qeli/key.pem".into();
+        let paths = critical_backup_paths(&config, "/etc/qeli/server.conf").unwrap();
+        assert!(paths
+            .iter()
+            .any(|path| path.archive_path == "qeli/cert.pem"));
+        assert!(paths.iter().any(|path| path.archive_path == "qeli/key.pem"));
     }
 
     #[test]

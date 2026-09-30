@@ -104,7 +104,10 @@ needed.
   or remove **both** files to deliberately generate a new pair.
   `qeli check-config` validates an existing pair with the same TLS loader. When
   the auto-generated pair does not yet exist, it permits first startup without
-  creating files.
+  creating files. An explicit TLS path requires a trusted server INI: a regular
+  file owned by root or the effective UID, with no group/world write or symlink.
+  With TLS files outside `/etc/qeli`, panel Backup returns HTTP 409; back up
+  the external pair separately.
 - With `tls = true` the session cookie automatically gets `Secure`.
 
 > Alternative to publishing: keep `bind = 127.0.0.1`, `tls = false` and reach the
@@ -286,9 +289,9 @@ The **⤓ Backup** and **⤒ Restore** buttons in the header of the *Host load* 
   on your machine. If any critical file (identity, `server.conf`, the users database)
   turned out to be unreadable, the download is **refused** with an
   explanation rather than handing you an archive that only looks complete.
-  The active config, external users database, per-profile identity keys and explicit panel
-  TLS files must all use normal absolute paths below `/etc/qeli`. Custom filenames and
-  subdirectories there are supported. If any active path is relative or outside that managed
+  The active config, external users database, per-profile identity keys and explicit TLS
+  files of an **enabled HTTPS panel** must all use normal absolute paths below
+  `/etc/qeli`. Custom filenames and subdirectories there are supported. If any active path is relative or outside that managed
   root, both panel backup and restore are refused with HTTP 409 instead of silently producing
   or applying a partial archive; use a manual backup that includes every external path.
   > **The archive holds secrets.** Private identity keys, argon2 password hashes, the
@@ -498,9 +501,10 @@ server. Both views save configuration only as INI.
 > (comments, ordering, spacing) is still preserved verbatim.
 
 Raw saves are guarded exactly like structured ones: the text must parse; `logging.file`
-must be inside `/var/log/qeli`; `auth.users_file`, `identity_key` and
-`web.tls_cert`/`tls_key` inside `/etc/qeli`; `web.password_hash` must be a valid argon2
-hash (the hand editor is the easiest place to lock yourself out with a typo);
+must be inside `/var/log/qeli`; `auth.users_file` and `identity_key` inside
+`/etc/qeli`; `web.tls_cert`/`tls_key` inside `/etc/qeli` or `/etc/letsencrypt`;
+`web.password_hash` must be a valid argon2 hash (the hand editor is the easiest
+place to lock yourself out with a typo);
 `routing.post_up`/`post_down` can neither be introduced nor changed through the panel;
 and the config must pass the same profile validation the server runs at startup. Panel
 settings apply live; changing `auth.users_file` or `web.persist_session_key` requires a full supervisor restart through `Apply & Restart` (or `systemctl restart qeli`). Profile/bind/tun changes also need a restart.

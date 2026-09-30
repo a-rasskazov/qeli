@@ -289,3 +289,4 @@
 - [Q25-F146: конкурентная запись серверного INI](reports/AUDIT-Q25-SERVER-CONCURRENT-WRITES.md)
 - [Q25-F147: TLS PEM и неполная автопара](reports/AUDIT-Q25-SERVER-TLS-PEM.md)
 - [Q25-F148: проверка TLS в check-config](reports/AUDIT-Q25-SERVER-TLS-CHECK-CONFIG.md)
+- [Q25-F149: доверие к TLS-путям и Let's Encrypt в панели](reports/AUDIT-Q25-SERVER-TLS-PATH-TRUST.md)

@@ -1,5 +1,6 @@
 use super::paths::{
     validate_in_whitelist, validate_path_field, ALLOWED_CONFIG_DIRS, ALLOWED_LOG_DIRS,
+    ALLOWED_TLS_DIRS,
 };
 use crate::server::web::auth::{self, AuthError};
 use crate::server::ServerState;
@@ -1423,12 +1424,12 @@ pub async fn put_config(
         }
     }
     if parsed.web.enabled && parsed.web.tls {
-        if let Err(e) = validate_path_field(&parsed.web.tls_cert, ALLOWED_CONFIG_DIRS) {
+        if let Err(e) = validate_path_field(&parsed.web.tls_cert, ALLOWED_TLS_DIRS) {
             return Ok(Json(
                 json!({ "ok": false, "error": format!("web.tls_cert: {}", e) }),
             ));
         }
-        if let Err(e) = validate_path_field(&parsed.web.tls_key, ALLOWED_CONFIG_DIRS) {
+        if let Err(e) = validate_path_field(&parsed.web.tls_key, ALLOWED_TLS_DIRS) {
             return Ok(Json(
                 json!({ "ok": false, "error": format!("web.tls_key: {}", e) }),
             ));
@@ -2009,10 +2010,10 @@ pub async fn put_config_raw(
         }
     }
     if parsed.web.enabled && parsed.web.tls {
-        if let Err(e) = validate_path_field(&parsed.web.tls_cert, ALLOWED_CONFIG_DIRS) {
+        if let Err(e) = validate_path_field(&parsed.web.tls_cert, ALLOWED_TLS_DIRS) {
             return Ok(Json(super::err_json(format!("web.tls_cert: {}", e))));
         }
-        if let Err(e) = validate_path_field(&parsed.web.tls_key, ALLOWED_CONFIG_DIRS) {
+        if let Err(e) = validate_path_field(&parsed.web.tls_key, ALLOWED_TLS_DIRS) {
             return Ok(Json(super::err_json(format!("web.tls_key: {}", e))));
         }
     }

@@ -558,15 +558,16 @@ async fn main() -> anyhow::Result<()> {
                 // so `check-config` and a real start agree.
                 #[cfg(target_os = "linux")]
                 server::validate_profiles(&cfg)?;
-                #[cfg(target_os = "linux")]
-                qeli::web::tls::check_config_files(&cfg.web)
-                    .map_err(|e| anyhow::anyhow!("{}: panel TLS: {}", path, e))?;
                 if let Some(source) = &server_source {
                     source.validate_users_file_trust(&cfg)?;
+                    source.validate_tls_paths_trust(&cfg)?;
                     for profile in &cfg.profiles {
                         source.validate_identity_key_trust(profile)?;
                     }
                 }
+                #[cfg(target_os = "linux")]
+                qeli::web::tls::check_config_files(&cfg.web)
+                    .map_err(|e| anyhow::anyhow!("{}: panel TLS: {}", path, e))?;
                 // The supervisor also parses the external users database before it starts
                 // the worker. `check-config` must apply the same admission rule.
                 // Use the same runtime loader as supervisor and worker: a genuinely
