@@ -559,6 +559,7 @@ async fn main() -> anyhow::Result<()> {
                 #[cfg(target_os = "linux")]
                 server::validate_profiles(&cfg)?;
                 if let Some(source) = &server_source {
+                    source.validate_users_file_trust(&cfg)?;
                     for profile in &cfg.profiles {
                         source.validate_identity_key_trust(profile)?;
                     }
@@ -1080,6 +1081,7 @@ fn add_client(
         .map_err(|e| anyhow::anyhow!("cannot read server config {}: {}", config.display(), e))?;
     let server_cfg: config::server::ServerConfig = config::parse_server_config(source.text())?;
     let users_file = server_cfg.auth.users_file.clone();
+    source.validate_users_file_trust(&server_cfg)?;
 
     // Resolve and validate the optional link target before hashing or appending the user. An
     // unusable IPv6 endpoint must not leave behind an account after the command ultimately
@@ -1407,6 +1409,7 @@ fn share_link(
             username
         ),
         None => {
+            source.validate_users_file_trust(&server_cfg)?;
             let new_pw = generate_password(20);
             let hash = qeli::crypto::hash_password(new_pw.as_bytes())
                 .map_err(|e| anyhow::anyhow!("hashing failed: {}", e))?;

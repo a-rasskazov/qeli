@@ -1290,6 +1290,10 @@ impl ConfigSourceSnapshot {
         ensure_identity_key_trust(profile, &self.trust)
     }
 
+    pub fn validate_users_file_trust(&self, config: &ServerConfig) -> anyhow::Result<()> {
+        ensure_users_file_trust(config, &self.trust)
+    }
+
     pub fn require_trusted_file_output(&self, label: &str) -> anyhow::Result<()> {
         if let Err(reason) = self.trust.check() {
             anyhow::bail!("{label} requires a trusted config file: {reason}");
@@ -1347,6 +1351,20 @@ fn ensure_identity_key_trust(
                 "profile '{}': explicit identity_key requires a trusted server config: {reason}",
                 profile.name
             );
+        }
+    }
+    Ok(())
+}
+
+/// A custom users database path can be written by the CLI, panel and control socket.
+/// Keep that path under the same snapshot trust policy as explicit identity keys.
+fn ensure_users_file_trust(
+    config: &ServerConfig,
+    trust: &crate::config_source::CommandTrust,
+) -> anyhow::Result<()> {
+    if config.auth.users_file != crate::config::server::DEFAULT_USERS_FILE {
+        if let Err(reason) = trust.check() {
+            anyhow::bail!("auth.users_file requires a trusted server config: {reason}");
         }
     }
     Ok(())
@@ -3511,6 +3529,7 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let (config, bad_values): (ServerConfig, Vec<String>) =
         crate::config::parse_server_config_reporting(&config_content)?;
     reject_bad_config_values(&bad_values)?;
+    ensure_users_file_trust(&config, &config_command_trust)?;
     for profile in &config.profiles {
         ensure_identity_key_trust(profile, &config_command_trust)?;
     }
@@ -4146,6 +4165,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let (config, bad_values): (ServerConfig, Vec<String>) =
         crate::config::parse_server_config_reporting(&config_content)?;
     reject_bad_config_values(&bad_values)?;
+    ensure_users_file_trust(&config, &config_command_trust)?;
     for profile in &config.profiles {
         ensure_identity_key_trust(profile, &config_command_trust)?;
     }
@@ -8609,6 +8629,42 @@ pool.cidr = 10.{net}.0.0/24
         untrusted
             .validate_identity_key_trust(&default_path_profile)
             .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn custom_users_file_uses_original_config_file_trust() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-users-path-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        let custom_users = dir.join("users.conf");
+        std::fs::write(
+            &path,
+            format!(
+                "[auth]\nusers_file = {}\n[profile:edge]\n",
+                custom_users.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let untrusted = read_config_source(&path).unwrap();
+        let config = crate::config::parse_server_config(untrusted.text()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let error = untrusted.validate_users_file_trust(&config).unwrap_err();
+        assert!(error.to_string().contains("auth.users_file"), "{error}");
+        assert!(!custom_users.exists());
+        read_config_source(&path)
+            .unwrap()
+            .validate_users_file_trust(&config)
+            .unwrap();
+        let mut default_path = config;
+        default_path.auth.users_file = crate::config::server::DEFAULT_USERS_FILE.into();
+        untrusted.validate_users_file_trust(&default_path).unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

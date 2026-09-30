@@ -1798,8 +1798,9 @@ fn default_tun_queues() -> usize {
     0 // auto: resolved to CPU count at profile start
 }
 fn default_users_file() -> String {
-    "/etc/qeli/users.conf".into()
+    DEFAULT_USERS_FILE.into()
 }
+pub const DEFAULT_USERS_FILE: &str = "/etc/qeli/users.conf";
 /// Paired with [`default_tun_addr`] — same reasoning, see there.
 fn default_cidr() -> String {
     "10.9.0.0/24".into()

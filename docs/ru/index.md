@@ -284,3 +284,4 @@
 - [Q25-F141: согласованный допуск CLI, панели и runtime](reports/AUDIT-Q25-SERVER-CHECK-CONFIG-PARITY.md)
 - [Q25-F142: имя профиля и путь серверного identity-ключа](reports/AUDIT-Q25-SERVER-IDENTITY-NAME.md)
 - [Q25-F143: доверие к identity_key и logging.file](reports/AUDIT-Q25-SERVER-IDENTITY-TRUST.md)
+- [Q25-F144: доверие к нестандартному auth.users_file](reports/AUDIT-Q25-SERVER-USERS-PATH-TRUST.md)
