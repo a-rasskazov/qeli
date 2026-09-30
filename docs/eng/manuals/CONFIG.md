@@ -1202,6 +1202,13 @@ field `identity_key`. Profile names with path separators `/` or `\` are
 rejected so a name cannot move the key outside the default directory. The
 public key is derived from the private one, and the client pins it.
 
+An explicit `identity_key` can direct the key write to another directory.
+Therefore `check-config`, server startup and key creation/rotation commands
+require a trusted `server.conf` when this field is set: a regular non-symlink
+file owned by root or the process's effective UID, with no group/world write.
+Trust applies to the same opened file snapshot that supplied the path. A
+rejected config cannot start a key write.
+
 On the profile's first start the key is generated automatically (if the file is
 absent) and saved. Logged:
 `Profile '<name>': server identity public key (pin on client): <hex>`.
@@ -3462,6 +3469,11 @@ time_format = datetime
 # plain | json — PARSED BUT NOT APPLIED YET (see below)
 format = plain
 ```
+
+If `[logging] file` comes from an untrusted config, the early logger does
+not create the directory or file; it reports the refusal on stderr and logs
+there instead. Level and timestamp settings remain readable without a file
+write. This applies to Linux server/worker/client before main validation.
 
 | Key | Default | Purpose |
 |---|---|---|

@@ -1274,6 +1274,37 @@ pub fn read_config_text(path: impl AsRef<std::path::Path>) -> std::io::Result<St
     crate::config_source::load(path).map(|snapshot| snapshot.into_parts().0)
 }
 
+/// The bytes and file-command trust must come from the same opened inode when
+/// a CLI operation may create or replace an explicitly configured identity key.
+pub struct ConfigSourceSnapshot {
+    text: String,
+    trust: crate::config_source::CommandTrust,
+}
+
+impl ConfigSourceSnapshot {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn validate_identity_key_trust(&self, profile: &ProfileConfig) -> anyhow::Result<()> {
+        ensure_identity_key_trust(profile, &self.trust)
+    }
+
+    pub fn require_trusted_file_output(&self, label: &str) -> anyhow::Result<()> {
+        if let Err(reason) = self.trust.check() {
+            anyhow::bail!("{label} requires a trusted config file: {reason}");
+        }
+        Ok(())
+    }
+}
+
+pub fn read_config_source(
+    path: impl AsRef<std::path::Path>,
+) -> std::io::Result<ConfigSourceSnapshot> {
+    let (text, trust) = crate::config_source::load(path)?.into_parts();
+    Ok(ConfigSourceSnapshot { text, trust })
+}
+
 pub const MAX_SERVER_INI_BYTES: u64 = crate::config_source::MAX_SERVER_INI_BYTES;
 
 /// Directory holding per-profile server identity keys.
@@ -1302,6 +1333,21 @@ fn prepare_identity_parent(path: &std::path::Path) -> anyhow::Result<()> {
     if !existed || parent == std::path::Path::new(IDENTITY_DIR) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+fn ensure_identity_key_trust(
+    profile: &ProfileConfig,
+    trust: &crate::config_source::CommandTrust,
+) -> anyhow::Result<()> {
+    if profile.identity_key.is_some() {
+        if let Err(reason) = trust.check() {
+            anyhow::bail!(
+                "profile '{}': explicit identity_key requires a trusted server config: {reason}",
+                profile.name
+            );
+        }
     }
     Ok(())
 }
@@ -3465,6 +3511,9 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     let (config, bad_values): (ServerConfig, Vec<String>) =
         crate::config::parse_server_config_reporting(&config_content)?;
     reject_bad_config_values(&bad_values)?;
+    for profile in &config.profiles {
+        ensure_identity_key_trust(profile, &config_command_trust)?;
+    }
 
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
@@ -4097,6 +4146,9 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let (config, bad_values): (ServerConfig, Vec<String>) =
         crate::config::parse_server_config_reporting(&config_content)?;
     reject_bad_config_values(&bad_values)?;
+    for profile in &config.profiles {
+        ensure_identity_key_trust(profile, &config_command_trust)?;
+    }
     if config.profiles.is_empty() {
         anyhow::bail!("no profiles defined in server config");
     }
@@ -8521,6 +8573,43 @@ pool.cidr = 10.{net}.0.0/24
             !dir.exists(),
             "invalid profile must not create a key directory"
         );
+    }
+
+    #[test]
+    fn explicit_identity_path_uses_original_config_file_trust() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-identity-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        std::fs::write(
+            &path,
+            format!(
+                "[profile:edge]\nidentity_key = {}\n",
+                dir.join("edge.key").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let untrusted = read_config_source(&path).unwrap();
+        let config = crate::config::parse_server_config(untrusted.text()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(untrusted
+            .validate_identity_key_trust(&config.profiles[0])
+            .is_err());
+        let trusted = read_config_source(&path).unwrap();
+        trusted
+            .validate_identity_key_trust(&config.profiles[0])
+            .unwrap();
+        let mut default_path_profile = config.profiles[0].clone();
+        default_path_profile.identity_key = None;
+        untrusted
+            .validate_identity_key_trust(&default_path_profile)
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

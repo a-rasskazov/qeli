@@ -294,15 +294,24 @@ enum Commands {
 /// up before the rest of the config is parsed. Falls back to (info, stderr) on
 /// any error — the real parse later will surface config problems.
 fn peek_logging(path: &PathBuf) -> (String, Option<String>, String) {
-    if let Ok(s) = server::read_config_text(path) {
+    if let Ok(source) = server::read_config_source(path) {
         // The only config format is flat INI: read its `[logging]` section.
-        if let Ok(doc) = config::format::IniDoc::parse(&s) {
+        if let Ok(doc) = config::format::IniDoc::parse(source.text()) {
             if let Some(log) = doc.section("logging") {
                 let level = log.get_or("level", "info").to_string();
                 let file = log
                     .get("file")
                     .filter(|f| !f.is_empty())
-                    .map(str::to_string);
+                    .map(str::to_string)
+                    .and_then(
+                        |path| match source.require_trusted_file_output("logging.file") {
+                            Ok(()) => Some(path),
+                            Err(error) => {
+                                eprintln!("qeli: ignoring logging.file — {error}");
+                                None
+                            }
+                        },
+                    );
                 let time_format = log.get_or("time_format", "datetime").to_string();
                 return (level, file, time_format);
             }
@@ -514,12 +523,19 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::CheckConfig { config, client } => {
             let path = config.display().to_string();
-            let text = if client {
-                std::fs::read_to_string(&config)
+            let server_source = if client {
+                None
             } else {
-                server::read_config_text(&config)
-            }
-            .map_err(|e| anyhow::anyhow!("cannot read {}: {}", path, e))?;
+                Some(
+                    server::read_config_source(&config)
+                        .map_err(|e| anyhow::anyhow!("cannot read {}: {}", path, e))?,
+                )
+            };
+            let text = match &server_source {
+                Some(source) => source.text().to_owned(),
+                None => std::fs::read_to_string(&config)
+                    .map_err(|e| anyhow::anyhow!("cannot read {}: {}", path, e))?,
+            };
 
             if client {
                 config::parse_client_config_strict(&text)
@@ -542,6 +558,11 @@ async fn main() -> anyhow::Result<()> {
                 // so `check-config` and a real start agree.
                 #[cfg(target_os = "linux")]
                 server::validate_profiles(&cfg)?;
+                if let Some(source) = &server_source {
+                    for profile in &cfg.profiles {
+                        source.validate_identity_key_trust(profile)?;
+                    }
+                }
                 // The supervisor also parses the external users database before it starts
                 // the worker. `check-config` must apply the same admission rule.
                 // Use the same runtime loader as supervisor and worker: a genuinely
@@ -637,8 +658,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::ShowIdentity { config } => {
             #[cfg(target_os = "linux")]
             {
-                let s = server::read_config_text(&config)?;
-                let cfg: config::server::ServerConfig = config::parse_server_config(&s)?;
+                let source = server::read_config_source(&config)?;
+                let cfg: config::server::ServerConfig = config::parse_server_config(source.text())?;
+                for profile in &cfg.profiles {
+                    source.validate_identity_key_trust(profile)?;
+                }
                 println!(
                     "{:<14} {:<22} SERVER PUBLIC KEY (pin on client)",
                     "PROFILE", "BIND"
@@ -660,8 +684,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::RotateIdentity { profile, config } => {
             #[cfg(target_os = "linux")]
             {
-                let s = server::read_config_text(&config)?;
-                let cfg: config::server::ServerConfig = config::parse_server_config(&s)?;
+                let source = server::read_config_source(&config)?;
+                let cfg: config::server::ServerConfig = config::parse_server_config(source.text())?;
                 let p = cfg
                     .profiles
                     .iter()
@@ -669,6 +693,7 @@ async fn main() -> anyhow::Result<()> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("profile '{}' not found in {}", profile, config.display())
                     })?;
+                source.validate_identity_key_trust(p)?;
                 let kp = server::generate_profile_key(p)?;
                 let hex: String = kp
                     .public
@@ -1051,9 +1076,9 @@ fn add_client(
     use config::users::{UserEntry, UsersDb};
 
     // Resolve the users file from the server config.
-    let cfg_str = server::read_config_text(&config)
+    let source = server::read_config_source(&config)
         .map_err(|e| anyhow::anyhow!("cannot read server config {}: {}", config.display(), e))?;
-    let server_cfg: config::server::ServerConfig = config::parse_server_config(&cfg_str)?;
+    let server_cfg: config::server::ServerConfig = config::parse_server_config(source.text())?;
     let users_file = server_cfg.auth.users_file.clone();
 
     // Resolve and validate the optional link target before hashing or appending the user. An
@@ -1083,6 +1108,9 @@ fn add_client(
     } else {
         None
     };
+    if let Some((profile_index, _, _)) = &prepared_link {
+        source.validate_identity_key_trust(&server_cfg.profiles[*profile_index])?;
+    }
 
     // Load the existing users DB, or start an empty one when the file doesn't exist yet
     // (first user on a fresh install). Read only — the actual append happens under the
@@ -1316,9 +1344,9 @@ fn share_link(
     reset: bool,
     config: PathBuf,
 ) -> anyhow::Result<()> {
-    let cfg_str = server::read_config_text(&config)
+    let source = server::read_config_source(&config)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {}", config.display(), e))?;
-    let server_cfg: config::server::ServerConfig = config::parse_server_config(&cfg_str)?;
+    let server_cfg: config::server::ServerConfig = config::parse_server_config(source.text())?;
 
     let profile = match &profile_name {
         Some(name) => server_cfg
@@ -1338,6 +1366,8 @@ fn share_link(
             .first()
             .ok_or_else(|| anyhow::anyhow!("no profiles defined in {}", config.display()))?,
     };
+
+    source.validate_identity_key_trust(profile)?;
 
     // Host: --host wins, else web.public_host — the same fallback the panel uses, so an
     // operator who set it once needn't repeat it per link.
@@ -1642,6 +1672,28 @@ fn format_bytes(bytes: u64) -> String {
 mod tests {
     use super::{validate_service_unit, validate_service_user};
     use qeli_core::config::set_section_keys;
+
+    #[test]
+    fn untrusted_logging_file_is_ignored_before_logger_initialization() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-log-trust-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let config = dir.join("server.conf");
+        let target = dir.join("unwanted.log");
+        std::fs::write(&config, format!("[logging]\nfile = {}\n", target.display())).unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let (_, file, _) = super::peek_logging(&config);
+        assert!(file.is_none());
+        assert!(!target.exists());
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (_, file, _) = super::peek_logging(&config);
+        assert_eq!(file.as_deref(), target.to_str());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn ups() -> Vec<(&'static str, String)> {
         vec![

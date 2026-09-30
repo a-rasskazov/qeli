@@ -283,3 +283,4 @@
 - [Q25-F140: приватная запись серверного INI панелью](reports/AUDIT-Q25-SERVER-INI-PERMISSIONS.md)
 - [Q25-F141: согласованный допуск CLI, панели и runtime](reports/AUDIT-Q25-SERVER-CHECK-CONFIG-PARITY.md)
 - [Q25-F142: имя профиля и путь серверного identity-ключа](reports/AUDIT-Q25-SERVER-IDENTITY-NAME.md)
+- [Q25-F143: доверие к identity_key и logging.file](reports/AUDIT-Q25-SERVER-IDENTITY-TRUST.md)

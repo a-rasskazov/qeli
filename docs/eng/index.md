@@ -283,3 +283,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F140: private panel writes for server INI](reports/AUDIT-Q25-SERVER-INI-PERMISSIONS.md)
 - [Q25-F141: consistent CLI, panel and runtime admission](reports/AUDIT-Q25-SERVER-CHECK-CONFIG-PARITY.md)
 - [Q25-F142: profile name and server identity-key path](reports/AUDIT-Q25-SERVER-IDENTITY-NAME.md)
+- [Q25-F143: trust for identity_key and logging.file](reports/AUDIT-Q25-SERVER-IDENTITY-TRUST.md)
