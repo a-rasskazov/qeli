@@ -554,6 +554,11 @@ public static class WireConformance
             try { Ini(text); } catch (ArgumentException) { refused = true; }
             check("ini-controls: import rejects lossy serialization", refused);
         }
+        var passwordlessDraft = Model.VpnConfig.FromQeliUri("qeli://u:@host:443");
+        bool passwordlessShareRefused = false;
+        try { passwordlessDraft.ToQeliUri(); }
+        catch (ArgumentException error) { passwordlessShareRefused = error.Message.Contains("inline pass"); }
+        check("uri-password: old passwordless link imports but cannot be re-shared", passwordlessShareRefused);
         bool bomUriRefused = false;
         try { Model.VpnConfig.FromQeliUri("\ufeffqeli://u:p@host:443?proto=udp&mode=reality-tls"); }
         catch (ArgumentException) { bomUriRefused = true; }

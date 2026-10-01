@@ -171,12 +171,17 @@ class ConfigHardeningTest {
         assertEquals("include", VpnConfig.fromIni(cfg.toIni()).appsMode)
     }
 
-    /** The link authority now matches Rust and iOS byte-for-byte, empty password included. */
+    /** An old passwordless link remains importable as a draft, but cannot be re-shared. */
     @Test
-    fun `link keeps the colon when the password is empty`() {
-        val uri = profile(pass = "").toQeliUri()
-        assertTrue("expected 'user:@host', got $uri", uri.startsWith("qeli://alice:@vpn.example.com:443"))
-        assertEquals("", VpnConfig.fromQeliUri(uri).password)
+    fun `passwordless link imports but cannot be shared`() {
+        val draft = VpnConfig.fromQeliUri("qeli://alice:@vpn.example.com:443")
+        assertEquals("", draft.password)
+        try {
+            draft.toQeliUri()
+            fail("expected export without an inline pass to be refused")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message.orEmpty().contains("inline pass"))
+        }
     }
 
     @Test

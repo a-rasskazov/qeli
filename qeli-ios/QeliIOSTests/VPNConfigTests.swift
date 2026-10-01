@@ -57,6 +57,12 @@ final class VPNConfigTests: XCTestCase {
         XCTAssertEqual(VPNConfig.label(fromQeliURI: link), "Телефон")
     }
 
+    func testPasswordlessLinkImportsAsDraftButCannotBeShared() throws {
+        let draft = try VPNConfig.fromQeliURI("qeli://u:@host:443")
+        XCTAssertEqual(draft.password, "")
+        XCTAssertThrowsError(try draft.toQeliURI())
+    }
+
     func testRejectsInvalidPortAndMode() {
         XCTAssertThrowsError(try VPNConfig(parsing: "[qeli]\nserver = host:0"))
         XCTAssertThrowsError(try VPNConfig(parsing: "[qeli]\nserver = host:443\nmode = unknown"))
