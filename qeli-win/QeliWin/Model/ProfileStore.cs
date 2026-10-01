@@ -18,6 +18,7 @@ public static class ProfileStore
     private static readonly string FilePath = Path.Combine(Dir, "profiles.json");
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public static List<VpnConfig> Load()
     {
@@ -32,12 +33,13 @@ public static class ProfileStore
             {
                 // Encrypted-at-rest (DPAPI, current user).
                 var plain = ProtectedData.Unprotect(bytes, null, DataProtectionScope.CurrentUser);
-                json = Encoding.UTF8.GetString(plain);
+                json = StrictUtf8.GetString(plain);
             }
-            catch
+            catch (CryptographicException)
             {
-                // Legacy plaintext file written before E1 — read as-is, then migrate.
-                json = Encoding.UTF8.GetString(bytes);
+                // Only a DPAPI decryption failure can select the legacy plaintext path.
+                // A malformed decrypted payload must never be reinterpreted as legacy.
+                json = StrictUtf8.GetString(bytes);
                 wasLegacyPlaintext = true;
             }
             var profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();

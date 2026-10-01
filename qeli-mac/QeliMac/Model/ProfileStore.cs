@@ -16,6 +16,7 @@ public static class ProfileStore
     private static readonly string Dir = Paths.UserDir;
     private static readonly string FilePath = Path.Combine(Dir, "profiles.json");
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public static List<VpnConfig> Load()
     {
@@ -26,7 +27,7 @@ public static class ProfileStore
             var raw = File.ReadAllBytes(FilePath);
             var plaintext = EncryptedEnvelope.Open(
                 raw, SecureKey.GetOrCreate(), allowLegacyArray: true, out bool needsMigration);
-            string json = Encoding.UTF8.GetString(plaintext);
+            string json = StrictUtf8.GetString(plaintext);
             var profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();
             // Profiles saved before the stable-Id fix have no "Id" field; the deserializer
             // left each at a fresh-GUID default that would otherwise change on every load
@@ -54,7 +55,7 @@ public static class ProfileStore
                     var plaintext = EncryptedEnvelope.Open(
                         File.ReadAllBytes(backup), SecureKey.GetOrCreate(), true, out _);
                     var profiles = JsonSerializer.Deserialize<List<VpnConfig>>(
-                        Encoding.UTF8.GetString(plaintext), Options) ?? new List<VpnConfig>();
+                        StrictUtf8.GetString(plaintext), Options) ?? new List<VpnConfig>();
                     Save(profiles);
                     System.Diagnostics.Debug.WriteLine("ProfileStore: restored profiles from authenticated .bak");
                     return profiles;
