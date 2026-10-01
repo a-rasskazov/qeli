@@ -373,7 +373,11 @@ assigned by the provider.
      carrying its own MAC, and an external `ping -6 2001:db8:1200:10::100` must reach the
      client. If the client OS blocks inbound ICMPv6, allow Echo Request or test a TCP/UDP
      service which is already listening.
-   - Disconnect, revoke, or session replacement removes ownership immediately. Flush the entry
+   - Server registry removal, revoke, or session replacement removes ownership immediately.
+     Stopping a client process, especially UDP, may first leave its session alive until
+     idle/liveness timeout and the next cleanup pass; roaming may also retain a grace
+     period. Before checking for absent NAs, confirm that the server no longer lists
+     this session. Flush the entry
      on an accessible upstream router or wait for its neighbor cache to expire, then retry: a
      new NS receives no proxy NA and traffic without a live session is dropped. A stale upstream
      entry may continue to show the server MAC for a while; that is upstream caching, not
