@@ -1159,6 +1159,8 @@
       'VPN authentication': 'Аутентификация VPN',
       'Panel login': 'Вход в панель',
       'Saved — applied live': 'Сохранено — применено на лету',
+      'Saved — VPN reload requested': 'Сохранено — запрошено обновление VPN worker',
+      'Saved — VPN policy awaits worker restart': 'Сохранено — VPN-политика применится при следующем запуске worker',
       'Applies to both web-panel login and VPN authentication':
         'Действует и на вход в веб-панель, и на аутентификацию VPN',
       'After this many failed attempts within the window, a source IP is locked out for the lockout duration.':

@@ -253,7 +253,43 @@ pub async fn status(
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_hostname, roaming_profiles};
+    use super::{clean_hostname, roaming_profiles, validate_bf_edit_candidate};
+
+    #[test]
+    fn brute_force_edit_rejects_unservable_or_invalid_live_candidates() {
+        let no_auth = "[profile:a]\n[web]\nenabled = true\n";
+        assert!(
+            validate_bf_edit_candidate(no_auth, "/etc/qeli/users.conf", false)
+                .unwrap_err()
+                .contains("web.password_hash")
+        );
+
+        let bad_hash = "[profile:a]\n[web]\nenabled = true\npassword_hash = broken\n";
+        assert!(
+            validate_bf_edit_candidate(bad_hash, "/etc/qeli/users.conf", false)
+                .unwrap_err()
+                .contains("Argon2")
+        );
+
+        let disabled_profile = "[profile:a]\nenabled = false\n";
+        assert!(
+            validate_bf_edit_candidate(disabled_profile, "/etc/qeli/users.conf", false)
+                .unwrap_err()
+                .contains("all profiles are disabled")
+        );
+
+        let changed_users = "[auth]\nusers_file = /etc/qeli/other-users.conf\n[profile:a]\n";
+        assert!(
+            validate_bf_edit_candidate(changed_users, "/etc/qeli/users.conf", true)
+                .unwrap_err()
+                .contains("full restart")
+        );
+
+        let valid_panel_only = "[profile:a]\n[web]\nenabled = false\n";
+        assert!(
+            validate_bf_edit_candidate(valid_panel_only, "/etc/qeli/users.conf", false).is_ok()
+        );
+    }
 
     #[test]
     fn hostname_is_safe_for_panel_display() {
@@ -492,6 +528,31 @@ fn bf_updates(enabled: bool, max: u32, window: u64, lockout: u64) -> [(&'static 
     ]
 }
 
+/// Check the exact edited INI against the live-reload contract before publishing it.
+/// VPN-auth SIGHUP cannot switch the supervisor's startup users-file path.
+fn validate_bf_edit_candidate(
+    raw: &str,
+    startup_users_file: &str,
+    reload_vpn: bool,
+) -> Result<(), String> {
+    let candidate = crate::config::parse_server_config(raw)
+        .map_err(|error| format!("edited config no longer parses: {error}"))?;
+    super::config::validate_web_auth_for_save(&candidate.web)?;
+    crate::server::validate_profiles(&candidate)
+        .map_err(|error| format!("edited config would be rejected at startup: {error}"))?;
+    if reload_vpn {
+        if candidate.auth.users_file != startup_users_file {
+            return Err(
+                "auth.users_file differs from the supervisor startup path; full restart is required before VPN brute-force settings can be applied live"
+                    .into(),
+            );
+        }
+        super::effective_users(&candidate)
+            .map_err(|error| format!("VPN brute-force reload would fail: {error}"))?;
+    }
+    Ok(())
+}
+
 /// GET /api/blocked/settings — the two independent brute-force policies, read from
 /// the live on-disk config. `vpn` = `[auth] brute_force` (enforced by the data-plane
 /// worker on VPN user authentication); `panel` = `[web] brute_force` (enforced by
@@ -501,15 +562,12 @@ pub async fn blocked_settings(
     State(state): State<Arc<ServerState>>,
     _guard: auth::AuthGuard,
 ) -> Result<Json<Value>, AuthError> {
-    let cfg = current_config(&state).await;
-    let vpn = cfg
-        .as_ref()
-        .map(|c| c.auth.brute_force.clone())
-        .unwrap_or_default();
-    let panel = cfg
-        .as_ref()
-        .map(|c| c.web.brute_force.clone())
-        .unwrap_or_default();
+    let cfg = match super::current_server_config(&state).await {
+        Ok(config) => config,
+        Err(error) => return Ok(Json(super::err_json(error))),
+    };
+    let vpn = cfg.auth.brute_force.clone();
+    let panel = cfg.web.brute_force.clone();
     Ok(Json(json!({
         "ok": true,
         "settings": {
@@ -532,8 +590,8 @@ pub async fn blocked_settings(
 /// in `[web] brute_force.*` and this (supervisor) process rebuilds its own tracker
 /// directly.
 ///
-/// Applying a new policy resets that surface's current failure counters (same
-/// semantics a SIGHUP config reload has always had).
+/// Applying a policy live resets that surface's failure counters. If the VPN
+/// worker cannot be signaled, its saved policy takes effect on its next start.
 pub async fn set_blocked_settings(
     State(state): State<Arc<ServerState>>,
     _guard: auth::AuthGuard,
@@ -612,12 +670,12 @@ pub async fn set_blocked_settings(
         raw = crate::config::set_section_keys(&raw, "web", &updates);
     }
 
-    // Safety net: never write a config that no longer parses.
-    if let Err(e) = crate::config::parse_server_config(&raw) {
-        return Ok(Json(super::err_json(format!(
-            "internal error: edited config no longer parses: {}",
-            e
-        ))));
+    // SIGHUP validates the complete candidate before changing the VPN policy.
+    // Apply the same gate before writing, including the panel's startup auth rule.
+    if let Err(error) =
+        validate_bf_edit_candidate(&raw, &state.config.auth.users_file, vpn.is_some())
+    {
+        return Ok(Json(super::err_json(error)));
     }
     let old_raw = match super::config::read_trusted_config_text(&canon, "panel brute-force save") {
         Ok(raw) => raw,
@@ -646,17 +704,19 @@ pub async fn set_blocked_settings(
         );
     }
     // (2) VPN policy → SIGHUP the worker so it rebuilds ITS tracker. No restart,
-    // no dropped sessions. Best-effort: the values are already persisted, so a
-    // missed signal still takes effect on the worker's next (re)start.
+    // no dropped sessions. Report a failed signal as pending, not live-applied.
+    let mut vpn_reload_requested = None;
     if let Some((enabled, max, window, lockout)) = vpn {
-        if let Some(tx) = &state.worker_tx {
-            if tx.send(WorkerCmd::ReloadUsers).await.is_err() {
-                log::warn!(
-                    "VPN brute-force settings persisted, but the data-plane worker reload \
-                     could not be signaled (worker channel closed); the worker will pick \
-                     up the new policy on its next start"
-                );
-            }
+        let sent = match &state.worker_tx {
+            Some(tx) => tx.send(WorkerCmd::ReloadUsers).await.is_ok(),
+            None => false,
+        };
+        vpn_reload_requested = Some(sent);
+        if !sent {
+            log::warn!(
+                "VPN brute-force settings persisted, but the data-plane worker reload \
+                 could not be signaled; the worker will pick up the new policy on its next start"
+            );
         }
         log::info!(
             "VPN-auth brute-force policy updated via panel (enabled={}, max_attempts={}, window={}s, lockout={}s)",
@@ -664,9 +724,15 @@ pub async fn set_blocked_settings(
         );
     }
 
+    let message = match vpn_reload_requested {
+        None => "brute-force settings saved and applied live",
+        Some(true) => "brute-force settings saved; VPN worker reload requested",
+        Some(false) => "brute-force settings saved; VPN policy applies on next worker start",
+    };
     Ok(Json(json!({
         "ok": true,
-        "message": "brute-force settings saved and applied",
+        "message": message,
+        "vpn_reload_requested": vpn_reload_requested,
         "path": canon.display().to_string(),
     })))
 }

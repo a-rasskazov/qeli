@@ -294,3 +294,4 @@
 - [Q25-F151: панель и доверие к сохраняемому INI](reports/AUDIT-Q25-SERVER-PANEL-SAVE-TRUST.md)
 - [Q25-F152: матрица INI и рестарт logging](reports/AUDIT-Q25-SERVER-FIELD-MATRIX-LOGGING.md)
 - [Q25-F153: проверка аутентификации панели до сохранения](reports/AUDIT-Q25-SERVER-WEB-AUTH-SAVE.md)
+- [Q25-F154: Quick Start и политика блокировок](reports/AUDIT-Q25-SERVER-QUICKSTART-BF-SAVE.md)

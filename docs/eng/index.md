@@ -294,3 +294,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F151: panel saves and INI trust](reports/AUDIT-Q25-SERVER-PANEL-SAVE-TRUST.md)
 - [Q25-F152: INI matrix and logging restart](reports/AUDIT-Q25-SERVER-FIELD-MATRIX-LOGGING.md)
 - [Q25-F153: web-auth validation before save](reports/AUDIT-Q25-SERVER-WEB-AUTH-SAVE.md)
+- [Q25-F154: Quick Start and lockout policy saves](reports/AUDIT-Q25-SERVER-QUICKSTART-BF-SAVE.md)

@@ -189,12 +189,18 @@ pub(super) fn write_server_config(path: &FsPath, raw: &str) -> anyhow::Result<()
 
 /// A saved config must not leave an enabled admin panel unable to start or
 /// cause a live reload to reject its authentication settings.
-fn validate_web_auth_for_save(web: &crate::config::server::WebConfig) -> Result<(), String> {
+pub(super) fn validate_web_auth_for_save(
+    web: &crate::config::server::WebConfig,
+) -> Result<(), String> {
     if web.enabled && web.password_hash.is_empty() && !web.insecure_no_auth {
         return Err(
             "web.enabled = true requires web.password_hash or explicit web.insecure_no_auth = true; set a password with `qeli set-web-password` before saving"
                 .into(),
         );
+    }
+    if web.enabled && !web.password_hash.is_empty() {
+        super::users::validate_argon2_hash(&web.password_hash)
+            .map_err(|error| format!("web.password_hash: {error}"))?;
     }
     Ok(())
 }
@@ -1199,6 +1205,9 @@ pub async fn apply_quickstart_profile(
             ))))
         }
     };
+    if let Err(error) = validate_web_auth_for_save(&reparsed.web) {
+        return Ok(Json(super::err_json(error)));
+    }
     if let Err(error) = crate::server::validate_profiles(&reparsed) {
         return Ok(Json(super::err_json(format!(
             "Quick Start config would be rejected at startup: {error}"
@@ -2628,8 +2637,14 @@ mod raw_secret_tests {
         assert!(validate_web_auth_for_save(&config.web).is_ok());
 
         config.web.enabled = true;
+        config.web.password_hash = crate::crypto::hash_password(b"test-admin").unwrap();
+        let result = validate_web_auth_for_save(&config.web);
+        assert!(result.is_ok(), "{result:?}");
+
         config.web.password_hash = "stored-verifier".into();
-        assert!(validate_web_auth_for_save(&config.web).is_ok());
+        assert!(validate_web_auth_for_save(&config.web)
+            .unwrap_err()
+            .contains("Argon2"));
     }
 
     #[test]

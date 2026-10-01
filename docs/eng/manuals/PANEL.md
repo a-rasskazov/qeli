@@ -692,8 +692,12 @@ GETTING-STARTED §10).
 - **Panel login** → `[web] brute_force`.
 
 Each has its own **on/off switch**, *Max attempts*, *Window* and *Lockout*, so the tunnel
-and the panel are limited (or disabled) separately. **Save policy** applies both live with
-no restart and no dropped sessions (it resets that surface's failure counters). Turn a
+and the panel are limited (or disabled) separately. **Save policy** validates the complete
+resulting INI before writing it and applies the panel policy immediately; it requests a VPN
+worker SIGHUP without dropping sessions. Successful live application resets that surface's
+failure counters. If the worker is unavailable, the tab reports that the saved VPN policy
+will apply at its next start. A failed INI read is shown as an error rather than defaults.
+Turn a
 switch off to disable rate-limiting for that surface entirely (only safe for panel login on
 a trusted / loopback bind). The same policies are also editable in **Config → Authentication**
 (VPN) and **Config → Web UI** (panel).

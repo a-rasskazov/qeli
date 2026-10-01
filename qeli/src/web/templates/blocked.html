@@ -217,8 +217,11 @@ function blockedPage() {
             vpn: Object.assign(defPolicy(), d.settings.vpn || {}),
             panel: Object.assign(defPolicy(), d.settings.panel || {}),
           };
+        } else {
+          this.policyOk = false;
+          this.policyMsg = d.error || this.t('Request failed');
         }
-      } catch (e) {}
+      } catch (e) { this.policyOk = false; this.policyMsg = this.t('Request failed'); }
     },
 
     async savePolicy() {
@@ -230,7 +233,10 @@ function blockedPage() {
           body: JSON.stringify({ vpn: this.policy.vpn, panel: this.policy.panel }),
         });
         this.policyOk = !!r.ok;
-        this.policyMsg = r.ok ? this.t('Saved — applied live') : (r.error || this.t('Save failed'));
+        this.policyMsg = !r.ok ? (r.error || this.t('Save failed'))
+          : r.vpn_reload_requested === false ? this.t('Saved — VPN policy awaits worker restart')
+          : r.vpn_reload_requested === true ? this.t('Saved — VPN reload requested')
+          : this.t('Saved — applied live');
       } catch (e) { this.policyOk = false; this.policyMsg = this.t('Request failed'); }
       this.savingPolicy = false;
     },
