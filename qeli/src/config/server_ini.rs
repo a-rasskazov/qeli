@@ -194,7 +194,9 @@ impl ServerConfig {
         for u in &self.auth.users {
             doc.push(user_to(u));
         }
-        for (name, g) in &self.auth.groups {
+        let mut groups: Vec<_> = self.auth.groups.iter().collect();
+        groups.sort_unstable_by_key(|(name, _)| *name);
+        for (name, g) in groups {
             doc.push(group_to(name, g));
         }
         doc.push(web_to(&self.web));
@@ -425,14 +427,18 @@ fn profile_to(p: &ProfileConfig) -> Section {
     // pool
     put_str(&mut s, "pool.cidr", &p.pool.cidr);
     put_list(&mut s, "pool.exclude", &p.pool.exclude);
-    for (name, ip) in &p.pool.static_reservations {
+    let mut reservations: Vec<_> = p.pool.static_reservations.iter().collect();
+    reservations.sort_unstable_by_key(|(name, _)| *name);
+    for (name, ip) in reservations {
         put_str(&mut s, &format!("pool.reservation.{}", name), ip);
     }
     if !p.pool.ipv6.cidr.is_empty() {
         put_str(&mut s, "pool.ipv6.cidr", &p.pool.ipv6.cidr);
     }
     put_list(&mut s, "pool.ipv6.exclude", &p.pool.ipv6.exclude);
-    for (name, ip) in &p.pool.ipv6.static_reservations {
+    let mut reservations: Vec<_> = p.pool.ipv6.static_reservations.iter().collect();
+    reservations.sort_unstable_by_key(|(name, _)| *name);
+    for (name, ip) in reservations {
         put_str(&mut s, &format!("pool.ipv6.reservation.{}", name), ip);
     }
     // routing
@@ -1306,7 +1312,9 @@ impl UsersDb {
         for u in &self.users {
             doc.push(user_to(u));
         }
-        for (name, g) in &self.groups {
+        let mut groups: Vec<_> = self.groups.iter().collect();
+        groups.sort_unstable_by_key(|(name, _)| *name);
+        for (name, g) in groups {
             doc.push(group_to(name, g));
         }
         doc.to_string()
@@ -1344,7 +1352,9 @@ fn user_to(u: &UserEntry) -> Section {
         put(&mut s, "bandwidth.limit_mbps", u.bandwidth.limit_mbps);
         put(&mut s, "bandwidth.burst_mbps", u.bandwidth.burst_mbps);
     }
-    for (k, v) in &u.metadata {
+    let mut metadata: Vec<_> = u.metadata.iter().collect();
+    metadata.sort_unstable_by_key(|(name, _)| *name);
+    for (k, v) in metadata {
         put_str(&mut s, &format!("metadata.{}", k), v);
     }
     for r in &u.routes {
@@ -1816,6 +1826,134 @@ obf.quic.enabled = true
             groups: cfg.auth.groups,
         };
         assert!(db.validate_network_fields().is_err());
+    }
+
+    #[test]
+    fn group_sections_have_stable_order_in_server_and_users_ini() {
+        let mut first = UsersDb::default();
+        first.groups.insert(
+            "zeta".into(),
+            GroupTemplate {
+                max_sessions: Some(2),
+                ..Default::default()
+            },
+        );
+        first.groups.insert(
+            "alpha".into(),
+            GroupTemplate {
+                max_sessions: Some(1),
+                ..Default::default()
+            },
+        );
+        let mut second = UsersDb::default();
+        second.groups.insert(
+            "alpha".into(),
+            GroupTemplate {
+                max_sessions: Some(1),
+                ..Default::default()
+            },
+        );
+        second.groups.insert(
+            "zeta".into(),
+            GroupTemplate {
+                max_sessions: Some(2),
+                ..Default::default()
+            },
+        );
+
+        let first_users_ini = first.to_ini_string();
+        assert_eq!(first_users_ini, second.to_ini_string());
+        assert!(
+            first_users_ini.find("[group:alpha]").unwrap()
+                < first_users_ini.find("[group:zeta]").unwrap()
+        );
+
+        let mut first_server = ServerConfig::default();
+        first_server.auth.groups = first.groups;
+        let mut second_server = ServerConfig::default();
+        second_server.auth.groups = second.groups;
+        let first_server_ini = first_server.to_ini_string();
+        assert_eq!(first_server_ini, second_server.to_ini_string());
+        assert!(
+            first_server_ini.find("[group:alpha]").unwrap()
+                < first_server_ini.find("[group:zeta]").unwrap()
+        );
+    }
+
+    #[test]
+    fn dynamic_profile_and_user_keys_have_stable_order() {
+        let mut first_profile = ProfileConfig::default();
+        let mut second_profile = ProfileConfig::default();
+        for (name, ipv4, ipv6) in [
+            ("zeta", "10.0.0.2", "fd00::2"),
+            ("alpha", "10.0.0.1", "fd00::1"),
+        ] {
+            first_profile
+                .pool
+                .static_reservations
+                .insert(name.into(), ipv4.into());
+            first_profile
+                .pool
+                .ipv6
+                .static_reservations
+                .insert(name.into(), ipv6.into());
+        }
+        for (name, ipv4, ipv6) in [
+            ("alpha", "10.0.0.1", "fd00::1"),
+            ("zeta", "10.0.0.2", "fd00::2"),
+        ] {
+            second_profile
+                .pool
+                .static_reservations
+                .insert(name.into(), ipv4.into());
+            second_profile
+                .pool
+                .ipv6
+                .static_reservations
+                .insert(name.into(), ipv6.into());
+        }
+        let first_server = ServerConfig {
+            profiles: vec![first_profile],
+            ..Default::default()
+        };
+        let second_server = ServerConfig {
+            profiles: vec![second_profile],
+            ..Default::default()
+        };
+        let ini = first_server.to_ini_string();
+        assert_eq!(ini, second_server.to_ini_string());
+        for prefix in ["pool.reservation.", "pool.ipv6.reservation."] {
+            assert!(
+                ini.find(&format!("{prefix}alpha")).unwrap()
+                    < ini.find(&format!("{prefix}zeta")).unwrap()
+            );
+        }
+
+        let mut first_user = UserEntry {
+            username: "alice".into(),
+            ..Default::default()
+        };
+        first_user.metadata.insert("zeta".into(), "2".into());
+        first_user.metadata.insert("alpha".into(), "1".into());
+        let mut second_user = UserEntry {
+            username: "alice".into(),
+            ..Default::default()
+        };
+        second_user.metadata.insert("alpha".into(), "1".into());
+        second_user.metadata.insert("zeta".into(), "2".into());
+        let first_users = UsersDb {
+            users: vec![first_user],
+            ..Default::default()
+        };
+        let second_users = UsersDb {
+            users: vec![second_user],
+            ..Default::default()
+        };
+        let users_ini = first_users.to_ini_string();
+        assert_eq!(users_ini, second_users.to_ini_string());
+        assert!(
+            users_ini.find("metadata.alpha").unwrap() < users_ini.find("metadata.zeta").unwrap()
+        );
     }
 
     #[test]

@@ -299,3 +299,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F156: panel Argon2 validation at admission and live reload](reports/AUDIT-Q25-SERVER-WEB-HASH-VALIDATION.md)
 - [Q25-F157: truthful panel live-reload result](reports/AUDIT-Q25-SERVER-WEB-RELOAD-RESULT.md)
 - [Q25-F158: saved versus active lockout policy](reports/AUDIT-Q25-SERVER-BLOCKED-LIVE.md)
+- [Q25-F159: stable ordering of dynamic INI fields](reports/AUDIT-Q25-SERVER-INI-ORDER.md)
