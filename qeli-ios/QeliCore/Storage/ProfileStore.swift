@@ -47,6 +47,7 @@ final class ProfileStore: @unchecked Sendable {
             throw ProfileStoreError.archiveTooLarge
         }
         var archive = try JSONDecoder.qeli.decode(ProfileArchive.self, from: plaintext)
+        guard !archive.profiles.isEmpty else { throw ProfileStoreError.tooManyProfiles }
         archive.normalize()
         try Self.validate(archive)
         return archive
@@ -54,6 +55,7 @@ final class ProfileStore: @unchecked Sendable {
 
     func save(_ input: ProfileArchive) throws {
         var archive = input
+        guard !archive.profiles.isEmpty else { throw ProfileStoreError.tooManyProfiles }
         archive.normalize()
         try Self.validate(archive)
         let plaintext = try JSONEncoder.qeli.encode(archive)
@@ -70,6 +72,7 @@ final class ProfileStore: @unchecked Sendable {
     /// Android, while retaining it lets two iOS restores preserve profile identity.
     func exportJSON(_ archive: ProfileArchive) throws -> Data {
         var archive = archive
+        guard !archive.profiles.isEmpty else { throw ProfileStoreError.tooManyProfiles }
         archive.normalize()
         try Self.validate(archive)
         let active = archive.profiles.firstIndex(where: { $0.id == archive.activeProfileID }) ?? 0
@@ -212,7 +215,7 @@ enum ProfileStoreError: LocalizedError {
         case .encryptionFailed: return "Could not encrypt the profile store."
         case .notQeliBackup: return "The file is not a Qeli profile backup."
         case .archiveTooLarge: return "The profile file exceeds the supported size limit."
-        case .tooManyProfiles: return "A profile archive may contain at most \(ProfileStore.maximumProfiles) profiles."
+        case .tooManyProfiles: return "A profile archive must contain 1 to \(ProfileStore.maximumProfiles) profiles."
         case .profileTooLarge(let index): return "Profile \(index) exceeds the config size limit."
         case .invalidProfileName(let index): return "Profile \(index) has an empty or overlong name."
         case .invalidProfile(let index, let message): return "Profile \(index) is invalid: \(message)"

@@ -306,6 +306,18 @@ final class ConfigHardeningTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: key), malformed)
     }
 
+    func testEmptyArchiveIsRejectedBeforeNormalizationOrExport() throws {
+        let empty = ProfileArchive(activeProfileID: nil, profiles: [])
+        let suite = "qeli.store.empty." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ProfileStore(suiteName: suite)
+
+        XCTAssertThrowsError(try store.save(empty))
+        XCTAssertNil(defaults.object(forKey: "profiles.encrypted.v1"))
+        XCTAssertThrowsError(try store.exportJSON(empty))
+    }
+
     func testProfileArchiveLimitsAreEnforcedBeforePersistence() throws {
         let profile = Profile(name: "profile", configText: ini())
         let tooMany = ProfileArchive(
