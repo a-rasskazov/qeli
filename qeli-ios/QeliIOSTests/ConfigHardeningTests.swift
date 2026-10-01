@@ -324,6 +324,42 @@ final class ConfigHardeningTests: XCTestCase {
         XCTAssertNoThrow(try ProfileStore.validate(archive))
     }
 
+    func testReaderDoesNotInitializeMissingStoreOrMasterKey() throws {
+        let suite = "qeli.store.reader." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let keychain = KeychainStore(service: suite, accessGroup: nil)
+        let store = ProfileStore(suiteName: suite, keychain: keychain)
+
+        XCTAssertThrowsError(try store.load()) { error in
+            guard let storeError = error as? ProfileStoreError,
+                  case .missingStore = storeError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertNil(defaults.object(forKey: "profiles.encrypted.v1"))
+        XCTAssertNil(try keychain.read(account: "profile-master-key-v1"))
+    }
+
+    func testReaderDoesNotCreateReplacementKeyForExistingCiphertext() throws {
+        let suite = "qeli.store.keyless." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let encoded = Data(repeating: 0, count: 32).base64EncodedString()
+        defaults.set(encoded, forKey: "profiles.encrypted.v1")
+        let keychain = KeychainStore(service: suite, accessGroup: nil)
+        let store = ProfileStore(suiteName: suite, keychain: keychain)
+
+        XCTAssertThrowsError(try store.load()) { error in
+            guard let storeError = error as? ProfileStoreError,
+                  case .missingMasterKey = storeError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertEqual(defaults.string(forKey: "profiles.encrypted.v1"), encoded)
+        XCTAssertNil(try keychain.read(account: "profile-master-key-v1"))
+    }
+
     func testNonStringEncryptedStoreIsNotReplacedWithInitialArchive() throws {
         let suite = "qeli.store.corrupt." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

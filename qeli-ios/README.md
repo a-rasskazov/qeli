@@ -214,3 +214,5 @@ capabilities that iOS doesn't expose.
 Configuration parsing, validation, defaults and portable policies use the same Rust library.
 Rebuild the XCFramework with `sh build_native.sh` after updating source; no Swift parser fallback exists.
 See [shared configuration](../docs/eng/plans/CLIENT-CONFIG-CORE.md) for migration and pending release gates.
+
+Profile archive publication belongs to the single app AppModel. PacketTunnel reads without initializing missing profiles or creating a missing master key; widgets do not access profile secrets. A missing archive/key fails until the app creates a profile or restores a backup. Arbitrary external writers are unsupported. Reconnect after editing an active INI; see [Q25-F210 and platform exclusions](../docs/eng/plans/AUDIT-DEBT.md).

@@ -1,6 +1,6 @@
 # Shared client configuration and policies
 
-<!-- normative-sync: client-config-core-v1 -->
+<!-- normative-sync: client-config-core-v2 -->
 
 Status on **2026-09-22**: source migration to Rust implemented; Apple verification and
 rebuilding committed release libraries remain mandatory before release.
@@ -173,3 +173,7 @@ These results verify the source migration and host C ABI/JNI integration;
 they do not complete platform certification or package delivery.
 
 D08/D11/D12: [Android JNI and emulator runtime](../reports/AUDIT-Q34-ANDROID-RUNTIME.md): fixed cargo-ndk cwd/API flag, removed the obsolete JSON-config harness; 154 JVM + 6 instrumentation tests PASS. The fresh dev x86_64 APK is SHA-verified. Release A/B, the full config/runtime contract and other platforms remain open.
+
+Reconciliation on 2 October: Q25-F210 closes available D08 — store ownership, 511 .NET/167 JVM/12 Android instrumentation; iOS read-only fix reviewed statically, Apple runtime SKIPPED by user decision. Earlier limitations above are historical; final native/certification refresh remains D15.
+
+[Q25-F210](AUDIT-DEBT.md)

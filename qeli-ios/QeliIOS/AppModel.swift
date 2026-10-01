@@ -75,7 +75,7 @@ final class AppModel: ObservableObject {
             self.alert = Self.invalidSigningAlert
         } else {
             do {
-                self.archive = try profileStore.load()
+                self.archive = try profileStore.load(initializeIfMissing: true)
             } catch {
                 self.archive = .initial
                 self.profileStoreLoadRejected = true

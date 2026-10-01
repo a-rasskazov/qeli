@@ -180,3 +180,5 @@
 "Heartbeat" = "Heartbeat";
 "Traffic shaping" = "Шейпинг трафика";
 "%1$@ and %2$lld more" = "%1$@ и ещё %2$lld";
+"No saved profiles are available. Open Qeli to create a profile before connecting." = "Нет сохранённых профилей. Откройте Qeli и создайте профиль перед подключением.";
+"The profile encryption key is missing. Restore a backup to recover your profiles." = "Ключ шифрования профилей отсутствует. Восстановите профили из резервной копии.";

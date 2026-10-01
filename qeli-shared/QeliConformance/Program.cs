@@ -18,6 +18,7 @@ public static class Program
         return verb switch
         {
             "selftest" => SelfTest(),
+            "profile-store-race-child" => ProfileStoreProcessConformance.RunChild(rest),
             "packetbench" => PacketCodecBenchmark.Run("csharp-conformance", rest),
             _ => Usage(),
         };
@@ -106,6 +107,7 @@ public static class Program
         LinkConformance.Run(Check);
         ConfigBoundaryConformance.Run(Check);
         ProfileStoreConformance.Run(Check);
+        ProfileStoreProcessConformance.Run(Check);
         AppSettingsStoreConformance.Run(Check);
         PrpNonceConformance.Run(Check);
         WireConformance.Run(Check);

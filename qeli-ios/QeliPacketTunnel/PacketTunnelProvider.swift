@@ -40,7 +40,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 guard PacketTunnelSigningDiagnostics.hasRequiredEntitlements() else {
                     throw PacketTunnelProviderError.invalidSigning
                 }
-                let archive = try ProfileStore().load()
+                // The app owns profile publication; the extension is a read-only consumer.
+                let archive = try ProfileStore().load(initializeIfMissing: false)
                 let optionID = (options?["profileID"] as? NSString)
                     .map { $0 as String }
                     .flatMap(UUID.init(uuidString:))

@@ -3562,3 +3562,11 @@ Gateway/exit-node setup, refresh and cleanup each share 15 seconds across router
 Client route setup/prepare/COMMIT/cleanup each share 15 seconds across the operation mutex and commands of both families. COMMIT rollback receives a separate shared 15 seconds; unknown changes remain reserved for verified retry. Inside NetworkPlan/cleanup this limit is capped by the remaining shared command budget. [Contract](../reports/AUDIT-Q25-ROUTE-BUDGET.md).
 
 Linux NetworkPlan commands share 15 seconds; rollback/cleanup receives separate shared 15 seconds, including subsequent stages and automatic Drop. [Contract and limits](OPERATIONS.md#shared-networkplan-and-cleanup-command-deadline).
+
+### Client profile writes and active sessions
+
+Profile configuration is INI. Edit/import it through the app; the internal encrypted store is not a configuration editor. Desktop instances coordinate through the shared sidecar lock and revision; Android windows check an encrypted version within the shared process. On iOS the app writes profiles and the tunnel extension only reads. A missing archive or encryption key refuses connection/read without the extension creating a profile or key. Recover a missing key by restoring a backup through the app.
+
+Saving INI does not replace the configuration of an existing session. Reconnect explicitly when the app requests it. Direct external-process store writes bypassing app coordination are unsupported; finish every writer before maintenance. A revision detects conflicts but cannot make arbitrary writes ignoring the lock atomic.
+
+[D08 checks and boundaries](../plans/AUDIT-DEBT.md).

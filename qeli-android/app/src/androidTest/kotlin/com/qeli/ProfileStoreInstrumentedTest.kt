@@ -2,6 +2,7 @@ package com.qeli
 
 import android.content.Context
 import android.util.Base64
+import com.qeli.model.VpnConfig
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.security.KeyStore
@@ -50,6 +51,26 @@ class ProfileStoreInstrumentedTest {
             ProfileStore.SecureStore(context, prefsName, keyAlias)
                 .getString("profile", null),
         )
+    }
+
+    @Test
+    fun encryptedIniEditRoundTripsThroughPackagedCore() {
+        val ini = "[qeli]\nserver = vpn.example:443\nuser = selftest\npass = fixture-secret\nmtu_probe = off\n"
+        val first = ProfileStore.SecureStore(context, prefsName, keyAlias)
+        val canonical = VpnConfig.fromIni(ini).toIni()
+        val revision = first.putStringIfVersion("profile", first.version("profile"), canonical)
+        val reader = ProfileStore.SecureStore(context, prefsName, keyAlias)
+        assertEquals(canonical, VpnConfig.fromIni(reader.getString("profile", null)!!).toIni())
+        val edited = VpnConfig.fromIni(canonical).copy(port = 8443).toIni()
+        first.putStringIfVersion("profile", revision, edited)
+        assertEquals(8443, VpnConfig.fromIni(reader.getString("profile", null)!!).port)
+        assertThrows(ProfileStore.SecureStore.StaleVersionException::class.java) {
+            reader.putStringIfVersion("profile", revision, canonical)
+        }
+        assertEquals(edited, reader.getString("profile", null))
+        val encoded = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            .getString("profile", null)!!
+        assertFalse(encoded.contains("fixture-secret"))
     }
 
     @Test

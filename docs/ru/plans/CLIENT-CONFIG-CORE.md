@@ -1,6 +1,6 @@
 # Общая конфигурация и политики клиентов
 
-<!-- normative-sync: client-config-core-v1 -->
+<!-- normative-sync: client-config-core-v2 -->
 
 Статус на **22 сентября 2026**: перенос исходников в Rust выполнен; проверка Apple и
 пересборка закоммиченных релизных библиотек ещё обязательны перед выпуском.
@@ -181,3 +181,7 @@ Linux unit-тест этой границы требует исполнения;
 они не закрывают платформенную сертификацию и выпуск пакетов.
 
 D08/D11/D12: [Android JNI и emulator runtime](../reports/AUDIT-Q34-ANDROID-RUNTIME.md): исправлены cwd/API flag cargo-ndk, удалён устаревший JSON-config harness; 154 JVM + 6 instrumentation PASS. Свежий dev x86_64 APK проверен по SHA. Release A/B, полный конфигурационный/runtime контракт и остальные платформы открыты.
+
+Сверка 2 октября: Q25-F210 закрывает доступный D08 — владельцы store, 511 .NET/167 JVM/12 Android instrumentation; iOS read-only fix проверен статически, Apple runtime SKIPPED по решению пользователя. Старые ограничения выше исторические; окончательное обновление native/certification остаётся D15.
+
+[Q25-F210](AUDIT-DEBT.md)

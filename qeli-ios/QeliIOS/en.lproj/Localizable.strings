@@ -180,3 +180,5 @@
 "Heartbeat" = "Heartbeat";
 "Traffic shaping" = "Traffic shaping";
 "%1$@ and %2$lld more" = "%1$@ and %2$lld more";
+"No saved profiles are available. Open Qeli to create a profile before connecting." = "No saved profiles are available. Open Qeli to create a profile before connecting.";
+"The profile encryption key is missing. Restore a backup to recover your profiles." = "The profile encryption key is missing. Restore a backup to recover your profiles.";

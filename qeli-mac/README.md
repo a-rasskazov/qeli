@@ -230,3 +230,5 @@ INI/URI, проверки, defaults и переносимые политики �
 `python scripts/build_client_core.py --debug` из корня и задайте напечатанный
 `QeliNativeCorePath` перед `dotnet build`. Релизные библиотеки требуют штатных A/B-сборок.
 Подробности: [единая конфигурация](../docs/ru/plans/CLIENT-CONFIG-CORE.md).
+
+Сверка store 2 октября: [Q25-F210](../docs/ru/plans/AUDIT-DEBT.md). Прямая запись внешнего процесса в encrypted store в обход координации не поддерживается; после правки активного INI требуется явное переподключение.

@@ -130,3 +130,5 @@ app-owned хранилища не меняются. Release A/B, arm64 и ост
 проверяются отдельно от этой тестовой сборки.
 
 Результаты прогона 24 сентября: [154 JVM + 6 Android instrumentation tests](../docs/ru/reports/AUDIT-Q34-ANDROID-RUNTIME.md).
+
+Сверка store 2 октября: [Q25-F210](../docs/ru/plans/AUDIT-DEBT.md). Прямая запись внешнего процесса в encrypted store в обход координации не поддерживается; после правки активного INI требуется явное переподключение.

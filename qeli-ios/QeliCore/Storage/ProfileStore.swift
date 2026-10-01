@@ -22,8 +22,11 @@ final class ProfileStore: @unchecked Sendable {
         self.keychain = keychain
     }
 
-    func load() throws -> ProfileArchive {
+    /// Only the app may initialize a missing archive. Provider reads must never publish
+    /// a template over the app's concurrent first save. Reading also never creates a key.
+    func load(initializeIfMissing: Bool = false) throws -> ProfileArchive {
         guard let stored = defaults.object(forKey: blobKey) else {
+            guard initializeIfMissing else { throw ProfileStoreError.missingStore }
             let archive = ProfileArchive.initial
             try save(archive)
             return archive
@@ -41,7 +44,10 @@ final class ProfileStore: @unchecked Sendable {
         guard combined.count <= Self.maximumArchiveBytes + 64 else {
             throw ProfileStoreError.corruptStore
         }
-        let key = try keychain.loadOrCreateSymmetricKey(account: masterKeyAccount)
+        guard let keyData = try keychain.read(account: masterKeyAccount) else {
+            throw ProfileStoreError.missingMasterKey
+        }
+        let key = SymmetricKey(data: keyData)
         let sealed = try AES.GCM.SealedBox(combined: combined)
         let plaintext = try AES.GCM.open(sealed, using: key)
         guard plaintext.count <= Self.maximumArchiveBytes else {
@@ -218,6 +224,8 @@ final class ProfileStore: @unchecked Sendable {
 
 enum ProfileStoreError: LocalizedError {
     case corruptStore
+    case missingStore
+    case missingMasterKey
     case unavailableAfterLoadFailure
     case staleProfile
     case encryptionFailed
@@ -233,6 +241,8 @@ enum ProfileStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .corruptStore: return "The encrypted profile store is corrupt."
+        case .missingStore: return String(localized: "No saved profiles are available. Open Qeli to create a profile before connecting.")
+        case .missingMasterKey: return String(localized: "The profile encryption key is missing. Restore a backup to recover your profiles.")
         case .unavailableAfterLoadFailure: return "Saved profiles could not be read. Restart the app or restore a backup before making changes."
         case .staleProfile: return String(localized: "Profile changed while the editor was open. Reopen it before saving.")
         case .encryptionFailed: return "Could not encrypt the profile store."
