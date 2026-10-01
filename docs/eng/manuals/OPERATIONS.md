@@ -689,3 +689,20 @@ Preparation spends the same 60-second budget as archive creation/verification; l
 results neither start tar nor publish a backup. This timer cannot safely interrupt a
 stuck syscall. INI format, hook authorization, archive contents and restore policy are
 unchanged. [Validation and remaining audit work](../plans/AUDIT-DEBT.md).
+
+
+<!-- normative-sync: panel-client-stop-v1 -->
+
+## Stopping panel client tunnels
+
+When the supervisor shuts down, new Connect/autostart requests are rejected.
+Running clients receive SIGTERM concurrently and share one five-second grace;
+repeated waits do not extend it. A client that exceeds the grace receives SIGKILL
+and is reaped before its process handle is released. Forced kill or unsuccessful
+exit produces a supervisor shutdown error: DNS, route and firewall restoration
+has not been confirmed. The next start uses the ordinary recovery mechanisms
+for Qeli-owned resources.
+
+Cancelling a Disconnect HTTP request does not lose the process or admit its replacement
+before cleanup ends. Status checks for other clients remain available. This grace
+is not a total server shutdown deadline and cannot interrupt a stuck kernel syscall.

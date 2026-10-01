@@ -1,6 +1,6 @@
 # Техдолг начатых аудитов
 
-<!-- normative-sync: audit-debt-v52 -->
+<!-- normative-sync: audit-debt-v53 -->
 
 Дата сверки: 1 октября 2026. По запросу пользователя новые разделы полного аудита
 приостановлены до закрытия этого реестра. Это **15 групп обязательств**, а не 15 найденных
@@ -643,3 +643,38 @@ D05/D09: [Q25-F111 — последовательный writer диагност�
 D05/D09: [Q25-F112/F113 — файлы идентичности](../reports/AUDIT-Q25-IDENTITY-FILES.md): ID загружается один раз в joined worker, временный ID стабилен при reconnect; TOFU ограничен 1 MiB, повреждение/конфликт пинов запрещает новое доверие, запись атомарна. 15 новых тестов; 8 baseline + 8 fixed identity cases, 6 teardown cases и 2 recovery PASS. 1575 host + 71 config; 2148 Linux + 48 privileged + 8 lifecycle PASS. D05 открыт: синхронный TOFU, другие startup I/O/Drop и общий deadline. **Техдолг: 4/15 DONE (26,7%), 9 IN_PROGRESS, 2 TODO.**
 
 D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): файлы доверия обрабатываются в одном присоединяемом потоке; отмена и timeout не оставляют запись без владельца, поздний отказ сохраняется до terminal result. 9 portable regressions; 16 worker cases + 16 файловых + 6 teardown и 2 recovery PASS. 1584 host + 71 config; 2157 Linux + 48 privileged + 8 lifecycle PASS. Общий deadline и другие startup I/O/Drop остаются D05. **Техдолг: 4/15 DONE (26,7%), 9 IN_PROGRESS, 2 TODO.**
+
+
+### Q25-F205 — остановка клиентов панели, 1 октября 2026
+
+Закрыт конкретный остаток D05: остановка outbound-клиентов больше не суммирует
+по пять секунд на профиль. Все принадлежащие менеджеру процессы получают SIGTERM
+параллельно и делят исходный пятисекундный grace, включая ожидание реестра.
+С первого запроса shutdown закрывается Connect/autostart; повторный или отменённый
+waiter не обновляет deadline. Принудительный kill, ошибочный exit и отказ signal/wait
+сохраняются в terminal result supervisor вместе с ошибкой основного worker.
+
+Disconnect сохраняет исходный Child до reaping даже при отмене HTTP-ожидания.
+Профильный lock запрещает замену ещё очищающегося процесса; проверки статуса других
+профилей не ждут его завершения. Shutdown не оставляет detached task-владельцев,
+наблюдённые ошибки переживают отмену waiter. Пять новых процессных регрессий и
+существующий autostart: **6/6**; связанные supervisor **19/19**, shutdown **10/10**,
+profile tasks **19/19**, всего **54 PASS**. Rustfmt PASS. Clippy Rust 1.97 прошёл
+с `-D warnings -A clippy::useless_conversion`; без исключения он отказал на двух
+неизменённых переносимых UDP-конверсиях. Логи обоих исходов сохранены.
+
+[Машинное evidence](../../../release/certification/evidence/client-shutdown-20261001.json)
+содержит 287 SHA проверенных Rust-файлов, SHA test-бинарника, выводы и хеши raw.
+Рабочий PID 845, listener 443 и release SHA `a526c03b` лабы сохранились.
+Проверка использует настоящие дочерние процессы без сетевых мутаций; новый release
+VPN/E2E и benchmark не запускались. Исходная последовательность подтверждена
+сверкой production-кода; старый release-бинарник для этой находки не запускался.
+
+D05 остаётся IN_PROGRESS: async join перед освобождением ресурсов при forced Drop
+и общий wall-clock срок всего worker/supervisor shutdown. Пять секунд относятся
+только к grace outbound-клиентов; kernel reaping/fs I/O не обещают прерываемость.
+D11/D14 evidence и **9/15** выше относятся к проверенному кандидату `62c84fc4`.
+После этой серверной правки native source digest и release tree изменились;
+старый provenance/certificate не сертифицирует новый HEAD. Обновление сборочных
+свидетельств и certification входит в финальную сборку пакета D15, а не в
+повторный прогон неизменённых transport/firewall матриц после каждой правки.

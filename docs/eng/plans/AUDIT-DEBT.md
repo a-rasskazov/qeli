@@ -1,6 +1,6 @@
 # Technical debt from started audits
 
-<!-- normative-sync: audit-debt-v52 -->
+<!-- normative-sync: audit-debt-v53 -->
 
 Reconciled on 1 October 2026. At the user’s request, new full-audit sections
 are paused until this register is closed. These are **15 groups of obligations**,
@@ -508,3 +508,38 @@ D05/D09: [Q25-F111 — ordered diagnostics writer](../reports/AUDIT-Q25-STATUS-W
 D05/D09: [Q25-F112/F113 — identity files](../reports/AUDIT-Q25-IDENTITY-FILES.md): ID loads once on a joined worker and temporary identity survives reconnect; TOFU is capped at 1 MiB, corrupt/conflicting pins reject new trust, writes are atomic. 15 new tests; 8 baseline + 8 fixed identity cases, 6 teardown cases and 2 recoveries PASS. 1575 host + 71 config; 2148 Linux + 48 privileged + 8 lifecycle PASS. D05 remains open: synchronous TOFU, other startup I/O/Drop and overall deadlines. **Debt: 4/15 DONE (26.7%), 9 IN_PROGRESS, 2 TODO.**
 
 D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): one joined thread owns trust-file I/O; stop and timeout retain admitted writes and late errors until terminal result. 9 portable regressions; 16 worker cases + 16 file cases + 6 teardown and 2 recoveries PASS. 1584 host + 71 config; 2157 Linux + 48 privileged + 8 lifecycle PASS. Overall deadlines and other startup I/O/Drop remain D05. **Debt: 4/15 DONE (26.7%), 9 IN_PROGRESS, 2 TODO.**
+
+
+### Q25-F205 — panel client shutdown, 1 October 2026
+
+A concrete D05 remainder is resolved: outbound-client shutdown no longer adds
+five seconds per profile. Every manager-owned process receives SIGTERM concurrently
+and shares the original five-second grace, including registry admission.
+The first shutdown request closes Connect/autostart admission; repeated or cancelled
+waiters do not reset the deadline. Forced kill, unsuccessful exit and signal/wait errors
+reach the supervisor terminal result together with the main worker failure.
+
+Disconnect retains the original Child until reaping even when its HTTP waiter is
+cancelled. A per-profile lock prevents replacement while that process is still cleaning
+up; status checks for other profiles do not wait for it. Shutdown creates no detached
+handle owners, and observed failures survive waiter cancellation. Five new process
+regressions plus existing autostart: **6/6**; related supervisor **19/19**, shutdown
+**10/10**, profile tasks **19/19**, total **54 PASS**. Rustfmt PASS. Rust 1.97 Clippy
+passed with `-D warnings -A clippy::useless_conversion`; without that exception it
+failed on two unchanged portable UDP conversions. Both outcomes are retained.
+
+[Machine evidence](../../../release/certification/evidence/client-shutdown-20261001.json)
+contains hashes of all 287 tested Rust files, the test binary SHA, outputs and raw hashes.
+The lab's working PID 845, listener 443 and release SHA `a526c03b` were preserved.
+Tests use real child processes without network mutations; no new release VPN/E2E or
+benchmark was run. The original sequence was established by production-source review;
+the old release binary was not executed for this finding.
+
+D05 remains IN_PROGRESS: async joining before resource destruction during forced Drop
+and the total worker/supervisor shutdown wall-clock bound. Five seconds bounds only
+outbound-client grace; kernel reaping/fs I/O is not promised to be interruptible.
+D11/D14 evidence and **9/15** above describe tested candidate `62c84fc4`.
+This server change modifies the native source digest and release tree; old provenance
+and certification do not certify the new HEAD. Build evidence and certification refresh
+belong to final D15 package assembly, rather than rerunning unchanged transport/firewall
+matrices after every local fix.

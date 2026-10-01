@@ -4391,14 +4391,20 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
 
     // Tear down any panel-managed outbound client tunnels (SIGTERM each so it
     // restores DNS/routes before exit).
-    state.client_manager.shutdown_all().await;
+    let mut shutdown_failures = crate::server_shutdown::Failures::default();
+    shutdown_failures.record("worker", result.map_err(Into::into));
+    shutdown_failures.record(
+        "outbound clients",
+        state.client_manager.shutdown_all().await,
+    );
+    let result = shutdown_failures.result();
 
     notifications.shutdown().await;
     match &result {
         Ok(()) => log::info!("Supervisor shutdown complete"),
         Err(error) => log::error!("Supervisor shutdown failed: {error}"),
     }
-    result.map_err(Into::into)
+    result
 }
 
 /// Signal only a still-owned, unreaped child. `try_wait` makes an already exited
