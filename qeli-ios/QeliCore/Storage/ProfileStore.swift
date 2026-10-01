@@ -4,7 +4,7 @@ import Foundation
 final class ProfileStore: @unchecked Sendable {
     static let maximumArchiveBytes = 8 * 1024 * 1024
     static let maximumBackupFileBytes = 12 * 1024 * 1024
-    static let maximumConfigBytes = 1024 * 1024
+    static let maximumConfigBytes = 256 * 1024 // shared editor/native core limit
     static let maximumProfiles = 256
     static let maximumProfileNameCharacters = 256
 

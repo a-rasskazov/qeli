@@ -27,7 +27,7 @@ every other client, not because a build of it was released.
 
 - SwiftUI application shell with connection, profile and live-log tabs.
 - Encrypted profile storage shared with the tunnel extension (App Group + Keychain).
-- INI and `qeli://` profile import/export.
+- INI and `qeli://` profile import/export (256 KiB per configuration, matching the native core).
 - QR scanning/generation, profile editing, duplication, ordering and sharing.
 - Android-compatible encrypted backups (`QELI-ENC-1`, PBKDF2-SHA256, AES-256-GCM).
 - Opt-in release checks that run only with a fail-closed full-tunnel route.

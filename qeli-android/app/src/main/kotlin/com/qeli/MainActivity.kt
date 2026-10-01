@@ -174,7 +174,7 @@ class MainActivity : AppCompatActivity() {
         private const val MAX_IMPORTED_FILE_BYTES = 8 * 1024 * 1024
         // QELI-ENC-1 base64-expands an otherwise valid 8 MiB plaintext archive.
         private const val MAX_IMPORTED_BACKUP_BYTES = 12 * 1024 * 1024
-        private const val MAX_IMPORTED_CONFIG_BYTES = 1024 * 1024
+        private const val MAX_IMPORTED_CONFIG_BYTES = 256 * 1024 // shared editor/native core limit
         private const val MAX_IMPORTED_PROFILES = 256
         private const val MAX_IMPORTED_PROFILE_NAME_CHARS = 256
         private val REACHABILITY_PROBE_IDS = AtomicLong(0L)
@@ -925,9 +925,12 @@ ipv6 = auto
                         val count = input.read(buffer)
                         if (count < 0) break
                         if (output.size() + count > maxBytes) {
-                            throw IllegalArgumentException(
-                                "file exceeds ${maxBytes / (1024 * 1024)} MiB import limit"
-                            )
+                            val limit = if (maxBytes < 1024 * 1024) {
+                                "${maxBytes / 1024} KiB"
+                            } else {
+                                "${maxBytes / (1024 * 1024)} MiB"
+                            }
+                            throw IllegalArgumentException("file exceeds $limit import limit")
                         }
                         output.write(buffer, 0, count)
                     }
