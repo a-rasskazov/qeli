@@ -1318,11 +1318,35 @@ fn linux_path_command_outcome(execution: &anyhow::Result<()>) -> PathCommandOutc
 }
 
 #[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
+static NEXT_ROAM_RPF_LEASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
+struct CandidateRpfLease {
+    scope: String,
+}
+
+#[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
+impl Drop for CandidateRpfLease {
+    fn drop(&mut self) {
+        if let Err(error) = crate::sysctl::release_scope(&self.scope) {
+            log::error!("could not restore roaming candidate rp_filter: {error}");
+        }
+    }
+}
+
+#[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
+struct PreparedLinuxPath {
+    routes: route::LinuxPreparedPathRoutes,
+    // Held only while the old /32 carrier bypass can make the new path asymmetric.
+    _rpf: Option<CandidateRpfLease>,
+}
+
+#[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
 pub(crate) struct LinuxPathController {
     core: Arc<std::sync::Mutex<ClientCore>>,
     shared: CorePathController,
     tunnel_interface: String,
-    prepared_routes: std::sync::Mutex<Option<route::LinuxPreparedPathRoutes>>,
+    prepared_routes: std::sync::Mutex<Option<PreparedLinuxPath>>,
     route_owner: std::sync::Mutex<Option<route::RouteScope>>,
     same_network_nat_failure_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>,
     dispatch_lock: std::sync::Mutex<()>,
@@ -1375,12 +1399,53 @@ impl LinuxPathController {
                     "client::linux_prepared_routes",
                 );
                 if current.as_ref().is_some_and(|active| {
-                    active.generation != command.generation
-                        || active.candidate_id != command.candidate_id
+                    active.routes.generation != command.generation
+                        || active.routes.candidate_id != command.candidate_id
                 }) {
                     anyhow::bail!("Linux path executor already owns another prepared candidate");
                 }
-                *current = Some(prepared);
+                // The old carrier's /32 remains pinned until COMMIT. Strict IPv4
+                // reverse-path filtering drops replies on a different candidate interface
+                // before the candidate can authenticate. Loose mode still checks source
+                // reachability; this lease restores the value on COMMIT or ABORT.
+                let rpf = if let Some(route) =
+                    prepared.routes.iter().find(|route| route.remote.is_ipv4())
+                {
+                    let path = format!("/proc/sys/net/ipv4/conf/{}/rp_filter", route.interface);
+                    let all = std::fs::read_to_string("/proc/sys/net/ipv4/conf/all/rp_filter")
+                        .map(|value| value.trim().to_string());
+                    let interface =
+                        std::fs::read_to_string(&path).map(|value| value.trim().to_string());
+                    // Avoid a conflicting lease when the gateway already disabled filtering.
+                    let already_compatible = matches!(all.as_deref(), Ok("2"))
+                        || matches!((all.as_deref(), interface.as_deref()), (Ok("0"), Ok("0")));
+                    if already_compatible {
+                        None
+                    } else {
+                        let id = NEXT_ROAM_RPF_LEASE
+                            .fetch_update(
+                                std::sync::atomic::Ordering::Relaxed,
+                                std::sync::atomic::Ordering::Relaxed,
+                                |id| id.checked_add(1),
+                            )
+                            .map_err(|_| {
+                                anyhow::anyhow!("roaming rp_filter lease counter exhausted")
+                            })?;
+                        let scope = format!("roam-rpf-{id:016x}");
+                        crate::sysctl::acquire_checked(&path, "2", &scope)
+                            .map_err(|error| anyhow::anyhow!(
+                                "cannot relax reverse-path filtering for roaming candidate {}: {error}",
+                                route.interface
+                            ))?;
+                        Some(CandidateRpfLease { scope })
+                    }
+                } else {
+                    None
+                };
+                *current = Some(PreparedLinuxPath {
+                    routes: prepared,
+                    _rpf: rpf,
+                });
                 Ok(())
             }
             PathCommandAction::BindSocket => {
@@ -1392,8 +1457,8 @@ impl LinuxPathController {
                     let prepared = current.as_ref().ok_or_else(|| {
                         anyhow::anyhow!("BIND_SOCKET has no prepared Linux route projection")
                     })?;
-                    if prepared.generation != command.generation
-                        || prepared.candidate_id != command.candidate_id
+                    if prepared.routes.generation != command.generation
+                        || prepared.routes.candidate_id != command.candidate_id
                     {
                         anyhow::bail!("BIND_SOCKET does not match the prepared Linux candidate");
                     }
@@ -1416,8 +1481,8 @@ impl LinuxPathController {
                 let prepared = current.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("COMMIT_PATH has no prepared Linux route projection")
                 })?;
-                if prepared.generation != command.generation
-                    || prepared.candidate_id != command.candidate_id
+                if prepared.routes.generation != command.generation
+                    || prepared.routes.candidate_id != command.candidate_id
                 {
                     anyhow::bail!("COMMIT_PATH does not match the prepared Linux candidate");
                 }
@@ -1435,7 +1500,7 @@ impl LinuxPathController {
                 // the authenticated carrier route; those interfaces may differ from the
                 // carrier and from each other. Failure leaves the previous route active and
                 // makes the core enqueue ABORT/reconnect.
-                prepared.commit_with(&previous_carriers, || {
+                prepared.routes.commit_with(&previous_carriers, || {
                     gateway::refresh_exit_paths_if_active(&self.tunnel_interface)
                 })?;
                 mark_carrier_candidates_pinned(&[address]);
@@ -1449,8 +1514,8 @@ impl LinuxPathController {
                     "client::linux_prepared_routes",
                 );
                 if current.as_ref().is_some_and(|prepared| {
-                    prepared.generation != command.generation
-                        || prepared.candidate_id != command.candidate_id
+                    prepared.routes.generation != command.generation
+                        || prepared.routes.candidate_id != command.candidate_id
                 }) {
                     anyhow::bail!("ABORT_PATH does not match the prepared Linux candidate");
                 }

@@ -278,8 +278,19 @@ ip netns exec "$SRV_NS" ip route add default via 10.40.3.1 dev qrm-s
 
 check "path A reaches the server" \
   "ip netns exec $CLI_NS ping -I 10.40.1.2 -c1 -W2 10.40.3.2"
-check "path B reaches the server" \
-  "ip netns exec $CLI_NS ping -I 10.40.2.2 -c1 -W2 10.40.3.2"
+# The initial /32 bypass and strict rp_filter can reject a B reply while A is the
+# physical default. Prove the B link works with a temporary loose filter, then put
+# the original value back so Qeli itself must manage the candidate during handover.
+ORIGINAL_RPF_B=$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qrm-b.rp_filter)
+ip netns exec "$CLI_NS" sysctl -qw net.ipv4.conf.qrm-b.rp_filter=2
+check "path B reaches the server with a candidate-compatible reverse-path filter" \
+  "ip netns exec $CLI_NS ping -I qrm-b -c1 -W2 10.40.3.2"
+ip netns exec "$CLI_NS" sysctl -qw "net.ipv4.conf.qrm-b.rp_filter=$ORIGINAL_RPF_B"
+if [ "$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qrm-b.rp_filter)" = "$ORIGINAL_RPF_B" ]; then
+  ok "path B reverse-path filter was restored before Qeli starts"
+else
+  bad "path B reverse-path filter was restored before Qeli starts"
+fi
 
 if [ "$REALITY_TARGET" = true ]; then
   if ! openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -526,6 +537,27 @@ PING_RX=$(awk -F, '/packets transmitted/ { value=$2; gsub(/[^0-9]/, "", value); 
   "$WORK/ping.log" | tail -n1)
 check "continuous probe retained at least 140 of 150 packets" \
   "test -n '$PING_RX' && test '$PING_RX' -ge 140"
+fi
+
+if [ "$CASE" = success ]; then
+  RPF_B=$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qrm-b.rp_filter)
+  if [ "$RPF_B" = "$ORIGINAL_RPF_B" ] \
+      && ! grep -q 'roam-rpf-' "$STATE_DIRECTORY/sysctls.state" 2>/dev/null; then
+    ok "COMMIT restored the candidate reverse-path filter and released its lease"
+  else
+    bad "COMMIT restored the candidate reverse-path filter and released its lease"
+  fi
+  kill -TERM "$CLIENT_JOB_PID" 2>/dev/null || true
+  for attempt in $(seq 1 100); do
+    RPF_B=$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qrm-b.rp_filter)
+    if [ "$RPF_B" = "$ORIGINAL_RPF_B" ]; then break; fi
+    sleep 0.2
+  done
+  if [ "$RPF_B" = "$ORIGINAL_RPF_B" ]; then
+    ok "client shutdown restored the candidate interface reverse-path filter"
+  else
+    bad "client shutdown restored the candidate interface reverse-path filter"
+  fi
 fi
 
 echo

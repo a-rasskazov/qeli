@@ -1381,6 +1381,13 @@ platform contract. A Qeli-managed interface's routes belong to a particular conn
 late commits after cleanup are rejected.
 [Owner diagnostics](TROUBLESHOOTING.md#641-linux-route-owner-stopped-expired-or-still-reserved).
 
+During IPv4 make-before-break, the old `/32` server route stays in place until COMMIT.
+Strict Linux `rp_filter` can otherwise discard replies arriving on the new interface.
+Qeli temporarily sets `rp_filter=2` (loose) on the candidate interface alone through
+its managed sysctl journal and restores the original value on COMMIT or ABORT.
+If it cannot acquire that ownership safely, candidate preparation is rejected.
+Roaming does not change the global `rp_filter` setting.
+
 The grace and orphan limits govern TCP hard-resume. UDP uses the same profile opt-in and
 authenticated capability negotiation for every UDP camouflage mode, but keeps its own
 short-lived candidate and anti-amplification bounds. `perf.connection.max_clients` and

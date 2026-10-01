@@ -1,6 +1,6 @@
 # Q25-F204 — ресурсный churn Linux worker
 
-<!-- normative-sync: audit-q25-worker-resource-churn-v1 -->
+<!-- normative-sync: audit-q25-worker-resource-churn-v2 -->
 
 Дата: 1 октября 2026. Текущий Rust-исходник, ранее синхронизированный на
 лабу .11; `cargo build --offline --locked --bin qeli` с
@@ -40,10 +40,48 @@ Raw evidence: `C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/d13-re
 активные firewall dumps и worker logs). Identity-ключи не копировались
 из изолированного стенда.
 
-D13 остаётся **IN_PROGRESS**: нужны текущий same-session reconnect
-soak и многопрофильный stop/fault сценарий. Старые 100 release handover
-на `ea87fd49` сохранены отдельно и не считаются подтверждением
-нынешнего бинарника.
+## TCP same-session churn и строгий `rp_filter`
+
+При первом прогоне текущего Linux-клиента с настройкой стенда
+`net.ipv4.conf.all.rp_filter=1` запасной путь не принимал ответы:
+старый маршрут `/32` к серверу оставался на A до COMMIT, а ответ нового
+carrier приходил через B. Изолированное изменение только
+`net.ipv4.conf.qrm-b.rp_filter=2` подтвердило причину: handover прошёл.
+Клиент теперь получает управляемый lease на интерфейс IPv4-кандидата
+при PREPARE и освобождает его при COMMIT/ABORT. Исходное значение и
+запись журнала восстановлены; глобальный sysctl не меняется. Preflight
+стенда временно проверяет B с loose-фильтром и возвращает исходный
+строгий режим **до** запуска клиента, поэтому тест не маскирует фикс.
+
+Первый 100-кратный debug soak подтвердил все 100 COMMIT и отсутствие
+orphan/sockets, но честно сохранил FAIL: клиентский fd вырос 18→26,
+серверный RSS — на 54 216 КиБ. Длинный lease интерфейса создавал
+лишние fd; после ограничения его срока до COMMIT/ABORT точная релизная
+сборка с обязательным `jemalloc` прошла критерии. Debug RSS нельзя
+подменять показателем релизного аллокатора.
+
+Финальный `qeli/src`: **308 файлов**, совпадающий digest
+`f3626d47535f5cb73286adcd2e50de7ab88f466158b291fbfc22947045cda124`.
+`cargo build --offline --locked --release --features jemalloc --bin qeli` PASS;
+release SHA-256 `a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0`.
+Точный бинарник дал **20/20** в single handover и **16/16** в
+100-кратном TCP fake-tls soak. Сохранились одна сессия, исходные
+процессы/TUN и 100 клиентских/серверных COMMIT; orphan=0,
+повторного AUTH нет. Клиентские fd 18→18, socket fd 6→6,
+RSS 51 712→54 104 КиБ (sampled peak +2 524 КиБ).
+Серверные fd 21→21, socket fd 7→7,
+RSS 52 100→56 764 КиБ (sampled peak +4 664 КиБ).
+Все значения меньше фиксированного лимита +32 МиБ RSS и порогов fd.
+После сценариев namespace/test listeners/processes отсутствовали;
+`qeli-server.service` на .10 остался active на :443.
+
+Raw evidence в том же каталоге: `qeli-d13-product-rpf2.log`,
+`qeli-d13-product-soak100.log` (debug FAIL),
+`qeli-d13-final-success.log`, `qeli-d13-final-soak100.log`.
+
+D13 остаётся **IN_PROGRESS**: нужен текущий UDP same-session soak и
+многопрофильный stop/fault сценарий. Ранее выполненные 100 release
+handover на `ea87fd49` сохранены отдельно и не заменяют эти проверки.
 
 [Реестр техдолга](../plans/AUDIT-DEBT.md) ·
 [Прежний release soak](AUDIT-Q34-RELEASE-SOAK.md)
