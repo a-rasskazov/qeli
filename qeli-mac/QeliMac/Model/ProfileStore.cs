@@ -32,11 +32,8 @@ public static class ProfileStore
             var plaintext = EncryptedEnvelope.Open(
                 raw, SecureKey.GetOrCreate(), allowLegacyArray: true, out bool needsEnvelopeMigration);
             string json = StrictUtf8.GetString(plaintext);
-            profiles = ProfileStorePayload.Decode(json, Options);
-            // Profiles saved before the stable-Id fix have no "Id" field; the deserializer
-            // left each at a fresh-GUID default that would otherwise change on every load
-            // (settings reference profiles by Id). Persist once to freeze those Ids.
-            bool needsIdMigration = profiles.Count > 0 && !json.Contains("\"Id\":");
+            // Persist missing legacy IDs once, including a mixed old/new profile list.
+            profiles = ProfileStorePayload.Decode(json, out bool needsIdMigration, Options);
             needsMigration = needsEnvelopeMigration || needsIdMigration;
         }
         catch (Exception ex)
@@ -81,7 +78,7 @@ public static class ProfileStore
     {
         Directory.CreateDirectory(Dir);
         var key = SecureKey.GetOrCreate();
-        var pt = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(profiles, Options));
+        var pt = Encoding.UTF8.GetBytes(ProfileStorePayload.Encode(profiles, Options));
         var blob = EncryptedEnvelope.Seal(pt, key);
         StoreFile.Write(blob);
     }

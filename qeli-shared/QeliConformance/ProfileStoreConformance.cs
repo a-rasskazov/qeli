@@ -34,6 +34,43 @@ internal static class ProfileStoreConformance
             catch (JsonException) { nullEntryRejected = true; }
             check("profile store: a null row cannot reach the desktop UI", nullEntryRejected);
 
+            var mixed = ProfileStorePayload.Decode(
+                """[{"Id":"fixed-id"},{"Name":"legacy"}]""", out bool needsIdMigration);
+            check("profile store: mixed legacy IDs trigger one-time migration",
+                needsIdMigration && mixed.Count == 2
+                && mixed[0].Id == "fixed-id"
+                && !string.IsNullOrWhiteSpace(mixed[1].Id)
+                && mixed[0].Id != mixed[1].Id);
+            var migrated = ProfileStorePayload.Decode(
+                JsonSerializer.Serialize(mixed), out bool migratedAgain);
+            check("profile store: migrated IDs stay stable after reload",
+                !migratedAgain && migrated.Select(profile => profile.Id)
+                    .SequenceEqual(mixed.Select(profile => profile.Id)));
+
+            foreach (var invalid in new[]
+            {
+                """[{"Id":null}]""",
+                """[{"Id":""}]""",
+                """[{"Id":"same"},{"Id":"same"}]""",
+            })
+            {
+                bool rejected = false;
+                try { ProfileStorePayload.Decode(invalid); }
+                catch (JsonException) { rejected = true; }
+                check("profile store: invalid or duplicate explicit ID is rejected", rejected);
+            }
+
+            bool duplicateWriteRejected = false;
+            try
+            {
+                ProfileStorePayload.Encode([
+                    new VpnConfig { Id = "same" },
+                    new VpnConfig { Id = "same" },
+                ]);
+            }
+            catch (JsonException) { duplicateWriteRejected = true; }
+            check("profile store: duplicate IDs cannot be persisted", duplicateWriteRejected);
+
             var livePath = Path.Combine(dir, "live-profiles.json");
             var first = new ProfileStoreFile(livePath);
             var second = new ProfileStoreFile(livePath);
