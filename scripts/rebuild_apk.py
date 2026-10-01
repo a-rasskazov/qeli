@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """Rebuild an APK on .11 from the current local source and pull it into dist.
 
-Pushes the repo's committed jniLibs/*.so, syncs Kotlin/resources/gradle WITHOUT
-wiping jniLibs, builds offline, then pulls the APK locally (rotating the previous one).
+Pushes the repo's verified jniLibs/*.so, syncs Kotlin/resources/gradle WITHOUT
+wiping jniLibs, builds a same-source Linux host core for JVM tests, then builds
+offline and pulls the APK locally (rotating the previous one).
 The default is debug; ``--release`` additionally requires a valid APK signature.
 """
 import os, sys, posixpath, shlex, shutil
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from native_lab import connect_lab, pull_verified_artifact, remote_sha256
-from native_repro import require_lab_password, sha256_file
+from native_lab import connect_lab, pull_verified_artifact, remote_sha256, sync_qeli_source
+from native_repro import require_lab_password, rust_toolchain, sha256_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCAL = os.fspath(REPO_ROOT / "qeli-android")
+LOCAL_QELI = REPO_ROOT / "qeli"
+REMOTE_QELI = "/root/qeli-src"
 CONFORMANCE = REPO_ROOT / "conformance"
 REMOTE = "/root/android-project"
 HOST = ("10.66.116.11", os.environ.get("QELI_LAB_USER", "root"))
@@ -102,11 +105,35 @@ print(f"  [sync] {len(sources)} files including shared conformance fixtures")
 print("  [versionName on .11]:",
       sh(c, f"grep -E 'versionCode|versionName' {REMOTE}/app/build.gradle.kts")[0])
 
+# 2b. JVM tests load the production Rust configuration service. Android ELF cannot
+# load in a Linux JVM, so build a host-only test core from the exact local source.
+# It is never copied into jniLibs or the APK.
+print("=== 2b. sync Rust source and build Linux host core for JVM tests ===")
+rust_count = sync_qeli_source(c, sf, LOCAL_QELI, REMOTE_QELI)
+print(f"  [sync] {rust_count} Rust source/assets files")
+host_core = f"{REMOTE_QELI}/target/debug/libqeli_core.so"
+host_command = (
+    f"export PATH=/root/.cargo/bin:$PATH; cd {shlex.quote(REMOTE_QELI)} "
+    f"&& cargo +{rust_toolchain()} build --locked --offline "
+    "--no-default-features --features transport-core-ffi --lib"
+)
+host_output, host_rc = sh(c, host_command, t=1200)
+print("\n".join(host_output.splitlines()[-35:]))
+if host_rc != 0:
+    print(f"[host core] FAILED (rc={host_rc})"); c.close(); sys.exit(1)
+exports, exports_rc = sh(
+    c,
+    f"nm -D {shlex.quote(host_core)} | grep -c 'Java_com_qeli_ConfigCore_nativeRequest$'",
+)
+if exports_rc != 0 or exports.strip() != "1":
+    print("[host core] missing ConfigCore JNI export"); c.close(); sys.exit(1)
+print(f"  [host core] {host_core}: ConfigCore JNI export present")
+
 # 3. Build (clear any stale gradle lock first; offline).
 assemble_task = "assembleRelease" if RELEASE else "assembleDebug"
 print(f"=== 3. ./gradlew testDebugUnitTest {assemble_task} --offline ===")
 sh(c, "pkill -9 -f GradleDaemon 2>/dev/null; rm -rf /root/.gradle/caches/journal-1 2>/dev/null; true")
-out, rc = sh(c, f"cd {REMOTE} && chmod +x gradlew && ./gradlew clean testDebugUnitTest {assemble_task} --offline --no-daemon "
+out, rc = sh(c, f"cd {REMOTE} && chmod +x gradlew && QELI_CONFIG_NATIVE_LIBRARY={shlex.quote(host_core)} ./gradlew clean testDebugUnitTest {assemble_task} --offline --no-daemon "
                 f"--max-workers=1 -Dorg.gradle.vfs.watch=false "
                 f"'-Dorg.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8' 2>&1", t=1200)
 print("\n".join(out.splitlines()[-80:]))
