@@ -1,6 +1,6 @@
 # Техдолг начатых аудитов
 
-<!-- normative-sync: audit-debt-v46 -->
+<!-- normative-sync: audit-debt-v47 -->
 
 Дата сверки: 1 октября 2026. По запросу пользователя новые разделы полного аудита
 приостановлены до закрытия этого реестра. Это **15 групп обязательств**, а не 15 найденных
@@ -27,12 +27,12 @@
 | D09 | 14/15/25/32/33 | DONE | Linux lifecycle и системные отказы | [Итоговая сверка](../reports/AUDIT-Q25-LINUX-LIFECYCLE-CLOSURE.md): на исходном `4eaf551a` 2175 Linux unit, 8 control, 15 hook-process и 8/8 реальных worker lifecycle PASS; сохранены exit/SHA и сетевые снимки до/после. Ранее 48 privileged и реальные DNS/route/firewall матрицы применимы к неизменённым путям. Полные install/upgrade и сетевые сочетания остаются D11/D10, общий shutdown — D05. |
 | D10 | 17/18/19/21/22/23 | IN_PROGRESS | Сетевая интеграционная матрица | Проверить off/manual/route/nat66 × NDP, DNS UDP/TCP, multiprofile, iptables/nft/firewalld, setup rollback/stop/restart и сохранение чужих ресурсов. |
 | D11 | 00/24/27/34 | DONE | Актуальные native cores и provenance | [Q25-F202](../reports/AUDIT-Q25-NATIVE-REBUILD.md): чистый исходник `27db1a22`, единый digest, независимые A/B release-сборки Windows x64, macOS universal2, Android arm64/x86_64 с совпадающими SHA; ABI/exports, 14 manifest-копий и provenance PASS. Windows selftest 143/0, Android APK содержит проверенные библиотеки. Mac app/runtime исключены в D12 по решению пользователя. |
-| D12 | 24/25/27/34 | IN_PROGRESS | Платформенное подтверждение | [Q25-F202](../reports/AUDIT-Q25-NATIVE-REBUILD.md): Android 0.8.2 APK, 167 JVM, 11/11 instrumentation, VPN Auth/NetworkPlan, двусторонний ICMP 4/4 и 4/4+2/2, reconnect после server timeout PASS на API 34 x86_64. Отклонённые фоновые inner-пакеты с физическим IP и lifecycle при смене сети требуют отдельной проверки. Windows VM, Mac/Xcode/iOS и router runtime **SKIPPED по решению пользователя**; это не сертификация. |
+| D12 | 24/25/27/34 | DONE | Платформенное подтверждение в доступном объёме | [Q25-F203](../reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md): Android 0.8.2 APK/JNI, 167 JVM, 11 instrumentation, двусторонний ICMP, WebView HTTP 200 с VPN-адреса, reconnect и Wi-Fi toggle PASS. Физический inner-source локализован в системном Private DNS `netd`; серверный антиспуфинг сохранился. Windows VM, Mac/Xcode/iOS и router runtime **SKIPPED по решению пользователя**, не PASS. Physical Android/LTE/Doze/always-on и release APK остаются полным аудитом раздела 29, не сертифицированы этим пунктом. |
 | D13 | 14/19/22/25 | IN_PROGRESS | Удержание ресурсов под нагрузкой | Измерить fd/tasks/threads/TUN/routes/firewall/journals/RSS до и после churn/reconnect/stop, включая отказы и несколько профилей; конечный deadline и критерии отсутствия роста. |
 | D14 | 00/34 | TODO | Текущий benchmark и certification | После корректности выполнить воспроизводимый benchmark нужных режимов с текущим SHA, окружением и метриками; собрать certification только из фактических результатов. Старые результаты 0.8.0 не закрывают 0.8.2. |
 | D15 | Все начатые разделы | IN_PROGRESS | Согласование evidence и документации | Сопоставить старые открытые пункты с поздними fixes; проверить применимость патчей, diff/commit и RU/EN ссылки. Каждый долг закрывать отдельным результатом, не числом коммитов. [Q25-F200](../reports/AUDIT-Q25-DOC-PARITY.md): 32 индексных, 3 ссылочных и 26 парных ошибок устранены; 494 Markdown-файла, все 9 проверок check_docs PASS. Сверка старых runtime-свидетельств остаётся. [Q25-F201](../reports/AUDIT-Q25-PATCH-RECONCILIATION.md): 625 архивных патчей классифицированы без применения; возраст D09 evidence уточнён. Все 22 адресно рассмотрены: для 20 кодовых кандидатов отсутствующий фикс не найден, 2 касаются пользовательского CHANGELOG; D15 остаётся открыт для итогового runtime/evidence. |
 
-Текущий статус после [Q25-F202](../reports/AUDIT-Q25-NATIVE-REBUILD.md): **6/15 DONE (40%), 8 IN_PROGRESS, 1 TODO**.
+Текущий статус после [Q25-F203](../reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md): **7/15 DONE (46,7%), 7 IN_PROGRESS, 1 TODO**.
 Исторические числа ниже относятся к прежним снимкам и не пересчитываются задним числом.
 
 ## Завершение техдолга: порядок с 25 сентября

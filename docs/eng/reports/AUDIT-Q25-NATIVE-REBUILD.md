@@ -1,6 +1,9 @@
 # Q25-F202 — reproducible native cores and Android runtime
 
-<!-- normative-sync: audit-q25-native-rebuild-v2 -->
+<!-- normative-sync: audit-q25-native-rebuild-v3 -->
+
+A later [F203 check](AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md) explained
+the background packets and closed D12 within the agreed available scope.
 
 Date: 1 October 2026. A/B source: `27db1a22`, digest
 `dce152196ab7b13ba42f9808a571ba95ac494c7ccbbd1c69578bd0de90c1979c`.

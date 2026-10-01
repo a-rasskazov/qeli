@@ -1,6 +1,9 @@
 # Q25-F202 — воспроизводимые native cores и Android runtime
 
-<!-- normative-sync: audit-q25-native-rebuild-v2 -->
+<!-- normative-sync: audit-q25-native-rebuild-v3 -->
+
+Последующая [проверка F203](AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md) объяснила
+фоновые пакеты и закрыла D12 в согласованном доступном объёме.
 
 Дата: 1 октября 2026. Исходник для A/B: `27db1a22`, digest
 `dce152196ab7b13ba42f9808a571ba95ac494c7ccbbd1c69578bd0de90c1979c`.

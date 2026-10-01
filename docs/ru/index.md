@@ -346,3 +346,4 @@
 - [Q25-F200: структура и языковые пары отчётов аудита](reports/AUDIT-Q25-DOC-PARITY.md)
 - [Q25-F201: архив патчей и возраст свидетельств](reports/AUDIT-Q25-PATCH-RECONCILIATION.md)
 - [Q25-F202: воспроизводимые native cores и Android runtime](reports/AUDIT-Q25-NATIVE-REBUILD.md)
+- [Q25-F203: Android Private DNS, VPN-трафик и смена Wi-Fi](reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md)

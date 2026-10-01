@@ -1,6 +1,6 @@
 # Technical debt from started audits
 
-<!-- normative-sync: audit-debt-v46 -->
+<!-- normative-sync: audit-debt-v47 -->
 
 Reconciled on 25 September 2026. At the user’s request, new full-audit sections
 are paused until this register is closed. These are **15 groups of obligations**,
@@ -27,12 +27,12 @@ Connections to both Linux VMs were verified; the running server and its files we
 | D09 | 14/15/25/32/33 | DONE | Linux lifecycle and system failures | [Closure evidence](../reports/AUDIT-Q25-LINUX-LIFECYCLE-CLOSURE.md): source `4eaf551a`: 2175 Linux unit, 8 control, 15 hook-process and 8/8 live worker lifecycle PASS, with exit/SHA and before/after network snapshots. Earlier 48 privileged and real DNS/route/firewall matrices still apply to unchanged paths. Full install/upgrade and network combinations remain D11/D10; whole shutdown remains D05. |
 | D10 | 17/18/19/21/22/23 | IN_PROGRESS | Network integration matrix | Verify off/manual/route/nat66 × NDP, DNS UDP/TCP, multiple profiles, iptables/nft/firewalld, setup rollback/stop/restart and preservation of foreign resources. |
 | D11 | 00/24/27/34 | DONE | Current native cores and provenance | [Q25-F202](../reports/AUDIT-Q25-NATIVE-REBUILD.md): clean source `27db1a22`, one digest, independent A/B release builds of Windows x64, macOS universal2 and Android arm64/x86_64 with matching SHA; ABI/exports, 14 manifest copies and provenance PASS. Windows selftest 143/0, Android APK embeds verified libraries. Mac app/runtime are excluded under D12 by user decision. |
-| D12 | 24/25/27/34 | IN_PROGRESS | Platform evidence | [Q25-F202](../reports/AUDIT-Q25-NATIVE-REBUILD.md): Android 0.8.2 APK, 167 JVM, 11/11 instrumentation, VPN Auth/NetworkPlan, bidirectional ICMP 4/4 and 4/4+2/2, and reconnect after server timeout PASS on API 34 x86_64. Rejected background inner packets with a physical IP and network-change lifecycle need targeted checks. Windows VM, Mac/Xcode/iOS, and router runtime are **SKIPPED by user decision**; this is not certification. |
+| D12 | 24/25/27/34 | DONE | Platform evidence within available scope | [Q25-F203](../reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md): Android 0.8.2 APK/JNI, 167 JVM, 11 instrumentation, bidirectional ICMP, WebView HTTP 200 from VPN address, reconnect and Wi-Fi toggle PASS. The physical inner source was localized to system Private DNS `netd`; server anti-spoofing held. Windows VM, Mac/Xcode/iOS and router runtime are **SKIPPED by user decision**, not PASS. Physical Android/LTE/Doze/always-on and a release APK remain part of full audit section 29, not certified here. |
 | D13 | 14/19/22/25 | IN_PROGRESS | Resource retention under load | Measure fd/tasks/threads/TUN/routes/firewall/journals/RSS before and after churn/reconnect/stop, including failures and multiple profiles; bounded duration and explicit growth criteria. |
 | D14 | 00/34 | TODO | Current benchmark and certification | After correctness, run reproducible benchmarks for required modes with the current SHA, environment and metrics; build certification only from actual results. Historical 0.8.0 results do not certify 0.8.2. |
 | D15 | All started sections | IN_PROGRESS | Evidence and documentation reconciliation | Map historical open items to later fixes; verify patch applicability, diff/commit and RU/EN links. Close each debt item with evidence, not a commit count. [Q25-F200](../reports/AUDIT-Q25-DOC-PARITY.md): 32 index, 3 link and 26 language-parity findings resolved; 494 Markdown files and all 9 check_docs checks PASS. Older runtime evidence reconciliation remains. [Q25-F201](../reports/AUDIT-Q25-PATCH-RECONCILIATION.md): 625 archived patches classified without applying them; D09 evidence age corrected. All 22 received targeted review: no missing fix found among 20 code candidates; 2 touch the user-modified CHANGELOG. D15 remains open for final runtime/evidence reconciliation. |
 
-Current status after [Q25-F202](../reports/AUDIT-Q25-NATIVE-REBUILD.md): **6/15 DONE (40%), 8 IN_PROGRESS, 1 TODO**.
+Current status after [Q25-F203](../reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md): **7/15 DONE (46.7%), 7 IN_PROGRESS, 1 TODO**.
 Historical counts below belong to earlier snapshots and are not retroactively changed.
 
 ## Debt completion: workflow from 25 September
