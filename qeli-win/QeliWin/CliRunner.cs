@@ -48,26 +48,39 @@ public static class CliRunner
             if (!ok) failed++;
         }
 
-        Console.WriteLine("qeli-win platform self-test");
-        WinDivertSelfTest.RunUnit(Check);
-        WindowsRoamingSocket.RunSelfTest(Check);
-        VpnTunnel.RunRoamingCapabilitySelfTest(Check);
-        NetworkConfigurator.RunDnsLifecycleSelfTest(Check);
-        NetworkConfigurator.RunRouteLifecycleSelfTest(Check);
+        // One unavailable native dependency must not hide independent route/DNS results.
+        // Keep the overall exit code nonzero while collecting every diagnostic group.
+        void RunGroup(string name, Action action)
+        {
+            try { action(); }
+            catch (Exception error)
+            {
+                Check($"{name}: {error.GetType().Name}: {error.Message}", false);
+            }
+        }
 
-        bool wintunLoaded;
-        uint driverVersion = 0;
-        try
+        Console.WriteLine("qeli-win platform self-test");
+        RunGroup("WinDivert unit", () => WinDivertSelfTest.RunUnit(Check));
+        RunGroup("roaming socket", () => WindowsRoamingSocket.RunSelfTest(Check));
+        RunGroup("DNS lifecycle", () => NetworkConfigurator.RunDnsLifecycleSelfTest(Check));
+        RunGroup("route lifecycle", () => NetworkConfigurator.RunRouteLifecycleSelfTest(Check));
+        RunGroup("native roaming capability", () => VpnTunnel.RunRoamingCapabilitySelfTest(Check));
+        RunGroup("Wintun probe", () =>
         {
-            driverVersion = WintunAdapter.ProbeLoad();
-            wintunLoaded = true;
-        }
-        catch (DllNotFoundException)
-        {
-            wintunLoaded = false;
-        }
-        Check($"Wintun loads from embedded resource (driver {driverVersion >> 16}.{driverVersion & 0xFFFF})",
-            wintunLoaded);
+            bool wintunLoaded;
+            uint driverVersion = 0;
+            try
+            {
+                driverVersion = WintunAdapter.ProbeLoad();
+                wintunLoaded = true;
+            }
+            catch (DllNotFoundException)
+            {
+                wintunLoaded = false;
+            }
+            Check($"Wintun loads from embedded resource (driver {driverVersion >> 16}.{driverVersion & 0xFFFF})",
+                wintunLoaded);
+        });
 
         Console.WriteLine(failed == 0 ? "ALL PASS" : $"{failed} FAILED");
         return failed == 0 ? 0 : 1;
