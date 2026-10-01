@@ -304,3 +304,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F161: archive restore directory scan errors](reports/AUDIT-Q25-SERVER-ARCHIVE-SCAN.md)
 - [Q25-F162: INI-only notification settings](reports/AUDIT-Q25-SERVER-NOTIFY-INI.md)
 - [Q25-F163: concurrent notification saves](reports/AUDIT-Q25-SERVER-NOTIFY-REVISION.md)
+- [Q25-F190: server INI history errors](reports/AUDIT-Q25-SERVER-INI-HISTORY.md)

@@ -304,3 +304,4 @@
 - [Q25-F161: ошибки перечисления при восстановлении архива](reports/AUDIT-Q25-SERVER-ARCHIVE-SCAN.md)
 - [Q25-F162: уведомления только в INI](reports/AUDIT-Q25-SERVER-NOTIFY-INI.md)
 - [Q25-F163: конкурентное сохранение уведомлений](reports/AUDIT-Q25-SERVER-NOTIFY-REVISION.md)
+- [Q25-F190: ошибки истории серверного INI](reports/AUDIT-Q25-SERVER-INI-HISTORY.md)

@@ -151,21 +151,26 @@ fn snapshot_config(config_path: &FsPath, current_raw: &str) -> Result<Option<Str
             .map_err(|error| format!("write config snapshot {}: {error}", snapshot.display()))?;
     }
 
-    let mut entries = std::fs::read_dir(&dir)
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&dir)
         .map_err(|error| format!("read config history {}: {error}", dir.display()))?
-        .flatten()
-        .filter(|entry| {
-            entry.path().extension().and_then(|x| x.to_str()) == Some("conf")
-                && entry
-                    .file_type()
-                    .map(|kind| kind.is_file() && !kind.is_symlink())
-                    .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
+    {
+        let entry = entry
+            .map_err(|error| format!("enumerate config history {}: {error}", dir.display()))?;
+        if entry.path().extension().and_then(|x| x.to_str()) == Some("conf") {
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("inspect config history entry: {error}"))?;
+            if kind.is_file() && !kind.is_symlink() {
+                entries.push(entry);
+            }
+        }
+    }
     entries.sort_by_key(|entry| entry.file_name());
     let remove_count = entries.len().saturating_sub(CONFIG_HISTORY_KEEP);
     for entry in entries.into_iter().take(remove_count) {
-        let _ = std::fs::remove_file(entry.path());
+        std::fs::remove_file(entry.path())
+            .map_err(|error| format!("rotate config history: {error}"))?;
     }
     Ok(Some(id))
 }
@@ -2211,6 +2216,49 @@ fn valid_history_id(id: &str) -> bool {
         && id != ".conf"
 }
 
+fn read_config_history_entries(dir: &FsPath) -> Result<Vec<Value>, String> {
+    match std::fs::symlink_metadata(dir) {
+        Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
+            return Err("config history path is not a real directory".to_string());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("inspect config history {}: {error}", dir.display())),
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(dir)
+        .map_err(|error| format!("read config history {}: {error}", dir.display()))?
+    {
+        let entry = entry
+            .map_err(|error| format!("enumerate config history {}: {error}", dir.display()))?;
+        let id = entry.file_name().to_string_lossy().to_string();
+        if !valid_history_id(&id) {
+            continue;
+        }
+        let kind = entry
+            .file_type()
+            .map_err(|error| format!("inspect config history entry {id}: {error}"))?;
+        if !kind.is_file() || kind.is_symlink() {
+            continue;
+        }
+        let raw = read_config_text(entry.path())
+            .map_err(|error| format!("read config history entry {id}: {error}"))?;
+        let created = id
+            .split('-')
+            .next()
+            .and_then(|part| part.parse::<u64>().ok())
+            .unwrap_or(0);
+        entries.push(json!({
+            "id": id,
+            "created": created,
+            "bytes": raw.len(),
+            "revision": config_revision(&raw),
+        }));
+    }
+    entries.sort_by(|a, b| b["created"].as_u64().cmp(&a["created"].as_u64()));
+    Ok(entries)
+}
+
 pub async fn list_config_history(
     State(state): State<Arc<ServerState>>,
     _guard: auth::AuthGuard,
@@ -2228,43 +2276,10 @@ pub async fn list_config_history(
         Ok(dir) => dir,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
-    let mut entries = Vec::new();
-    if let Ok(metadata) = std::fs::symlink_metadata(&dir) {
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Ok(Json(super::err_json(
-                "config history path is not a real directory",
-            )));
-        }
-    }
-    if let Ok(read_dir) = std::fs::read_dir(&dir) {
-        for entry in read_dir.flatten() {
-            let id = entry.file_name().to_string_lossy().to_string();
-            if !valid_history_id(&id)
-                || !entry
-                    .file_type()
-                    .map(|kind| kind.is_file() && !kind.is_symlink())
-                    .unwrap_or(false)
-            {
-                continue;
-            }
-            let raw = match read_config_text(entry.path()) {
-                Ok(raw) => raw,
-                Err(_) => continue,
-            };
-            let created = id
-                .split('-')
-                .next()
-                .and_then(|part| part.parse::<u64>().ok())
-                .unwrap_or(0);
-            entries.push(json!({
-                "id": id,
-                "created": created,
-                "bytes": raw.len(),
-                "revision": config_revision(&raw),
-            }));
-        }
-    }
-    entries.sort_by(|a, b| b["created"].as_u64().cmp(&a["created"].as_u64()));
+    let entries = match read_config_history_entries(&dir) {
+        Ok(entries) => entries,
+        Err(error) => return Ok(Json(super::err_json(error))),
+    };
     Ok(Json(json!({ "ok": true, "entries": entries })))
 }
 
@@ -2490,6 +2505,28 @@ mod raw_secret_tests {
         for invalid in ["../server.conf", "x/y.conf", ".conf", "x.tgz", "x conf"] {
             assert!(!valid_history_id(invalid), "accepted {invalid:?}");
         }
+    }
+
+    #[test]
+    fn config_history_listing_reports_corrupt_entries() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-config-history-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        assert!(read_config_history_entries(&dir).unwrap().is_empty());
+        std::fs::create_dir(&dir).unwrap();
+        let entry = dir.join("1780000000-aabbccddeeff.conf");
+        std::fs::write(&entry, b"[web]\n").unwrap();
+        let listed = read_config_history_entries(&dir).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], "1780000000-aabbccddeeff.conf");
+        std::fs::write(&entry, [0xff]).unwrap();
+        assert!(read_config_history_entries(&dir)
+            .unwrap_err()
+            .contains("read config history entry"));
+        std::fs::remove_file(&entry).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 
     #[test]
