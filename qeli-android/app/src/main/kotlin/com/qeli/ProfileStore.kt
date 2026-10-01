@@ -134,14 +134,6 @@ object ProfileStore {
                 return editor.commit()
             }
 
-            fun apply() {
-                val editor = store.backing.edit()
-                values.forEach { (key, value) ->
-                    if (value == null) editor.remove(key)
-                    else editor.putString(key, store.encrypt(key, value))
-                }
-                editor.apply()
-            }
         }
     }
 

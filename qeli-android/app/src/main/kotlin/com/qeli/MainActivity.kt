@@ -124,11 +124,22 @@ class MainActivity : AppCompatActivity() {
         val legacy = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!store.contains(KEY_PROFILES)) {
             legacy.getString(KEY_PROFILES, null)?.let { raw ->
-                store.edit().putString(KEY_PROFILES, raw).apply()
+                check(store.edit().putString(KEY_PROFILES, raw).commit()) {
+                    "Could not commit migrated profile store"
+                }
+                check(store.getString(KEY_PROFILES, null) == raw) {
+                    "Migrated profile store did not pass read-back verification"
+                }
             }
         }
         if (legacy.contains(KEY_PROFILES)) {
-            legacy.edit().remove(KEY_PROFILES).apply() // wipe the old plaintext secrets
+            // Preserve the plaintext recovery copy if the encrypted entry is unreadable.
+            check(store.getString(KEY_PROFILES, null) != null) {
+                "Encrypted profile store is absent; refusing to erase legacy profiles"
+            }
+            check(legacy.edit().remove(KEY_PROFILES).commit()) {
+                "Could not erase legacy plaintext profiles"
+            }
         }
         store
     }
@@ -953,6 +964,7 @@ ipv6 = auto
         require(n in 1..MAX_IMPORTED_PROFILES) {
             "backup must contain 1..$MAX_IMPORTED_PROFILES profiles"
         }
+        val candidate = ArrayList<Profile>(n)
         for (index in 0 until n) {
             val entry = entries.optJSONObject(index)
                 ?: throw IllegalArgumentException("profile ${index + 1} must be an object")
@@ -968,6 +980,7 @@ ipv6 = auto
                     error,
                 )
             }
+            candidate.add(Profile(name, stored))
         }
         val restoredActive = root.optInt("active", 0)
         require(restoredActive in 0 until n) { "backup active profile index is out of range" }
@@ -976,8 +989,13 @@ ipv6 = auto
             .setMessage(getString(R.string.restore_confirm, n))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.restore_profiles) { _, _ ->
-                secureStore.edit().putString(KEY_PROFILES, root.toString()).apply()
-                loadProfiles(); reach.clear(); renderProfileList(); renderActiveProfile(); pingActive()
+                try { persistCandidate(candidate, restoredActive) }
+                catch (error: Exception) {
+                    Toast.makeText(this, error.message ?: "Could not restore profiles", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                profiles.clear(); profiles.addAll(candidate); activeIndex = restoredActive
+                reach.clear(); renderProfileList(); renderActiveProfile(); pingActive()
                 Toast.makeText(this, getString(R.string.restored, n), Toast.LENGTH_SHORT).show()
             }
             .show()
@@ -1079,12 +1097,14 @@ ipv6 = auto
         ""
     }
 
-    private fun persist() {
-        val encoded = encodeProfileSet(profiles, activeIndex)
-        secureStore.edit()
-            .putString(KEY_PROFILES, encoded)
-            .apply()
+    private fun persistCandidate(items: List<Profile>, selectedIndex: Int) {
+        val encoded = encodeProfileSet(items, selectedIndex)
+        check(secureStore.edit().putString(KEY_PROFILES, encoded).commit()) {
+            "Could not commit profile store"
+        }
     }
+
+    private fun persist() = persistCandidate(profiles, activeIndex)
 
     /** Validate and encode a complete prospective state before mutating the live list. */
     private fun encodeProfileSet(items: List<Profile>, selectedIndex: Int): String {
@@ -1155,13 +1175,13 @@ ipv6 = auto
             else candidate[index] = Profile(name, iniText)
             val candidateActive = if (index < 0) activeAfterAdd(candidate.size) else activeIndex
             try {
-                encodeProfileSet(candidate, candidateActive)
+                persistCandidate(candidate, candidateActive)
             } catch (e: Exception) {
                 Toast.makeText(this, e.message ?: getString(R.string.invalid_config, ""), Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
-            persist(); renderProfileList(); renderActiveProfile(); pingActive()
+            renderProfileList(); renderActiveProfile(); pingActive()
             dialog.dismiss()
         }
     }
@@ -1212,9 +1232,9 @@ ipv6 = auto
             val candidate = profiles.map { it.copy() }.toMutableList()
             candidate.add(Profile(label, ini))
             val candidateActive = activeAfterAdd(candidate.size)
-            encodeProfileSet(candidate, candidateActive)
+            persistCandidate(candidate, candidateActive)
             profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
-            persist(); renderProfileList(); renderActiveProfile(); pingActive()
+            renderProfileList(); renderActiveProfile(); pingActive()
             binding.tabs.getTabAt(0)?.select()
             appendLog("Imported \"$label\" from QR/link")
             Toast.makeText(
@@ -1260,9 +1280,9 @@ ipv6 = auto
                 val candidate = profiles.map { it.copy() }.toMutableList()
                 candidate.add(Profile(label, text))
                 val candidateActive = activeAfterAdd(candidate.size)
-                encodeProfileSet(candidate, candidateActive)
+                persistCandidate(candidate, candidateActive)
                 profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
-                persist(); renderProfileList(); renderActiveProfile(); pingActive()
+                renderProfileList(); renderActiveProfile(); pingActive()
                 binding.tabs.getTabAt(0)?.select()
                 appendLog("Imported \"$label\"")
                 Toast.makeText(
@@ -1566,7 +1586,12 @@ ipv6 = auto
                     Toast.makeText(this, getString(R.string.switch_blocked), Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                activeIndex = i; persist(); renderProfileList(); renderActiveProfile()
+                try { persistCandidate(profiles, i) }
+                catch (e: Exception) {
+                    Toast.makeText(this, e.message ?: "Could not save profile", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                activeIndex = i; renderProfileList(); renderActiveProfile()
                 binding.tabs.getTabAt(0)?.select()
                 Toast.makeText(this, getString(R.string.active_profile_toast, p.name), Toast.LENGTH_SHORT).show()
             }
@@ -1672,13 +1697,12 @@ ipv6 = auto
                 candidate[i].text = writeAppsIntoIni(profile.text, mode, sel)
                 try {
                     VpnConfig.parse(candidate[i].text).validate()
-                    encodeProfileSet(candidate, activeIndex)
+                    persistCandidate(candidate, activeIndex)
                 } catch (e: Exception) {
                     Toast.makeText(this, e.message ?: "Invalid per-app profile", Toast.LENGTH_LONG).show()
                     return@setPositiveButton
                 }
                 profiles.clear(); profiles.addAll(candidate)
-                persist()
                 val n = if (mode == "all") 0 else sel.size
                 Toast.makeText(this, if (mode == "all") getString(R.string.per_app_all_toast) else getString(R.string.per_app_selected_toast, n), Toast.LENGTH_SHORT).show()
             }
@@ -1764,14 +1788,14 @@ ipv6 = auto
             candidate.add(i + 1, Profile(name, p.text))
             // Insertion before the active row must retain the same active profile.
             val candidateActive = if (activeIndex > i) activeIndex + 1 else activeIndex
-            encodeProfileSet(candidate, candidateActive)
+            persistCandidate(candidate, candidateActive)
             profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
         } catch (e: Exception) {
             Toast.makeText(this, e.message ?: "Profile cannot be duplicated", Toast.LENGTH_LONG).show()
             return
         }
         reach.clear()               // indices shifted → re-probe
-        persist(); renderProfileList()
+        renderProfileList()
     }
 
     /** Reorder a profile up (-1) or down (+1); keeps the active selection on the same entry. */
@@ -1787,11 +1811,18 @@ ipv6 = auto
     private fun moveProfile(i: Int, delta: Int) {
         val j = i + delta
         if (j < 0 || j >= profiles.size) return
-        val moved = profiles.removeAt(i)
-        profiles.add(j, moved)
-        activeIndex = when (activeIndex) { i -> j; j -> i; else -> activeIndex }
+        val candidate = profiles.map { it.copy() }.toMutableList()
+        val moved = candidate.removeAt(i)
+        candidate.add(j, moved)
+        val candidateActive = when (activeIndex) { i -> j; j -> i; else -> activeIndex }
+        try { persistCandidate(candidate, candidateActive) }
+        catch (e: Exception) {
+            Toast.makeText(this, e.message ?: "Could not save profiles", Toast.LENGTH_LONG).show()
+            return
+        }
+        profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
         reach.clear()               // indices shifted → re-probe
-        persist(); renderProfileList()
+        renderProfileList()
     }
 
     /** Share a profile as a compact qeli:// link + QR (copy to clipboard, or the Android
@@ -1846,16 +1877,24 @@ ipv6 = auto
             .setTitle(R.string.delete_profile).setMessage(getString(R.string.delete_profile_confirm, p.name))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.delete_profile) { _, _ ->
-                profiles.removeAt(i)
+                val currentIndex = profiles.indexOfFirst { it === p }
+                if (currentIndex < 0) return@setPositiveButton
+                val candidate = profiles.map { it.copy() }.toMutableList()
+                candidate.removeAt(currentIndex)
+                if (candidate.isEmpty()) {
+                    candidate.add(Profile(getString(R.string.default_profile_name), TEMPLATE))
+                }
+                // Removing an earlier row must retain the same active profile.
+                val candidateActive = (activeIndex - if (currentIndex < activeIndex) 1 else 0)
+                    .coerceIn(0, candidate.size - 1)
+                try { persistCandidate(candidate, candidateActive) }
+                catch (e: Exception) {
+                    Toast.makeText(this, e.message ?: "Could not save profiles", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
                 reach.clear()
-                if (profiles.isEmpty()) profiles.add(Profile(getString(R.string.default_profile_name), TEMPLATE))
-                // Keep pointing at the SAME profile. Removing an earlier entry shifts every
-                // index after it down by one; the old code only clamped an out-of-range
-                // index, so deleting a profile ABOVE the active one silently made a
-                // different profile active — including while that tunnel was running.
-                if (i < activeIndex) activeIndex--
-                activeIndex = activeIndex.coerceIn(0, profiles.size - 1)
-                persist(); renderProfileList(); renderActiveProfile()
+                renderProfileList(); renderActiveProfile()
             }.show()
     }
 
