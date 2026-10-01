@@ -123,18 +123,35 @@ def ensure_rust_targets(
     return ",".join(required)
 
 
+REPRO_BUILD_ROOT = "/var/tmp/qeli-native-repro"
+MIN_REPRO_FREE_KIB = 8 * 1024 * 1024
+
+
 def reset_repro_group(connection: LabConnection, group: str) -> str:
-    """Remove only this recipe's two rebuildable /tmp roots and report free space."""
+    """Reset only this recipe's roots on disk and reject insufficient build space."""
     if not re.fullmatch(r"[a-z0-9-]+", group):
         raise ValueError(f"invalid reproducibility group: {group!r}")
-    root = "/tmp/qeli-native-repro"
-    first = f"{root}/{group}-a"
-    second = f"{root}/{group}-b"
+    first = f"{REPRO_BUILD_ROOT}/{group}-a"
+    second = f"{REPRO_BUILD_ROOT}/{group}-b"
     connection.checked(
-        f"rm -rf {shlex.quote(first)} {shlex.quote(second)} && mkdir -p {root}",
+        f"rm -rf {shlex.quote(first)} {shlex.quote(second)} "
+        f"&& mkdir -p {shlex.quote(REPRO_BUILD_ROOT)}",
         f"clean {group} reproducibility roots",
     )
-    return connection.checked("df -h / | tail -1", "disk space after reproducibility cleanup")
+    free_text = connection.checked(
+        f"LC_ALL=C df -Pk {shlex.quote(REPRO_BUILD_ROOT)} | tail -1",
+        "build filesystem free space",
+    )
+    try:
+        free_kib = int(free_text.split()[3])
+    except (IndexError, ValueError) as error:
+        raise RuntimeError(f"invalid build filesystem inventory: {free_text!r}") from error
+    if free_kib < MIN_REPRO_FREE_KIB:
+        raise RuntimeError(
+            f"{group} reproducible build needs at least 8 GiB free on "
+            f"{REPRO_BUILD_ROOT}; found {free_kib // 1024} MiB"
+        )
+    return f"{free_kib // 1024} MiB free on {REPRO_BUILD_ROOT}"
 
 
 def sync_qeli_source(

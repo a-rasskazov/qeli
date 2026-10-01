@@ -28,6 +28,7 @@ from native_lab import (
     pull_verified_artifact,
     remote_sha256,
     reset_repro_group,
+    REPRO_BUILD_ROOT,
     sync_qeli_source,
 )
 from native_repro import (
@@ -45,7 +46,7 @@ from native_repro import (
 REPO = Path(__file__).resolve().parent.parent
 LOCAL_QELI = REPO / "qeli"
 REMOTE_SOURCE = "/opt/qeli-src"
-REMOTE_BUILD_ROOT = "/tmp/qeli-native-repro"
+REMOTE_BUILD_ROOT = REPRO_BUILD_ROOT
 REMOTE_MACHO_REPRO = f"{REMOTE_BUILD_ROOT}/macho_repro.py"
 RCODESIGN = "/usr/local/bin/rcodesign"
 HOST = ("10.66.116.10", os.environ.get("QELI_LAB_USER", "root"))

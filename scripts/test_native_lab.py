@@ -162,13 +162,21 @@ class NativeLabTests(unittest.TestCase):
         self.assertEqual(result, "x86_64-pc-windows-gnu")
         self.assertEqual(len(connection.commands), 1)
 
-    def test_repro_cleanup_is_scoped_to_exact_tmp_roots(self):
-        connection = FakeConnection("disk")
-        self.assertEqual(native_lab.reset_repro_group(connection, "desktop"), "disk")
+    def test_repro_cleanup_uses_disk_and_checks_capacity(self):
+        connection = FakeConnection("/dev/sda1 49152000 40000000 9152000 82% /var/tmp")
+        result = native_lab.reset_repro_group(connection, "desktop")
+        self.assertIn("MiB free on /var/tmp/qeli-native-repro", result)
         command = connection.commands[0][0]
-        self.assertIn("/tmp/qeli-native-repro/desktop-a", command)
-        self.assertIn("/tmp/qeli-native-repro/desktop-b", command)
+        self.assertIn("/var/tmp/qeli-native-repro/desktop-a", command)
+        self.assertIn("/var/tmp/qeli-native-repro/desktop-b", command)
         self.assertNotIn("/opt/qeli-src/target", command)
+        self.assertIn("df -Pk /var/tmp/qeli-native-repro", connection.commands[1][0])
+
+    def test_repro_cleanup_rejects_low_space_before_sync_or_build(self):
+        connection = FakeConnection("/dev/sda1 49152000 48000000 472000 99% /var/tmp")
+        with self.assertRaisesRegex(RuntimeError, "needs at least 8 GiB"):
+            native_lab.reset_repro_group(connection, "android")
+        self.assertEqual(len(connection.commands), 2)
 
     def test_repro_cleanup_rejects_path_syntax(self):
         with self.assertRaisesRegex(ValueError, "invalid reproducibility group"):

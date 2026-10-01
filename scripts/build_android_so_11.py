@@ -26,6 +26,7 @@ from native_lab import (
     pull_verified_artifact,
     remote_sha256,
     reset_repro_group,
+    REPRO_BUILD_ROOT,
     sync_qeli_source,
 )
 from native_repro import (
@@ -41,7 +42,7 @@ from native_repro import (
 REPO = Path(__file__).resolve().parent.parent
 LOCAL_QELI = REPO / "qeli"
 REMOTE_SOURCE = "/root/qeli-src"
-REMOTE_BUILD_ROOT = "/tmp/qeli-native-repro"
+REMOTE_BUILD_ROOT = REPRO_BUILD_ROOT
 NDK = f"/root/android-sdk/ndk/{DEFAULT_ANDROID_NDK}"
 HOST = ("10.66.116.11", os.environ.get("QELI_LAB_USER", "root"))
 ABIS = ("arm64-v8a", "x86_64")
