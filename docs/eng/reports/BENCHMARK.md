@@ -92,36 +92,46 @@ This set does not close IPv6/DNS/leak/PMTU/legacy or physical certification gate
 
 The new [SSH runner](../../../scripts/audit_release_matrix_lab.py) runs existing
 release fixtures in fresh NET/mount/PID namespaces with private `/run`, `/var/lib`,
-`/var/log`, `/etc/qeli` and a short `/tmp`. Binary `a526c03b` was not rebuilt.
-[Retained evidence](../../../release/certification/evidence/linux-matrix-20261001.json)
-contains **18/18 functional cases, 327/327 assertions PASS**:
-12 outer/inner IPv4/IPv6 × TCP/UDP fake-TLS/QUIC full cells, 2 dual split,
-TAP/NDP/RA, DNS over both upstream families (56 checks), PMTU/MTU/PTB (36),
-and both interop directions with packaged 0.7.16 (26).
-The package was extracted into a private directory without installation; legacy binary SHA
-`6139d7f0280a129e635c188b80bfba93f8256ca76295f24e10e740f99c5ef8bd`.
+`/var/log`, `/etc/qeli` and a short `/tmp`. Same `a526c03b`, no binary rebuild.
+[Evidence](../../../release/certification/evidence/linux-matrix-20261001.json):
+**18/18 functional cases, 327/327 assertions PASS** — 12 full cells
+outer/inner IPv4/IPv6 × TCP/UDP fake-TLS/QUIC, 2 dual split, TAP/NDP/RA,
+DNS over both upstream families (56), PMTU/MTU/PTB (36), and both interop
+directions with packaged 0.7.16 (26). Legacy package extracted without installation;
+binary SHA `6139d7f0280a129e635c188b80bfba93f8256ca76295f24e10e740f99c5ef8bd`.
 
-The first `full-01` run stopped: the long TMPDIR exceeded Unix socket SUN_LEN.
-A private `/tmp` bind fixes the path; firewall comparison excludes generation timestamps
-and packet counters, and the runner stops at the first failure. These are harness fixes;
-product code did not change. Failed logs were retained.
+The first `full-01` stopped because a long TMPDIR exceeded Unix socket SUN_LEN.
+Fixed private `/tmp`, firewall comparison without timestamps/counters and stopping
+at the first failure. These are harness changes; product code is unchanged and logs retained.
 
-**Acceptance of the whole campaign is incomplete.** During `full-02`, the parent host
-gained two legacy FORWARD rules for `vpn0` and MASQUERADE for `10.8.0.0/24 -> ens18`.
-The separate legacy repeat returned 26/26 traffic PASS, but those rules disappeared;
-they were later observed again without an audit fixture running. Original host worker PID
-845 remained, and no test namespaces/processes remain. Test profiles use `10.86.0.0/24`
-and their own TUN names; the parent mutation source has not been established.
-Unknown rules were not manually changed.
+Two subsequent runs observed changes to three parent legacy rules.
+The source is established: `vpn-obfuscated.service` fails with
+`password_file or password_command required`, `Restart=on-failure`, 5-second interval,
+**5109 restarts**. Dependent `vpn-nat.service` adds/removes exactly two FORWARD
+rules for `vpn0` and MASQUERADE `10.8.0.0/24 -> ens18` on every start/stop.
+Journal, scripts and before/after retained. Test profiles use `10.86.0.0/24`
+and private TUN names. **This is an independent failing lab service, not a Qeli mutation.**
+Only the two old units were stopped; files and enabled state retained.
+Working `qeli.service`, original PID 845, routes/DNS and all other firewall rules retained.
+After stopping the loop, TCP, IPv6 QUIC, DNS, PMTU and legacy were repeated:
+**144/144 PASS**, every full host snapshot field matched before/after. Remaining cells
+were not rerun: same SHA/source/fixtures and parent discrepancy explained by evidence.
+Original nonmatching snapshots and the
+[partial manifest](../../../release/certification/evidence/0.8.2-partial-20261001.json)
+are retained, not replaced with a claim that initial cleanup succeeded.
 
-The [0.8.2 manifest](../../../release/certification/0.8.2.json) retains observed PASS
-separately from acceptance: **19 automated rows BLOCKED** until the host-integrity
-discrepancy is resolved; one roaming row reuses the previous 100 TCP + 100 QUIC flips
-of the exact SHA. This does not mean 19 protocol failures.
-Linux unit 2238 PASS/59 ignored is reused because the `qeli` tree is identical to D13
-(`f0649180abda2161d04fbe40c9d8af9d0e50696f`). Platform limits are retained;
-physical tests are not promoted to PASS. Certification is incomplete and D14 remains
-`IN_PROGRESS`. Raw: `audit-debt-20260924/d14-release-matrix-20261001/`.
+The [current 0.8.2 manifest](../../../release/certification/0.8.2.json) accepts
+**20/20 required automated gates**: 18 cases, aggregate leak from the full family
+matrix and the previous 100 TCP + 100 QUIC flips of the exact SHA.
+Overall Linux unit 2238 PASS/59 ignored is reused because the `qeli` tree is identical
+to D13 (`f0649180abda2161d04fbe40c9d8af9d0e50696f`). All 21 physical advisory rows remain:
+20 `not_available`, canary `pending`; this is not physical certification or a full
+release preflight/CI/package audit. User uncommitted changes are outside the candidate.
+D14 is closed for the current tested candidate; D05/D06/D07/D08/D10/D15 remain.
+Raw: `audit-debt-20260924/d14-release-matrix-20261001/`.
+
+The benchmark above was recorded **before** stopping the old restart loop; absolute
+numbers were not remeasured. They remain observations of that environment, not stable A/B.
 
 
 > **Latest 0.8.0 cross-protocol run:** the

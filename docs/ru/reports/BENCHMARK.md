@@ -90,38 +90,47 @@ Per-phase CPU/RSS, retransmit, jitter и метаданные сохранены
 
 ## Проверки текущего release-кандидата — 1 октября 2026
 
-Новый [SSH runner](../../../scripts/audit_release_matrix_lab.py) использует готовые
+Новый [SSH runner](../../../scripts/audit_release_matrix_lab.py) запускает готовые
 release fixtures в fresh NET/mount/PID namespaces с private `/run`, `/var/lib`,
-`/var/log`, `/etc/qeli` и коротким `/tmp`. Бинарник `a526c03b` не пересобирался.
-[Сохранённое evidence](../../../release/certification/evidence/linux-matrix-20261001.json)
-содержит **18/18 функциональных сценариев, 327/327 утверждений PASS**:
-12 outer/inner IPv4/IPv6 × TCP/UDP fake-TLS/QUIC full cells, 2 dual split,
-TAP/NDP/RA, DNS через оба upstream family (56 checks), PMTU/MTU/PTB (36)
-и оба направления совместимости с пакетным 0.7.16 (26).
-Пакет извлечён в отдельный каталог без установки; legacy binary SHA
-`6139d7f0280a129e635c188b80bfba93f8256ca76295f24e10e740f99c5ef8bd`.
+`/var/log`, `/etc/qeli` и коротким `/tmp`. Проверен тот же `a526c03b`, без пересборки.
+[Evidence](../../../release/certification/evidence/linux-matrix-20261001.json):
+**18/18 функциональных сценариев, 327/327 утверждений PASS** — 12 full cells
+outer/inner IPv4/IPv6 × TCP/UDP fake-TLS/QUIC, 2 dual split, TAP/NDP/RA,
+DNS через оба upstream family (56), PMTU/MTU/PTB (36), оба направления
+interop с пакетным 0.7.16 (26). Legacy package извлечён без установки;
+binary SHA `6139d7f0280a129e635c188b80bfba93f8256ca76295f24e10e740f99c5ef8bd`.
 
-Первый запуск `full-01` остановлен: длинный TMPDIR превысил Unix socket SUN_LEN.
-Путь исправлен private bind `/tmp`, сравнение firewall исключает время генерации
-и packet counters, runner прекращает кампанию на первом отказе. Это исправления
-стенда; код продукта не менялся. Неуспешные логи сохранены.
+Первый `full-01` остановлен из-за Unix socket SUN_LEN при длинном TMPDIR.
+Исправлены private `/tmp`, сравнение firewall без времени/счётчиков и остановка
+на первом отказе. Это изменения стенда; код продукта не менялся, логи сохранены.
 
-**Приёмка всей кампании не завершена.** В `full-02` на parent host появились
-два legacy FORWARD правила для `vpn0` и MASQUERADE для `10.8.0.0/24 -> ens18`.
-В отдельном legacy repeat трафик дал 26/26 PASS, но эти правила исчезли;
-позднее вновь наблюдались без работающей audit-фикстуры. Исходный host worker PID
-845 сохранился, тестовые namespaces/processes отсутствуют. Тестовые профили
-используют `10.86.0.0/24` и собственные имена TUN; источник parent-мутации
-не установлен. Неизвестные правила вручную не изменялись.
+Два последующих прогона выявили изменение трёх parent legacy-правил.
+Источник установлен: `vpn-obfuscated.service` падает с
+`password_file or password_command required`, `Restart=on-failure`, интервал 5 с,
+**5109 рестартов**. Зависимый `vpn-nat.service` каждым start/stop добавляет/удаляет
+ровно два FORWARD правила для `vpn0` и MASQUERADE `10.8.0.0/24 -> ens18`.
+Журнал, scripts и before/after сохранены. Тестовые профили используют `10.86.0.0/24`
+и собственные имена TUN. **Это независимый неработающий сервис лабы, не мутация Qeli.**
+Остановлены только два старых units; их файлы и enabled state сохранены.
+Работающий `qeli.service`, исходный PID 845, routes/DNS и остальные firewall-правила сохранены.
+После остановки TCP, IPv6 QUIC, DNS, PMTU и legacy повторены: **144/144 PASS**,
+все поля полного host snapshot совпали до/после. Остальные cells не повторялись:
+тот же SHA/source/fixtures, причина parent-расхождения доказана. Первые несовпавшие
+снимки и [partial manifest](../../../release/certification/evidence/0.8.2-partial-20261001.json)
+сохранены, не заменены утверждением о первоначальном успешном cleanup.
 
-[Manifest 0.8.2](../../../release/certification/0.8.2.json) сохраняет наблюдаемые
-PASS отдельно от допуска: **19 automated rows BLOCKED** до разрешения
-host-integrity расхождения; один roaming row использует ранее проверенные
-100 TCP + 100 QUIC переходов того же SHA. Это не 19 поломок протокола.
-Linux unit 2238 PASS/59 ignored переиспользован: дерево `qeli` идентично D13
-(`f0649180abda2161d04fbe40c9d8af9d0e50696f`). Платформенные ограничения сохранены;
-физические проверки не превращены в PASS. Certification остаётся неполной,
-D14 остаётся `IN_PROGRESS`. Raw: `audit-debt-20260924/d14-release-matrix-20261001/`.
+[Текущий manifest 0.8.2](../../../release/certification/0.8.2.json) принимает
+**20/20 обязательных automated gates**: 18 сценариев, aggregate leak по полной
+семейной матрице и ранее проверенные 100 TCP + 100 QUIC переходов того же SHA.
+Общий Linux unit 2238 PASS/59 ignored переиспользован: дерево `qeli` идентично D13
+(`f0649180abda2161d04fbe40c9d8af9d0e50696f`). 21 physical advisory сохранён:
+20 `not_available`, canary `pending`; это не физическая certification и не полный
+release preflight/CI/package audit. Пользовательские uncommitted изменения исключены.
+D14 закрыт для текущего проверенного кандидата; D05/D06/D07/D08/D10/D15 остаются.
+Raw: `audit-debt-20260924/d14-release-matrix-20261001/`.
+
+Benchmark выше снят **до** остановки старого restart loop; абсолютные цифры не
+переизмерялись. Они остаются наблюдениями указанного окружения, не стабильным A/B.
 
 
 > **Исторический сравнительный прогон 0.8.0:**
