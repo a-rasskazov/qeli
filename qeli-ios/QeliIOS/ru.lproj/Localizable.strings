@@ -155,6 +155,8 @@
 "Carrier" = "Внешний канал";
 "Packet recordizer" = "Рекордайзер пакетов";
 "Legacy packet-per-record" = "Устаревший пакет на запись";
+"Reconnect required" = "Требуется переподключение";
+"The active profile was saved. Disconnect and connect again to apply it to the running tunnel." = "Активный профиль сохранён. Отключитесь и подключитесь снова, чтобы применить его к работающему туннелю.";
 "Reconnect fallback" = "Обычное переподключение";
 "Multipath" = "Multipath";
 "up to %lld streams" = "до %lld потоков";

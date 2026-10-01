@@ -242,13 +242,20 @@ final class AppModel: ObservableObject {
         persistArchive(rollbackTo: previous)
     }
 
-    func saveProfile(id: UUID?, name: String, configText: String) throws {
+    /// Returns whether a running tunnel still uses the previous active configuration.
+    @discardableResult
+    func saveProfile(id: UUID?, name: String, configText: String) throws -> Bool {
         let previous = archive
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { throw VPNConfigError.invalid("profile name is empty") }
         let config = try VPNConfig(parsing: configText)
         let normalized = try config.toINI(label: trimmedName)
+        var reconnectRequired = false
         if let id, let index = archive.profiles.firstIndex(where: { $0.id == id }) {
+            reconnectRequired = (
+                isTunnelBusy && id == activeProfileID &&
+                archive.profiles[index].configText != normalized
+            )
             archive.profiles[index].name = trimmedName
             archive.profiles[index].configText = normalized
             archive.profiles[index].modifiedAt = Date()
@@ -259,6 +266,7 @@ final class AppModel: ObservableObject {
         }
         do { try commitArchive() }
         catch { archive = previous; throw error }
+        return reconnectRequired
     }
 
     @discardableResult

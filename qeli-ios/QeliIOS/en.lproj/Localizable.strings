@@ -155,6 +155,8 @@
 "Carrier" = "Carrier";
 "Packet recordizer" = "Packet recordizer";
 "Legacy packet-per-record" = "Legacy packet-per-record";
+"Reconnect required" = "Reconnect required";
+"The active profile was saved. Disconnect and connect again to apply it to the running tunnel." = "The active profile was saved. Disconnect and connect again to apply it to the running tunnel.";
 "Reconnect fallback" = "Reconnect fallback";
 "Multipath" = "Multipath";
 "up to %lld streams" = "up to %lld streams";
