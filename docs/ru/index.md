@@ -311,3 +311,4 @@
 - [Q25-F194: переносимый пароль в ссылке и сборка редактора](reports/AUDIT-Q25-CLIENT-SHARE-PASSWORD.md)
 - [Q25-F195: ошибки выдачи ссылки в клиентском UI](reports/AUDIT-Q25-CLIENT-SHARE-UI.md)
 - [Q25-F196: проверка пароля share URI во всех адаптерах](reports/AUDIT-Q25-CLIENT-SHARE-PARITY.md)
+- [Q25-F197: матрица общего INI-редактора](reports/AUDIT-Q25-CLIENT-INI-MATRIX.md)

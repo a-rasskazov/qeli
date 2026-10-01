@@ -779,3 +779,143 @@ fn share_requires_a_portable_inline_password() {
     assert!(uri.starts_with("qeli://alice:secret@vpn.example.com:443"));
     ok(json!({"op":"import","source":uri}));
 }
+
+#[test]
+fn every_schema_field_survives_runtime_projection() {
+    let schema = ok(json!({"op":"schema"}));
+    let fields = schema["fields"].as_array().unwrap();
+    assert_eq!(fields.len(), 84);
+    for field in fields {
+        let key = field["key"].as_str().unwrap();
+        let kind = field["kind"].as_str().unwrap();
+        let value = match key {
+            "server" => "other.example.com:8443".to_string(),
+            "name" => "Example".to_string(),
+            "proto" => "udp".to_string(),
+            "user" => "bob".to_string(),
+            "pass" => "otherpass".to_string(),
+            "key" => "ab".repeat(32),
+            "mode" => "plain".to_string(),
+            "front" => "none".to_string(),
+            "sni" => "example.com".to_string(),
+            "reality_sid" => "0123456789abcdef".to_string(),
+            "mtu" => "1400".to_string(),
+            "dns" => "system".to_string(),
+            "dns_servers" => "1.1.1.1".to_string(),
+            "apps_mode" => "include".to_string(),
+            "apps" => "com.example.app".to_string(),
+            "route_file" => "rules.txt".to_string(),
+            "local" => "192.0.2.3".to_string(),
+            "lport" => "12345".to_string(),
+            "dev" => "vpn1".to_string(),
+            "device_type" => "tun".to_string(),
+            "lan_subnet" => "192.168.1.0/24".to_string(),
+            "lan_subnet_ipv6" => "2001:db8::/64".to_string(),
+            "post_up" | "post_down" | "password_command" => "true".to_string(),
+            "password_file" => "/tmp/qeli-pw".to_string(),
+            "reality_split" => "1,2".to_string(),
+            "ipv6" | "roaming" => "off".to_string(),
+            "logging.level" => "debug".to_string(),
+            "logging.file" => "/tmp/qeli.log".to_string(),
+            "logging.time_format" => "utc".to_string(),
+            "include" => "10.0.0.0/8".to_string(),
+            "exclude" => "192.0.2.0/24".to_string(),
+            _ => match kind {
+                "bool" => (field["default"] != "true").to_string(),
+                "int" => {
+                    (field["default"].as_str().unwrap().parse::<i64>().unwrap() + 1).to_string()
+                }
+                "list" | "lines" => "10.0.0.0/8".to_string(),
+                _ => "sample".to_string(),
+            },
+        };
+        let mut source = String::from("[qeli]\n");
+        for (base_key, base_value) in [
+            ("server", "vpn.example.com:443"),
+            ("user", "alice"),
+            ("pass", "secret"),
+        ] {
+            if key != base_key {
+                source.push_str(&format!("{base_key} = {base_value}\n"));
+            }
+        }
+        if key == "exit_node" {
+            source.push_str("gateway = false\n");
+        }
+        if key == "apps_mode" {
+            source.push_str("apps = com.example.app\n");
+        }
+        if let Some(logging_key) = key.strip_prefix("logging.") {
+            source.push_str(&format!("[logging]\n{logging_key} = {value}\n"));
+        } else {
+            source.push_str(&format!("{key} = {value}\n"));
+        }
+        let imported = ok(json!({"op":"import","source":source}));
+        let runtime = ok(json!({"op":"runtime","source":source}));
+        let again = ok(json!({"op":"import","source":runtime["text"]}));
+        assert_eq!(imported["values"], again["values"], "field {key}");
+    }
+}
+
+#[test]
+fn bounded_ini_mutations_keep_values_and_raw_entries_across_export() {
+    let keys = [
+        "mode",
+        "proto",
+        "mtu",
+        "dns",
+        "dns_servers",
+        "include",
+        "apps",
+        "apps_mode",
+        "gateway",
+        "allow_ipv4_leak",
+        "route_file",
+        "logging.level",
+        "future_key",
+        "pass",
+    ];
+    let values = [
+        "",
+        "true",
+        "false",
+        "0",
+        "1",
+        "bad",
+        "1.1.1.1",
+        "a,b",
+        " a ",
+        "\"a;b\"",
+        "a\\\"b",
+        "snowman",
+        "x\tq",
+        "\"quoted\"",
+        "10.0.0.0/8",
+    ];
+    let mut state = 192486_u64;
+    let mut pick = |len: usize| {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        ((state >> 32) as usize) % len
+    };
+    for case in 0..1000 {
+        let mut source = String::from(BASE);
+        for _ in 0..pick(6) {
+            source.push_str(&format!(
+                "{} = {}\n",
+                keys[pick(keys.len())],
+                values[pick(values.len())]
+            ));
+        }
+        if case % 7 == 0 {
+            source.push_str(&format!(
+                "[logging]\nlevel = {}\n",
+                values[pick(values.len())]
+            ));
+        }
+        let first = ok(json!({"op":"import","source":source}));
+        let saved = ok(json!({"op":"export","source":first["source"]}));
+        let again = ok(json!({"op":"import","source":saved["text"]}));
+        assert_eq!(first["values"], again["values"], "case {case}");
+        assert_eq!(first["raw"], again["raw"], "case {case}");
+    }
+}
