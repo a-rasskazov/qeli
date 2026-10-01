@@ -88,6 +88,42 @@ from these different tables; such a conclusion requires equivalent A/B.
 This set does not close IPv6/DNS/leak/PMTU/legacy or physical certification gates.
 
 
+## Current release-candidate checks — 1 October 2026
+
+The new [SSH runner](../../../scripts/audit_release_matrix_lab.py) runs existing
+release fixtures in fresh NET/mount/PID namespaces with private `/run`, `/var/lib`,
+`/var/log`, `/etc/qeli` and a short `/tmp`. Binary `a526c03b` was not rebuilt.
+[Retained evidence](../../../release/certification/evidence/linux-matrix-20261001.json)
+contains **18/18 functional cases, 327/327 assertions PASS**:
+12 outer/inner IPv4/IPv6 × TCP/UDP fake-TLS/QUIC full cells, 2 dual split,
+TAP/NDP/RA, DNS over both upstream families (56 checks), PMTU/MTU/PTB (36),
+and both interop directions with packaged 0.7.16 (26).
+The package was extracted into a private directory without installation; legacy binary SHA
+`6139d7f0280a129e635c188b80bfba93f8256ca76295f24e10e740f99c5ef8bd`.
+
+The first `full-01` run stopped: the long TMPDIR exceeded Unix socket SUN_LEN.
+A private `/tmp` bind fixes the path; firewall comparison excludes generation timestamps
+and packet counters, and the runner stops at the first failure. These are harness fixes;
+product code did not change. Failed logs were retained.
+
+**Acceptance of the whole campaign is incomplete.** During `full-02`, the parent host
+gained two legacy FORWARD rules for `vpn0` and MASQUERADE for `10.8.0.0/24 -> ens18`.
+The separate legacy repeat returned 26/26 traffic PASS, but those rules disappeared;
+they were later observed again without an audit fixture running. Original host worker PID
+845 remained, and no test namespaces/processes remain. Test profiles use `10.86.0.0/24`
+and their own TUN names; the parent mutation source has not been established.
+Unknown rules were not manually changed.
+
+The [0.8.2 manifest](../../../release/certification/0.8.2.json) retains observed PASS
+separately from acceptance: **19 automated rows BLOCKED** until the host-integrity
+discrepancy is resolved; one roaming row reuses the previous 100 TCP + 100 QUIC flips
+of the exact SHA. This does not mean 19 protocol failures.
+Linux unit 2238 PASS/59 ignored is reused because the `qeli` tree is identical to D13
+(`f0649180abda2161d04fbe40c9d8af9d0e50696f`). Platform limits are retained;
+physical tests are not promoted to PASS. Certification is incomplete and D14 remains
+`IN_PROGRESS`. Raw: `audit-debt-20260924/d14-release-matrix-20261001/`.
+
+
 > **Latest 0.8.0 cross-protocol run:** the
 > [full 34-mode report](benchmarks/vpn_protocol_benchmark_repeat_2026-09-01.md)
 > covers three passes for 25 masked modes, IPv4/IPv6, TCP/UDP, CPU/RSS and the limits of
