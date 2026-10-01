@@ -79,6 +79,23 @@ object ProfileStore {
 
         fun edit(): Editor = Editor(this)
 
+        /** Opaque encrypted value observed by an Activity, including a malformed entry. */
+        data class Version(val present: Boolean, val encrypted: Any?)
+
+        class StaleVersionException : IllegalStateException("Profile store changed in another app instance")
+
+        fun version(key: String): Version = Version(backing.contains(key), backing.all[key])
+
+        /** Serializes competing Activities in this process and refuses stale writes. */
+        fun putStringIfVersion(key: String, expected: Version, value: String): Version =
+            synchronized(backing) {
+                if (version(key) != expected) throw StaleVersionException()
+                check(backing.edit().putString(key, encrypt(key, value)).commit()) {
+                    "Could not commit profile store"
+                }
+                version(key)
+            }
+
         private fun encrypt(preferenceKey: String, value: String): String {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key)

@@ -112,6 +112,7 @@ class MainActivity : AppCompatActivity() {
     private val profiles = mutableListOf<Profile>()
     private var activeIndex = 0
     private var profileStoreLoadRejected = false
+    private var observedProfileVersion: ProfileStore.SecureStore.Version? = null
     private var profileRevision = 0L
     private val reach = HashMap<Int, Long>()   // profile index -> ping ms (-1 = down, -2 = checking)
 
@@ -1024,8 +1025,12 @@ ipv6 = auto
 
     private fun loadProfiles() {
         profileStoreLoadRejected = false
-        val raw = try { secureStore.getString(KEY_PROFILES, null) }
-        catch (error: Exception) {
+        // Capture even an unreadable encrypted entry so explicit backup restore cannot
+        // replace a newer entry written by another Activity while the dialog is open.
+        val raw = try {
+            observedProfileVersion = secureStore.version(KEY_PROFILES)
+            secureStore.getString(KEY_PROFILES, null)
+        } catch (error: Exception) {
             profileStoreLoadRejected = true
             Log.e("VpnMain", "profiles decrypt: ${error.message}")
             null
@@ -1129,9 +1134,15 @@ ipv6 = auto
             getString(R.string.profile_store_write_blocked)
         }
         val encoded = encodeProfileSet(items, selectedIndex)
-        check(secureStore.edit().putString(KEY_PROFILES, encoded).commit()) {
-            "Could not commit profile store"
+        val expected = checkNotNull(observedProfileVersion) {
+            "Load the profile store before saving."
         }
+        val updated = try {
+            secureStore.putStringIfVersion(KEY_PROFILES, expected, encoded)
+        } catch (error: ProfileStore.SecureStore.StaleVersionException) {
+            throw IllegalStateException(getString(R.string.profile_store_stale), error)
+        }
+        observedProfileVersion = updated
         profileStoreLoadRejected = false
         profileRevision++
     }

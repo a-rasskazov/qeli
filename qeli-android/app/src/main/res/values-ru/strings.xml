@@ -161,6 +161,7 @@
     <string name="restore_confirm">Заменить все текущие профили на %1$d из резервной копии?</string>
     <string name="profile_store_unavailable_title">Хранилище профилей недоступно</string>
     <string name="profile_store_unavailable_message">Не удалось прочитать сохранённые профили. Исходные данные не заменены. Перезапустите приложение; если ошибка повторится, восстановите резервную копию.</string>
+    <string name="profile_store_stale">Профили изменились в другом окне приложения. Перезапустите Qeli перед сохранением.</string>
     <string name="profile_store_write_blocked">Не удалось прочитать сохранённые профили; перезапустите приложение или восстановите резервную копию перед изменениями.</string>
     <string name="restored">Восстановлено профилей: %1$d</string>
 
