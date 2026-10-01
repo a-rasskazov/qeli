@@ -22,31 +22,32 @@ public static class ProfileStore
     {
         // Absent file = normal first run. Only a PRESENT-but-unreadable file is dangerous.
         if (!File.Exists(FilePath)) return new List<VpnConfig>();
+        List<VpnConfig> profiles;
+        bool needsMigration;
         try
         {
             var raw = File.ReadAllBytes(FilePath);
             var plaintext = EncryptedEnvelope.Open(
-                raw, SecureKey.GetOrCreate(), allowLegacyArray: true, out bool needsMigration);
+                raw, SecureKey.GetOrCreate(), allowLegacyArray: true, out bool needsEnvelopeMigration);
             string json = StrictUtf8.GetString(plaintext);
-            var profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();
+            profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();
             // Profiles saved before the stable-Id fix have no "Id" field; the deserializer
             // left each at a fresh-GUID default that would otherwise change on every load
             // (settings reference profiles by Id). Persist once to freeze those Ids.
             bool needsIdMigration = profiles.Count > 0 && !json.Contains("\"Id\":");
-            if (needsMigration || needsIdMigration) Save(profiles);
-            return profiles;
+            needsMigration = needsEnvelopeMigration || needsIdMigration;
         }
         catch (Exception ex)
         {
-            // The file exists but couldn't be decrypted/parsed (e.g. Keychain key lost).
-            // Do NOT silently return an empty list — the next Save would overwrite the
-            // (possibly recoverable) file. Preserve it aside first, then start empty.
-            try { File.Move(FilePath, FilePath + ".corrupt-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); }
-            catch { /* best effort */ }
-            System.Diagnostics.Debug.WriteLine($"ProfileStore: profiles.json unreadable, preserved aside ({ex.Message})");
+            // Keep the unreadable original before attempting .bak recovery. Failure to
+            // preserve it must stop loading, rather than allow a later Save to overwrite it.
+            var preserved = ProfileStoreRecovery.PreserveUnreadable(FilePath);
+            System.Diagnostics.Debug.WriteLine(
+                $"ProfileStore: profiles.json unreadable, preserved at {preserved} ({ex.Message})");
 
             // File.Replace keeps one last authenticated generation. Recover it automatically
             // instead of opening with an empty profile list after a torn/corrupt latest write.
+            List<VpnConfig>? recovered = null;
             try
             {
                 var backup = FilePath + ".bak";
@@ -54,19 +55,25 @@ public static class ProfileStore
                 {
                     var plaintext = EncryptedEnvelope.Open(
                         File.ReadAllBytes(backup), SecureKey.GetOrCreate(), true, out _);
-                    var profiles = JsonSerializer.Deserialize<List<VpnConfig>>(
+                    recovered = JsonSerializer.Deserialize<List<VpnConfig>>(
                         StrictUtf8.GetString(plaintext), Options) ?? new List<VpnConfig>();
-                    Save(profiles);
-                    System.Diagnostics.Debug.WriteLine("ProfileStore: restored profiles from authenticated .bak");
-                    return profiles;
                 }
             }
             catch (Exception backupError)
             {
                 System.Diagnostics.Debug.WriteLine($"ProfileStore: .bak recovery failed ({backupError.Message})");
             }
-            return new List<VpnConfig>();
+            if (recovered is null) return new List<VpnConfig>();
+
+            // A write failure must propagate instead of hiding the successfully read backup.
+            Save(recovered);
+            System.Diagnostics.Debug.WriteLine("ProfileStore: restored profiles from authenticated .bak");
+            return recovered;
         }
+
+        // Do not quarantine a readable store if only its migration write fails.
+        if (needsMigration) Save(profiles);
+        return profiles;
     }
 
     public static void Save(IEnumerable<VpnConfig> profiles)

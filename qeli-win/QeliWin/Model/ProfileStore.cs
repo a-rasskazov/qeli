@@ -24,6 +24,8 @@ public static class ProfileStore
     {
         // Absent file = normal first run. Only a PRESENT-but-unreadable file is dangerous.
         if (!File.Exists(FilePath)) return new List<VpnConfig>();
+        List<VpnConfig> profiles;
+        bool needsMigration;
         try
         {
             var bytes = File.ReadAllBytes(FilePath);
@@ -42,25 +44,27 @@ public static class ProfileStore
                 json = StrictUtf8.GetString(bytes);
                 wasLegacyPlaintext = true;
             }
-            var profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();
+            profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();
             // Profiles saved before the stable-Id fix have no "Id" field; the deserializer
             // left each at a fresh-GUID default that would otherwise change on every load
             // (settings reference profiles by Id). Persist once to freeze those Ids.
             bool needsIdMigration = profiles.Count > 0 && !json.Contains("\"Id\":");
-            // Re-write encrypted immediately so plaintext secrets stop lingering on disk.
-            if (wasLegacyPlaintext || needsIdMigration) Save(profiles);
-            return profiles;
+            needsMigration = wasLegacyPlaintext || needsIdMigration;
         }
         catch (Exception ex)
         {
-            // The file exists but couldn't be decrypted/parsed. Do NOT silently return an
-            // empty list — the next Save would overwrite the (possibly recoverable) file.
-            // Preserve it aside first, then start empty.
-            try { File.Move(FilePath, FilePath + ".corrupt-" + DateTimeOffset.UtcNow.ToUnixTimeSeconds()); }
-            catch { /* best effort */ }
-            System.Diagnostics.Debug.WriteLine($"ProfileStore: profiles.json unreadable, preserved aside ({ex.Message})");
+            // Do not expose an empty store while the unreadable file remains at FilePath.
+            // A failed quarantine is fatal so a later Save cannot overwrite that file.
+            var preserved = ProfileStoreRecovery.PreserveUnreadable(FilePath);
+            System.Diagnostics.Debug.WriteLine(
+                $"ProfileStore: profiles.json unreadable, preserved at {preserved} ({ex.Message})");
             return new List<VpnConfig>();
         }
+
+        // A failed migration write does not make an otherwise valid store corrupt.
+        // Let it fail without moving the readable source out of the way.
+        if (needsMigration) Save(profiles);
+        return profiles;
     }
 
     public static void Save(IEnumerable<VpnConfig> profiles)
