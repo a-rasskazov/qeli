@@ -14,7 +14,48 @@ use crate::server::ServerState;
 use axum::extract::{Path, State};
 use axum::Json;
 use serde_json::{json, Value};
+use std::path::Path as FsPath;
 use std::sync::Arc;
+
+/// Read a stable snapshot with the client runtime's INI budget.
+fn read_profile(path: &str) -> anyhow::Result<Option<String>> {
+    match crate::config_source::load_bounded(path, crate::transport_core::MAX_CONFIG_BYTES as u64) {
+        Ok(snapshot) => Ok(Some(snapshot.into_parts().0)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn profile_revision_conflict(body: &Value, current: Option<&str>) -> Option<Value> {
+    let expected = body.get("expected_revision").and_then(Value::as_str);
+    let revision = current.map(super::config::config_revision);
+    match (current, expected) {
+        (None, None) => None,
+        (Some(_), Some(expected)) if Some(expected) == revision.as_deref() => None,
+        (Some(_), None) => Some(json!({
+            "ok": false, "kind": "config_revision_required",
+            "error": "This client profile already exists. Open it for editing to load its revision.",
+            "current_revision": revision,
+        })),
+        _ => Some(json!({
+            "ok": false, "kind": "config_conflict",
+            "error": "The client profile changed or was deleted. Reload and review it before saving.",
+            "current_revision": revision,
+        })),
+    }
+}
+
+fn write_profile_if_unchanged(
+    path: &str,
+    ini: &str,
+    checked_raw: Option<&str>,
+) -> anyhow::Result<bool> {
+    if read_profile(path)?.as_deref() != checked_raw {
+        return Ok(false);
+    }
+    crate::util::write_atomic_private(path, ini.as_bytes())?;
+    Ok(true)
+}
 
 /// Sanitize an arbitrary string (a link label or host) into a valid profile name.
 fn sanitize_name(s: &str) -> String {
@@ -138,8 +179,9 @@ fn panel_state_from_diagnostics(status: &Value) -> &'static str {
 /// Parse a stored profile's `[qeli]` essentials for the list view (best-effort).
 fn profile_summary(name: &str) -> Value {
     let path = ClientManager::profile_path(name);
-    let cfg = std::fs::read_to_string(&path)
+    let cfg = read_profile(&path)
         .ok()
+        .flatten()
         .and_then(|s| crate::config::parse_client_config_strict(&s).ok());
     match cfg {
         Some(c) => json!({
@@ -402,7 +444,7 @@ fn free_dev(exclude: &str) -> anyhow::Result<String> {
         if n == exclude {
             continue;
         }
-        if let Ok(s) = std::fs::read_to_string(ClientManager::profile_path(&n)) {
+        if let Ok(Some(s)) = read_profile(&ClientManager::profile_path(&n)) {
             if let Ok(c) = crate::config::parse_client_config_strict(&s) {
                 // ClientConfig zeroizes secrets in Drop, so clone the device name.
                 used.insert(c.tun.name.clone());
@@ -434,8 +476,9 @@ fn ensure_unique_dev(name: &str, ini: &str) -> anyhow::Result<String> {
     if crate::config::editor::explicit_device(ini)?.is_some() {
         return Ok(ini.to_string());
     }
-    let previous = std::fs::read_to_string(ClientManager::profile_path(name))
+    let previous = read_profile(&ClientManager::profile_path(name))
         .ok()
+        .flatten()
         .and_then(|s| crate::config::parse_client_config_strict(&s).ok())
         .map(|c| c.tun.name.clone());
     let dev = match previous {
@@ -491,7 +534,7 @@ fn validate_panel_profile(ini: &str) -> anyhow::Result<()> {
 }
 
 /// Persist the original INI, retaining comments and assigning a TUN device if absent.
-fn persist(name: &str, ini: &str) -> anyhow::Result<()> {
+fn persist(name: &str, ini: &str, checked_raw: Option<&str>) -> anyhow::Result<bool> {
     validate_panel_profile(ini)?;
     let ini = ensure_unique_dev(name, ini)?;
     // Validate the bytes that will be written, including the automatic device assignment.
@@ -500,8 +543,7 @@ fn persist(name: &str, ini: &str) -> anyhow::Result<()> {
     // The profile embeds the plaintext VPN password (`pass = …`), so it must be
     // born 0600 — `write_atomic` would fall back to 0644 for a new file, leaving
     // credentials world-readable to any local user.
-    crate::util::write_atomic_private(ClientManager::profile_path(name), ini.as_bytes())?;
-    Ok(())
+    write_profile_if_unchanged(&ClientManager::profile_path(name), &ini, checked_raw)
 }
 
 /// Create/replace a profile. Body is EITHER a full raw INI (`{name, raw}` — full
@@ -524,14 +566,33 @@ pub async fn save_profile(
     let raw = body
         .get("raw")
         .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.trim().is_empty());
     let ini = match raw {
         Some(r) => r.to_string(),
         None => ini_from_fields(&body),
     };
-    match persist(&name, &ini) {
-        Ok(()) => Json(json!({ "ok": true, "name": name })),
+    let path = ClientManager::profile_path(&name);
+    if let Err(error) = std::fs::create_dir_all(crate::server::client_manager::CLIENTS_DIR) {
+        return Json(super::err_json(format!(
+            "cannot create client profile directory: {error}"
+        )));
+    }
+    let _file_lock = match super::config::lock_server_config(FsPath::new(&path)).await {
+        Ok(lock) => lock,
+        Err(error) => return Json(super::err_json(error)),
+    };
+    let current = match read_profile(&path) {
+        Ok(current) => current,
+        Err(error) => return Json(super::err_json(error.to_string())),
+    };
+    if let Some(conflict) = profile_revision_conflict(&body, current.as_deref()) {
+        return Json(conflict);
+    }
+    match persist(&name, &ini, current.as_deref()) {
+        Ok(true) => Json(json!({ "ok": true, "name": name })),
+        Ok(false) => Json(super::err_json(
+            "The client profile changed on disk during this save. Reload and review it.",
+        )),
         Err(e) => Json(super::err_json(e.to_string())),
     }
 }
@@ -560,8 +621,29 @@ pub async fn import_link(
         .unwrap_or_else(|| sanitize_name(parsed.label.as_deref().unwrap_or(&parsed.host)));
     // Links do not carry gateway; from_link applies the shared client default.
     let cfg = ClientConfig::from_link(&parsed);
-    match persist(&name, &cfg.to_ini_string()) {
-        Ok(()) => Json(json!({ "ok": true, "name": name })),
+    let path = ClientManager::profile_path(&name);
+    if let Err(error) = std::fs::create_dir_all(crate::server::client_manager::CLIENTS_DIR) {
+        return Json(super::err_json(format!(
+            "cannot create client profile directory: {error}"
+        )));
+    }
+    let _file_lock = match super::config::lock_server_config(FsPath::new(&path)).await {
+        Ok(lock) => lock,
+        Err(error) => return Json(super::err_json(error)),
+    };
+    let current = match read_profile(&path) {
+        Ok(current) => current,
+        Err(error) => return Json(super::err_json(error.to_string())),
+    };
+    // Import is create-only, even if an API caller supplies an edit revision.
+    if let Some(conflict) = profile_revision_conflict(&json!({}), current.as_deref()) {
+        return Json(conflict);
+    }
+    match persist(&name, &cfg.to_ini_string(), current.as_deref()) {
+        Ok(true) => Json(json!({ "ok": true, "name": name })),
+        Ok(false) => Json(super::err_json(
+            "The client profile changed on disk during this import. Reload and review it.",
+        )),
         Err(e) => Json(super::err_json(e.to_string())),
     }
 }
@@ -575,9 +657,13 @@ pub async fn get_profile(
     if !ClientManager::valid_name(&name) {
         return Json(super::err_json("invalid name"));
     }
-    match std::fs::read_to_string(ClientManager::profile_path(&name)) {
-        Ok(ini) => Json(json!({ "ok": true, "name": name, "raw": ini })),
-        Err(_) => Json(super::err_json("profile not found")),
+    match read_profile(&ClientManager::profile_path(&name)) {
+        Ok(Some(ini)) => {
+            let revision = super::config::config_revision(&ini);
+            Json(json!({ "ok": true, "name": name, "raw": ini, "revision": revision }))
+        }
+        Ok(None) => Json(super::err_json("profile not found")),
+        Err(error) => Json(super::err_json(error.to_string())),
     }
 }
 
@@ -654,6 +740,50 @@ pub async fn disconnect(
 mod diagnostic_tests {
     use super::*;
     use crate::config::format::IniDoc;
+
+    #[test]
+    fn client_profile_revision_rejects_stale_edit_and_name_collision() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-client-revision-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("client.conf");
+        let path = file.to_str().unwrap();
+        let first = "[qeli]\nserver = first:443\n";
+        let edited = "# manual edit\n[qeli]\nserver = first:443\n";
+        assert_eq!(read_profile(path).unwrap(), None);
+        assert!(write_profile_if_unchanged(path, first, None).unwrap());
+        assert!(!write_profile_if_unchanged(path, edited, None).unwrap());
+        assert_eq!(
+            profile_revision_conflict(&json!({}), Some(first)).unwrap()["kind"],
+            "config_revision_required"
+        );
+        let expected = super::super::config::config_revision(first);
+        assert!(
+            profile_revision_conflict(&json!({"expected_revision": expected}), Some(first))
+                .is_none()
+        );
+        std::fs::write(path, edited).unwrap();
+        assert!(!write_profile_if_unchanged(path, first, Some(first)).unwrap());
+        assert_eq!(
+            profile_revision_conflict(&json!({"expected_revision": expected}), Some(edited))
+                .unwrap()["kind"],
+            "config_conflict"
+        );
+        assert_eq!(read_profile(path).unwrap().as_deref(), Some(edited));
+        assert!(write_profile_if_unchanged(path, first, Some(edited)).unwrap());
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_len(crate::transport_core::MAX_CONFIG_BYTES as u64 + 1)
+            .unwrap();
+        assert!(read_profile(path).is_err());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn panel_validation_uses_shared_config_rules_and_retains_privilege_limits() {

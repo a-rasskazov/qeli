@@ -319,8 +319,8 @@ function clientPage() {
     importOpen: false, importLink: '', importName: '',
     diagOpen: false, diagProfile: null,
     formOpen: false,
-    form: { editing:false, rawMode:false, raw:'', name:'', server:'', proto:'tcp', mode:'fake-tls', user:'', pass:'', dev:'', key:'', sni:'', rsid:'', obfs_key:'', front:'websocket', awg:false, jc:0, jmin:40, jmax:300, quic:false, ipv6:'auto', include:'', exclude:'', lan_subnet_ipv6:'', allow_ipv4_leak:false, allow_ipv6_leak:false, gateway:false, route_local:false, autostart:false },
-    blankForm() { return { editing:false, rawMode:false, raw:'', name:'', server:'', proto:'tcp', mode:'fake-tls', user:'', pass:'', dev:'', key:'', sni:'', rsid:'', obfs_key:'', front:'websocket', awg:false, jc:0, jmin:40, jmax:300, quic:false, ipv6:'auto', include:'', exclude:'', lan_subnet_ipv6:'', allow_ipv4_leak:false, allow_ipv6_leak:false, gateway:false, route_local:false, autostart:false }; },
+    form: { editing:false, rawMode:false, raw:'', revision:null, name:'', server:'', proto:'tcp', mode:'fake-tls', user:'', pass:'', dev:'', key:'', sni:'', rsid:'', obfs_key:'', front:'websocket', awg:false, jc:0, jmin:40, jmax:300, quic:false, ipv6:'auto', include:'', exclude:'', lan_subnet_ipv6:'', allow_ipv4_leak:false, allow_ipv6_leak:false, gateway:false, route_local:false, autostart:false },
+    blankForm() { return { editing:false, rawMode:false, raw:'', revision:null, name:'', server:'', proto:'tcp', mode:'fake-tls', user:'', pass:'', dev:'', key:'', sni:'', rsid:'', obfs_key:'', front:'websocket', awg:false, jc:0, jmin:40, jmax:300, quic:false, ipv6:'auto', include:'', exclude:'', lan_subnet_ipv6:'', allow_ipv4_leak:false, allow_ipv6_leak:false, gateway:false, route_local:false, autostart:false }; },
 
     async load() { this.loading = true; await this.refresh(); this.loading = false; },
     async refresh() {
@@ -382,7 +382,7 @@ function clientPage() {
     },
     parseIni(raw, f) {
       const next = this.blankForm();
-      next.name = f.name; next.editing = f.editing; next.raw = raw; next.rawMode = f.rawMode;
+      next.name = f.name; next.editing = f.editing; next.raw = raw; next.rawMode = f.rawMode; next.revision = f.revision;
       const map = {server:'server',proto:'proto',user:'user',pass:'pass',dev:'dev',key:'key',mode:'mode',sni:'sni',reality_sid:'rsid',obfs_key:'obfs_key',front:'front',include:'include',exclude:'exclude',lan_subnet_ipv6:'lan_subnet_ipv6',ipv6:'ipv6'};
       const flags = new Set(['awg','quic','gateway','route_local','autostart','allow_ipv4_leak','allow_ipv6_leak']);
       const numbers = new Set(['jc','jmin','jmax']);
@@ -485,7 +485,7 @@ function clientPage() {
     async openEdit(n) {
       const r = await apiFetch(`api/client/profiles/${encodeURIComponent(n)}`);
       if (!r.ok) { this.notify(r.error, 'error'); return; }
-      const f = this.blankForm(); f.editing = true; f.name = n; f.raw = r.raw || '';
+      const f = this.blankForm(); f.editing = true; f.name = n; f.raw = r.raw || ''; f.revision = r.revision;
       try { this.parseIni(r.raw, f); }
       catch (error) { f.rawMode = true; this.notify(error.message, 'error'); }
       this.form = f; this.formOpen = true;
@@ -503,6 +503,7 @@ function clientPage() {
         body = Object.assign({}, this.form);
         delete body.raw;
       }
+      body.expected_revision = this.form.revision;
       const r = await apiFetch('api/client/profiles', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(body)});
       if (r.ok) { this.formOpen=false; this.notify(`Saved "${r.name}"`); await this.refresh(); }

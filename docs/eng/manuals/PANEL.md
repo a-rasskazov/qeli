@@ -623,6 +623,12 @@ connecting *to* this machine.
   start, `route_local` and full-tunnel. The **Raw INI ↦** toggle in the same dialog gives
   the full config, and keys the form doesn't manage survive a round-trip through it.
 
+Creating or importing requires an unused name; an existing client profile is never
+silently replaced. The editor saves with the exact INI revision it loaded. If another
+tab or a manual edit changes the file, the save is rejected: reopen the profile,
+review the newer contents, and save again. INI reads use the client runtime's
+256 KiB limit.
+
 **Where things live.**
 - Profiles: `/etc/qeli/clients/<name>.conf`, mode `0600` (they contain the password in
   plaintext). Names are `[A-Za-z0-9._-]` only, up to 64 characters.
