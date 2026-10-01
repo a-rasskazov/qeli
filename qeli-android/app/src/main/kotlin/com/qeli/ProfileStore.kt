@@ -10,6 +10,7 @@ import com.google.crypto.tink.RegistryConfiguration
 import com.google.crypto.tink.aead.AeadConfig
 import com.google.crypto.tink.daead.DeterministicAeadConfig
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
+import java.math.BigDecimal
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.KeyStore
@@ -31,6 +32,8 @@ import org.json.JSONObject
  */
 object ProfileStore {
     const val KEY_PROFILES = "profiles_json"
+    const val MAX_PROFILE_SET_BYTES = 8 * 1024 * 1024
+    const val MAX_PROFILES = 256
 
     private const val PREFS_SECURE = "vpn_secure_v2"
     private const val KEY_ALIAS = "qeli_profile_store_v2_aes"
@@ -169,18 +172,36 @@ object ProfileStore {
             null
         } ?: return null
         return try {
+            if (raw.toByteArray(Charsets.UTF_8).size > MAX_PROFILE_SET_BYTES) return null
             val root = JSONObject(raw)
             val arr = root.optJSONArray("profiles") ?: return null
-            if (arr.length() == 0) return null
-            var idx = root.optInt("active", 0)
-            if (idx !in 0 until arr.length()) idx = 0
-            val profile = arr.getJSONObject(idx)
+            if (arr.length() !in 1..MAX_PROFILES) return null
+            val profile = arr.getJSONObject(readActiveProfileIndex(root, arr.length()))
             profile.optString("cfg", "").ifBlank {
                 profile.optString("json", "").ifBlank { null }
             }
         } catch (_: Exception) {
             null
         }
+    }
+
+    /** Missing active is a legacy default; malformed or out-of-range values cannot select another profile. */
+    internal fun readActiveProfileIndex(root: JSONObject, count: Int): Int {
+        require(count in 1..MAX_PROFILES) { "profile count is out of range" }
+        val raw = root.opt("active")
+        val index = when (raw) {
+            null -> 0
+            is Number -> try {
+                BigDecimal(raw.toString()).toBigIntegerExact().intValueExact()
+            } catch (_: ArithmeticException) {
+                null
+            } catch (_: NumberFormatException) {
+                null
+            }
+            else -> null
+        } ?: throw IllegalArgumentException("active profile index must be an integer")
+        require(index in 0 until count) { "active profile index is out of range" }
+        return index
     }
 
     private fun loadOrCreateKey(alias: String): SecretKey {

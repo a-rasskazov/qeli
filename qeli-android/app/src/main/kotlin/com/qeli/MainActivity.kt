@@ -185,11 +185,11 @@ class MainActivity : AppCompatActivity() {
         internal var uiVisible = false
             private set
         private const val PREF_LAST_AUTO_PROBE_MS = "last_auto_probe_ms"
-        private const val MAX_IMPORTED_FILE_BYTES = 8 * 1024 * 1024
+        private const val MAX_IMPORTED_FILE_BYTES = ProfileStore.MAX_PROFILE_SET_BYTES
         // QELI-ENC-1 base64-expands an otherwise valid 8 MiB plaintext archive.
         private const val MAX_IMPORTED_BACKUP_BYTES = 12 * 1024 * 1024
         private const val MAX_IMPORTED_CONFIG_BYTES = 256 * 1024 // shared editor/native core limit
-        private const val MAX_IMPORTED_PROFILES = 256
+        private const val MAX_IMPORTED_PROFILES = ProfileStore.MAX_PROFILES
         private const val MAX_IMPORTED_PROFILE_NAME_CHARS = 256
         private val REACHABILITY_PROBE_IDS = AtomicLong(0L)
         // Flat-INI template — the same `[qeli]` schema the Rust client reads.
@@ -985,8 +985,7 @@ ipv6 = auto
             }
             candidate.add(Profile(name, stored))
         }
-        val restoredActive = root.optInt("active", 0)
-        require(restoredActive in 0 until n) { "backup active profile index is out of range" }
+        val restoredActive = ProfileStore.readActiveProfileIndex(root, n)
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.restore_profiles)
             .setMessage(getString(R.string.restore_confirm, n))
@@ -1046,10 +1045,7 @@ ipv6 = auto
                 require(arr.length() in 1..MAX_IMPORTED_PROFILES) {
                     "stored profile set must contain 1..$MAX_IMPORTED_PROFILES entries"
                 }
-                val storedActive = root.optInt("active", 0)
-                require(storedActive in 0 until arr.length()) {
-                    "stored active profile index is out of range"
-                }
+                val storedActive = ProfileStore.readActiveProfileIndex(root, arr.length())
                 val loaded = ArrayList<Profile>(arr.length())
                 for (i in 0 until arr.length()) {
                     val p = arr.getJSONObject(i)
