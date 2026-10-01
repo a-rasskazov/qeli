@@ -480,6 +480,8 @@ tun.queues = 0
 
 - `0`/auto = `nproc` (recommended). Capped at 256 (the Linux kernel TUN-queue
   ceiling, `MAX_TAP_QUEUES`) — auto=nproc is not clamped on real servers.
+- Explicit values: `1..=256`; a larger value is rejected during config validation
+  rather than silently clamped.
 - `1` = the old behavior (a single pump) — for rollback.
 - Non-breaking, **server only**: nothing changes on the wire, clients need no
   rebuild (TUN is a local OS-kernel interface). Both **TCP** (N TUN queues) **and

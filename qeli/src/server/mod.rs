@@ -1620,6 +1620,8 @@ fn split_listen_spec(spec: &str) -> Option<(String, u16)> {
 
 /// Longest interface name the kernel will accept, from `IFNAMSIZ` (16) minus the NUL.
 const MAX_IFNAME_LEN: usize = 15;
+/// Linux TUN/TAP multi-queue ceiling (MAX_TAP_QUEUES).
+const MAX_TUN_QUEUES: usize = 256;
 
 fn validate_configured_interface(profile: &str, key: &str, value: &str) -> anyhow::Result<()> {
     let name = value.trim();
@@ -1711,6 +1713,12 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // validation (e.g. a half-edited one) without blocking startup.
         if !p.enabled {
             continue;
+        }
+        if p.tun.queues > MAX_TUN_QUEUES {
+            anyhow::bail!(
+                "profile '{}': tun.queues = {} exceeds the kernel limit {}; use 0 for auto or an explicit 1..={}",
+                p.name, p.tun.queues, MAX_TUN_QUEUES, MAX_TUN_QUEUES
+            );
         }
         if p.name.is_empty() {
             anyhow::bail!("profile has an empty name");
@@ -3330,7 +3338,7 @@ fn server_udp_buffer_budget(
     let automatic_queues = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)
-        .clamp(1, 256);
+        .clamp(1, MAX_TUN_QUEUES);
     let mut sockets = 0usize;
     let mut automatic_sockets = 0usize;
     let mut reserved_kernel_bytes = 0u64;
@@ -3342,7 +3350,7 @@ fn server_udp_buffer_budget(
         let queues = if profile.tun.queues == 0 {
             automatic_queues
         } else {
-            profile.tun.queues.clamp(1, 256)
+            profile.tun.queues.clamp(1, MAX_TUN_QUEUES)
         };
         let listener_count = 1usize.saturating_add(profile.bind.listen.len());
         let count = queues.saturating_mul(listener_count);
@@ -5155,7 +5163,7 @@ fn setup_profile_tun(pcfg: &ProfileConfig) -> anyhow::Result<ProfileTunSetup> {
         // Ceiling = the kernel's tun multi-queue limit (MAX_TAP_QUEUES = 256); this
         // never reduces auto=nproc for real core counts. More queues than cores is
         // pointless (idle pollers), but explicit values are honoured up to the limit.
-        n.clamp(1, 256)
+        n.clamp(1, MAX_TUN_QUEUES)
     };
     let queues = TunInterface::create_multiqueue(&pcfg.tun.name, pcfg.tun.mtu, dev_type, nq)?;
     // The name the KERNEL gave the device, not the one we asked for. TUNSETIFF copies at most
@@ -7865,6 +7873,21 @@ pool.cidr = 10.{net}.0.0/24
             validate_profiles(&cfg("tun", 1400, "16777216")).is_err(),
             "the buffer is allocated per queue, so an absurd value multiplies"
         );
+    }
+
+    #[test]
+    fn explicit_tun_queues_above_kernel_limit_are_rejected() {
+        let mut config = crate::config::parse_server_config(
+            "[profile:p]\nbind.address = 127.0.0.1\nbind.port = 4443\ntun.name = vpn0\n",
+        )
+        .expect("fixture INI must parse");
+        config.profiles[0].tun.queues = 0;
+        validate_profiles(&config).expect("auto queue count must validate");
+        config.profiles[0].tun.queues = MAX_TUN_QUEUES;
+        validate_profiles(&config).expect("kernel queue ceiling must validate");
+        config.profiles[0].tun.queues = MAX_TUN_QUEUES + 1;
+        let error = validate_profiles(&config).unwrap_err().to_string();
+        assert!(error.contains("tun.queues"), "wrong error: {error}");
     }
 
     #[test]

@@ -665,8 +665,8 @@
             </div>
             <div>
               <label class="field-label">TUN queues (multi-queue)</label>
-              <p class="field-desc">IFF_MULTI_QUEUE: 0 = auto (CPU count) so the kernel RSS-spreads packets across cores. 1 = single queue.</p>
-              <input class="inp" type="number" min="0" x-model.number="cfg.profiles[activeTab].tun.queues" @input="markDirty()">
+              <p class="field-desc">IFF_MULTI_QUEUE: 0 = auto (CPU count), 1 = single queue, up to 256 explicitly.</p>
+              <input class="inp" type="number" min="0" max="256" x-model.number="cfg.profiles[activeTab].tun.queues" @input="markDirty()">
             </div>
           </div>
         </div>
