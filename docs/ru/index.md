@@ -296,3 +296,4 @@
 - [Q25-F153: проверка аутентификации панели до сохранения](reports/AUDIT-Q25-SERVER-WEB-AUTH-SAVE.md)
 - [Q25-F154: Quick Start и политика блокировок](reports/AUDIT-Q25-SERVER-QUICKSTART-BF-SAVE.md)
 - [Q25-F155: предупреждения SIGHUP о настройках, требующих рестарта](reports/AUDIT-Q25-SERVER-SIGHUP-RESTART-HINTS.md)
+- [Q25-F156: проверка Argon2-хеша панели при загрузке и live reload](reports/AUDIT-Q25-SERVER-WEB-HASH-VALIDATION.md)

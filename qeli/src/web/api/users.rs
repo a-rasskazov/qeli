@@ -6,21 +6,8 @@ use axum::Json;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// Reject anything that isn't a parseable Argon2 PHC string. Without this,
-/// callers can store plaintext in `password_hash` and the server happily
-/// accepts it on next login (because PasswordHash::new would fail at verify
-/// time and the user could never log in — but the record is still persisted).
-pub(super) fn validate_argon2_hash(hash: &str) -> Result<(), String> {
-    if !hash.starts_with("$argon2id$")
-        && !hash.starts_with("$argon2i$")
-        && !hash.starts_with("$argon2d$")
-    {
-        return Err("password_hash must be an Argon2 PHC string ($argon2id$…)".into());
-    }
-    argon2::PasswordHash::new(hash)
-        .map(|_| ())
-        .map_err(|e| format!("invalid Argon2 hash: {}", e))
-}
+// Shared by the INI validation gate, panel saves, and user API.
+pub(super) use crate::config::validate_argon2_hash;
 
 /// Hash a plaintext password (Argon2id) and reversibly-encrypt it under the panel
 /// key, so the config/QR can be re-issued later without the plaintext. Encryption

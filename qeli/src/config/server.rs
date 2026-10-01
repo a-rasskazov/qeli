@@ -1572,6 +1572,11 @@ impl WebConfig {
             return Ok(());
         }
 
+        if !self.password_hash.is_empty() {
+            crate::config::validate_argon2_hash(&self.password_hash)
+                .map_err(|error| format!("web.password_hash: {error}"))?;
+        }
+
         if self.port == 0 {
             return Err(
                 "web.port = 0 would bind an ephemeral port while the log reports 0; set a port in 1..=65535"
@@ -1717,6 +1722,21 @@ mod web_validation_tests {
         web.tls_key.clear();
         web.validate_active()
             .expect("a disabled panel must not validate hidden dormant settings");
+    }
+
+    #[test]
+    fn active_panel_rejects_unusable_admin_hash() {
+        let mut web = active_web();
+        web.password_hash = "stored-verifier".into();
+        assert_rejected(&web, "web.password_hash");
+
+        web.enabled = false;
+        web.validate_active()
+            .expect("disabled panel keeps its dormant hash untouched");
+
+        web.enabled = true;
+        web.password_hash = crate::crypto::hash_password(b"test-admin").unwrap();
+        web.validate_active().expect("valid Argon2 hash");
     }
 
     #[test]

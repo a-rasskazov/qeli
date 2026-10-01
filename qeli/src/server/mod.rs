@@ -8847,7 +8847,7 @@ pool.cidr = 10.{net}.0.0/24
         startup.web.enabled = true;
         startup.web.bind = "127.0.0.1".into();
         startup.web.port = 8080;
-        startup.web.password_hash = "saved-hash".into();
+        startup.web.password_hash = crate::crypto::hash_password(b"test-admin").unwrap();
         startup.web.base_path = "/old".into();
         let state = test_api_state(startup.clone(), &path);
         let ip = "192.0.2.11".parse().unwrap();
@@ -8880,6 +8880,17 @@ pool.cidr = 10.{net}.0.0/24
         assert!(state.failed_auth.lock().await.by_ip.is_empty());
         assert_eq!(state.live_web.read().await.brute_force.max_attempts, 2);
 
+        candidate.web.password_hash = "not-an-argon2-hash".into();
+        candidate.web.public_host = "invalid-hash.example".into();
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+        state.reload_web_settings().await;
+        assert_eq!(
+            state.live_web.read().await.password_hash,
+            startup.web.password_hash
+        );
+        assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
+
+        candidate.web.password_hash = startup.web.password_hash.clone();
         candidate.web.session_ttl_secs = 0;
         candidate.web.brute_force.max_attempts = 3;
         candidate.web.public_host = "invalid.example".into();

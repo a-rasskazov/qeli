@@ -12,6 +12,20 @@ pub mod users;
 
 use serde::{Deserialize, Serialize};
 
+/// Validate a stored verifier before config admission or a live auth swap.
+/// A malformed PHC string would leave an enabled panel permanently unloggable.
+pub fn validate_argon2_hash(hash: &str) -> Result<(), String> {
+    if !hash.starts_with("$argon2id$")
+        && !hash.starts_with("$argon2i$")
+        && !hash.starts_with("$argon2d$")
+    {
+        return Err("password_hash must be an Argon2 PHC string ($argon2id$…)".into());
+    }
+    argon2::PasswordHash::new(hash)
+        .map(|_| ())
+        .map_err(|e| format!("invalid Argon2 hash: {}", e))
+}
+
 /// Parse a server config. The one and only on-disk format is flat INI
 /// (`[auth]` / `[web]` / `[logging]` singletons + `[profile:<name>]` sections);
 /// see [`server::ServerConfig::from_ini`].
