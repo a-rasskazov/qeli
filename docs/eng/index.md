@@ -345,3 +345,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F199: reproducible native build inputs](reports/AUDIT-Q25-NATIVE-BUILD-INPUTS.md)
 - [Q25-F200: audit report structure and language parity](reports/AUDIT-Q25-DOC-PARITY.md)
 - [Q25-F201: patch archive and evidence age](reports/AUDIT-Q25-PATCH-RECONCILIATION.md)
+- [Q25-F202: reproducible native cores and Android runtime](reports/AUDIT-Q25-NATIVE-REBUILD.md)

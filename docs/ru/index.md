@@ -345,3 +345,4 @@
 - [Q25-F199: входы воспроизводимой native-сборки](reports/AUDIT-Q25-NATIVE-BUILD-INPUTS.md)
 - [Q25-F200: структура и языковые пары отчётов аудита](reports/AUDIT-Q25-DOC-PARITY.md)
 - [Q25-F201: архив патчей и возраст свидетельств](reports/AUDIT-Q25-PATCH-RECONCILIATION.md)
+- [Q25-F202: воспроизводимые native cores и Android runtime](reports/AUDIT-Q25-NATIVE-REBUILD.md)
