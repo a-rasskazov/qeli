@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -447,6 +449,26 @@ public sealed partial class VpnConfig : INotifyPropertyChanged
     public string ToTransportCoreIni() => NativeOperation("runtime").GetProperty("text").GetString()!;
     public void Validate(bool platformCapabilities = true) => _ = NativeOperation("validate");
     public static VpnConfig Parse(string text) { var config=NativeImport(text); config.Validate(); return config; }
+    /// <summary>Read a config/link file within the native 256 KiB budget without lossy UTF-8 decoding.</summary>
+    public static VpnConfig ParseFile(string path)
+    {
+        const int maxBytes = 256 * 1024;
+        using var file = File.OpenRead(path);
+        var bytes = new byte[maxBytes + 1];
+        try
+        {
+            var count = 0;
+            while (count < bytes.Length)
+            {
+                var read = file.Read(bytes.AsSpan(count));
+                if (read == 0) break;
+                count += read;
+            }
+            if (count > maxBytes) throw new ArgumentException("Configuration exceeds 256 KiB.", nameof(path));
+            return Parse(new UTF8Encoding(false, true).GetString(bytes.AsSpan(0, count)));
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
     public static VpnConfig FromIni(string text) => NativeImport(text);
     public static VpnConfig FromQeliUri(string text) => NativeImport(text);
     public VpnConfig Clone() { var c=JsonSerializer.Deserialize<VpnConfig>(JsonSerializer.Serialize(this))!; c.Id=Guid.NewGuid().ToString("N"); return c; }

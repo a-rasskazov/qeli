@@ -84,10 +84,10 @@ public static class CliRunner
 
 
     // ── live handshake / connect ──────────────────────────────────────────────────
-    // Accepts a file path OR an inline config, in any format: flat-INI (current),
-    // an INI file/text or a qeli:// link. Retired formats are rejected by VpnConfig.Parse.
+    // Accepts a UTF-8 flat-INI file, inline INI or a qeli:// link.
+    // Retired config formats are rejected by the shared parser.
     private static VpnConfig LoadConfig(string arg) =>
-        VpnConfig.Parse(File.Exists(arg) ? File.ReadAllText(arg) : arg);
+        File.Exists(arg) ? VpnConfig.ParseFile(arg) : VpnConfig.Parse(arg);
 
     private static int Handshake(string[] rest)
     {
