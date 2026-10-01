@@ -90,9 +90,13 @@ impl Control {
                             base.add(offset + header_len).cast::<libc::in6_pktinfo>(),
                         )
                     };
+                    let interface = info
+                        .ipi6_ifindex
+                        .try_into()
+                        .map_err(|_| invalid("invalid IPv6 packet info interface"))?;
                     Some(LocalAddress::new(
                         Ipv6Addr::from(info.ipi6_addr.s6_addr).into(),
-                        info.ipi6_ifindex,
+                        interface,
                     )?)
                 }
                 _ => None,
@@ -110,7 +114,17 @@ impl Control {
         }
         found.ok_or_else(|| invalid("UDP destination packet info missing"))
     }
-    pub(crate) fn send(&mut self, source: LocalAddress, header: &mut libc::msghdr) {
+    pub(crate) fn send(
+        &mut self,
+        source: LocalAddress,
+        header: &mut libc::msghdr,
+    ) -> io::Result<()> {
+        // Android libc uses a signed ipi6_ifindex; Linux uses an unsigned field.
+        // Reject an unrepresentable scope instead of wrapping it onto another interface.
+        let interface = source
+            .scope
+            .try_into()
+            .map_err(|_| invalid("IPv6 packet info interface is out of range"))?;
         self.0.fill(0);
         self.receive(header);
         // SAFETY: the aligned owned buffer fits cmsghdr and either pktinfo payload.
@@ -140,7 +154,7 @@ impl Control {
                         ipi6_addr: libc::in6_addr {
                             s6_addr: ip.octets(),
                         },
-                        ipi6_ifindex: source.scope,
+                        ipi6_ifindex: interface,
                     };
                     std::ptr::write_unaligned(
                         libc::CMSG_DATA(cmsg).cast::<libc::in6_pktinfo>(),
@@ -152,6 +166,7 @@ impl Control {
             (*cmsg).cmsg_len = libc::CMSG_LEN(payload_len as _) as _;
             header.msg_controllen = libc::CMSG_SPACE(payload_len as _) as _;
         }
+        Ok(())
     }
 }
 
@@ -202,7 +217,7 @@ pub(crate) fn send(
     header.msg_iov = &mut iovec;
     header.msg_iovlen = 1;
     let mut control = Control::default();
-    control.send(source, &mut header);
+    control.send(source, &mut header)?;
     // SAFETY: name, iovec, wire and control remain borrowed and alive for this syscall.
     let sent = unsafe { libc::sendmsg(socket.as_raw_fd(), &header, libc::MSG_DONTWAIT) };
     if sent < 0 {

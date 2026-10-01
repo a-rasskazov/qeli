@@ -27,7 +27,9 @@ fn ancillary_rejects_missing_truncated_and_invalid_headers() {
 fn received_control(ip: Ipv4Addr) -> (Control, libc::msghdr) {
     let mut control = Control::default();
     let mut header: libc::msghdr = unsafe { std::mem::zeroed() };
-    control.send(LocalAddress::new(ip.into(), 0).unwrap(), &mut header);
+    control
+        .send(LocalAddress::new(ip.into(), 0).unwrap(), &mut header)
+        .unwrap();
     unsafe {
         let info = libc::CMSG_DATA(libc::CMSG_FIRSTHDR(&header)).cast::<libc::in_pktinfo>();
         (*info).ipi_addr = (*info).ipi_spec_dst;

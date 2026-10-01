@@ -298,7 +298,10 @@ mod imp {
             header.msg_hdr.msg_control = std::ptr::null_mut();
             header.msg_hdr.msg_controllen = 0 as _;
             if let Some(source) = source {
-                scratch.controls[i].send(source, &mut header.msg_hdr);
+                if let Err(error) = scratch.controls[i].send(source, &mut header.msg_hdr) {
+                    scratch.release_pointers(i + 1);
+                    return Err(error);
+                }
             }
             header.msg_hdr.msg_flags = 0;
             header.msg_len = 0;
