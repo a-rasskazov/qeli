@@ -60,6 +60,26 @@ internal static class ProfileStoreConformance
                 check("profile store: invalid or duplicate explicit ID is rejected", rejected);
             }
 
+            foreach (var invalid in new[]
+            {
+                """[{"Id":"safe","Protocol":null}]""",
+                """[{"Id":"safe","IncludeRoutes":null}]""",
+                """[{"Id":"safe","DnsServers":[null]}]""",
+                """[{"Id":"safe","CarriedKeys":{"dns.mode":null}}]""",
+            })
+            {
+                bool rejected = false;
+                try { ProfileStorePayload.Decode(invalid); }
+                catch (JsonException) { rejected = true; }
+                check("profile store: null required config data is rejected on load", rejected);
+            }
+
+            bool nullWriteRejected = false;
+            try { ProfileStorePayload.Encode([new VpnConfig { Protocol = null! }]); }
+            catch (JsonException) { nullWriteRejected = true; }
+            check("profile store: null required config data cannot be persisted",
+                nullWriteRejected);
+
             bool duplicateWriteRejected = false;
             try
             {
