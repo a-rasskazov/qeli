@@ -328,6 +328,12 @@ impl ClientLink {
 
     /// Parse a `qeli://` URI back into a [`ClientLink`].
     pub fn from_uri(uri: &str) -> Result<ClientLink, LinkError> {
+        // The document service already caps imported INI and links at 256 KiB, but
+        // direct callers (including the panel import API) bypass that entry point.
+        // Bound the raw URI before percent decoding or splitting an attacker-sized query.
+        if uri.len() > 256 * 1024 {
+            return Err(LinkError("qeli:// link exceeds 256 KiB"));
+        }
         let rest = uri
             .strip_prefix("qeli://")
             .ok_or(LinkError("missing qeli:// scheme"))?;
@@ -789,6 +795,18 @@ mod tests {
         assert!(ClientLink::from_uri("qeli://u:p@2001:db8::443").is_err()); // bare IPv6
         assert!(ClientLink::from_uri("qeli://u:p@[2001:db8:::1]:443").is_err());
         assert!(ClientLink::from_uri("qeli://u:p@[vpn.example.com]:443").is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_uri_before_query_decoding() {
+        let prefix = "qeli://u:p@host:443?future=";
+        let at_limit = format!("{prefix}{}", "x".repeat(256 * 1024 - prefix.len()));
+        assert!(ClientLink::from_uri(&at_limit).is_ok());
+        let too_large = format!("{at_limit}x");
+        assert_eq!(
+            ClientLink::from_uri(&too_large).unwrap_err().0,
+            "qeli:// link exceeds 256 KiB"
+        );
     }
 
     #[test]

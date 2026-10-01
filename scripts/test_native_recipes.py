@@ -544,7 +544,7 @@ class NativeRecipeTests(unittest.TestCase):
         main_source = (Path(__file__).parent.parent / "qeli/src/main.rs").read_text(
             encoding="utf-8"
         )
-        self.assertIn("server::load_users_db(&cfg).map_err", main_source)
+        self.assertIn("server::load_users_db_for_runtime(&cfg).map_err", main_source)
         self.assertNotIn("valid empty first install", main_source)
 
         multiprofile = (Path(__file__).parent / "pool2_multiprofile.py").read_text(
