@@ -46,7 +46,7 @@ public static class ProfileStore
                 json = StrictUtf8.GetString(bytes);
                 wasLegacyPlaintext = true;
             }
-            profiles = JsonSerializer.Deserialize<List<VpnConfig>>(json, Options) ?? new List<VpnConfig>();
+            profiles = ProfileStorePayload.Decode(json, Options);
             // Profiles saved before the stable-Id fix have no "Id" field; the deserializer
             // left each at a fresh-GUID default that would otherwise change on every load
             // (settings reference profiles by Id). Persist once to freeze those Ids.

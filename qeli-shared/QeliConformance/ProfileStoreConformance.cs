@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Qeli.Shared.Model;
 
 namespace Qeli.Conformance;
@@ -21,6 +22,17 @@ internal static class ProfileStoreConformance
             try { ProfileStoreRecovery.PreserveUnreadable(path); }
             catch (IOException) { failedClosed = true; }
             check("profile store: failed quarantine refuses empty recovery", failedClosed);
+
+            check("profile store: an empty array remains a valid empty list",
+                ProfileStorePayload.Decode("[]").Count == 0);
+            bool nullRootRejected = false;
+            try { ProfileStorePayload.Decode("null"); }
+            catch (JsonException) { nullRootRejected = true; }
+            check("profile store: a null root is rejected before empty recovery", nullRootRejected);
+            bool nullEntryRejected = false;
+            try { ProfileStorePayload.Decode("[null]"); }
+            catch (JsonException) { nullEntryRejected = true; }
+            check("profile store: a null row cannot reach the desktop UI", nullEntryRejected);
 
             var livePath = Path.Combine(dir, "live-profiles.json");
             var first = new ProfileStoreFile(livePath);
