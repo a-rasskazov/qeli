@@ -156,9 +156,21 @@ pub(crate) fn ok_json() -> Value {
 pub(super) async fn current_server_config(
     state: &Arc<ServerState>,
 ) -> Result<crate::config::server::ServerConfig, String> {
+    current_server_config_with_revision(state)
+        .await
+        .map(|(config, _)| config)
+}
+
+/// Return the parsed config and a revision computed from the same trusted INI snapshot.
+/// The lockout-policy editor uses both, so a concurrent edit cannot pair old policy
+/// values with a newer revision token.
+pub(super) async fn current_server_config_with_revision(
+    state: &Arc<ServerState>,
+) -> Result<(crate::config::server::ServerConfig, String), String> {
     let path = state.config_path.lock().await.clone();
     let Some(path) = path else {
-        return Ok(state.config.clone());
+        let raw = state.config.to_ini_string();
+        return Ok((state.config.clone(), config::config_revision(&raw)));
     };
     let source = crate::server::read_config_source(&path)
         .map_err(|error| format!("cannot read current server config '{}': {error}", path))?;
@@ -183,7 +195,7 @@ pub(super) async fn current_server_config(
             .validate_identity_key_trust(profile)
             .map_err(|error| error.to_string())?;
     }
-    Ok(config)
+    Ok((config, config::config_revision(source.text())))
 }
 
 /// Load exactly the users union the data-plane will use for this config: the external

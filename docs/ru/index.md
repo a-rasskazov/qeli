@@ -300,3 +300,4 @@
 - [Q25-F157: достоверный статус live reload панели](reports/AUDIT-Q25-SERVER-WEB-RELOAD-RESULT.md)
 - [Q25-F158: сохранённая и действующая политика блокировок](reports/AUDIT-Q25-SERVER-BLOCKED-LIVE.md)
 - [Q25-F159: стабильный порядок динамических полей INI](reports/AUDIT-Q25-SERVER-INI-ORDER.md)
+- [Q25-F160: ревизия INI для политики блокировок](reports/AUDIT-Q25-SERVER-BLOCKED-REVISION.md)

@@ -165,7 +165,8 @@ try:
     print("\n=== blocked-IPs lockout-policy editor ===")
     g0 = curl("/api/blocked/settings", jar="/root/qtest/j.txt")
     check("GET settings defaults 100/300/30", '"max_attempts":100' in g0 and '"window_secs":300' in g0, g0)
-    p1 = curl("/api/blocked/settings","POST",json.dumps({"max_attempts":4,"window_secs":90,"lockout_secs":150}), jar="/root/qtest/j.txt")
+    policy_revision = json.loads(g0)["revision"]
+    p1 = curl("/api/blocked/settings","POST",json.dumps({"max_attempts":4,"window_secs":90,"lockout_secs":150,"expected_revision":policy_revision}), jar="/root/qtest/j.txt")
     check("POST settings accepted", '"ok":true' in p1, p1)
     conf_now = S(f"cat {ETC}/server.conf")
     check("config patched in container volume", "brute_force.max_attempts = 4" in conf_now and "brute_force.window_secs = 90" in conf_now, conf_now)

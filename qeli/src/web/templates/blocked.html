@@ -162,6 +162,7 @@ function blockedPage() {
     loading: false,
     saving: null,
     policy: { vpn: defPolicy(), panel: defPolicy() },
+    policyRevision: '',
     savingPolicy: false,
     policyMsg: '',
     policyOk: false,
@@ -213,6 +214,7 @@ function blockedPage() {
       try {
         const d = await apiFetch('api/blocked/settings');
         if (d.ok && d.settings) {
+          this.policyRevision = d.revision || '';
           this.policy = {
             vpn: Object.assign(defPolicy(), d.settings.vpn || {}),
             panel: Object.assign(defPolicy(), d.settings.panel || {}),
@@ -232,8 +234,9 @@ function blockedPage() {
         const r = await apiFetch('api/blocked/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vpn: this.policy.vpn, panel: this.policy.panel }),
+          body: JSON.stringify({ vpn: this.policy.vpn, panel: this.policy.panel, expected_revision: this.policyRevision }),
         });
+        if (r.ok) this.policyRevision = r.revision || this.policyRevision;
         this.policyOk = !!r.ok && r.panel_applied !== false && r.vpn_reload_requested !== false;
         this.policyMsg = !r.ok ? (r.error || this.t('Save failed'))
           : r.panel_applied === false && r.vpn_reload_requested === false

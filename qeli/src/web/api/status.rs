@@ -316,6 +316,10 @@ mod tests {
             .unwrap()
             .0;
         assert_eq!(initial["panel_applied"], true);
+        assert_eq!(
+            initial["revision"],
+            super::super::config::config_revision(&startup.to_ini_string())
+        );
 
         let mut saved = startup;
         saved.web.brute_force.max_attempts = 2;
@@ -326,6 +330,11 @@ mod tests {
             .0;
         assert_eq!(pending["panel_applied"], false);
         assert_eq!(pending["settings"]["panel"]["max_attempts"], 2);
+        assert_eq!(
+            pending["revision"],
+            super::super::config::config_revision(&saved.to_ini_string())
+        );
+        assert_ne!(pending["revision"], initial["revision"]);
         assert_eq!(pending["live_panel"]["max_attempts"], 5);
 
         assert!(state.reload_web_settings().await);
@@ -620,7 +629,7 @@ pub async fn blocked_settings(
     State(state): State<Arc<ServerState>>,
     _guard: auth::AuthGuard,
 ) -> Result<Json<Value>, AuthError> {
-    let cfg = match super::current_server_config(&state).await {
+    let (cfg, revision) = match super::current_server_config_with_revision(&state).await {
         Ok(config) => config,
         Err(error) => return Ok(Json(super::err_json(error))),
     };
@@ -629,6 +638,7 @@ pub async fn blocked_settings(
     let live_panel = state.live_web.read().await.brute_force.clone();
     Ok(Json(json!({
         "ok": true,
+        "revision": revision,
         "settings": {
             "vpn": bf_settings_json(&vpn),
             "panel": bf_settings_json(&panel),
@@ -640,9 +650,9 @@ pub async fn blocked_settings(
 
 /// POST /api/blocked/settings — update either or both brute-force policies.
 ///
-/// Body: `{ "vpn": {enabled,max_attempts,window_secs,lockout_secs}, "panel": {…} }`.
+/// Body: `{ "expected_revision": "<GET revision>", "vpn": {…}, "panel": {…} }`.
 /// A surface is only touched when its object is present. (A legacy flat body —
-/// `{max_attempts,…}` from an older cached panel — is treated as the `vpn`
+/// `{max_attempts,…}` from an older API client — is treated as the `vpn`
 /// surface.) The relevant dotted keys are patched into the on-disk config **in
 /// place** (comments preserved — unlike the whole-config PUT which re-serializes
 /// and strips them), then live application is attempted without dropping sessions:
@@ -720,6 +730,9 @@ pub async fn set_blocked_settings(
     };
 
     let checked_raw = raw.clone();
+    if let Some(conflict) = super::config::revision_conflict(&body, &checked_raw) {
+        return Ok(Json(conflict));
+    }
 
     // Surgical, comment-preserving patch: VPN keys under [auth], panel keys under [web].
     if let Some((enabled, max, window, lockout)) = vpn {
@@ -809,5 +822,6 @@ pub async fn set_blocked_settings(
         "panel_applied": panel_applied,
         "vpn_reload_requested": vpn_reload_requested,
         "path": canon.display().to_string(),
+        "revision": super::config::config_revision(&raw),
     })))
 }

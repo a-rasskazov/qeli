@@ -50,7 +50,7 @@ pub(super) fn config_revision(raw: &str) -> String {
         .collect()
 }
 
-fn revision_conflict(body: &Value, current_raw: &str) -> Option<Value> {
+pub(super) fn revision_conflict(body: &Value, current_raw: &str) -> Option<Value> {
     let Some(expected) = body
         .get("expected_revision")
         .and_then(Value::as_str)
