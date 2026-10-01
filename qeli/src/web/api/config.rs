@@ -187,6 +187,18 @@ pub(super) fn write_server_config(path: &FsPath, raw: &str) -> anyhow::Result<()
     crate::util::write_atomic_private(path, raw.as_bytes())
 }
 
+/// A saved config must not leave an enabled admin panel unable to start or
+/// cause a live reload to reject its authentication settings.
+fn validate_web_auth_for_save(web: &crate::config::server::WebConfig) -> Result<(), String> {
+    if web.enabled && web.password_hash.is_empty() && !web.insecure_no_auth {
+        return Err(
+            "web.enabled = true requires web.password_hash or explicit web.insecure_no_auth = true; set a password with `qeli set-web-password` before saving"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn needs_full_restart(
     current: &crate::config::server::WebConfig,
     next: &crate::config::server::WebConfig,
@@ -1544,6 +1556,11 @@ pub async fn put_config(
         }
     }
 
+    // The structured form restores its masked admin hash from disk above.
+    if let Err(error) = validate_web_auth_for_save(&parsed.web) {
+        return Ok(Json(super::err_json(error)));
+    }
+
     // Write flat-INI (the canonical on-disk format) so the file stays
     // consistent with hand-edited configs. Note: structured editing through the
     // UI cannot preserve hand-written comments — for comment-heavy configs, edit
@@ -2004,6 +2021,9 @@ pub async fn put_config_raw(
         ))));
     }
 
+    if let Err(error) = validate_web_auth_for_save(&parsed.web) {
+        return Ok(Json(super::err_json(error)));
+    }
     if let Some(ref log_file) = parsed.logging.file {
         if let Err(e) = validate_path_field(log_file, ALLOWED_LOG_DIRS) {
             return Ok(Json(super::err_json(format!("logging.file: {}", e))));
@@ -2315,6 +2335,9 @@ pub async fn restore_config_history(
             findings.join("; ")
         ))));
     }
+    if let Err(error) = validate_web_auth_for_save(&parsed.web) {
+        return Ok(Json(super::err_json(error)));
+    }
     if let Some(error) = validate_config_structure(&parsed) {
         return Ok(Json(super::err_json(error)));
     }
@@ -2587,6 +2610,26 @@ mod raw_secret_tests {
         let edited = SAMPLE.replace("$argon2id$alice", "$argon2id$NEWVALUE");
         let restored = unmask_raw_secrets(&edited, SAMPLE).unwrap();
         assert!(restored.contains("$argon2id$NEWVALUE"));
+    }
+
+    #[test]
+    fn panel_save_rejects_an_enabled_web_panel_without_auth() {
+        let mut config =
+            crate::config::parse_server_config("[profile:a]\n[web]\nenabled = true\n").unwrap();
+        assert!(validate_web_auth_for_save(&config.web)
+            .unwrap_err()
+            .contains("web.password_hash"));
+
+        config.web.insecure_no_auth = true;
+        assert!(validate_web_auth_for_save(&config.web).is_ok());
+
+        config.web.insecure_no_auth = false;
+        config.web.enabled = false;
+        assert!(validate_web_auth_for_save(&config.web).is_ok());
+
+        config.web.enabled = true;
+        config.web.password_hash = "stored-verifier".into();
+        assert!(validate_web_auth_for_save(&config.web).is_ok());
     }
 
     #[test]

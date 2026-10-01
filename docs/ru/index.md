@@ -293,3 +293,4 @@
 - [Q25-F150: доверие к INI в панельных identity и Share](reports/AUDIT-Q25-SERVER-PANEL-SNAPSHOT-TRUST.md)
 - [Q25-F151: панель и доверие к сохраняемому INI](reports/AUDIT-Q25-SERVER-PANEL-SAVE-TRUST.md)
 - [Q25-F152: матрица INI и рестарт logging](reports/AUDIT-Q25-SERVER-FIELD-MATRIX-LOGGING.md)
+- [Q25-F153: проверка аутентификации панели до сохранения](reports/AUDIT-Q25-SERVER-WEB-AUTH-SAVE.md)

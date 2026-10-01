@@ -293,3 +293,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F150: INI trust in panel identity and Share](reports/AUDIT-Q25-SERVER-PANEL-SNAPSHOT-TRUST.md)
 - [Q25-F151: panel saves and INI trust](reports/AUDIT-Q25-SERVER-PANEL-SAVE-TRUST.md)
 - [Q25-F152: INI matrix and logging restart](reports/AUDIT-Q25-SERVER-FIELD-MATRIX-LOGGING.md)
+- [Q25-F153: web-auth validation before save](reports/AUDIT-Q25-SERVER-WEB-AUTH-SAVE.md)
