@@ -735,7 +735,6 @@ public partial class MainWindow : Window
             // (Audit 2026-08-04, H-07.)
             cfg.Validate(platformCapabilities: false);
             cfg.Name ??= cfg.ServerAddress;
-            _profiles.Add(cfg);
             PersistAndSelect(cfg);
         }
         catch (Exception ex)
@@ -749,8 +748,12 @@ public partial class MainWindow : Window
     {
         var cfg = ConfigEditorWindow.Show(this, null);
         if (cfg == null) return;
-        _profiles.Add(cfg);
-        PersistAndSelect(cfg);
+        try { PersistAndSelect(cfg); }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     // Per-card "⋯" menu: Edit / Duplicate / Share-QR / Delete.
@@ -774,8 +777,12 @@ public partial class MainWindow : Window
         if (Ctx(sender) is not { } p) return;
         var copy = p.Clone();
         copy.Name = p.DisplayName + Loc.T("CopySuffix");
-        _profiles.Add(copy);
-        PersistAndSelect(copy);
+        try { PersistAndSelect(copy); }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     /// <summary>True when <paramref name="p"/> is the profile the tunnel is currently
@@ -806,7 +813,6 @@ public partial class MainWindow : Window
         var edited = ConfigEditorWindow.Show(this, p);
         if (edited == null) return;
         bool wasRunning = IsRunning(p);
-        int idx = _profiles.IndexOf(p);
         if (wasRunning && !_serviceMode)
         {
             try
@@ -824,12 +830,23 @@ public partial class MainWindow : Window
         // Replacing the item + reselecting it both raise SelectionChanged; suppress the
         // auto-switch so it doesn't restart the tunnel here — the wasRunning branch below
         // owns the restart (and only when the LIVE profile was the one edited).
+        int idx = _profiles.IndexOf(p);
+        if (idx < 0) return;
+        var updated = _profiles.ToList();
+        updated[idx] = edited;
+        try { ProfileStore.Save(updated); }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            if (wasRunning && !_serviceMode) await StartTunnel(p);
+            return;
+        }
         Programmatic(() =>
         {
             _profiles[idx] = edited;
             ProfilesList.SelectedItem = edited;
         });
-        ProfileStore.Save(_profiles);
         CheckReachability(edited);
         // If we just edited the live profile (e.g. changed the server IP), the running
         // tunnel is still on the OLD config — restart it on the edited one so the change
@@ -848,7 +865,8 @@ public partial class MainWindow : Window
         // Tear down the tunnel FIRST if we're deleting the profile it's running on —
         // otherwise its reconnect loop (owned by the tunnel, not the list) keeps trying
         // the deleted server's IP long after the profile is gone.
-        if (IsRunning(p) && !_serviceMode)
+        bool wasRunning = IsRunning(p);
+        if (wasRunning && !_serviceMode)
         {
             try { await Task.Run(_tunnel.Stop); }
             catch (Exception error)
@@ -862,8 +880,16 @@ public partial class MainWindow : Window
         // Removing the selected item shifts the selection → SelectionChanged; suppress so a
         // delete of a NON-running profile while connected doesn't restart onto whatever
         // becomes selected. The running-profile case is handled above.
+        if (!_profiles.Contains(p)) return;
+        try { ProfileStore.Save(_profiles.Where(item => !ReferenceEquals(item, p)).ToList()); }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            if (wasRunning && !_serviceMode) await StartTunnel(p);
+            return;
+        }
         Programmatic(() => _profiles.Remove(p));
-        ProfileStore.Save(_profiles);
         UpdateEmptyHint();
     }
 
@@ -1063,9 +1089,14 @@ public partial class MainWindow : Window
 
     private void PersistAndSelect(VpnConfig cfg)
     {
-        ProfileStore.Save(_profiles);
+        // Persist a proposed list before changing the visible collection.
+        ProfileStore.Save(_profiles.Append(cfg));
         // New/imported/duplicated profile: select it but don't hijack a live tunnel.
-        Programmatic(() => ProfilesList.SelectedItem = cfg);
+        Programmatic(() =>
+        {
+            _profiles.Add(cfg);
+            ProfilesList.SelectedItem = cfg;
+        });
         UpdateEmptyHint();
         CheckReachability(cfg);
     }
