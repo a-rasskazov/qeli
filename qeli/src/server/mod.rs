@@ -4378,34 +4378,40 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
             .spawn()
     };
 
-    let result = crate::server_supervisor::supervise(
-        spawn_worker,
-        signal_worker,
-        |pid| {
-            state.metrics.worker_pid.store(
-                pid.unwrap_or(0) as i32,
-                std::sync::atomic::Ordering::Relaxed,
+    // Stop outbound clients concurrently with the worker. Admission closes in the
+    // signal future before supervision requests SIGTERM, not after its sixty-second wait.
+    // Primary completion also starts side cleanup if supervision returns without a signal.
+    let stopping_state = &state;
+    let (worker_result, client_result) = crate::server_shutdown::coordinate(
+        |stopping| async move {
+            crate::server_supervisor::supervise(
+                spawn_worker,
+                signal_worker,
+                |pid| {
+                    stopping_state.metrics.worker_pid.store(
+                        pid.unwrap_or(0) as i32,
+                        std::sync::atomic::Ordering::Relaxed,
+                    )
+                },
+                &mut worker_rx,
+                async {
+                    tokio::select! {
+                        _ = sigint.recv() => {},
+                        _ = sigterm.recv() => {},
+                    }
+                    stopping_state.client_manager.request_shutdown();
+                    let _ = stopping.send(true);
+                },
+                crate::server_supervisor::SupervisorPolicy::default(),
             )
+            .await
         },
-        &mut worker_rx,
-        async {
-            tokio::select! {
-                _ = sigint.recv() => {},
-                _ = sigterm.recv() => {},
-            }
-        },
-        crate::server_supervisor::SupervisorPolicy::default(),
+        || state.client_manager.shutdown_all(),
     )
     .await;
-
-    // Tear down any panel-managed outbound client tunnels (SIGTERM each so it
-    // restores DNS/routes before exit).
     let mut shutdown_failures = crate::server_shutdown::Failures::default();
-    shutdown_failures.record("worker", result.map_err(Into::into));
-    shutdown_failures.record(
-        "outbound clients",
-        state.client_manager.shutdown_all().await,
-    );
+    shutdown_failures.record("worker", worker_result.map_err(Into::into));
+    shutdown_failures.record("outbound clients", client_result);
     let result = shutdown_failures.result();
 
     notifications.shutdown().await;

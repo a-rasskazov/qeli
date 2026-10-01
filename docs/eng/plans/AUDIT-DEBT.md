@@ -1,6 +1,6 @@
 # Technical debt from started audits
 
-<!-- normative-sync: audit-debt-v54 -->
+<!-- normative-sync: audit-debt-v55 -->
 
 Reconciled on 2 October 2026. At the user’s request, new full-audit sections
 are paused until this register is closed. These are **15 groups of obligations**,
@@ -578,3 +578,41 @@ path; corrected runs succeeded and the initial logs are retained.
 this fix adds no single wall-clock deadline and cannot interrupt kernel/fs I/O.
 Historical **9/15 DONE (60%)** and D11/D14 apply to candidate `62c84fc4`;
 the new HEAD requires final native/provenance/certification refresh under D15.
+
+### Q25-F207 — concurrent worker and panel-client stop, 2 October 2026
+
+Sequential supervisor shutdown composition is fixed. Previously outbound-client stop
+began only after supervise returned, potentially 60 seconds after the signal.
+Connect/autostart remained open until then, and the client grace was added after
+worker waiting. Handling SIGTERM/SIGINT now synchronously closes client admission
+before the worker's SIGTERM. One coordinator polls both supervisor-owned waits
+concurrently and returns both results; it creates no detached tasks. Supervise
+completion without a separate stop signal also starts client cleanup. Cancelling
+the coordinator preserves existing guards and the manager's original deadline;
+neither path's failure is discarded.
+
+Targeted shutdown **13/13**, panel clients **7/7**, supervisor **19/19**,
+notifications **8/8**: **47 PASS**, including four new regressions.
+Live checks launch real supervisor/worker/client processes in separate NET/mount/PID
+namespaces. The retained Q25-F206 debug binary reproduces sequential waiting:
+with an eight-second post_down the client is still alive at 6.20 seconds,
+and the total stop takes 13.24 seconds. The current debug binary reaps the client
+at 5.02 seconds while the worker hook is still running; total stop takes 8.25 seconds.
+Both supervisors return expected exit 1: the TCP peer deliberately leaves handshake
+unanswered, forcing client kill and leaving its VPN cleanup unconfirmed.
+This verifies delay/reaping and failure reporting, rather than a successful VPN handshake.
+
+Both runs remove worker TUN/tagged NAT, restore the original forwarding value and
+reap every child. Full parent-host snapshots match; listener 443/PID 845 and the
+working release SHA are preserved. Rustfmt PASS; Rust 1.97 Clippy PASS with the existing
+`-D warnings -A clippy::useless_conversion` exception. Evidence retains SHA for 287
+sources, both debug binaries and the test binary, initial compile/fixture failures and
+corrected runs. Full transport/benchmark matrices were not repeated.
+
+Checks and exact SHA are recorded in
+[machine evidence](../../../release/certification/evidence/stop-composition-20261002.json).
+This fixes composition of existing grace periods rather than adding a single worker
+shutdown deadline. Notification waiting, async joins, blocking host cleanup and kernel
+reaping retain their documented limits. **D05 remains IN_PROGRESS**; final native
+rebuild and release certification after server changes remain D15. Historical
+**9/15 DONE (60%)** apply to the verified candidate `62c84fc4`.

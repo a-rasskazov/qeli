@@ -46,6 +46,33 @@ impl Failures {
     }
 }
 
+/// Start side cleanup as soon as stop is announced, while the primary owner continues
+/// joining its process. Primary completion also announces stop on every return path.
+/// Both futures are borrowed here, never spawned; cancellation preserves their existing
+/// ownership guards instead of leaving detached cleanup tasks behind.
+pub(crate) async fn coordinate<W, C, Work, Cleanup, WorkFuture, CleanupFuture>(
+    work: Work,
+    cleanup: Cleanup,
+) -> (W, C)
+where
+    Work: FnOnce(tokio::sync::watch::Sender<bool>) -> WorkFuture,
+    Cleanup: FnOnce() -> CleanupFuture,
+    WorkFuture: std::future::Future<Output = W>,
+    CleanupFuture: std::future::Future<Output = C>,
+{
+    let (stopping, mut stop) = tokio::sync::watch::channel(false);
+    let primary = async {
+        let result = work(stopping.clone()).await;
+        let _ = stopping.send(true);
+        result
+    };
+    let side = async {
+        crate::server_supervisor::wait_for_shutdown(&mut stop).await;
+        cleanup().await
+    };
+    tokio::join!(primary, side)
+}
+
 /// Profile supervisors are asked to stop normally, never aborted in this path.
 /// Drain every one even after an error, panic, or unexpected cancellation.
 pub(crate) async fn drain_profiles(
@@ -249,5 +276,80 @@ mod tests {
             "{error}"
         );
         assert!(profiles.is_empty());
+    }
+    #[tokio::test]
+    async fn primary_completion_without_stop_still_runs_cleanup_and_keeps_both_errors() {
+        let (work, cleanup) = coordinate(
+            |_| async { Err::<(), _>(anyhow::anyhow!("primary error")) },
+            || async { Err::<(), _>(anyhow::anyhow!("side error")) },
+        )
+        .await;
+        let mut failures = Failures::default();
+        failures.record("work", work);
+        failures.record("cleanup", cleanup);
+        let message = failures.result().unwrap_err().to_string();
+        assert!(
+            message.contains("primary error") && message.contains("side error"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_cleanup_starts_before_primary_finishes_and_both_are_joined() {
+        let (release, waiting) = tokio::sync::oneshot::channel();
+        let (side_done, side_wait) = tokio::sync::oneshot::channel();
+        let mut joined = Box::pin(coordinate(
+            |stopping| async move {
+                stopping.send(true).unwrap();
+                waiting.await.unwrap();
+                7
+            },
+            || async {
+                side_done.send(()).unwrap();
+                11
+            },
+        ));
+        tokio::select! {
+            result = &mut joined => panic!("did not join primary: {result:?}"),
+            result = side_wait => result.unwrap(),
+        }
+        release.send(()).unwrap();
+        assert_eq!(joined.await, (7, 11));
+    }
+
+    #[tokio::test]
+    async fn cancelled_coordinator_drops_both_borrowed_owners_without_detaching_tasks() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        struct Capture(Arc<AtomicUsize>);
+        impl Drop for Capture {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let primary_capture = Capture(dropped.clone());
+        let side_capture = Capture(dropped.clone());
+        let mut joined = Box::pin(coordinate(
+            |stopping| async move {
+                let _capture = primary_capture;
+                stopping.send(true).unwrap();
+                std::future::pending::<()>().await;
+            },
+            || async move {
+                let _capture = side_capture;
+                std::future::pending::<()>().await;
+            },
+        ));
+        use std::future::Future;
+        std::future::poll_fn(|cx| {
+            assert!(joined.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(joined);
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
     }
 }

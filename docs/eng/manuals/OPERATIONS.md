@@ -691,13 +691,14 @@ stuck syscall. INI format, hook authorization, archive contents and restore poli
 unchanged. [Validation and remaining audit work](../plans/AUDIT-DEBT.md).
 
 
-<!-- normative-sync: panel-client-stop-v1 -->
+<!-- normative-sync: panel-client-stop-v2 -->
 
 ## Stopping panel client tunnels
 
-When the supervisor shuts down, new Connect/autostart requests are rejected.
-Running clients receive SIGTERM concurrently and share one five-second grace;
-repeated waits do not extend it. A client that exceeds the grace receives SIGKILL
+When the supervisor handles SIGTERM/SIGINT, it immediately closes Connect/autostart.
+Worker and running clients are asked to stop concurrently: waiting for the worker
+does not postpone client shutdown or add a new grace period afterwards.
+Clients share one five-second grace from the stop request; repeated waits do not extend it. A client that exceeds the grace receives SIGKILL
 and is reaped before its process handle is released. Forced kill or unsuccessful
 exit produces a supervisor shutdown error: DNS, route and firewall restoration
 has not been confirmed. The next start uses the ordinary recovery mechanisms

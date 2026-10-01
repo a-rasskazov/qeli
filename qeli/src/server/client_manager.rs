@@ -279,10 +279,20 @@ impl ClientManager {
             .await
     }
 
-    async fn shutdown_with_grace(&self, grace: std::time::Duration) -> anyhow::Result<()> {
-        let deadline = *self
+    /// Close Connect/autostart immediately when the supervisor begins stopping its worker.
+    /// This is synchronous so admission cannot remain open while that child is awaited.
+    pub(crate) fn request_shutdown(&self) {
+        self.request_shutdown_with_grace(std::time::Duration::from_secs(5));
+    }
+
+    fn request_shutdown_with_grace(&self, grace: std::time::Duration) -> tokio::time::Instant {
+        *self
             .shutdown_deadline
-            .get_or_init(|| tokio::time::Instant::now() + grace);
+            .get_or_init(|| tokio::time::Instant::now() + grace)
+    }
+
+    async fn shutdown_with_grace(&self, grace: std::time::Duration) -> anyhow::Result<()> {
+        let deadline = self.request_shutdown_with_grace(grace);
         let _waiter = self.shutdown_waiter.lock().await;
         let owned: Vec<_> = self
             .running
@@ -559,5 +569,57 @@ mod tests {
             .unwrap();
         assert!(!ClientManager::profile_autostarts_file(&path));
         std::fs::remove_file(path).unwrap();
+    }
+    #[tokio::test]
+    async fn supervisor_stop_reaps_clients_while_worker_is_still_waiting() {
+        let manager = ClientManager::new();
+        let child = ready_child("trap '' TERM; echo ready; exec sleep 30").await;
+        manager
+            .running
+            .lock()
+            .await
+            .insert("one".into(), Arc::new(Mutex::new(child)));
+        let (release_worker, worker_wait) = tokio::sync::oneshot::channel();
+        let (clients_done, clients_wait) = tokio::sync::oneshot::channel();
+        let stopping_manager = &manager;
+        let mut coordinator = Box::pin(crate::server_shutdown::coordinate(
+            |stopping| async move {
+                // Same order as the supervisor's signal future: close admission,
+                // announce stop, then continue owning and waiting for the worker.
+                stopping_manager.request_shutdown_with_grace(Duration::from_millis(100));
+                let _ = stopping.send(true);
+                worker_wait.await.unwrap();
+                Err::<(), _>(anyhow::anyhow!("worker failure fixture"))
+            },
+            || async {
+                let result = manager.shutdown_all().await;
+                let _ = clients_done.send(());
+                result
+            },
+        ));
+        tokio::select! {
+            result = &mut coordinator => panic!("returned before worker exit: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(2), clients_wait) => result.unwrap().unwrap(),
+        }
+        assert!(
+            manager.running.lock().await.is_empty(),
+            "clients were left running until worker exit"
+        );
+        assert!(manager
+            .connect("not-present")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("shutting down"));
+        release_worker.send(()).unwrap();
+        let (worker, clients) = coordinator.await;
+        let mut failures = crate::server_shutdown::Failures::default();
+        failures.record("worker", worker);
+        failures.record("outbound clients", clients);
+        let message = failures.result().unwrap_err().to_string();
+        assert!(
+            message.contains("worker failure fixture") && message.contains("forced termination"),
+            "{message}"
+        );
     }
 }
