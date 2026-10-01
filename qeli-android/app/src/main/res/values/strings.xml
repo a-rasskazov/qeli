@@ -145,6 +145,9 @@
     <string name="wrong_passphrase">Wrong passphrase or corrupt backup</string>
     <string name="restore_failed">Restore failed: %1$s</string>
     <string name="restore_confirm">Replace all current profiles with %1$d from the backup?</string>
+    <string name="profile_store_unavailable_title">Profile store unavailable</string>
+    <string name="profile_store_unavailable_message">Saved profiles could not be read. Existing data was not replaced. Restart the app; if the problem persists, restore a profile backup.</string>
+    <string name="profile_store_write_blocked">Saved profiles could not be read; restart the app or restore a backup before making changes.</string>
     <string name="restored">Restored %1$d profile(s)</string>
 
     <!-- ── Per-app routing dialog ── -->

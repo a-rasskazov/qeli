@@ -111,6 +111,7 @@ class MainActivity : AppCompatActivity() {
 
     private val profiles = mutableListOf<Profile>()
     private var activeIndex = 0
+    private var profileStoreLoadRejected = false
     private val reach = HashMap<Int, Long>()   // profile index -> ping ms (-1 = down, -2 = checking)
 
     /** Encrypted-at-rest profile store: profiles carry the server password and
@@ -989,9 +990,10 @@ ipv6 = auto
             .setMessage(getString(R.string.restore_confirm, n))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.restore_profiles) { _, _ ->
-                try { persistCandidate(candidate, restoredActive) }
+                // Restore is the explicit, confirmed replacement path for an unreadable store.
+                try { persistCandidate(candidate, restoredActive, replacingUnreadableStore = true) }
                 catch (error: Exception) {
-                    Toast.makeText(this, error.message ?: "Could not restore profiles", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, getString(R.string.restore_failed, error.message ?: ""), Toast.LENGTH_LONG).show()
                     return@setPositiveButton
                 }
                 profiles.clear(); profiles.addAll(candidate); activeIndex = restoredActive
@@ -1020,8 +1022,13 @@ ipv6 = auto
     }
 
     private fun loadProfiles() {
-        val raw = secureStore.getString(KEY_PROFILES, null)
-        var loadRejected = false
+        profileStoreLoadRejected = false
+        val raw = try { secureStore.getString(KEY_PROFILES, null) }
+        catch (error: Exception) {
+            profileStoreLoadRejected = true
+            Log.e("VpnMain", "profiles decrypt: ${error.message}")
+            null
+        }
         if (raw != null) {
             try {
                 require(raw.toByteArray(Charsets.UTF_8).size <= MAX_IMPORTED_FILE_BYTES) {
@@ -1047,17 +1054,27 @@ ipv6 = auto
                 profiles.addAll(loaded)
                 activeIndex = root.optInt("active", 0)
             } catch (e: Exception) {
-                loadRejected = true
+                profileStoreLoadRejected = true
                 Log.e("VpnMain", "profiles load: ${e.message}")
             }
         }
         if (profiles.isEmpty()) {
             profiles.add(Profile(getString(R.string.default_profile_name), TEMPLATE))
-            // Never overwrite a rejected encrypted store merely by opening the app. The
-            // normal creation/import paths below prevent new over-limit stores; retaining an
-            // older/corrupt value here still leaves it recoverable from app data or a fixed
-            // build instead of silently replacing all credentials with the template.
-            if (!loadRejected) persist()
+            // A rejected encrypted store must remain untouched until an explicit restore.
+            if (!profileStoreLoadRejected) {
+                try { persist() }
+                catch (error: Exception) {
+                    profileStoreLoadRejected = true
+                    Log.e("VpnMain", "profiles initial save: ${error.message}")
+                }
+            }
+        }
+        if (profileStoreLoadRejected) {
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.profile_store_unavailable_title)
+                .setMessage(R.string.profile_store_unavailable_message)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
         }
         if (activeIndex !in profiles.indices) activeIndex = 0
     }
@@ -1097,11 +1114,19 @@ ipv6 = auto
         ""
     }
 
-    private fun persistCandidate(items: List<Profile>, selectedIndex: Int) {
+    private fun persistCandidate(
+        items: List<Profile>,
+        selectedIndex: Int,
+        replacingUnreadableStore: Boolean = false,
+    ) {
+        check(!profileStoreLoadRejected || replacingUnreadableStore) {
+            getString(R.string.profile_store_write_blocked)
+        }
         val encoded = encodeProfileSet(items, selectedIndex)
         check(secureStore.edit().putString(KEY_PROFILES, encoded).commit()) {
             "Could not commit profile store"
         }
+        profileStoreLoadRejected = false
     }
 
     private fun persist() = persistCandidate(profiles, activeIndex)

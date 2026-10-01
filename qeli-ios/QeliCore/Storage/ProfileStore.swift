@@ -22,10 +22,13 @@ final class ProfileStore: @unchecked Sendable {
     }
 
     func load() throws -> ProfileArchive {
-        guard let encoded = defaults.string(forKey: blobKey) else {
+        guard let stored = defaults.object(forKey: blobKey) else {
             let archive = ProfileArchive.initial
             try save(archive)
             return archive
+        }
+        guard let encoded = stored as? String else {
+            throw ProfileStoreError.corruptStore
         }
         let maximumStoredBase64Characters = ((Self.maximumArchiveBytes + 64 + 2) / 3) * 4
         guard encoded.utf8.count <= maximumStoredBase64Characters else {
@@ -191,6 +194,7 @@ final class ProfileStore: @unchecked Sendable {
 
 enum ProfileStoreError: LocalizedError {
     case corruptStore
+    case unavailableAfterLoadFailure
     case encryptionFailed
     case notQeliBackup
     case archiveTooLarge
@@ -204,6 +208,7 @@ enum ProfileStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .corruptStore: return "The encrypted profile store is corrupt."
+        case .unavailableAfterLoadFailure: return "Saved profiles could not be read. Restart the app or restore a backup before making changes."
         case .encryptionFailed: return "Could not encrypt the profile store."
         case .notQeliBackup: return "The file is not a Qeli profile backup."
         case .archiveTooLarge: return "The profile file exceeds the supported size limit."

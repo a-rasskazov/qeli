@@ -49,6 +49,7 @@ final class AppModel: ObservableObject {
     private var queuedProbes: [Profile] = []
     private var queuedOrActiveProbeIDs = Set<UUID>()
     private var startupSigningInvalid = false
+    private var profileStoreLoadRejected = false
     private var activeProbeCount = 0
     private static let maximumConcurrentProbes = 4
 
@@ -70,12 +71,14 @@ final class AppModel: ObservableObject {
         if !missingSigningRequirements.isEmpty {
             self.archive = .initial
             self.startupSigningInvalid = true
+            self.profileStoreLoadRejected = true
             self.alert = Self.invalidSigningAlert
         } else {
             do {
                 self.archive = try profileStore.load()
             } catch {
                 self.archive = .initial
+                self.profileStoreLoadRejected = true
                 if (error as? KeychainError)?.isMissingEntitlement == true {
                     self.startupSigningInvalid = true
                     self.alert = Self.invalidSigningAlert
@@ -514,6 +517,9 @@ final class AppModel: ObservableObject {
     }
 
     func makeBackup(passphrase: String) async throws -> Data {
+        guard !profileStoreLoadRejected else {
+            throw ProfileStoreError.unavailableAfterLoadFailure
+        }
         let archiveSnapshot = archive
         let store = profileStore
         let json = try await Task.detached(priority: .userInitiated) {
@@ -554,7 +560,7 @@ final class AppModel: ObservableObject {
         }
         let previous = self.archive
         self.archive = archive
-        if persistArchive(rollbackTo: previous) {
+        if persistArchive(rollbackTo: previous, replacingUnreadableStore: true) {
             reachability.removeAll()
         }
     }
@@ -577,8 +583,12 @@ final class AppModel: ObservableObject {
         alert = AppAlert(title: title, message: error.localizedDescription, isLiteralMessage: true)
     }
 
-    private func commitArchive() throws {
+    private func commitArchive(replacingUnreadableStore: Bool = false) throws {
+        guard !profileStoreLoadRejected || replacingUnreadableStore else {
+            throw ProfileStoreError.unavailableAfterLoadFailure
+        }
         try profileStore.save(archive)
+        profileStoreLoadRejected = false
         profiles = archive.profiles
         synchronizeActiveProfile()
         if managedConfiguration.hasActiveProfilePolicy {
@@ -721,9 +731,12 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func persistArchive(rollbackTo previous: ProfileArchive) -> Bool {
+    private func persistArchive(
+        rollbackTo previous: ProfileArchive,
+        replacingUnreadableStore: Bool = false
+    ) -> Bool {
         do {
-            try commitArchive()
+            try commitArchive(replacingUnreadableStore: replacingUnreadableStore)
             return true
         } catch {
             // Roll back from the in-memory snapshot first. Reloading the store can fail for the

@@ -293,6 +293,19 @@ final class ConfigHardeningTests: XCTestCase {
         XCTAssertNoThrow(try ProfileStore.validate(archive))
     }
 
+    func testNonStringEncryptedStoreIsNotReplacedWithInitialArchive() throws {
+        let suite = "qeli.store.corrupt." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = "profiles.encrypted.v1"
+        let malformed = Data([0x00, 0xFF, 0x5A])
+        defaults.set(malformed, forKey: key)
+
+        let store = ProfileStore(suiteName: suite)
+        XCTAssertThrowsError(try store.load())
+        XCTAssertEqual(defaults.data(forKey: key), malformed)
+    }
+
     func testProfileArchiveLimitsAreEnforcedBeforePersistence() throws {
         let profile = Profile(name: "profile", configText: ini())
         let tooMany = ProfileArchive(
