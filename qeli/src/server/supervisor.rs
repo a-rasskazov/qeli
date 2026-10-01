@@ -176,6 +176,9 @@ pub(crate) async fn supervise(
                     log::info!("supervisor: worker exited ({status})");
                     break if status.success() {
                         Ok(())
+                    } else if status.code() == Some(crate::server_shutdown_budget::EXIT_CODE) {
+                        Err(io::Error::new(io::ErrorKind::TimedOut,
+                            "worker exceeded its total shutdown budget; forced exit cannot confirm cleanup"))
                     } else {
                         Err(io::Error::other(format!("worker exited unsuccessfully ({status})")))
                     };
@@ -834,5 +837,16 @@ mod tests {
         let error = result.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Other);
         assert!(error.to_string().contains('7'), "{error}");
+    }
+    #[tokio::test]
+    async fn worker_process_budget_expiry_is_a_failed_stop() {
+        let error = stop_fixture_with_exit(crate::server_shutdown_budget::EXIT_CODE, false)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            error.to_string().contains("cannot confirm cleanup"),
+            "{error}"
+        );
     }
 }

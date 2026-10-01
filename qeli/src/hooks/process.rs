@@ -108,6 +108,35 @@ impl std::fmt::Display for RunError {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct CommandGroups {
+    closed: bool,
+    groups: std::collections::HashSet<i32>,
+}
+
+#[cfg(target_os = "linux")]
+fn command_groups() -> &'static std::sync::Mutex<CommandGroups> {
+    static GROUPS: std::sync::OnceLock<std::sync::Mutex<CommandGroups>> =
+        std::sync::OnceLock::new();
+    GROUPS.get_or_init(Default::default)
+}
+
+/// Process-budget fallback: prevent new commands and signal only groups whose
+/// leaders remain owned/unreaped. Spawn/reap share this lock, preventing PGID reuse.
+#[cfg(all(target_os = "linux", feature = "server"))]
+pub(crate) fn stop_owned_groups() {
+    let mut owned = command_groups()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    owned.closed = true;
+    for group in owned.groups.drain() {
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
+    }
+}
+
 /// The Linux group leader stays unreaped until both output pipes close. Descendants
 /// inheriting a pipe can otherwise outlive the leader, whose recycled PID would make
 /// a later kill(-pid) unsafe. Never poll wait/try_wait while the drains are pending.
@@ -133,8 +162,24 @@ impl OwnedProcess {
             .stderr(stderr)
             .kill_on_drop(true);
         #[cfg(target_os = "linux")]
-        command.process_group(0);
+        let mut owned = command_groups()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        #[cfg(target_os = "linux")]
+        {
+            if owned.closed {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "process shutdown budget expired; command admission closed",
+                ));
+            }
+            command.process_group(0);
+        }
         let child = command.spawn()?;
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = child.id() {
+            owned.groups.insert(pid as i32);
+        }
         Ok(Self {
             #[cfg(target_os = "linux")]
             group: child.id().map(|pid| pid as i32),
@@ -147,6 +192,10 @@ impl OwnedProcess {
         let Some(group) = self.group.take() else {
             return Ok(());
         };
+        let mut owned = command_groups()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        owned.groups.remove(&group);
         // SAFETY: process_group(0) made this owned, unreaped child the group leader.
         if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
             let error = io::Error::last_os_error();
@@ -158,14 +207,30 @@ impl OwnedProcess {
     }
 
     async fn wait(&mut self) -> io::Result<ExitStatus> {
-        let result = self.child.wait().await;
-        // No await between reaping and disarming. Cancellation cannot signal a
-        // recycled PID; normal completion preserves deliberately redirected daemons.
         #[cfg(target_os = "linux")]
         {
-            self.group = None;
+            use std::future::Future;
+            let waiting = self.child.wait();
+            tokio::pin!(waiting);
+            let group = &mut self.group;
+            std::future::poll_fn(|cx| {
+                // The deadline monitor must never observe a leader after this
+                // poll reaped it but before its group was disarmed.
+                let mut owned = command_groups()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let result = waiting.as_mut().poll(cx);
+                if matches!(result, std::task::Poll::Ready(Ok(_))) {
+                    if let Some(group) = group.take() {
+                        owned.groups.remove(&group);
+                    }
+                }
+                result
+            })
+            .await
         }
-        result
+        #[cfg(not(target_os = "linux"))]
+        self.child.wait().await
     }
 
     async fn terminate(&mut self) -> io::Result<ExitStatus> {

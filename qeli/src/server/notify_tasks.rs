@@ -119,14 +119,16 @@ impl DeliveryQueue {
         inner.tasks.abort_all();
     }
 
+    pub(crate) fn request_shutdown(&self) -> Instant {
+        let mut inner = self.lock();
+        inner.stopping = true;
+        *inner
+            .deadline
+            .get_or_insert_with(|| Instant::now() + self.grace)
+    }
+
     pub(crate) async fn shutdown(&self) {
-        let deadline = {
-            let mut inner = self.lock();
-            inner.stopping = true;
-            *inner
-                .deadline
-                .get_or_insert_with(|| Instant::now() + self.grace)
-        };
+        let deadline = self.request_shutdown();
         // Serialize waiters: JoinSet owns one waker. Pending handles and the original
         // deadline stay in self if this future is cancelled and another caller resumes.
         let _waiter = self.shutdown_lock.lock().await;
@@ -352,5 +354,18 @@ mod tests {
         tx.send(()).unwrap();
         queue.shutdown().await;
         assert_eq!(ran.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn early_stop_closes_admission_and_does_not_refresh_delivery_deadline() {
+        let queue = DeliveryQueue::new(2, 1, Duration::from_millis(20));
+        queue.try_spawn(std::future::pending()).unwrap();
+        let deadline = queue.request_shutdown();
+        assert!(queue.try_spawn(async {}).unwrap_err().contains("stopping"));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(queue.request_shutdown(), deadline);
+        tokio::time::timeout(Duration::from_millis(10), queue.shutdown())
+            .await
+            .unwrap();
+        assert!(queue.lock().tasks.is_empty());
     }
 }

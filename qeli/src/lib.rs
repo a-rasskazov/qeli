@@ -134,6 +134,11 @@ mod nat_ipv6_sysctl;
 #[path = "server/nat/dns_input.rs"]
 mod nat_dns_input;
 
+// Process-only shutdown budget, independent of the async executor.
+#[cfg(any(test, all(target_os = "linux", feature = "server")))]
+#[path = "server/shutdown_budget.rs"]
+mod server_shutdown_budget;
+
 // Share final worker error/exit policy with portable host regression tests.
 #[cfg(any(test, all(target_os = "linux", feature = "server")))]
 #[path = "server/shutdown.rs"]

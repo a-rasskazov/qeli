@@ -417,7 +417,7 @@ async fn main() -> anyhow::Result<()> {
                 let config_str = config.to_str().ok_or_else(|| {
                     anyhow::anyhow!("config path is not valid UTF-8: {}", config.display())
                 })?;
-                server::run_worker(config_str).await?;
+                server::run_worker_process(config_str).await?;
             }
         }
 

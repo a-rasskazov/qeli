@@ -800,7 +800,9 @@ Event details and the displayed server name are clipped at UTF-8 boundaries to 2
 than 4096/512/128 bytes are rejected, not shortened; saved configuration is unchanged.
 Graceful stop closes admission, drains for at most ten seconds, then cancels and joins
 remaining deliveries. There is no durable retry; full queues, shutdown or network errors
-can lose notifications. HTTP 4xx/5xx are logged with the channel name.
+can lose notifications. The grace starts at the first worker/supervisor stop request;
+the queue drains concurrently with cleanup and does not add ten seconds afterwards.
+HTTP 4xx/5xx are logged with the channel name.
 
 ### Update banner (opt-in)
 When `[web] update_check = true`, the panel shows a dismissible **"Update available"**

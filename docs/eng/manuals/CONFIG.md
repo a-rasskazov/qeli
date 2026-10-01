@@ -2869,6 +2869,7 @@ These rules apply to both client and server hooks:
   and reaps the shell on timeout, error and cancellation. Context-file preparation/removal
   also runs there. Forced Drop joins that thread; stuck filesystem/kernel calls cannot be
   preempted. The 30 seconds bound command/output work, not file preparation or whole shutdown.
+  CLI server workers separately enforce a 45-second cleanup budget with forced exit 124.
   [Details](OPERATIONS.md#hook-and-backup-file-operations).
 - Normal shell completion with closed stdout/stderr preserves intentionally launched
   background services. Redirect both streams, for example to the service's own log, and

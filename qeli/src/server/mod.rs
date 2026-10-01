@@ -3571,6 +3571,20 @@ fn reject_bad_config_values(bad: &[String]) -> anyhow::Result<()> {
 }
 
 pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
+    run_worker_inner(cfg_path, None).await
+}
+
+/// CLI process boundary: this entry point installs the process shutdown monitor.
+/// Library callers retain their existing signal/cleanup and quarantine contracts.
+pub async fn run_worker_process(cfg_path: &str) -> anyhow::Result<()> {
+    let mut budget = crate::server_shutdown_budget::Budget::for_worker()?;
+    run_worker_inner(cfg_path, Some(&mut budget)).await
+}
+
+async fn run_worker_inner(
+    cfg_path: &str,
+    process_budget: Option<&mut crate::server_shutdown_budget::Budget>,
+) -> anyhow::Result<()> {
     // Install handlers before creating control/profile tasks or changing host networking.
     use tokio::signal::unix::{signal, SignalKind};
     let mut sighup = signal(SignalKind::hangup())
@@ -3796,9 +3810,16 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
 
     let mut via_signal = false;
     let mut fatal_reason: Option<String> = None;
+    // Arm before stop diagnostics: even the first logger call may block.
+    let arm_shutdown = || {
+        if let Some(budget) = process_budget.as_deref() {
+            budget.arm();
+        }
+    };
     loop {
         tokio::select! {
             joined = profile_set.join_next() => {
+                arm_shutdown();
                 let reason = match joined {
                     Some(Ok(Ok(()))) => "a profile supervisor ended unexpectedly".to_string(),
                     Some(Ok(Err(error))) => format!("a profile supervisor failed: {error}"),
@@ -3810,11 +3831,13 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
                 break;
             },
             reason = worker_services.next_failure() => {
+                arm_shutdown();
                 log::error!("{reason}");
                 fatal_reason = Some(reason);
                 break;
             },
             control = control_fatal_rx.recv() => {
+                arm_shutdown();
                 let reason = control
                     .unwrap_or_else(|| "control server task disappeared".to_string());
                 log::error!("{reason}");
@@ -3822,11 +3845,13 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
                 break;
             },
             _ = sigint.recv() => {
+                arm_shutdown();
                 log::info!("Received SIGINT, stopping server...");
                 via_signal = true;
                 break;
             }
             _ = sigterm.recv() => {
+                arm_shutdown();
                 log::info!("Received SIGTERM, stopping server...");
                 via_signal = true;
                 break;
@@ -3838,87 +3863,102 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Finish accepted administrative operations before profiles lose their resources.
-    let _ = control_shutdown_tx.send(true);
-    worker_services.request_shutdown();
-    let mut task_failures = crate::server_shutdown::Failures::default();
-    task_failures.record("control task", control_task.await.map_err(Into::into));
-    task_failures.record("worker services", worker_services.shutdown().await);
+    if let Some(budget) = process_budget.as_deref() {
+        budget.arm();
+        log::info!("worker shutdown: shared 45-second process budget armed; expiry exits 124 with cleanup unconfirmed");
+    }
+    notifications.request_shutdown();
+    let cleanup = async {
+        // Finish accepted administrative operations before profiles lose their resources.
+        let _ = control_shutdown_tx.send(true);
+        worker_services.request_shutdown();
+        let mut task_failures = crate::server_shutdown::Failures::default();
+        task_failures.record("control task", control_task.await.map_err(Into::into));
+        task_failures.record("worker services", worker_services.shutdown().await);
 
-    // Ask every generation to leave through its normal async cleanup path. Aborting the
-    // supervisors dropped `ProfileTeardown` synchronously and could remove TUN/NAT while
-    // generation-owned tasks were still detached and using those resources.
-    let _ = profile_shutdown_tx.send(true);
-    crate::server_shutdown::drain_profiles(&mut profile_set, &mut task_failures).await;
-    task_failures.record(
-        "deferred profile cleanup",
-        finish_deferred_profiles(&state).await,
-    );
+        // Ask every generation to leave through its normal async cleanup path. Aborting the
+        // supervisors dropped `ProfileTeardown` synchronously and could remove TUN/NAT while
+        // generation-owned tasks were still detached and using those resources.
+        let _ = profile_shutdown_tx.send(true);
+        crate::server_shutdown::drain_profiles(&mut profile_set, &mut task_failures).await;
+        task_failures.record(
+            "deferred profile cleanup",
+            finish_deferred_profiles(&state).await,
+        );
 
-    // Tear down the host NAT rules we installed (the next start also cleans stale
-    // rules, so a SIGKILL that skips this is recovered then) and run post_down.
-    for pcfg in &state.config.profiles {
-        // Unconditional, not `if nat.enabled`. `routing.forward_private` installs rules
-        // through `nat::enable_routing` under the SAME `qeli-nat:<profile>` tag — mangle
-        // FORWARD TCPMSS plus filter FORWARD ACCEPT for the tun — and nothing removed
-        // them on the way out, so `systemctl stop qeli` left ACCEPT rules behind on a host
-        // with `FORWARD DROP`. They were only ever cleared by the NEXT start
-        // (`cleanup_all`), which never comes if the profile is deleted from the config or
-        // the service is disabled. `cleanup` deletes by exact tag and is a no-op when
-        // there is nothing to delete, so running it always is strictly safer — it also
-        // covers a profile whose NAT was toggled off while running.
-        // (Audit 2026-07-27, B6.)
-        let profile_name = pcfg.name.clone();
-        let cleanup = crate::profile_teardown::blocking("qeli-final-cleanup", move || {
-            nat::cleanup(&profile_name)
+        // Tear down the host NAT rules we installed (the next start also cleans stale
+        // rules, so a SIGKILL that skips this is recovered then) and run post_down.
+        for pcfg in &state.config.profiles {
+            // Unconditional, not `if nat.enabled`. `routing.forward_private` installs rules
+            // through `nat::enable_routing` under the SAME `qeli-nat:<profile>` tag — mangle
+            // FORWARD TCPMSS plus filter FORWARD ACCEPT for the tun — and nothing removed
+            // them on the way out, so `systemctl stop qeli` left ACCEPT rules behind on a host
+            // with `FORWARD DROP`. They were only ever cleared by the NEXT start
+            // (`cleanup_all`), which never comes if the profile is deleted from the config or
+            // the service is disabled. `cleanup` deletes by exact tag and is a no-op when
+            // there is nothing to delete, so running it always is strictly safer — it also
+            // covers a profile whose NAT was toggled off while running.
+            // (Audit 2026-07-27, B6.)
+            let profile_name = pcfg.name.clone();
+            let cleanup = crate::profile_teardown::blocking("qeli-final-cleanup", move || {
+                nat::cleanup(&profile_name)
+            })
+            .await
+            .and_then(|result| result);
+            if let Err(error) = cleanup {
+                log::error!("Profile '{}': final sweep incomplete: {error}", pcfg.name);
+            }
+            // Skips any profile whose hook already ran when that profile ended on its own — the
+            // snapshot claim lives in `run_post_down`, so a shutdown racing a dying profile cannot fire
+            // the hook twice.
+            run_post_down(&state, &pcfg.name).await;
+        }
+
+        // Every path (including service failure) collects counters after profile writers have
+        // stopped, and persists while the exclusive worker lease is still held.
+        // Earlier Drop/sweep failures may have been transient. Decide from this final
+        // exact ownership pass, while still attempting the accounting flush on failure.
+        let owned_cleanup =
+            crate::profile_teardown::blocking("qeli-owned-cleanup", nat::finish_owned_cleanup)
+                .await
+                .and_then(|result| result);
+        let flush_state = state.clone();
+        let usage_flush = crate::profile_teardown::blocking("qeli-usage-flush", move || {
+            flush_state.usage.flush()
         })
         .await
         .and_then(|result| result);
-        if let Err(error) = cleanup {
-            log::error!("Profile '{}': final sweep incomplete: {error}", pcfg.name);
-        }
-        // Skips any profile whose hook already ran when that profile ended on its own — the
-        // snapshot claim lives in `run_post_down`, so a shutdown racing a dying profile cannot fire
-        // the hook twice.
-        run_post_down(&state, &pcfg.name).await;
-    }
-
-    // Every path (including service failure) collects counters after profile writers have
-    // stopped, and persists while the exclusive worker lease is still held.
-    // Earlier Drop/sweep failures may have been transient. Decide from this final
-    // exact ownership pass, while still attempting the accounting flush on failure.
-    let owned_cleanup =
-        crate::profile_teardown::blocking("qeli-owned-cleanup", nat::finish_owned_cleanup)
-            .await
-            .and_then(|result| result);
-    let flush_state = state.clone();
-    let usage_flush =
-        crate::profile_teardown::blocking("qeli-usage-flush", move || flush_state.usage.flush())
-            .await
-            .and_then(|result| result);
-    let result = crate::server_shutdown::result(
-        fatal_reason,
-        task_failures.result(),
-        owned_cleanup,
-        usage_flush,
-    );
-    notifications.shutdown().await;
-    if result.is_ok() {
-        network_lease.mark_complete();
+        crate::server_shutdown::result(
+            fatal_reason,
+            task_failures.result(),
+            owned_cleanup,
+            usage_flush,
+        )
+    };
+    // Notifications drain from the same stop point, rather than adding another
+    // ten seconds after every network/accounting phase has completed.
+    let (result, ()) = tokio::join!(cleanup, notifications.shutdown());
+    let exit_process = via_signal || process_budget.is_some();
+    if exit_process {
+        // Keep the monitor armed through pathname cleanup and final diagnostics.
+        drop(control_socket);
     }
     match &result {
         Ok(()) => log::info!("Server shutdown complete"),
         Err(error) => log::error!("{error}"),
     }
-    // On a signal-driven stop, exit the process directly. The data plane spawns
-    // blocking TUN reader threads; a graceful runtime drop joins them and would hang
-    // (they block in read()), making `systemctl stop` time out and the unit go
-    // "failed". The kernel reclaims the TUN devices / fds on exit; the final owned
-    // cleanup result above determines whether the stop can report success.
-    if via_signal {
-        // process::exit skips Drop: release the pathname only after the final
-        // usage flush, so a replacement worker cannot load stale counters.
-        drop(control_socket);
+    if let Some(budget) = process_budget {
+        if !budget.finish() {
+            // No logging or Rust Drop here: either may be the very blocked operation
+            // the process budget must terminate. Exact ownership journals stay on disk.
+            crate::server_shutdown_budget::exit_process();
+        }
+    }
+    if result.is_ok() {
+        network_lease.mark_complete();
+    }
+    if exit_process {
+        // CLI workers never hand blocking TUN threads back to Tokio runtime Drop.
         std::process::exit(i32::from(result.is_err()));
     }
     result
@@ -4381,8 +4421,9 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // Stop outbound clients concurrently with the worker. Admission closes in the
     // signal future before supervision requests SIGTERM, not after its sixty-second wait.
     // Primary completion also starts side cleanup if supervision returns without a signal.
+    let stopping_notifications = &notifications;
     let stopping_state = &state;
-    let (worker_result, client_result) = crate::server_shutdown::coordinate(
+    let (worker_result, (client_result, ())) = crate::server_shutdown::coordinate(
         |stopping| async move {
             crate::server_supervisor::supervise(
                 spawn_worker,
@@ -4400,13 +4441,19 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
                         _ = sigterm.recv() => {},
                     }
                     stopping_state.client_manager.request_shutdown();
+                    stopping_notifications.request_shutdown();
                     let _ = stopping.send(true);
                 },
                 crate::server_supervisor::SupervisorPolicy::default(),
             )
             .await
         },
-        || state.client_manager.shutdown_all(),
+        || async {
+            tokio::join!(
+                state.client_manager.shutdown_all(),
+                notifications.shutdown()
+            )
+        },
     )
     .await;
     let mut shutdown_failures = crate::server_shutdown::Failures::default();
@@ -4414,7 +4461,6 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     shutdown_failures.record("outbound clients", client_result);
     let result = shutdown_failures.result();
 
-    notifications.shutdown().await;
     match &result {
         Ok(()) => log::info!("Supervisor shutdown complete"),
         Err(error) => log::error!("Supervisor shutdown failed: {error}"),

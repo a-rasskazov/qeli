@@ -34,6 +34,10 @@ pub struct Runtime {
     queue: Arc<DeliveryQueue>,
 }
 impl Runtime {
+    pub fn request_shutdown(&self) {
+        self.queue.request_shutdown();
+    }
+
     pub async fn shutdown(&self) {
         self.queue.shutdown().await;
     }

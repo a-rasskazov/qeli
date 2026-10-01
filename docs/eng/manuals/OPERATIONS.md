@@ -389,8 +389,9 @@ The protocol is one JSON line per connection, up to 64 KiB per request and 8 MiB
 response excluding LF/CRLF. Overflow is an error, never a truncated message. Request
 reads, CLI connect, and writes have a 5 s deadline; CLI response reads have 15 s.
 At most 16 connections are handled concurrently. Shutdown closes admission and drains
-accepted handlers before profile teardown; the supervisor's overall 60 s worker grace
-still applies. Forced termination cannot guarantee completion of commands or hooks.
+accepted handlers before profile teardown. CLI workers use one 45 s cleanup budget;
+the supervisor retains its 60 s grace. Forced termination does not confirm command
+or hook completion; see the shutdown section below.
 
 
 ## Server firewall recovery
@@ -708,7 +709,7 @@ Cancelling a Disconnect HTTP request does not lose the process or admit its repl
 before cleanup ends. Status checks for other clients remain available. This grace
 is not a total server shutdown deadline and cannot interrupt a stuck kernel syscall.
 
-<!-- normative-sync: server-profile-cancel-v1 -->
+<!-- normative-sync: server-profile-cancel-v2 -->
 
 ## Forced cancellation of a server profile
 
@@ -721,6 +722,42 @@ a successful later join does not turn forced cancellation into an ordinary stop.
 Use SIGTERM and await process exit. Destroying the worker future itself does not
 guarantee completed cleanup: unfinished resources and network-namespace admission
 remain retained until process exit. Do not launch a new generation in that process.
-The next process uses the ordinary recovery of Qeli-owned rules. There is currently
-no single shutdown deadline; this mechanism cannot interrupt stalled kernel/fs calls.
-[Checks and remaining D05 work](../plans/AUDIT-DEBT.md).
+The next process uses the ordinary recovery of Qeli-owned rules. The CLI process
+boundary is described below; library `run_worker` does not install that timer.
+[Checks](../plans/AUDIT-DEBT.md).
+
+
+<!-- normative-sync: server-stop-budget-v1 -->
+
+## Total server shutdown budget
+
+The CLI worker (`_worker`, including supervisor children) starts one **45-second**
+budget on the first observed stop or fatal event, before stop logging. It covers
+control handlers, service/profile tasks, deferred joins, NAT/sysctl cleanup,
+hooks, accounting persistence and control-socket removal. Repeated waits do not
+extend the deadline. A dedicated OS thread monitors the clock independently of
+Tokio execution. The limit is below the supervisor’s sixty-second grace, allowing
+the worker to report failure before the parent forcibly kills it. Normal exit
+reports the final cleanup result; failure is nonzero.
+
+On expiry, the worker closes command admission, sends SIGKILL to tracked groups
+of owned commands whose leaders have not been reaped, and exits with **code 124**.
+The supervisor reports `worker exceeded its total shutdown budget`: this is a
+failure with cleanup unconfirmed. Ownership journals remain for ordinary recovery
+on the next start; do not delete them to conceal the failure. Services deliberately
+detached by a hook with closed pipes retain their existing contract; descendants
+that escape the process group are outside Qeli's management.
+
+The supervisor stops its worker, panel clients and notification queue concurrently:
+worker grace remains **60 seconds**, client grace **5 seconds**, and notification
+grace **10 seconds** from the first stop request. Worker notifications also drain
+concurrently with cleanup; they do not add a separate ten seconds afterwards.
+Accepted messages may be lost on timeout or forced exit.
+
+The 45 seconds apply to CLI cleanup, not OS signal delivery, preparation before
+shutdown, or library `run_worker`. Library cancellation retains resources and
+rejects another in-process worker as described above. Arbitrarily stuck kernel
+syscalls, kernel exit/reaping and synchronous spawn under the command-registry
+lock cannot safely be interrupted by this timer; there is no absolute wall-clock
+guarantee during kernel failure. A stalled filesystem worker is verified with
+forced process exit and subsequent recovery.
