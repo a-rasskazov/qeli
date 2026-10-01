@@ -706,3 +706,20 @@ for Qeli-owned resources.
 Cancelling a Disconnect HTTP request does not lose the process or admit its replacement
 before cleanup ends. Status checks for other clients remain available. This grace
 is not a total server shutdown deadline and cannot interrupt a stuck kernel syscall.
+
+<!-- normative-sync: server-profile-cancel-v1 -->
+
+## Forced cancellation of a server profile
+
+When a profile future is cancelled, Qeli closes descendant-task admission and retains
+their JoinSets together with TUN and DNS/NAT resources. The worker joins descendants
+before deleting resources; terminal NAT cleanup and hooks follow this step.
+Cancelling cleanup waiting requeues the generation and preserves the failure:
+a successful later join does not turn forced cancellation into an ordinary stop.
+
+Use SIGTERM and await process exit. Destroying the worker future itself does not
+guarantee completed cleanup: unfinished resources and network-namespace admission
+remain retained until process exit. Do not launch a new generation in that process.
+The next process uses the ordinary recovery of Qeli-owned rules. There is currently
+no single shutdown deadline; this mechanism cannot interrupt stalled kernel/fs calls.
+[Checks and remaining D05 work](../plans/AUDIT-DEBT.md).

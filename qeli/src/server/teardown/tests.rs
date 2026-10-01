@@ -230,3 +230,40 @@ async fn cancelled_setup_joins_before_outer_guard_and_drops_unadopted_result() {
     assert!(result_dropped_on_worker.load(Ordering::SeqCst));
     assert!(!early_outer_drop.load(Ordering::SeqCst));
 }
+
+#[test]
+fn deferred_entry_keeps_resources_owned_until_taken() {
+    struct Resource(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Resource {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let deferred = Deferred::default();
+    deferred.retain(Resource(drops.clone()));
+    assert_eq!(drops.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let resource = deferred.take().unwrap();
+    assert!(deferred.take().is_none());
+    drop(resource);
+    assert_eq!(drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn deferred_owner_drop_quarantines_unjoined_resources() {
+    struct Resource(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Resource {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let deferred = Deferred::default();
+    deferred.retain(Resource(drops.clone()));
+    drop(deferred);
+    assert_eq!(
+        drops.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "owner loss must not invoke cleanup before async descendants finish"
+    );
+}

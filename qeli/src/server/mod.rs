@@ -1053,6 +1053,8 @@ pub struct ServerState {
     /// Actual per-generation values exported to lifecycle hooks. In particular WAN names are
     /// the interfaces selected by auto-detection, not the placeholder text from the config.
     profile_hook_env: Arc<Mutex<HashMap<String, ProfileHookEnv>>>,
+    /// Cancelled generations keep resources and JoinSets here until worker shutdown joins them.
+    deferred_profiles: crate::profile_teardown::Deferred<ProfileResources>,
     pub failed_auth: Arc<Mutex<FailedAuthTracker>>,
     /// Supervisor → worker control channel. `Some` only in the supervisor.
     pub worker_tx: Option<tokio::sync::mpsc::Sender<WorkerCmd>>,
@@ -1155,6 +1157,7 @@ pub(crate) fn test_api_state(
         config_write_lock: Arc::new(Mutex::new(())),
         profiles: Arc::new(RwLock::new(HashMap::new())),
         profile_hook_env: Arc::new(Mutex::new(HashMap::new())),
+        deferred_profiles: Default::default(),
         failed_auth: Arc::new(Mutex::new(FailedAuthTracker::new(true, 5, 300, 900))),
         worker_tx: None,
         client_manager: Arc::new(client_manager::ClientManager::new()),
@@ -3669,6 +3672,7 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         config_write_lock: Arc::new(Mutex::new(())),
         profiles: Arc::new(RwLock::new(HashMap::new())),
         profile_hook_env: Arc::new(Mutex::new(HashMap::new())),
+        deferred_profiles: Default::default(),
         failed_auth,
         worker_tx: None,
         client_manager: Arc::new(client_manager::ClientManager::new()),
@@ -3846,6 +3850,10 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
     // generation-owned tasks were still detached and using those resources.
     let _ = profile_shutdown_tx.send(true);
     crate::server_shutdown::drain_profiles(&mut profile_set, &mut task_failures).await;
+    task_failures.record(
+        "deferred profile cleanup",
+        finish_deferred_profiles(&state).await,
+    );
 
     // Tear down the host NAT rules we installed (the next start also cleans stale
     // rules, so a SIGKILL that skips this is recovered then) and run post_down.
@@ -4266,6 +4274,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
         config_write_lock: Arc::new(Mutex::new(())),
         profiles: Arc::new(RwLock::new(HashMap::new())),
         profile_hook_env: Arc::new(Mutex::new(HashMap::new())),
+        deferred_profiles: Default::default(),
         failed_auth,
         worker_tx: Some(worker_tx),
         client_manager: Arc::new(client_manager::ClientManager::new()),
@@ -4895,6 +4904,69 @@ struct ProfileTeardown {
     failures: crate::profile_teardown::Report,
 }
 
+struct ProfileResources {
+    teardown: ProfileTeardown,
+    services: ProfileServices,
+}
+
+/// The only owner allowed to hand a profile's host resources to synchronous Drop.
+/// On cancellation/panic, keep both the resources and the joinable service sets.
+struct ProfileScope {
+    resources: Option<ProfileResources>,
+}
+
+impl ProfileScope {
+    async fn cleanup(&mut self) -> anyhow::Result<()> {
+        let resources = self
+            .resources
+            .as_mut()
+            .expect("profile scope owns resources");
+        let failures = resources.teardown.failures.clone();
+        let result = resources.services.shutdown(&resources.teardown.tasks).await;
+        failures.record("profile tasks/services", result);
+        resources.teardown.unregister().await;
+        // No async descendants remain. Cancellation from this point joins the host worker
+        // before releasing its resources; before this point Drop requeues the whole scope.
+        let resources = self.resources.take().expect("profile scope owns resources");
+        let result = crate::profile_teardown::blocking("qeli-profile-teardown", move || {
+            drop(resources);
+        })
+        .await;
+        failures.record("profile teardown worker", result);
+        failures.result()
+    }
+}
+
+impl Drop for ProfileScope {
+    fn drop(&mut self) {
+        if let Some(mut resources) = self.resources.take() {
+            resources
+                .services
+                .request_shutdown(&resources.teardown.tasks);
+            let state = resources.teardown.state.clone();
+            state.deferred_profiles.failures.record(
+                &resources.teardown.profile,
+                Err(anyhow::anyhow!("profile scope ended before terminal cleanup; resources deferred until async descendants are joined")),
+            );
+            state.deferred_profiles.retain(resources);
+        }
+    }
+}
+
+async fn finish_deferred_profiles(state: &Arc<ServerState>) -> anyhow::Result<()> {
+    while let Some(resources) = state.deferred_profiles.take() {
+        let mut scope = ProfileScope {
+            resources: Some(resources),
+        };
+        let result = scope.cleanup().await;
+        state
+            .deferred_profiles
+            .failures
+            .record("deferred generation", result);
+    }
+    state.deferred_profiles.failures.result()
+}
+
 impl ProfileTeardown {
     async fn unregister(&mut self) {
         let Some(expected) = self.registered_profile.clone() else {
@@ -5075,7 +5147,7 @@ async fn run_profile(
     // guard while the generation body runs, so it can await every async child BEFORE Drop
     // removes the TUN/NAT resources those children use.
     let failures = crate::profile_teardown::Report::default();
-    let mut teardown = ProfileTeardown {
+    let teardown = ProfileTeardown {
         profile: name.clone(),
         queues: Vec::new(),
         state: state.clone(),
@@ -5086,7 +5158,14 @@ async fn run_profile(
         failures: failures.clone(),
     };
 
-    let mut services = ProfileServices::default();
+    let mut scope = ProfileScope {
+        resources: Some(ProfileResources {
+            teardown,
+            services: ProfileServices::default(),
+        }),
+    };
+    let ProfileResources { teardown, services } =
+        scope.resources.as_mut().expect("new profile scope");
     let setup_deadline = tokio::time::Instant::now() + PROFILE_SETUP_BUDGET;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let result = await_profile_ready(
@@ -5096,23 +5175,144 @@ async fn run_profile(
         run_profile_generation(
             state,
             pcfg,
-            &mut teardown,
+            teardown,
             tasks.clone(),
             &mut shutdown,
-            &mut services,
+            services,
             ready_tx,
         ),
     )
     .await;
-    let service_cleanup = services.shutdown(&tasks).await;
-    teardown.unregister().await;
-    let teardown_cleanup = crate::profile_teardown::blocking("qeli-profile-teardown", move || {
-        drop(teardown);
-    })
-    .await;
-    failures.record("profile teardown worker", teardown_cleanup);
-    failures.record("profile tasks/services", service_cleanup);
-    crate::profile_teardown::Outcome::new(result, failures.result())
+    let cleanup = scope.cleanup().await;
+    crate::profile_teardown::Outcome::new(result, cleanup)
+}
+
+#[cfg(test)]
+mod deferred_profile_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn tunnel_exists() -> bool {
+        std::process::Command::new("ip")
+            .args(["link", "show", "qdf206"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    }
+
+    fn dns_rules_exist() -> bool {
+        let output = std::process::Command::new("iptables-save")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("deferred206")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires root in private NET/mount/PID namespaces and private /var/lib"]
+    async fn forced_scope_drop_keeps_tun_dns_and_joins_after_cancelled_drain() {
+        assert_eq!(unsafe { libc::geteuid() }, 0);
+        let parent =
+            std::env::var("QELI_AUDIT_PARENT_NET").expect("namespace parent identity required");
+        let current = std::fs::read_link("/proc/self/ns/net")
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_ne!(current, parent, "host network test is forbidden");
+        let config =
+            crate::config::parse_server_config("[profile:deferred206]\ntun.name = qdf206\n")
+                .unwrap();
+        let state = test_api_state(config, std::path::Path::new("/tmp/qdf206.conf"));
+        let tun = TunInterface::create("qdf206", 1400).unwrap();
+        TunInterface::set_address("qdf206", "10.8.0.1", 24).unwrap();
+        let dns =
+            nat::enable_dns_input("deferred206", "qdf206", "10.8.0.0/24", "10.8.0.1", 53).unwrap();
+        let tasks = ProfileTasks::new("deferred206");
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (started, began) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        struct ChildDrop {
+            started: Option<tokio::sync::oneshot::Sender<()>>,
+            release: std::sync::mpsc::Receiver<()>,
+            dropped: Arc<AtomicBool>,
+        }
+        impl Drop for ChildDrop {
+            fn drop(&mut self) {
+                assert!(
+                    tunnel_exists() && dns_rules_exist(),
+                    "resources disappeared before child Drop"
+                );
+                let _ = self.started.take().unwrap().send(());
+                self.release.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert!(
+                    tunnel_exists() && dns_rules_exist(),
+                    "resources disappeared while child Drop waited"
+                );
+                self.dropped.store(true, Ordering::SeqCst);
+            }
+        }
+        let payload = ChildDrop {
+            started: Some(started),
+            release: blocked,
+            dropped: dropped.clone(),
+        };
+        assert!(tasks.spawn(async move {
+            let _payload = payload;
+            std::future::pending::<()>().await;
+        }));
+        let teardown = ProfileTeardown {
+            profile: "deferred206".into(),
+            queues: vec![tun],
+            state: state.clone(),
+            readers: None,
+            tasks,
+            dns_input_leases: vec![dns],
+            registered_profile: None,
+            failures: Default::default(),
+        };
+        let scope = ProfileScope {
+            resources: Some(ProfileResources {
+                teardown,
+                services: Default::default(),
+            }),
+        };
+        if std::env::var_os("QELI_AUDIT_BASELINE_DROP").is_some() {
+            // The unchanged production destructor reproduces the old local-variable order.
+            let mut scope = scope;
+            let ProfileResources { teardown, services } = scope.resources.take().unwrap();
+            drop(services);
+            drop(teardown);
+        } else {
+            drop(scope);
+        }
+        tokio::time::timeout(Duration::from_secs(2), began)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(tunnel_exists() && dns_rules_exist());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), finish_deferred_profiles(&state))
+                .await
+                .is_err()
+        );
+        assert!(!dropped.load(Ordering::SeqCst));
+        assert!(
+            tunnel_exists() && dns_rules_exist(),
+            "cancelled drain released unjoined resources"
+        );
+        release.send(()).unwrap();
+        let error = finish_deferred_profiles(&state)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("deferred until async descendants"));
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(!tunnel_exists() && !dns_rules_exist());
+        assert!(state.deferred_profiles.take().is_none());
+    }
 }
 
 /// TUN fds stay local until setup completes. An abandoned worker result closes its

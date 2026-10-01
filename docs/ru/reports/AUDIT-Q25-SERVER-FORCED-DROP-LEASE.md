@@ -13,3 +13,5 @@
 Первая итоговая сборка остановилась на ENOSPC: приватный incremental-кэш Cargo вырос до 3,2 ГиБ. Удалён только проверенный `/var/tmp/qeli-audit-debt-20260924-d85ead10/target/debug/incremental`; установленные службы и данные хоста не менялись. Финальная сборка без incremental и live-прогон — `forcedlease-buildfinal.log/.rc`; предыдущие успешные тесты и первая live-матрица — `forcedlease25.log/.rc` и `server-forced-drop-20260925/`. Все артефакты: `C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260925/server-forced-drop-phase/`.
 
 В D05 остаются общий бюджет shutdown и доказательство порядка дочерних задач/ресурсов при принудительном `Drop`. D06 WAN identity и сочетания D10 не менялись.
+
+Продолжение от 2 октября 2026: Q25-F206 в [реестре техдолга](../plans/AUDIT-DEBT.md) закрывает порядок async join/host cleanup при forced Drop; общий бюджет shutdown остаётся открытым. Этот отчёт описывает историческое состояние.

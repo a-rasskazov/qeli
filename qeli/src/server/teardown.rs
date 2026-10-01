@@ -80,6 +80,55 @@ impl Report {
     }
 }
 
+/// Worker-owned resources awaiting asynchronous joining after a scope is cancelled.
+/// Take only one entry into another requeue-on-drop scope before awaiting it.
+/// If the owner itself disappears, unresolved resources remain quarantined until
+/// process exit instead of running destructors ahead of their async descendants.
+pub(crate) struct Deferred<T> {
+    entries: Mutex<Vec<T>>,
+    pub(crate) failures: Report,
+}
+
+impl<T> Default for Deferred<T> {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+            failures: Report::default(),
+        }
+    }
+}
+
+impl<T> Deferred<T> {
+    pub(crate) fn retain(&self, entry: T) {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(entry);
+    }
+
+    pub(crate) fn take(&self) -> Option<T> {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pop()
+    }
+}
+
+impl<T> Drop for Deferred<T> {
+    fn drop(&mut self) {
+        let entries = self
+            .entries
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !entries.is_empty() {
+            log::error!("{} deferred profile cleanup(s) have no async owner; resources retained until process exit", entries.len());
+        }
+        for entry in entries.drain(..) {
+            std::mem::forget(entry);
+        }
+    }
+}
+
 /// A transient generation failure may be retried only after its resource cleanup succeeded.
 /// Cleanup failure must reach the worker: otherwise a backoff/replacement loses old evidence.
 pub(crate) struct Outcome {

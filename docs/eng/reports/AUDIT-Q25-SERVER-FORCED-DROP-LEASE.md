@@ -13,3 +13,5 @@ Current-source Linux checks: 7/7 ordinary network-lease tests, including cancell
 The first final binary build stopped at ENOSPC: the private Cargo incremental cache had grown to 3.2 GiB. Only the verified `/var/tmp/qeli-audit-debt-20260924-d85ead10/target/debug/incremental` cache was removed; no installed service or host data was touched. The final non-incremental build and live run are `forcedlease-buildfinal.log/.rc`; the earlier successful tests and first live matrix are `forcedlease25.log/.rc` and `server-forced-drop-20260925/`. All artifacts: `C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260925/server-forced-drop-phase/`.
 
 The remaining D05 work is whole shutdown budgeting and proof of child-task/resource ordering on forced `Drop`. D06 WAN identity and D10 network combinations are unchanged.
+
+Continuation on 2 October 2026: Q25-F206 in the [debt register](../plans/AUDIT-DEBT.md) closes forced-Drop async-join/host-cleanup ordering; the overall shutdown budget remains open. This report records historical behavior.

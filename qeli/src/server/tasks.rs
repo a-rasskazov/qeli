@@ -146,10 +146,14 @@ pub(crate) struct ProfileServices {
 }
 
 impl ProfileServices {
-    pub(crate) async fn shutdown(&mut self, tasks: &ProfileTasks) -> anyhow::Result<()> {
+    pub(crate) fn request_shutdown(&mut self, tasks: &ProfileTasks) {
         tasks.abort_all();
         self.listeners.abort_all();
         self.services.abort_all();
+    }
+
+    pub(crate) async fn shutdown(&mut self, tasks: &ProfileTasks) -> anyhow::Result<()> {
+        self.request_shutdown(tasks);
         while let Some(result) = self.listeners.join_next().await {
             self.failures.record_aborted_task("listener", result);
         }
