@@ -306,3 +306,4 @@
 - [Q25-F163: конкурентное сохранение уведомлений](reports/AUDIT-Q25-SERVER-NOTIFY-REVISION.md)
 - [Q25-F190: ошибки истории серверного INI](reports/AUDIT-Q25-SERVER-INI-HISTORY.md)
 - [Q25-F191: null в полях desktop-профиля](reports/AUDIT-Q25-DESKTOP-STORE-NULL-FIELDS.md)
+- [Q25-F192: общее хранение настроек Windows/macOS](reports/AUDIT-Q25-DESKTOP-SETTINGS-STORE.md)

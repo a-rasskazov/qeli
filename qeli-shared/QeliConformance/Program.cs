@@ -106,6 +106,7 @@ public static class Program
         LinkConformance.Run(Check);
         ConfigBoundaryConformance.Run(Check);
         ProfileStoreConformance.Run(Check);
+        AppSettingsStoreConformance.Run(Check);
         PrpNonceConformance.Run(Check);
         WireConformance.Run(Check);
         RoamingPathConformance.Run(Check);
