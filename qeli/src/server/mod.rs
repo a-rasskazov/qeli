@@ -1171,15 +1171,27 @@ impl ServerState {
     /// public host takes effect immediately, without a full process restart.
     /// Called after the panel writes the config file. Bind/port/TLS/enabled are
     /// bound at startup and are NOT swapped here (they still require a restart).
-    pub async fn reload_web_settings(&self) {
+    pub async fn reload_web_settings(&self) -> bool {
         let path = match self.config_path.lock().await.clone() {
             Some(p) => p,
-            None => return,
+            None => {
+                log::error!("panel: cannot reload live web settings without a config path");
+                return false;
+            }
         };
-        let new_web = read_config_text(&path)
-            .ok()
-            .and_then(|s| crate::config::parse_server_config(&s).ok())
-            .map(|c| c.web);
+        let new_web = match read_config_text(&path) {
+            Ok(raw) => match crate::config::parse_server_config(&raw) {
+                Ok(config) => Some(config.web),
+                Err(error) => {
+                    log::error!("panel: cannot parse live web settings: {error}");
+                    None
+                }
+            },
+            Err(error) => {
+                log::error!("panel: cannot read live web settings: {error}");
+                None
+            }
+        };
         if let Some(mut web) = new_web {
             // The listener/router, TLS transport, session-key source and base path
             // were fixed when the supervisor started. Keep those values in the live
@@ -1201,7 +1213,7 @@ impl ServerState {
                 }
             }) {
                 log::error!("panel: REFUSING live web-settings reload: {error}");
-                return;
+                return false;
             }
             // Fail-closed, mirroring the start-time guard (web/mod.rs): a live reload must
             // never leave a non-loopback panel password-less. put_config restores an empty
@@ -1230,7 +1242,7 @@ impl ServerState {
                      unauthenticated panel is genuinely intended. Keeping the previous \
                      settings."
                 );
-                return;
+                return false;
             }
             // Going password-less deliberately must be as loud live as it is at startup —
             // previously the only trace was a cheerful "settings reloaded".
@@ -1248,22 +1260,27 @@ impl ServerState {
                 Duration::from_secs(bf.window_secs.min(MAX_BRUTE_FORCE_SECS)),
                 Duration::from_secs(bf.lockout_secs.min(MAX_BRUTE_FORCE_SECS)),
             );
-            {
-                let mut tracker = self.failed_auth.lock().await;
-                if tracker.thresholds() != desired {
-                    *tracker = FailedAuthTracker::new(
-                        bf.enabled,
-                        bf.max_attempts,
-                        bf.window_secs,
-                        bf.lockout_secs,
-                    );
-                    log::info!("panel: admin-login brute-force policy changed; tracker reset");
-                }
+            // Acquire both guards before mutating either. A cancelled HTTP request
+            // must not replace the lockout tracker while the web settings still
+            // wait for a reader to release the write lock.
+            let mut live_web = self.live_web.write().await;
+            let mut tracker = self.failed_auth.lock().await;
+            if tracker.thresholds() != desired {
+                *tracker = FailedAuthTracker::new(
+                    bf.enabled,
+                    bf.max_attempts,
+                    bf.window_secs,
+                    bf.lockout_secs,
+                );
+                log::info!("panel: admin-login brute-force policy changed; tracker reset");
             }
-            *self.live_web.write().await = web;
+            *live_web = web;
             log::info!(
                 "panel: live web settings reloaded (admin password / allowlist / CSRF origins)"
             );
+            true
+        } else {
+            false
         }
     }
 }
@@ -8861,7 +8878,7 @@ pool.cidr = 10.{net}.0.0/24
         candidate.web.base_path = "/new".into();
         candidate.web.public_host = "panel.example".into();
         std::fs::write(&path, candidate.to_ini_string()).unwrap();
-        state.reload_web_settings().await;
+        assert!(state.reload_web_settings().await);
         {
             let live = state.live_web.read().await;
             assert!(live.enabled);
@@ -8875,7 +8892,7 @@ pool.cidr = 10.{net}.0.0/24
 
         candidate.web.brute_force.max_attempts = 2;
         std::fs::write(&path, candidate.to_ini_string()).unwrap();
-        state.reload_web_settings().await;
+        assert!(state.reload_web_settings().await);
         assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
         assert!(state.failed_auth.lock().await.by_ip.is_empty());
         assert_eq!(state.live_web.read().await.brute_force.max_attempts, 2);
@@ -8883,7 +8900,7 @@ pool.cidr = 10.{net}.0.0/24
         candidate.web.password_hash = "not-an-argon2-hash".into();
         candidate.web.public_host = "invalid-hash.example".into();
         std::fs::write(&path, candidate.to_ini_string()).unwrap();
-        state.reload_web_settings().await;
+        assert!(!state.reload_web_settings().await);
         assert_eq!(
             state.live_web.read().await.password_hash,
             startup.web.password_hash
@@ -8895,9 +8912,51 @@ pool.cidr = 10.{net}.0.0/24
         candidate.web.brute_force.max_attempts = 3;
         candidate.web.public_host = "invalid.example".into();
         std::fs::write(&path, candidate.to_ini_string()).unwrap();
-        state.reload_web_settings().await;
+        assert!(!state.reload_web_settings().await);
         assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
         assert_eq!(state.live_web.read().await.public_host, "panel.example");
+
+        std::fs::write(&path, "[web").unwrap();
+        assert!(!state.reload_web_settings().await);
+        assert_eq!(state.live_web.read().await.public_host, "panel.example");
+        std::fs::remove_file(&path).unwrap();
+        assert!(!state.reload_web_settings().await);
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn web_reload_waits_for_both_locks_before_changing_lockout_policy() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-web-reload-locks-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("server.conf");
+        let mut startup = ServerConfig::default();
+        startup.profiles.push(ProfileConfig::baseline());
+        startup.web = serde_json::from_str("{}").unwrap();
+        startup.web.enabled = true;
+        startup.web.insecure_no_auth = true;
+        let state = test_api_state(startup.clone(), &path);
+
+        let mut candidate = startup;
+        candidate.web.brute_force.max_attempts = 2;
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+
+        let held_web = state.live_web.read().await;
+        let mut reload = Box::pin(state.reload_web_settings());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), reload.as_mut())
+                .await
+                .is_err()
+        );
+        assert_eq!(state.failed_auth.lock().await.thresholds().1, 5);
+        drop(held_web);
+        assert!(reload.await);
+        assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
+        assert_eq!(state.live_web.read().await.brute_force.max_attempts, 2);
+
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(dir).unwrap();
     }

@@ -1241,7 +1241,7 @@ pub async fn apply_quickstart_profile(
             "Quick Start write failed: {error}"
         ))));
     }
-    state.reload_web_settings().await;
+    let web_settings_applied = state.reload_web_settings().await;
     Ok(Json(json!({
         "ok": true,
         "profile": profile,
@@ -1250,7 +1250,10 @@ pub async fn apply_quickstart_profile(
         "reused": reused,
         "revision": config_revision(&next_raw),
         "snapshot": snapshot,
-        "message": if reused {
+        "web_settings_applied": web_settings_applied,
+        "message": if !web_settings_applied {
+            "Quick Start saved the INI, but panel settings were not applied live; inspect the current INI and server logs before restarting."
+        } else if reused {
             "Existing profile enabled; credentials preserved and requested IP mode applied."
         } else {
             "Quick Start profile created."
@@ -1687,9 +1690,11 @@ pub async fn put_config(
     // Apply the panel's own settings (admin password/username, IP allowlist, CSRF
     // origins, public host) LIVE — the supervisor serves the panel from this copy,
     // so they take effect without a restart. Profile/bind/tun/TLS still need one.
-    state.reload_web_settings().await;
+    let web_settings_applied = state.reload_web_settings().await;
 
-    let message = if needs_full_restart {
+    let message = if !web_settings_applied {
+        "config saved, but panel settings were not applied live; the previous panel authentication remains active. Inspect the current INI and server logs before retrying or restarting."
+    } else if needs_full_restart {
         "config saved. A startup-only setting changed (panel listener, session-key source, \
          auth.users_file or logging settings) — apply it with a FULL restart using \
          `Apply & Restart` or `systemctl restart qeli`."
@@ -1699,6 +1704,7 @@ pub async fn put_config(
     Ok(Json(json!({
         "ok": true,
         "needs_full_restart": needs_full_restart,
+        "web_settings_applied": web_settings_applied,
         "message": message,
         "path": canon.display().to_string(),
         "revision": config_revision(&config_str),
@@ -2166,14 +2172,16 @@ pub async fn put_config_raw(
 
     // Apply the panel's own settings live (see put_config); restart still needed
     // for profile/bind/tun/TLS.
-    state.reload_web_settings().await;
+    let web_settings_applied = state.reload_web_settings().await;
 
     // Report startup-only changes exactly as the structured editor does. A worker-only
     // restart cannot change the panel listener, session-key source, users-file path
     // or supervisor logging.
     let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
 
-    let message = if needs_full_restart {
+    let message = if !web_settings_applied {
+        "raw config saved (comments preserved), but panel settings were not applied live; the previous panel authentication remains active. Inspect the current INI and server logs before retrying or restarting."
+    } else if needs_full_restart {
         "raw config saved (comments preserved). A startup-only setting changed (panel listener, session-key source, auth.users_file or logging settings); apply it with a FULL restart using `Apply & Restart` or `systemctl restart qeli`."
     } else {
         "raw config saved (comments preserved) — web/panel settings applied live; restart to apply profile/bind/tun changes"
@@ -2183,6 +2191,7 @@ pub async fn put_config_raw(
         "ok": true,
         "message": message,
         "needs_full_restart": needs_full_restart,
+        "web_settings_applied": web_settings_applied,
         "path": canon.display().to_string(),
         "revision": config_revision(&raw),
         "snapshot": snapshot,
@@ -2383,11 +2392,16 @@ pub async fn restore_config_history(
             "rollback write failed: {error}"
         ))));
     }
-    state.reload_web_settings().await;
+    let web_settings_applied = state.reload_web_settings().await;
     let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
     Ok(Json(json!({
         "ok": true,
-        "message": "Configuration snapshot restored — restart to apply it.",
+        "message": if web_settings_applied {
+            "Configuration snapshot restored — restart to apply it."
+        } else {
+            "Configuration snapshot restored, but panel settings were not applied live; inspect the current INI and server logs before restarting."
+        },
+        "web_settings_applied": web_settings_applied,
         "revision": config_revision(&raw),
         "restored": id,
         "rollback_snapshot": rollback_snapshot,

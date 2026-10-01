@@ -32,8 +32,10 @@ A panel save writes the server INI with mode `0600`, even when the previous
 file had more permissive access.
 A failed load blocks saving; edits made during a pending save remain marked unsaved.
 Panel address/port/TLS/base_path changes require a full process restart, not just a worker restart.
-Saving changed panel-login thresholds through the form or INI editor applies them immediately;
-existing IP lockouts remain when thresholds are unchanged.
+Changed panel-login thresholds apply immediately when live reload succeeds; existing IP
+lockouts remain when thresholds are unchanged. Save responses include
+`web_settings_applied`: when `false`, the INI was written but the previous panel
+settings remain active; inspect the file and server log before restarting.
 
 Repeated `[profile:<name>]`, `[user:<name>]`, and `[group:<name>]` sections in one file
 are rejected before applying changes. Profile names cannot contain commas, `/`,

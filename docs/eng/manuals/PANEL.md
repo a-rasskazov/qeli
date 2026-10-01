@@ -71,9 +71,10 @@ the hash:
 - **In the panel:** Config → Web → "Set admin password" (type a password → it's
   hashed into the field → Save) — once you already have access and want to rotate it.
   A panel save of the `[web]` settings (admin password/username, IP allowlist, CSRF
-  origins) takes effect **immediately, without a restart** — a password change also
-  invalidates the current session on the spot. Only socket-bound fields (`bind`/`port`/
-  `tls`) still need a restart. (The `set-web-password` CLI above is a separate process,
+  origins) takes effect **immediately, without a restart** when the response reports
+  `web_settings_applied: true` — a password change also invalidates the current session.
+  If false, the INI is saved but the previous panel settings remain active; the response
+  warns about it. Socket-bound fields (`bind`/`port`/`tls`) still need a full restart. (The `set-web-password` CLI above is a separate process,
   so it does need the restart.)
 - **`argon2` CLI (manual):** `printf '%s' 'YOUR_PASSWORD' | argon2 "$(head -c12 /dev/urandom|base64)" -id -t 3 -m 15 -p 1 -e`
 - **Via API** (only when the panel is already reachable — i.e. a password is already
@@ -509,7 +510,9 @@ must be inside `/var/log/qeli`; `auth.users_file` and `identity_key` inside
 place to lock yourself out with a typo);
 `routing.post_up`/`post_down` can neither be introduced nor changed through the panel;
 and the config must pass the same profile validation the server runs at startup. Panel
-settings apply live; changing `auth.users_file`, `web.persist_session_key`,
+settings apply live when the save response reports `web_settings_applied: true`;
+when false, the previous panel settings remain active. Changing `auth.users_file`
+or `web.persist_session_key`,
 `logging.level`, `logging.file`, or `logging.time_format` requires a full supervisor
 restart through `Apply & Restart` (or `systemctl restart qeli`). Profile/bind/tun
 changes also need a restart.
