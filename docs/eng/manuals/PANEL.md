@@ -859,3 +859,30 @@ previously required hand-editing the INI.
 
 Server identity, key pinning, H-1, per-profile authorization, limits, wire
 modes/REALITY — see [CONFIG.md](CONFIG.md).
+
+<!-- normative-sync: server-config-writers-v1 -->
+<a id="server-config-writers-v1"></a>
+
+### External server INI writers and revision boundaries
+
+The form, INI editor, Quick Start, history, writing CLI commands and Backup/Restore
+share one sidecar lock `<canonical config path>.lock`. It protects the complete
+read, validation and atomic publication transaction. Never delete or replace a live
+process's lock file; exact restore preserves its inode.
+
+An external script or editor must hold an exclusive `flock` on that same canonical
+sidecar from reading through completion of writing/rename. If the editor cannot
+follow this protocol, stop Qeli and finish concurrent panel/CLI operations first,
+edit the INI, run `qeli check-config`, then start the service. `expected_revision`
+detects changes to the previously read file; a second read also detects changes
+during save preparation. This detects conflicts rather than blocking arbitrary
+root writers: a write without the sidecar lock between the final check and rename
+is not protected.
+
+Saving a profile does not change active bind/TUN/DNS parameters. Apply it through
+an explicit worker restart; startup-only panel fields require a full process
+restart. An invalid restart candidate is refused before stopping the active worker.
+History applies eligible web fields live; archive restoration requires an explicit
+restart. These boundaries are checked by the shared
+[runtime scenario](../../../scripts/audit_panel_config_lifecycle.py) and recorded
+in the [D07 register](../plans/AUDIT-DEBT.md).

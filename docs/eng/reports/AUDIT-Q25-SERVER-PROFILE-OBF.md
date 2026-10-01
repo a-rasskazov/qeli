@@ -20,3 +20,5 @@
 Finding: with different `tls.server_name` and `reality_proxy.target`, the generator wrote the former into a REALITY link while the proxy contacted the latter. The shared `ClientLink::for_profile` used by CLI and panel now takes REALITY SNI from the target. Manually configured clients still need matching SNI. `server_name` remains effective for non-REALITY links. On isolated lab `.11`, the regression for fake-tls+REALITY, real TLS, no REALITY and URI round-trip, all 12 share-codec tests, `cargo fmt --check` and strict Clippy passed; services were untouched.
 
 Mixed D07 save/reload/import scenarios and the race with an external editor that skips the advisory lock remain. This static matrix does not prove every obfuscation mode on a live server.
+
+Continuation on 2 October: [Q25-F209 in the register](../plans/AUDIT-DEBT.md) closes mixed API save/INI/history/Quick Start/archive/restart checks for D07 and specifies the mandatory external-writer sidecar lock. Historical counts above are not a new execution. Network combinations and final certification remain D10/D15.
