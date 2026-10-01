@@ -176,9 +176,10 @@ try:
     h = curl("/api/hash-password","POST",json.dumps({"password":ADMIN2}), jar="/root/qtest/j.txt")
     hash2 = json.loads(h).get("hash","") if h.strip().startswith("{") else ""
     check("hash-password ok", hash2.startswith("$argon2"), h)
-    cfg = json.loads(curl("/api/config", jar="/root/qtest/j.txt"))["config"]
+    cfg_reply = json.loads(curl("/api/config", jar="/root/qtest/j.txt"))
+    cfg = cfg_reply["config"]
     cfg["web"]["password_hash"] = hash2
-    put = curl("/api/config","PUT",json.dumps({"config":cfg}), jar="/root/qtest/j.txt")
+    put = curl("/api/config","PUT",json.dumps({"config":cfg,"expected_revision":cfg_reply["revision"]}), jar="/root/qtest/j.txt")
     check("PUT config (password change) accepted", '"ok":true' in put, put)
     time.sleep(1.5)
     check("container did NOT restart (same main pid)", S("docker inspect -f '{{.State.Pid}}' qtest")==cid0 and S("docker inspect -f '{{.State.Running}}' qtest")=="true")

@@ -520,6 +520,10 @@ or `web.persist_session_key`,
 restart through `Apply & Restart` (or `systemctl restart qeli`). Profile/bind/tun
 changes also need a restart.
 
+When writing server INI through the API (Quick Start, form, INI editor or history
+restore), send `expected_revision` from the latest config GET. A missing or stale
+revision rejects the write; reload the config and retry.
+
 ### Server identity: show & rotate
 **Config → Global → Server identity keys** (`GET /api/identity`) lists each profile with
 its bind string and its **pinned public key** (hex) — the panel equivalent of

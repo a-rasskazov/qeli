@@ -51,10 +51,18 @@ pub(super) fn config_revision(raw: &str) -> String {
 }
 
 fn revision_conflict(body: &Value, current_raw: &str) -> Option<Value> {
-    let expected = body
+    let Some(expected) = body
         .get("expected_revision")
         .and_then(Value::as_str)
-        .filter(|revision| !revision.is_empty())?;
+        .filter(|revision| !revision.is_empty())
+    else {
+        return Some(json!({
+            "ok": false,
+            "kind": "config_revision_required",
+            "error": "A configuration revision is required for this write. Reload the current configuration before saving.",
+            "current_revision": config_revision(current_raw),
+        }));
+    };
     let current = config_revision(current_raw);
     (expected != current).then(|| {
         json!({
@@ -2465,8 +2473,15 @@ mod raw_secret_tests {
         let conflict = revision_conflict(&stale, current).unwrap();
         assert_eq!(conflict["kind"], "config_conflict");
         assert_eq!(conflict["current_revision"], config_revision(current));
-        // API compatibility for older automation: no token still takes the serialized lock.
-        assert!(revision_conflict(&json!({}), current).is_none());
+        for missing in [
+            json!({}),
+            json!({"expected_revision": ""}),
+            json!({"expected_revision": 1}),
+        ] {
+            let conflict = revision_conflict(&missing, current).unwrap();
+            assert_eq!(conflict["kind"], "config_revision_required");
+            assert_eq!(conflict["current_revision"], config_revision(current));
+        }
     }
 
     #[test]

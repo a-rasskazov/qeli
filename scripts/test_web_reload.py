@@ -111,10 +111,10 @@ try:
     hash2 = json.loads(h).get("hash","") if h.strip().startswith("{") else ""
     check("hash-password returned an argon2 hash", hash2.startswith("$argon2"), h)
     # GET current config, swap web.password_hash, PUT it back
-    cfg_reply = curl("/api/config", jar=J1)
-    cfg = json.loads(cfg_reply)["config"]
+    cfg_reply = json.loads(curl("/api/config", jar=J1))
+    cfg = cfg_reply["config"]
     cfg["web"]["password_hash"] = hash2
-    put = curl("/api/config","PUT",json.dumps({"config":cfg}), jar=J1)
+    put = curl("/api/config","PUT",json.dumps({"config":cfg,"expected_revision":cfg_reply["revision"]}), jar=J1)
     check("PUT /api/config accepted", '"ok":true' in put, put)
     # confirm the server did NOT restart (same pid, panel still up)
     time.sleep(1.5)
