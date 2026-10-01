@@ -314,7 +314,7 @@ public partial class ConfigEditorWindow : Window
         if (string.IsNullOrWhiteSpace(edited)) return;
 
         VpnConfig parsed;
-        try { parsed = VpnConfig.Parse(edited.Trim()); }
+        try { parsed = VpnConfig.Parse(edited); }
         catch (Exception ex)
         {
             await Dialogs.InfoAsync(this, Loc.F("ImportError", ex.Message), Loc.T("Profile"));

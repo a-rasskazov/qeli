@@ -1136,7 +1136,7 @@ ipv6 = auto
             .create()
         dialog.show()
         dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val cfgText = dlgBinding.editJson.text.toString().trim()
+            val cfgText = dlgBinding.editJson.text.toString()
             val roamingPolicy = roamingPolicies.getOrElse(dlgBinding.spinnerRoaming.selectedItemPosition) { "auto" }
             val cfg = try {
                 VpnConfig.parse(cfgText).copy(roaming = roamingPolicy).also { it.validate() }

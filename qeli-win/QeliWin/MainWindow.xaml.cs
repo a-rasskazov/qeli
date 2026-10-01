@@ -727,7 +727,7 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(text)) return;
         try
         {
-            var cfg = VpnConfig.Parse(text.Trim());
+            var cfg = VpnConfig.Parse(text);
             // IMPORT boundary: run the semantic checks that `FromIni` deliberately
             // skips (it stays lenient so the editor can open a broken profile). A
             // pasted profile is exactly as untrusted as a scanned link — without this,

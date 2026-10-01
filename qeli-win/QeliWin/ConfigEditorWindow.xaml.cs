@@ -304,7 +304,7 @@ public partial class ConfigEditorWindow : Window
         VpnConfig parsed;
         try
         {
-            parsed = VpnConfig.Parse(edited.Trim());
+            parsed = VpnConfig.Parse(edited);
         }
         catch (Exception ex)
         {

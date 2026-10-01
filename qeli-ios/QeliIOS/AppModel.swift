@@ -262,7 +262,7 @@ final class AppModel: ObservableObject {
     func importProfile(_ rawText: String, suggestedName: String? = nil) throws -> Profile {
         let previous = archive
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let config = try VPNConfig(parsing: trimmed)
+        let config = try VPNConfig(parsing: rawText)
         let name = suggestedName?.nonEmpty
             ?? (trimmed.hasPrefix("qeli://") ? VPNConfig.label(fromQeliURI: trimmed) : nil)
             ?? Self.commentLabel(trimmed)
