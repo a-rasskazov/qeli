@@ -3143,6 +3143,9 @@ Managed IPv6 modes (`off`, `route`, `nat66`) require `ip6tables`.
 `manual` leaves IPv6 firewall, forwarding and RA settings to the administrator, including
 DNS INPUT access and any port-53 redirect; it does not require `ip6tables`. Tunnel addresses
 and authenticated client routes remain managed by Qeli.
+Forwarding and RA belong to the network namespace: a sibling `route` or `nat66`
+profile may enable them for its own operation. `manual` does not acquire its own
+IPv6 sysctl lease or isolate these values from sibling profiles.
 In `off`, qeli installs a verified per-profile drop for packets
 entering or leaving that TUN through any other interface, so an isolated profile cannot
 inherit host-wide forwarding enabled by a sibling profile in either direction. `route` permits

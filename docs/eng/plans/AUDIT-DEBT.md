@@ -1,6 +1,6 @@
 # Technical debt from started audits
 
-<!-- normative-sync: audit-debt-v58 -->
+<!-- normative-sync: audit-debt-v59 -->
 
 Reconciled on 2 October 2026. At the user’s request, new full-audit sections
 are paused until this register is closed. These are **15 groups of obligations**,
@@ -773,3 +773,45 @@ when the app requests it. Previous reconnect E2E is not counted as a new executi
 [Checks and SHA](../../../release/certification/evidence/client-store-20261002.json).
 **D08 DONE; registry: 12/15 DONE (80%), 3 IN_PROGRESS — D06/D10/D15.** This is not full
 audit completion, iOS runtime PASS or certification of current HEAD.
+
+### Q25-F211 — combined IPv6/DNS/NDP matrix, 2 October 2026
+
+Added a reproducible [isolated runtime scenario](../../../scripts/audit_worker_ipv6_multiprofile.py):
+four real dual-stack `off/manual/route/nat66` profiles, two TCP and two UDP, a shared
+WAN, independent DNS listeners and required NDP responders on `manual`/`route`.
+Real **iptables-nft and iptables-legacy: 59 checks each, 118 PASS total**.
+Checks cover off DROP, no manual IPv6 rules, source-preserving route, nat66 MASQUERADE
+and off-WAN guard, protective DROP ordering, shared forwarding/RA leases, invalid
+SIGHUP refusal and unchanged network generation on valid reload.
+
+Each backend executed **32 DNS queries** across four profiles: IPv4/IPv6 × UDP/TCP ×
+A/AAAA. Upstream received only eight queries: cache is shared between frontend
+transports within one profile and independent between profiles. Standalone `manual`
+returned two additional IPv6 DNS answers with initial `forwarding=0` and unchanged
+RA/IPv6 firewall. DNS originated on the server: this tests the real proxy/listeners,
+not encrypted VPN traffic or TUN INPUT/port 53 redirection packet paths. Both NDP
+responders actually bound; upstream NS/NA replies for active session leases are not
+validated by this batch.
+
+With a missing required `ndp_proxy_interface`, the profile admits no clients and
+never runs post_up. The worker remains alive and retries the profile: required NDP
+does not mean termination of other profiles. After SIGTERM the test compares exact
+foreign rules/policies, routes, link flags (including ALLMULTI), sysctl values and
+removal of the control socket/sysctl journal. Four-profile stop, manual-only stop
+and stop following NDP refusal restore baseline on both backends.
+
+Three intermediate fixture failures are retained and not counted as PASS: the first
+two compared a baseline without yet-created empty nat/mangle tables; nft `-S` reads
+do not instantiate them. The fixture now creates/removes an empty private chain
+before taking baseline. The third incorrectly expected worker termination instead
+of supported rejected-profile retry. No production Rust changes were required.
+All 288 local/remote source SHA and debug SHA match previous exact build evidence;
+no fresh build/Clippy/benchmark was run. External host snapshots match across all
+four attempts, working release/listener is preserved, `.10` was untouched.
+[Commands, SHA and raw manifest](../../../release/certification/evidence/ipv6-multiprofile-20261002.json).
+
+**D10 stays IN_PROGRESS:** upstream NDP packet tests for active/inactive leases and
+remaining mixed firewall/firewalld and lifecycle combinations are still required.
+WAN changes/identity stay D06; final native/certificate refresh stays D15.
+**Registry: 12/15 DONE (80%), 3 IN_PROGRESS — D06/D10/D15.** This fraction concerns
+technical-debt groups, not the entire 37-step audit.

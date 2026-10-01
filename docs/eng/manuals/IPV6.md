@@ -172,6 +172,10 @@ sysctls independently rather than relying on another managed profile to keep for
 on. NDP `required` still refuses startup if the responder cannot bind; it does not verify
 that the administrator's routing/firewall setup can deliver packets. A routed prefix
 that needs no Neighbor Discovery can use `ndp_proxy = off` with `manual` too.
+A required-NDP failure rejects this profile: the worker stays alive and retries it
+while other profiles continue running. Forwarding and RA belong to the network
+namespace; a sibling `route`/`nat66` may change them for its own operation, while
+`manual` acquires no IPv6 sysctl lease.
 
 #### Switching to administrator-managed IPv6
 

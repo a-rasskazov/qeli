@@ -1,6 +1,6 @@
 # Техдолг начатых аудитов
 
-<!-- normative-sync: audit-debt-v58 -->
+<!-- normative-sync: audit-debt-v59 -->
 
 Дата сверки: 2 октября 2026. По запросу пользователя новые разделы полного аудита
 приостановлены до закрытия этого реестра. Это **15 групп обязательств**, а не 15 найденных
@@ -906,3 +906,43 @@ INI не переписывает уже работающую сессию; по
 [Проверки и SHA](../../../release/certification/evidence/client-store-20261002.json).
 **D08 DONE; реестр: 12/15 DONE (80%), 3 IN_PROGRESS — D06/D10/D15.** Это не завершение
 всего аудита, не iOS runtime PASS и не сертификат текущего HEAD.
+
+### Q25-F211 — совместная IPv6/DNS/NDP матрица, 2 октября 2026
+
+Добавлен воспроизводимый [изолированный runtime-сценарий](../../../scripts/audit_worker_ipv6_multiprofile.py):
+четыре настоящих dual-stack профиля `off/manual/route/nat66`, два TCP и два UDP,
+общий WAN, отдельные DNS listeners и обязательные NDP responders у `manual`/`route`.
+На настоящих **iptables-nft и iptables-legacy — по 59 проверок, всего 118 PASS**.
+Проверены DROP режима off, отсутствие IPv6-правил manual, source-preserving route,
+MASQUERADE и off-WAN guard nat66, приоритет защитных DROP, общие forwarding/RA leases,
+отказ неверного SIGHUP и сохранение сетевого поколения при правильном reload.
+
+На каждом backend выполнено **32 DNS-запроса** четырёх профилей: IPv4/IPv6 × UDP/TCP ×
+A/AAAA. Upstream получил только восемь запросов: кеш общий между frontend-транспортами
+одного профиля и независим между профилями. Отдельный `manual` дал ещё два IPv6 DNS
+ответа при исходном `forwarding=0` и неизменном RA/IPv6 firewall. DNS проверялся с
+самого сервера: это настоящий proxy/listener, но не трафик через VPN и не packet-proof
+INPUT/перенаправления порта 53 с TUN. Два NDP responder действительно привязались;
+ответы upstream NS/NA для адресов активных сессий этим пакетом не подтверждены.
+
+Для отсутствующего `ndp_proxy_interface` в режиме required профиль не допускает
+клиентов и не выполняет post_up. Worker остаётся живым и повторяет запуск профиля:
+обязательный NDP не означает остановку других профилей. После SIGTERM сравниваются
+точные чужие правила и политики, маршруты, link flags (включая ALLMULTI), sysctl,
+удаление control socket и sysctl journal. Четырёхпрофильный stop, manual-only stop и
+stop после NDP-отказа восстановили исходное состояние на обоих backend.
+
+Три промежуточных отказа теста сохранены и не засчитаны PASS: первые два сравнивали
+с baseline без ещё не созданных пустых nat/mangle таблиц; чтение nft через `-S` их
+не создаёт. Теперь перед снимком создаётся/удаляется пустая тестовая цепочка.
+Третий ошибочно ожидал завершения worker вместо штатного retry отклонённого профиля.
+Изменений production Rust не потребовалось. 288 local/remote SHA и debug SHA совпали
+с точным предыдущим build evidence; повторных build/Clippy/benchmark здесь нет.
+Внешние host snapshots всех четырёх прогонов совпали, работающий release/listener
+сохранён, `.10` не затронут. [Команды, SHA и raw manifest](../../../release/certification/evidence/ipv6-multiprofile-20261002.json).
+
+**D10 остаётся IN_PROGRESS:** нужны upstream NDP packet tests для активных/неактивных
+leases, оставшиеся mixed firewall/firewalld и lifecycle сочетания. Смена/идентичность
+WAN остаётся D06, окончательная native/certificate сверка — D15.
+**Реестр: 12/15 DONE (80%), 3 IN_PROGRESS — D06/D10/D15.** Это доля групп техдолга,
+а не готовность всего 37-шагового аудита.
