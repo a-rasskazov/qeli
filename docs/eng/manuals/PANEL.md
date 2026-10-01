@@ -749,11 +749,12 @@ url = ""
 on_restore = true
 ```
 
-On first read, an existing legacy `notify.json` is converted to `notify.ini` only
-when INI is absent. After validation and an atomic `0600` write, the old file is
-removed; the token and event selections are preserved. Existing INI is authoritative,
-and invalid INI never falls back to JSON. Restoring an older backup performs the same
-conversion in staging before publication. Internal API and webhook messages retain JSON.
+Notification settings are read only from INI (up to 64 KiB); an oversized or
+invalid file is rejected without falling back to defaults. If an old
+`notify.json` remains without `notify.ini`, loading fails: transfer its
+settings to INI and remove the old file. Panel backups omit `notify.json`,
+and archive restore rejects it. JSON remains only in the internal API and
+webhook messages.
 
 - **Server name** — a label prefixed to every message (`[name] …`) and put in the
   webhook JSON `server` field, so several servers reporting into one chat / hook are

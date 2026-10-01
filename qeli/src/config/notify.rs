@@ -1,5 +1,4 @@
-//! Notification settings use the shared INI grammar. JSON is accepted only by the
-//! one-time migration of the old sidecar; once INI exists it is authoritative.
+//! Notification settings use the shared INI grammar. Persisted configuration is INI only.
 use super::format::{IniDoc, Section};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -165,38 +164,38 @@ impl NotifyConfig {
 
 static IO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Load INI, migrating an existing legacy sidecar only when no INI exists.
-/// A malformed INI is never replaced with JSON/defaults. The old file is removed
-/// only after a checked, private atomic write succeeds.
+/// Notification settings are small. Refuse oversized or non-regular INI files before
+/// parsing, and do not silently replace an old JSON-only installation with defaults.
+pub const MAX_NOTIFY_INI_BYTES: u64 = 64 * 1024;
+
 pub fn load_path(path: &Path) -> anyhow::Result<NotifyConfig> {
     let _guard = IO_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    match std::fs::read_to_string(path) {
-        Ok(raw) => return NotifyConfig::from_ini(&raw),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+    match crate::config_source::load_bounded(path, MAX_NOTIFY_INI_BYTES) {
+        Ok(snapshot) => {
+            let (raw, _) = snapshot.into_parts();
+            NotifyConfig::from_ini(&raw)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let legacy = path.with_extension("json");
+            if legacy.try_exists()? {
+                anyhow::bail!(
+                    "unsupported legacy notification config '{}'; convert it to INI before starting notifications",
+                    legacy.display()
+                );
+            }
+            Ok(NotifyConfig::default())
+        }
+        Err(error) => Err(error.into()),
     }
-    let legacy = path.with_extension("json");
-    if !legacy.try_exists()? {
-        return Ok(NotifyConfig::default());
-    }
-    // The supervisor and worker can both perform first-time migration on Linux.
-    #[cfg(unix)]
-    let _file_lock = crate::util::FileLock::acquire(path)?;
-    match std::fs::read_to_string(path) {
-        Ok(raw) => return NotifyConfig::from_ini(&raw),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    let old = std::fs::read_to_string(&legacy)?;
-    let config: NotifyConfig = serde_json::from_str(&old)?;
-    let raw = config.to_ini_string()?;
-    crate::util::write_atomic_private(path, raw.as_bytes())?;
-    std::fs::remove_file(&legacy)?;
-    Ok(config)
 }
 
 pub fn save_path(path: &Path, config: &NotifyConfig) -> anyhow::Result<()> {
     let raw = config.to_ini_string()?;
+    anyhow::ensure!(
+        raw.len() as u64 <= MAX_NOTIFY_INI_BYTES,
+        "notification INI is {} bytes; maximum is {MAX_NOTIFY_INI_BYTES}",
+        raw.len()
+    );
     let _guard = IO_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     #[cfg(unix)]
     let _file_lock = crate::util::FileLock::acquire(path)?;
@@ -263,18 +262,22 @@ mod tests {
         );
     }
     #[test]
-    fn legacy_migration_preserves_all_settings_and_is_one_time() {
-        let dir = directory("migration");
+    fn ini_only_loader_refuses_legacy_file_without_rewriting_it() {
+        let dir = directory("ini-only");
         let ini = dir.join("notify.ini");
         let old = dir.join("notify.json");
-        let config = fixture();
-        std::fs::write(&old, serde_json::to_vec(&config).unwrap()).unwrap();
-        assert_eq!(load_path(&ini).unwrap(), config);
-        assert!(!old.exists());
-        assert_eq!(
-            NotifyConfig::from_ini(&std::fs::read_to_string(&ini).unwrap()).unwrap(),
-            config
+        std::fs::write(&old, b"legacy secret").unwrap();
+        let error = load_path(&ini).unwrap_err().to_string();
+        assert!(
+            error.contains("unsupported legacy notification config"),
+            "{error}"
         );
+        assert!(!ini.exists());
+        assert_eq!(std::fs::read(&old).unwrap(), b"legacy secret");
+
+        let config = fixture();
+        save_path(&ini, &config).unwrap();
+        assert_eq!(load_path(&ini).unwrap(), config);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -284,23 +287,34 @@ mod tests {
             );
         }
         std::fs::remove_file(&ini).unwrap();
+        std::fs::remove_file(&old).unwrap();
         assert_eq!(load_path(&ini).unwrap(), NotifyConfig::default());
         std::fs::remove_dir_all(dir).unwrap();
     }
+
     #[test]
-    fn broken_ini_never_falls_back_and_failed_migration_preserves_source() {
-        let dir = directory("failure");
+    fn invalid_or_oversized_ini_is_rejected_without_overwriting() {
+        let dir = directory("bounded");
         let ini = dir.join("notify.ini");
-        let old = dir.join("notify.json");
-        std::fs::write(&old, serde_json::to_vec(&fixture()).unwrap()).unwrap();
         std::fs::write(&ini, "[telegram]\nenabled=bad").unwrap();
         assert!(load_path(&ini).is_err());
-        assert!(old.exists());
+
+        std::fs::write(&ini, "#".repeat(MAX_NOTIFY_INI_BYTES as usize + 1)).unwrap();
+        let error = load_path(&ini).unwrap_err().to_string();
+        assert!(error.contains("maximum is 65536"), "{error}");
+        let oversized = NotifyConfig {
+            server_name: "x".repeat(MAX_NOTIFY_INI_BYTES as usize),
+            ..Default::default()
+        };
+        assert!(save_path(&ini, &oversized).is_err());
+        assert_eq!(
+            std::fs::metadata(&ini).unwrap().len(),
+            MAX_NOTIFY_INI_BYTES + 1
+        );
+
         std::fs::remove_file(&ini).unwrap();
-        std::fs::write(&old, "invalid").unwrap();
+        std::fs::create_dir(&ini).unwrap();
         assert!(load_path(&ini).is_err());
-        assert!(!ini.exists());
-        assert_eq!(std::fs::read_to_string(&old).unwrap(), "invalid");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

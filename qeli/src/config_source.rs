@@ -10,6 +10,7 @@ use std::{
 /// Largest server INI accepted by the worker, CLI and panel. The panel's
 /// request-body ceiling is also 16 MiB; serialized edits are checked again
 /// before writing because JSON-to-INI expansion can exceed the request size.
+#[cfg(any(feature = "server", test))]
 pub(crate) const MAX_SERVER_INI_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -192,6 +193,12 @@ fn open(path: &Path) -> io::Result<OpenedConfig> {
 #[cfg(any(feature = "server", test))]
 pub(crate) fn load(path: impl AsRef<Path>) -> io::Result<ConfigSnapshot> {
     open(path.as_ref())?.read()
+}
+
+/// Read another INI sidecar through the same stable, regular-file descriptor,
+/// with its own smaller size budget.
+pub(crate) fn load_bounded(path: impl AsRef<Path>, max_bytes: u64) -> io::Result<ConfigSnapshot> {
+    open(path.as_ref())?.read_with_limit(max_bytes)
 }
 
 // Match the shared client-core limit before allocating or reading file contents.

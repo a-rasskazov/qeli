@@ -302,3 +302,4 @@
 - [Q25-F159: стабильный порядок динамических полей INI](reports/AUDIT-Q25-SERVER-INI-ORDER.md)
 - [Q25-F160: ревизия INI для политики блокировок](reports/AUDIT-Q25-SERVER-BLOCKED-REVISION.md)
 - [Q25-F161: ошибки перечисления при восстановлении архива](reports/AUDIT-Q25-SERVER-ARCHIVE-SCAN.md)
+- [Q25-F162: уведомления только в INI](reports/AUDIT-Q25-SERVER-NOTIFY-INI.md)

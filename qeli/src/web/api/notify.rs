@@ -39,7 +39,7 @@ pub async fn get_notify(
     State(state): State<Arc<crate::server::ServerState>>,
     _guard: auth::AuthGuard,
 ) -> Result<Json<Value>, AuthError> {
-    // A first read can migrate the old sidecar; serialize it with backup/restore.
+    // Serialize the INI read with backup/restore so the panel sees one stable tree.
     let _write_guard = state.config_write_lock.lock().await;
     Ok(Json(match notify::load_checked() {
         Ok(config) => json!({ "ok": true, "config": public_config(&config) }),

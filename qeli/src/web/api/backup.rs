@@ -62,6 +62,7 @@ const PORTABLE_TAR_EXCLUDES: &[&str] = &[
     // The legacy key can remain after migration to /var/lib/qeli. Never export it beside the
     // encrypted password values: the portable archive deliberately excludes encryption keys.
     "qeli/panel-secret.key",
+    "qeli/notify.json",
 ];
 
 fn append_tar_excludes(command: &mut std::process::Command, portable: bool) {
@@ -1033,7 +1034,18 @@ fn vet_staged_tree(root: &str, config_path: &str) -> Result<(), String> {
             ));
         }
     }
-    // Validate notification settings and migrate an older backup before publishing it.
+    // A restored config tree must not reintroduce the retired JSON notification sidecar.
+    let legacy_notify = std::path::Path::new(root).join("notify.json");
+    if legacy_notify
+        .try_exists()
+        .map_err(|error| format!("staged tree unreadable: {error}"))?
+    {
+        return Err(
+            "refused: archive contains notify.json; convert notification settings to notify.ini before restoring"
+                .into(),
+        );
+    }
+    // Validate notification settings before publishing the staged tree.
     crate::config::notify::load_path(&std::path::Path::new(root).join("notify.ini"))
         .map_err(|error| format!("refused: restored notification config is invalid: {error}"))?;
     let hook_files = hook_referenced_files(config_path);
@@ -1409,6 +1421,21 @@ mod tests {
     }
 
     #[test]
+    fn restore_rejects_legacy_notification_json_before_publication() {
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-restore-notify-json-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("server.ini"), srv("")).unwrap();
+        std::fs::write(dir.join("users.conf"), "").unwrap();
+        std::fs::write(dir.join("notify.json"), "{}").unwrap();
+        let error = vet_staged_tree(dir.to_str().unwrap(), "/etc/qeli/server.ini").unwrap_err();
+        assert!(error.contains("archive contains notify.json"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn staged_users_are_validated_against_inline_groups_and_reservations() {
         let dir = std::env::temp_dir().join(format!("qeli-restore-union-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1703,6 +1730,7 @@ mod tests {
         assert!(TRANSIENT_TAR_EXCLUDES.contains(&"qeli/.restore-upload-*.tgz"));
         assert!(TRANSIENT_TAR_EXCLUDES.contains(&"qeli/.restore-staging-*"));
         assert!(PORTABLE_TAR_EXCLUDES.contains(&"qeli/panel-secret.key"));
+        assert!(PORTABLE_TAR_EXCLUDES.contains(&"qeli/notify.json"));
     }
 
     #[cfg(unix)]
