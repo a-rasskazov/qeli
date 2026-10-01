@@ -12,7 +12,6 @@ import com.google.crypto.tink.daead.DeterministicAeadConfig
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
 import java.math.BigDecimal
 import java.nio.ByteBuffer
-import java.nio.charset.CodingErrorAction
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -32,14 +31,16 @@ import org.json.JSONObject
  */
 object ProfileStore {
     const val KEY_PROFILES = "profiles_json"
-    const val MAX_PROFILE_SET_BYTES = 8 * 1024 * 1024
-    const val MAX_PROFILES = 256
-
+    const val MAX_PROFILE_SET_BYTES = ProfileLimits.MAX_ARCHIVE_BYTES
+    const val MAX_PROFILES = ProfileLimits.MAX_PROFILES
     private const val PREFS_SECURE = "vpn_secure_v2"
     private const val KEY_ALIAS = "qeli_profile_store_v2_aes"
     private const val ENVELOPE_VERSION: Byte = 1
     private const val GCM_TAG_BITS = 128
     private const val GCM_IV_BYTES = 12
+    // Version byte, IV and GCM tag around bounded plaintext.
+    internal const val MAX_ENVELOPE_BYTES = MAX_PROFILE_SET_BYTES + 1 + GCM_IV_BYTES + GCM_TAG_BITS / 8
+    internal const val MAX_BASE64_CHARS = ((MAX_ENVELOPE_BYTES + 2) / 3) * 4
     private const val AAD_PREFIX = "qeli.profile-store.v2:"
 
     @Volatile
@@ -105,7 +106,13 @@ object ProfileStore {
             cipher.updateAAD(aad(preferenceKey))
             val iv = cipher.iv
             check(iv.size == GCM_IV_BYTES) { "Android Keystore returned a non-standard GCM IV" }
-            val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+            val plaintext = value.toByteArray(Charsets.UTF_8)
+            val ciphertext = try {
+                requirePlaintextSize(plaintext.size)
+                cipher.doFinal(plaintext)
+            } finally {
+                plaintext.fill(0)
+            }
             val envelope = ByteBuffer.allocate(1 + iv.size + ciphertext.size)
                 .put(ENVELOPE_VERSION)
                 .put(iv)
@@ -116,7 +123,9 @@ object ProfileStore {
 
         private fun decrypt(preferenceKey: String, encoded: String): String {
             try {
+                requireBase64Size(encoded.length)
                 val envelope = Base64.decode(encoded, Base64.NO_WRAP)
+                requireEnvelopeSize(envelope.size)
                 require(envelope.size >= 1 + GCM_IV_BYTES + GCM_TAG_BITS / 8) {
                     "encrypted profile envelope is truncated"
                 }
@@ -130,8 +139,12 @@ object ProfileStore {
                 cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
                 cipher.updateAAD(aad(preferenceKey))
                 val plaintext = cipher.doFinal(ciphertext)
-                try { return decodeProfileStoreUtf8(plaintext) }
-                finally { plaintext.fill(0) }
+                try {
+                    requirePlaintextSize(plaintext.size)
+                    return decodeUtf8Strict(plaintext)
+                } finally {
+                    plaintext.fill(0)
+                }
             } catch (error: SecurityException) {
                 throw error
             } catch (error: Exception) {
@@ -204,6 +217,18 @@ object ProfileStore {
         return index
     }
 
+    internal fun requirePlaintextSize(size: Int) {
+        require(size in 0..MAX_PROFILE_SET_BYTES) { "profile store plaintext exceeds 8 MiB" }
+    }
+
+    internal fun requireEnvelopeSize(size: Int) {
+        require(size in 0..MAX_ENVELOPE_BYTES) { "encrypted profile envelope exceeds the safety limit" }
+    }
+
+    internal fun requireBase64Size(size: Int) {
+        require(size in 0..MAX_BASE64_CHARS) { "encoded profile envelope exceeds the safety limit" }
+    }
+
     private fun loadOrCreateKey(alias: String): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (keyStore.getKey(alias, null) as? SecretKey)?.let { return it }
@@ -271,7 +296,7 @@ object ProfileStore {
                 "legacy profile entry has an invalid length"
             }
             val plaintext = ByteArray(length).also(buffer::get)
-            try { return decodeProfileStoreUtf8(plaintext) }
+            try { return decodeUtf8Strict(plaintext) }
             finally { plaintext.fill(0) }
         }
 
@@ -282,11 +307,3 @@ object ProfileStore {
         }
     }
 }
-
-/** Never replace malformed stored bytes with U+FFFD inside credentials or INI text. */
-internal fun decodeProfileStoreUtf8(bytes: ByteArray): String =
-    Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-        .decode(ByteBuffer.wrap(bytes))
-        .toString()

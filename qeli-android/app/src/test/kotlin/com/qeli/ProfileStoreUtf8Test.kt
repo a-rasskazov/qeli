@@ -8,12 +8,12 @@ import java.nio.charset.CharacterCodingException
 class ProfileStoreUtf8Test {
     @Test fun malformedBytesCannotChangeStoredCredentials() {
         assertThrows(CharacterCodingException::class.java) {
-            decodeProfileStoreUtf8(byteArrayOf(0x70, 0x61, 0x73, 0x73, 0x3d, 0xC3.toByte()))
+            decodeUtf8Strict(byteArrayOf(0x70, 0x61, 0x73, 0x73, 0x3d, 0xC3.toByte()))
         }
     }
 
     @Test fun validUnicodeStoredTextIsPreserved() {
         val text = "pass=пароль\n"
-        assertEquals(text, decodeProfileStoreUtf8(text.toByteArray(Charsets.UTF_8)))
+        assertEquals(text, decodeUtf8Strict(text.toByteArray(Charsets.UTF_8)))
     }
 }

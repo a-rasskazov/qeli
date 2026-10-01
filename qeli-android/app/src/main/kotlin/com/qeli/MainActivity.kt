@@ -187,7 +187,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_LAST_AUTO_PROBE_MS = "last_auto_probe_ms"
         private const val MAX_IMPORTED_FILE_BYTES = ProfileStore.MAX_PROFILE_SET_BYTES
         // QELI-ENC-1 base64-expands an otherwise valid 8 MiB plaintext archive.
-        private const val MAX_IMPORTED_BACKUP_BYTES = 12 * 1024 * 1024
+        private const val MAX_IMPORTED_BACKUP_BYTES = com.qeli.crypto.BackupCrypto.MAX_BACKUP_BYTES
         private const val MAX_IMPORTED_CONFIG_BYTES = 256 * 1024 // shared editor/native core limit
         private const val MAX_IMPORTED_PROFILES = ProfileStore.MAX_PROFILES
         private const val MAX_IMPORTED_PROFILE_NAME_CHARS = 256
@@ -893,11 +893,12 @@ ipv6 = auto
                                     com.qeli.crypto.BackupCrypto.decrypt(bytes, pass)
                                 }
                             } catch (e: Exception) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    getString(R.string.wrong_passphrase),
-                                    Toast.LENGTH_LONG,
-                                ).show()
+                                val message = if (e is javax.crypto.AEADBadTagException) {
+                                    getString(R.string.wrong_passphrase)
+                                } else {
+                                    getString(R.string.restore_failed, e.message ?: "")
+                                }
+                                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                                 return@launch
                             } finally {
                                 bytes.fill(0)
@@ -914,8 +915,14 @@ ipv6 = auto
                         }
                     }
                 } else {
-                    try { confirmAndRestore(String(bytes, Charsets.UTF_8)) }
-                    finally { bytes.fill(0) }
+                    try {
+                        require(bytes.size <= MAX_IMPORTED_FILE_BYTES) {
+                            "plaintext backup exceeds 8 MiB"
+                        }
+                        confirmAndRestore(decodeUtf8Strict(bytes))
+                    } finally {
+                        bytes.fill(0)
+                    }
                 }
             } catch (e: Exception) {
                 Toast.makeText(

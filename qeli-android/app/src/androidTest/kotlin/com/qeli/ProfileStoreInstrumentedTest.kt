@@ -111,6 +111,34 @@ class ProfileStoreInstrumentedTest {
     }
 
     @Test
+    fun oversizedEncodedEnvelopeIsRejectedBeforeBase64Decode() {
+        val store = ProfileStore.SecureStore(context, prefsName, keyAlias)
+        val raw = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        val oversized = "A".repeat(ProfileStore.MAX_BASE64_CHARS + 1)
+        assertTrue(raw.edit().putString("profile", oversized).commit())
+
+        assertThrows(SecurityException::class.java) { store.getString("profile", null) }
+        assertEquals(oversized, raw.getString("profile", null))
+    }
+
+    @Test
+    fun oversizedPlaintextCannotReplaceEncryptedEntry() {
+        val store = ProfileStore.SecureStore(context, prefsName, keyAlias)
+        assertTrue(store.edit().putString("profile", "original").commit())
+        val version = store.version("profile")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.putStringIfVersion(
+                "profile",
+                version,
+                "x".repeat(ProfileStore.MAX_PROFILE_SET_BYTES + 1),
+            )
+        }
+        assertEquals("original", store.getString("profile", null))
+        assertEquals(version, store.version("profile"))
+    }
+
+    @Test
     fun tamperAndCiphertextRelocationAreRejected() {
         val store = ProfileStore.SecureStore(context, prefsName, keyAlias)
         assertEquals(true, store.edit().putString("profile", "secret").commit())

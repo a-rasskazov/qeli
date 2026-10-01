@@ -34,7 +34,7 @@ every other client, not because a build of it was released.
   Editing the active profile while connected saves it, then asks for a manual disconnect
   and reconnect so the running tunnel takes the new settings.
   An editor or delete confirmation opened before that profile changes is refused on save/delete.
-- Android-compatible encrypted backups (`QELI-ENC-1`, PBKDF2-SHA256, AES-256-GCM).
+- Android-compatible encrypted backups (`QELI-ENC-1`, PBKDF2-SHA256, AES-256-GCM): 8 MiB plaintext JSON and 12 MiB encrypted-file limits.
 - Opt-in release checks that run only with a fail-closed full-tunnel route.
 - `NETunnelProviderManager` lifecycle, VPN On Demand and status/statistics bridge.
 - `NEPacketTunnelProvider` target over the current ABI 1.16 core, requiring ABI 1.16 for the configuration service, optional ABI 1.12-1.14 path transactions and ABI 1.15 management events. Swift applies
