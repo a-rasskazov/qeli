@@ -249,11 +249,9 @@ mod dns_legacy;
 #[cfg(any(test, all(target_os = "linux", feature = "client")))]
 mod secret_buffer;
 
-// Bind command authorization to the exact descriptor supplying Linux runtime INI bytes.
-#[cfg(any(
-    test,
-    all(target_os = "linux", any(feature = "client", feature = "server"))
-))]
+// The notification INI loader uses the same bounded snapshot on every platform.
+// Linux additionally binds command authorization to that exact descriptor.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod config_source;
 
 // Lifecycle hooks (post_up/post_down); used by both the client and server, Linux-only.

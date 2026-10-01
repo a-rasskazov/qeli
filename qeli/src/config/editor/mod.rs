@@ -593,6 +593,12 @@ fn execute(req: &Value) -> anyhow::Result<Value> {
         "uri" => {
             validate(&d)?;
             let cfg = ClientConfig::from_ini(&materialize(&d)?)?;
+            // A share link cannot carry password_file/password_command. Without an
+            // inline password it would import successfully but fail at connect time.
+            anyhow::ensure!(
+                cfg.auth.password.as_deref().is_some_and(|pass| !pass.is_empty()),
+                "cannot share profile as qeli:// without an inline pass; set pass in the INI before sharing"
+            );
             let label = d.values["name"]
                 .as_str()
                 .filter(|s| !s.is_empty())

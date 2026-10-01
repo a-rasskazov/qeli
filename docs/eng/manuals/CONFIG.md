@@ -156,6 +156,8 @@ links with `proto` and `mode` spelled out separately.
 > All clients preserve and apply their local flat-INI policy; qeli:// serializers omit it and
 > importers ignore legacy `apps*` query parameters.
 
+**Password when sharing.** Exporting a local profile to `qeli://` requires a nonempty inline `pass` in the INI. `password_file` and `password_command` work only on the source device and cannot be carried in a link; without `pass`, export now fails while the local INI remains usable. Add `pass` only when you intend to give the link recipient that secret.
+
 **About `quic`.** The server **mirrors the client's choice per-connection** — it validates
 the complete qeli QUIC envelope on the first datagram (including its declared Length), so
 `udp-quic` works even when the server profile's

@@ -758,3 +758,24 @@ fn policy_subtract_counts_final_routes_and_retains_the_real_limit() {
         );
     }
 }
+
+#[test]
+fn share_requires_a_portable_inline_password() {
+    for source in [
+        "[qeli]\nserver = vpn.example.com:443\nuser = alice\n",
+        "[qeli]\nserver = vpn.example.com:443\nuser = alice\npassword_file = /tmp/qeli-secret\n",
+        "[qeli]\nserver = vpn.example.com:443\nuser = alice\npassword_command = secret-tool lookup service qeli\n",
+    ] {
+        ok(json!({"op":"validate","source":source}));
+        let denied = call(json!({"op":"uri","source":source}));
+        assert_eq!(denied["ok"], false, "{denied}");
+        assert!(denied["error"].as_str().unwrap().contains("inline pass"));
+    }
+    let source = "[qeli]\nserver = vpn.example.com:443\nuser = alice\npass = secret\npassword_file = /tmp/qeli-secret\n";
+    let uri = ok(json!({"op":"uri","source":source}))["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(uri.starts_with("qeli://alice:secret@vpn.example.com:443"));
+    ok(json!({"op":"import","source":uri}));
+}
