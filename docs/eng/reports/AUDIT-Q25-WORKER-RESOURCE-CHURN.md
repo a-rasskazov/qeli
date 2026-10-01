@@ -84,9 +84,57 @@ Raw evidence in the same directory: `qeli-d13-product-rpf2.log`,
 `qeli-d13-final-success.log`, `qeli-d13-final-soak100.log`,
 `qeli-d13-fmt.log`, `qeli-d13-unit.log`, and `qeli-d13-unit-fd4096.log`.
 
-D13 remains **IN_PROGRESS**: current-source UDP same-session soak and a
-multi-profile stop/fault case remain. Earlier 100 release handovers at
-`ea87fd49` are separate evidence and do not replace these checks.
+## UDP same-session and two-profile stop/fault
+
+The same `a526c03b` release binary completed **100/100** UDP QUIC
+same-session COMMITs: **17/17** checks PASS. Original client/server
+processes and TUN survived; no repeat AUTH, candidate, or CID accumulation.
+Client fds 18→19, socket fds 6→7, RSS 51,532→60,660 KiB
+(sampled peak +13,048 KiB); server fds 21→21, socket fds 7→7,
+RSS 59,792→74,728 KiB (sampled peak +14,936 KiB). Both peaks stay
+below the predefined +32 MiB budget. After COMMIT, both `rp_filter`
+values returned to their original strict value 1 and the sysctl lease
+left the journal. The first run is retained as **FAIL 14/15** solely
+because preflight probed B with its source address while the default
+still selected A under strict reverse-path filtering. The corrected
+preflight temporarily uses a candidate-compatible filter and
+`ping -I qru-b`, restoring strict mode **before** Qeli starts. No
+product change was needed.
+
+New `scripts/audit_worker_multiprofile_resource.py` isolates network,
+mount, and PID namespaces and exercises concurrent TCP `alpha` and UDP
+`beta` profiles. **14/14** assertions PASS: malformed SIGHUP retained both
+profiles; ten valid reloads held fd/socket/task counts at
+26/11/7→26/11/7 and sampled RSS peak at 54,224→54,352 KiB (+128 KiB).
+Graceful stop ran both `post_down` hooks exactly once and restored the
+original firewall, routes, links, forwarding, control socket, and
+journal. After SIGKILL both profiles' rules and journal remained for
+recovery; restarting only `alpha` removed orphan rules/device for the
+deleted `beta`, and final clean stop restored the original snapshot.
+The first version of this new harness falsely detected second-run
+readiness from the old hook file; waiting for a new `up` entry fixed it.
+
+Three other UDP wire modes used the same binary for 20 transitions
+each: `fake-tls`, `obfs`, and `obfs-awg` all passed **17/17** checks.
+Each retained one session and the original processes/TUN, counted
+20 COMMITs, avoided fd/socket accumulation, and restored `rp_filter`
+and the sysctl lease. The largest sampled RSS increase in those three
+runs was +12,428 KiB server and +5,660 KiB client. These are bounded
+20-transition adapter checks, not a 100-transition endurance run for
+each adapter.
+
+D13 is **DONE** within the available Linux scope: bounded worker
+reload/stop, TCP and UDP same-session churn, two-profile SIGKILL/recovery,
+and network-object restoration met the recorded criteria. This does not
+claim a continuous RSS maximum between samples or unavailable platform
+runtime checks.
+
+Raw evidence: `udp-quic-100.log` (initial harness FAIL),
+`udp-quic-100-fixed.log`, `multi-profile.log` (early false-ready FAIL),
+`multi-profile-02.log`, `multi-profile-02/` (14 results, snapshots,
+resource samples, and logs), plus `udp-fake-tls-20.log`,
+`udp-obfs-20.log`, and `udp-obfs-awg-20.log`. Earlier 100 release handovers at
+`ea87fd49` remain separate evidence.
 
 [Debt register](../plans/AUDIT-DEBT.md) ·
 [Earlier release soak](AUDIT-Q34-RELEASE-SOAK.md)

@@ -158,4 +158,6 @@ run_udp_soak_case() {
   check "soak closed superseded sockets instead of leaking file descriptors" "test '$client_fd_after' -le $((client_fd_before + 4)) && test '$server_fd_after' -le $((server_fd_before + 4)) && test '$client_fd_max' -le $((client_fd_before + 16)) && test '$server_fd_max' -le $((server_fd_before + 16))"
   check "soak did not accumulate socket descriptors" "test '$client_socket_after' -le $((client_socket_before + 2)) && test '$server_socket_after' -le $((server_socket_before + 2)) && test '$client_socket_max' -le $((client_socket_before + 8)) && test '$server_socket_max' -le $((server_socket_before + 8))"
   check "soak kept sampled RSS growth within the 32 MiB acceptance budget" "test $((client_rss_max - client_rss_before)) -le 32768 && test $((server_rss_max - server_rss_before)) -le 32768 && test $((client_rss_after - client_rss_before)) -le 32768 && test $((server_rss_after - server_rss_before)) -le 32768"
+  check "soak restored candidate reverse-path filters and released sysctl leases" \
+    "test \"\$(ip netns exec $CLI_NS sysctl -n net.ipv4.conf.qru-a.rp_filter)\" = '$ORIGINAL_RPF_A' && test \"\$(ip netns exec $CLI_NS sysctl -n net.ipv4.conf.qru-b.rp_filter)\" = '$ORIGINAL_RPF_B' && ! grep -q 'roam-rpf-' $STATE_DIRECTORY/sysctls.state 2>/dev/null"
 }

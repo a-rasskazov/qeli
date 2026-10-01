@@ -197,8 +197,17 @@ ip netns exec "$SRV_NS" ip route add default via 10.41.3.1 dev qru-s
 
 check "path A reaches the server" \
   "ip netns exec $CLI_NS ping -I 10.41.1.2 -c1 -W2 10.41.3.2"
-check "path B reaches the server" \
-  "ip netns exec $CLI_NS ping -I 10.41.2.2 -c1 -W2 10.41.3.2"
+# A remains the initial physical default. Strict rp_filter can discard a B reply
+# even when B works; test B with a temporary candidate-compatible filter, then
+# restore it before Qeli starts so the product must manage its own handover.
+ORIGINAL_RPF_A=$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qru-a.rp_filter)
+ORIGINAL_RPF_B=$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qru-b.rp_filter)
+ip netns exec "$CLI_NS" sysctl -qw net.ipv4.conf.qru-b.rp_filter=2
+check "path B reaches the server with a candidate-compatible reverse-path filter" \
+  "ip netns exec $CLI_NS ping -I qru-b -c1 -W2 10.41.3.2"
+ip netns exec "$CLI_NS" sysctl -qw "net.ipv4.conf.qru-b.rp_filter=$ORIGINAL_RPF_B"
+check "path B reverse-path filter was restored before Qeli starts" \
+  "test \"\$(ip netns exec $CLI_NS sysctl -n net.ipv4.conf.qru-b.rp_filter)\" = '$ORIGINAL_RPF_B'"
 
 if [ "$CASE" = nat-rebind ]; then
   # Stateless one-to-one translation keeps the client's local socket/interface untouched while
