@@ -10,6 +10,7 @@ throughput up+down (iperf3, retransmits + iperf CPU + sampled qeli process
 
 Modes include the no-obfuscation `plain` (raw) tunnel and real-TLS `reality-tls`.
 """
+import argparse
 import os
 import sys, io, os, json, time, socket, re
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -360,6 +361,12 @@ def baseline(s, cl):
     return r
 
 def main():
+    parser = argparse.ArgumentParser(description="Historical host-wide benchmark; stops services and replaces lab files")
+    parser.add_argument('--allow-host-wide-benchmark', action='store_true',
+                        help='explicitly allow service stops, global process kills and host file replacement')
+    args = parser.parse_args()
+    if not args.allow_host_wide_benchmark:
+        parser.error('use benchmark_isolated_lab.py for an active lab; this historical runner requires --allow-host-wide-benchmark')
     print("Waiting for VMs...")
     if not wait_up():
         print("VMs not up"); return

@@ -9,6 +9,41 @@
 Датированная копия — `benchmark_v0.8.0_2026-08-26_combined_12modes.json`; старые файлы
 сохраняются как исторические снимки. Оркестратор — [scripts/benchmark.py](../../../scripts/benchmark.py).
 
+## Изолированный benchmark на действующей лабе
+
+Для текущих прогонов используется
+[scripts/benchmark_isolated_lab.py](../../../scripts/benchmark_isolated_lab.py).
+На каждой VM он создаёт отдельный IPvlan network namespace с адресами
+`10.255.42.1/30` и `10.255.42.2/30`; `/etc/qeli`, `/var/lib` и `/var/log`
+изолированы mount namespace. Reality использует отдельный локальный TLS-target.
+Cleanup проверяет идентичность namespace и завершает только его процессы.
+До и после сверяются хостовые IPv4-адреса, routes и действующий listener `:443`.
+
+Нужны заранее размещённые одинаковые release binaries: по умолчанию
+`/var/tmp/qeli-d14-bin/qeli` на `.10` и `/root/qeli-src/target/release/qeli`
+на `.11`. Runner сверяет полный SHA-256 обоих файлов. Пароль SSH передаётся
+через `QELI_LAB_PASS`; он не сохраняется в evidence. Пример:
+
+```text
+python scripts/benchmark_isolated_lab.py --sha256 a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0 --output benchmark-evidence/run-1
+```
+
+По умолчанию выполняются те же 12 wire-режимов, один TCP-stream,
+по 8 секунд upload/download для каждого и UDP-нагрузка 100/500 Мбит/с
+по 5 секунд для UDP-carrier. Сначала снимается прямой baseline.
+`--modes` выбирает поднабор, `--seconds` задаёт интервал TCP (5–30 секунд).
+Скорость — `sum_received.bits_per_second`, то есть фактически принятые байты.
+Сохраняются raw iperf, потери, retransmit, kernel RcvbufErrors, session drops,
+сэмплы CPU/RSS точных Qeli PID и метаданные binary/source/harness SHA.
+CPU считается по дельте process ticks за интервал (100% — одно ядро,
+для двух vCPU допустимы 200%); RSS peak остаётся выборочным.
+`COMPLETED` означает корректно полученный замер; автоматического порога
+производительности или утверждения «регрессий нет» этот статус не содержит.
+
+Исторический [benchmark.py](../../../scripts/benchmark.py) останавливает
+службы, выполняет host-wide `pkill`, заменяет бинарники и resolver-файл.
+Его запуск теперь требует явного `--allow-host-wide-benchmark` до SSH.
+
 > **Актуальный сравнительный прогон 0.8.0:**
 > [полный отчёт по 34 VPN-режимам](benchmarks/vpn_protocol_benchmark_repeat_2026-09-01.md)
 > включает три прохода для 25 masked-режимов, IPv4/IPv6, TCP/UDP, CPU/RSS и ограничения

@@ -9,6 +9,41 @@ holds the **latest structured run** — **qeli 0.8.0**, 2026-08-26, full binary 
 The dated copy is `benchmark_v0.8.0_2026-08-26_combined_12modes.json`; older files remain
 historical snapshots. The orchestrator — [scripts/benchmark.py](../../../scripts/benchmark.py).
 
+## Isolated benchmark on an active lab
+
+Current runs use
+[scripts/benchmark_isolated_lab.py](../../../scripts/benchmark_isolated_lab.py).
+Each VM gets a separate IPvlan network namespace with `10.255.42.1/30`
+and `10.255.42.2/30`; `/etc/qeli`, `/var/lib`, and `/var/log` are isolated
+in a mount namespace. Reality uses a dedicated local TLS target. Cleanup
+checks namespace identity and terminates only its processes. Host IPv4
+addresses, routes, and the existing `:443` listener are compared before/after.
+
+Identical release binaries must be staged first: defaults are
+`/var/tmp/qeli-d14-bin/qeli` on `.10` and `/root/qeli-src/target/release/qeli`
+on `.11`. The runner checks both full SHA-256 values. SSH password comes
+from `QELI_LAB_PASS` and is not stored in evidence. Example:
+
+```text
+python scripts/benchmark_isolated_lab.py --sha256 a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0 --output benchmark-evidence/run-1
+```
+
+Defaults cover the same 12 wire modes, one TCP stream, 8-second upload
+and download per mode, and 5-second UDP loads at 100/500 Mbps for UDP
+carriers. A direct baseline runs first. `--modes` selects a subset;
+`--seconds` sets the TCP interval (5–30 seconds). Throughput uses
+`sum_received.bits_per_second`, counting bytes actually received. Raw
+iperf, loss, retransmits, kernel RcvbufErrors, session drops, exact Qeli
+PID CPU/RSS samples, and binary/source/harness SHA metadata are retained.
+CPU is process-tick delta over the interval (100% means one CPU;
+two vCPUs can reach 200%); RSS peaks are sampled. `COMPLETED` means a
+measurement was obtained correctly, without an automatic performance
+threshold or a no-regression claim.
+
+Historical [benchmark.py](../../../scripts/benchmark.py) stops services,
+uses host-wide `pkill`, replaces binaries and the resolver file. It now
+requires explicit `--allow-host-wide-benchmark` before SSH access.
+
 > **Latest 0.8.0 cross-protocol run:** the
 > [full 34-mode report](benchmarks/vpn_protocol_benchmark_repeat_2026-09-01.md)
 > covers three passes for 25 masked modes, IPv4/IPv6, TCP/UDP, CPU/RSS and the limits of
