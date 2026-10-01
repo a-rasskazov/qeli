@@ -72,12 +72,18 @@ RSS 51 712→54 104 КиБ (sampled peak +2 524 КиБ).
 Серверные fd 21→21, socket fd 7→7,
 RSS 52 100→56 764 КиБ (sampled peak +4 664 КиБ).
 Все значения меньше фиксированного лимита +32 МиБ RSS и порогов fd.
+`cargo fmt --all -- --check` PASS. Полный `cargo test --offline --locked --lib`
+с исходным лабораторным soft limit 1024 fd дал 2237 PASS / 1 FAIL (`EMFILE`):
+DNS capacity test одновременно держит 512 клиентских и 512 серверных
+TCP-сокетов. При soft limit 4096 и `--test-threads=2` тот же набор
+**2238 PASS / 0 FAIL** (59 ignored); оба полных лога сохранены.
 После сценариев namespace/test listeners/processes отсутствовали;
 `qeli-server.service` на .10 остался active на :443.
 
 Raw evidence в том же каталоге: `qeli-d13-product-rpf2.log`,
 `qeli-d13-product-soak100.log` (debug FAIL),
-`qeli-d13-final-success.log`, `qeli-d13-final-soak100.log`.
+`qeli-d13-final-success.log`, `qeli-d13-final-soak100.log`,
+`qeli-d13-fmt.log`, `qeli-d13-unit.log` и `qeli-d13-unit-fd4096.log`.
 
 D13 остаётся **IN_PROGRESS**: нужен текущий UDP same-session soak и
 многопрофильный stop/fault сценарий. Ранее выполненные 100 release

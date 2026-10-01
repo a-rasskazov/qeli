@@ -70,13 +70,19 @@ and 100 client/server COMMITs remained; orphan=0 and there was no repeat
 AUTH. Client fds 18→18, socket fds 6→6, RSS 51,712→54,104 KiB
 (sampled peak +2,524 KiB). Server fds 21→21, socket fds 7→7,
 RSS 52,100→56,764 KiB (sampled peak +4,664 KiB). All values are below
-the fixed +32 MiB RSS and fd limits. Namespaces, test listeners, and
+the fixed +32 MiB RSS and fd limits. `cargo fmt --all -- --check`
+passed. The full `cargo test --offline --locked --lib` at the lab's initial
+1024-fd soft limit gave 2,237 PASS / 1 FAIL (`EMFILE`): the DNS capacity
+test holds 512 client and 512 server TCP sockets at once. At soft limit
+4096 with `--test-threads=2`, the same suite gave **2,238 PASS / 0 FAIL**
+(59 ignored); both complete logs are retained. Namespaces, test listeners, and
 processes were absent afterward; .10's `qeli-server.service` remained
 active on :443.
 
 Raw evidence in the same directory: `qeli-d13-product-rpf2.log`,
 `qeli-d13-product-soak100.log` (debug FAIL),
-`qeli-d13-final-success.log`, and `qeli-d13-final-soak100.log`.
+`qeli-d13-final-success.log`, `qeli-d13-final-soak100.log`,
+`qeli-d13-fmt.log`, `qeli-d13-unit.log`, and `qeli-d13-unit-fd4096.log`.
 
 D13 remains **IN_PROGRESS**: current-source UDP same-session soak and a
 multi-profile stop/fault case remain. Earlier 100 release handovers at

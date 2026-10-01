@@ -12,75 +12,33 @@
 
 ## Содержимое
 
-> **Состояние после изменения исходников:** source transport-core уже ABI 1.15 и содержит
-> `NOTICE`/`KICK`, а перечисленные ниже закоммиченные библиотеки пока остаются сертифицированным
-> набором ABI 1.14. Это ожидаемое промежуточное состояние разработки: штатная release-сборка
-> должна заменить все canonical/consumed копии и provenance из финального коммита 0.8.0.
+Текущий ABI общего Rust-клиента — **1.16** (`qeli/src/transport_core/mod.rs`).
+Проверяемые SHA-256 каждой canonical/consumed пары записаны в
+[SHA256SUMS](SHA256SUMS), соответствие исходникам — в
+[PROVENANCE](PROVENANCE), а два независимых прохода сборки — в
+`reproducibility/{desktop,android}.json`. После любой правки Rust-исходников
+или build-рецептов эти проверки обязаны выполняться заново.
 
-| Файл | Таргет | Размер | Что это | Потребляется |
-|---|---|---|---|---|
-| `android/arm64-v8a/libqeli.so` | aarch64-linux-android | 3.13 МиБ | ABI 1.14 whole-client core + roaming | `qeli-android/app/src/main/jniLibs/arm64-v8a/` → APK |
-| `android/x86_64/libqeli.so` | x86_64-linux-android | 3.53 МиБ | то же (эмулятор/x86-устройства) | `qeli-android/app/src/main/jniLibs/x86_64/` → APK |
-| `windows-x64/qeli.dll` | x86_64-pc-windows-gnu | 4.69 МиБ | ABI 1.14 whole-client core + REALITY C ABI | `qeli-win/QeliWin/native/qeli.dll` → EmbeddedResource в .exe |
-| `macos-universal/libqeli.dylib` | universal2 (arm64+x86_64) | 10.91 МиБ | ABI 1.14 whole-client core + REALITY C ABI | `qeli-mac/QeliMac/native/libqeli.dylib` → Content в `.app` |
-| `third-party/windows-x64/wintun.dll` | x86_64 | 418 КБ | WireGuard Wintun userspace TUN (СТОРОННЯЯ, не наша) | `qeli-win/QeliWin/wintun/wintun.dll` → EmbeddedResource |
-| `third-party/windows-x64/windivert/WinDivert.dll` + `WinDivert64.sys` | x86_64 | — | WinDivert 2.2.2 (СТОРОННЯЯ, LGPL-3.0 OR GPL-2.0) — per-app packet capture | `qeli-win/QeliWin/windivert/` → EmbeddedResource |
+| Файл | Таргет | Потребляется |
+|---|---|---|
+| `android/arm64-v8a/libqeli.so` | aarch64-linux-android | `qeli-android/app/src/main/jniLibs/arm64-v8a/` → APK |
+| `android/x86_64/libqeli.so` | x86_64-linux-android | `qeli-android/app/src/main/jniLibs/x86_64/` → APK |
+| `windows-x64/qeli.dll` | x86_64-pc-windows-gnu | `qeli-win/QeliWin/native/qeli.dll` → EmbeddedResource |
+| `macos-universal/libqeli.dylib` | universal2 (arm64+x86_64) | `qeli-mac/QeliMac/native/libqeli.dylib` → `.app` Content |
+| `third-party/windows-x64/wintun.dll` | x86_64 | `qeli-win/QeliWin/wintun/wintun.dll` |
+| `third-party/windows-x64/windivert/WinDivert.dll` и `WinDivert64.sys` | x86_64 | `qeli-win/QeliWin/windivert/` |
 
-> **Закоммиченные first-party binaries:** все четыре библиотеки соответствуют ABI 1.14 и
-> source digest `342e61a4…`. Desktop и Android независимо прошли чистую byte-identical A/B
-> сборку; evidence, `SHA256SUMS`, canonical и consumed-копии согласованы. Коммиты сборочных
-> evidence различаются, но их полный digest Rust-источника одинаков. Команда
-> `python native-libs/provenance.py --check` сейчас сообщает `OK`. Повторная сборка ядра
-> обязательна только после изменения `qeli/src`, `qeli/Cargo.toml` или `qeli/Cargo.lock`;
-> изменения платформенного приложения всё равно требуют новой упаковки и её release-gates.
-
-Все `qeli`-либы (so/dll/dylib) — это ОДИН Rust-крейт `qeli`
-(`crate-type = ["rlib","cdylib","staticlib"]`), C-ABI в
-`src/protocol/realtls/ffi.rs`, `src/transport_core/ffi.rs` и Android JNI adapter,
-кросс-скомпилированный под разные таргеты. Экспорты:
-`qeli_realtls_{new,recv,seal,open,free,buf_free}` (6 символов C ABI) и 22
-`qeli_client_*`; Android ABI требует 21 `Java_com_qeli_TransportCore_*`.
-Старые Kotlin-specific RealTls/ML-KEM/KeyExchange JNI
-wrappers удалены после перехода всего Android transport на whole-client core.
-
-**Версия лежащих сейчас бинарников:** ABI 1.14 transport-core с 81-key config contract,
-типизированными roaming path transactions, `PATH_REFRESH`, статистикой V3 и cancellable
-UDP-probe JNI. Для текущего Rust source `provenance.py --check` обязан сообщать `OK`;
-публикация приложений по-прежнему требует platform/signing/E2E gates. Поверхность включает
-поддержку обоих cipher-suite (TLS_AES_128_GCM_SHA256 + TLS_AES_256_GCM_SHA384) и
-post-quantum hybrid X25519MLKEM768. Единый browser-grade отпечаток со всеми клиентами.
-
-Все три платформенных варианта собираются с `--no-default-features --features transport-core-ffi`
-(feature включает `client` и `ffi-cdylib`, но не сервер/web stack). ABI 1.6 запускает весь
-Android payload в Rust: protected TCP/UDP carrier,
-handshake, NetworkPlan/TUN handoff, шифрование, packet pumps,
-QUIC/MTU/heartbeat/shaping и bonding. ABI 1.7 добавил Windows/macOS whole-client runtime,
-capability `TUN_PACKET_IO` и bounded generation-scoped `qeli_client_tun_push/pull` для
-существующих Wintun/utun adapters. Rust владеет carrier, handshake, crypto, TCP/UDP/QUIC,
-Reality, bonding и packet loops; C# применяет `NetworkPlan`, хранит trust/device ID и
-перекладывает raw IP packets между platform TUN и нативными очередями. Фактический peer IP
-carrier публикуется в плане, чтобы full-tunnel bypass не выполнял второе DNS-разрешение.
-ABI 1.8 подключает к тому же packet bridge iOS и добавляет общий handle-free
-`qeli_client_udp_probe`; iOS XCFramework строится отдельно на macOS/Xcode и поэтому не хранится
-в этом каталоге Windows/lab-артефактов.
-ABI 1.9 передаёт Wintun adapter name в Rust и переносит Wintun session/read event/rings в
-единое ядро; все четыре лежащие здесь first-party библиотеки уже пересобраны после этого
-изменения.
-ABI 1.2 socket-protect request/ACK binding подключён к фоновому dispatcher: сервис адаптивно опрашивает ту же
-bounded core queue, вызывает `VpnService.protect(fd)` с retry и возвращает ACK. Native producer
-теперь создаёт неблокирующий TCP/UDP carrier и сохраняет его только после положительного ACK;
-connect/handshake и packet IO выполняются единственным native owner. Вторая очередь или callback не
-добавлялись; общий fd-backed TUN backend работает внутри Android NDK-библиотеки.
-ABI 1.3 дополнительно принимает существующий 16-байтный Android device ID до `start()`;
-ABI 1.4 добавляет async server-identity request/ACK через ту же bounded queue и Android
-`qeli_known_hosts` adapter. ABI 1.5 добавляет bounded authenticated-handshake input и
-generation-scoped TUN fd. ABI 1.6 добавляет whole-client export `qeli_client_run`, JNI
-run/stats bindings и capability `NATIVE_DATA_PLANE`; Kotlin остаётся platform/UI adapter и не
-является packet reader на активном пути. 17-й JNI export — handle-free UDP first-flight
-diagnostic: credential-free профиль использует тот же Rust PQ ClientHello/fragment/QUIC/obfs
-builder, что рабочий transport, и останавливается на первом ответе сервера. 18-й и 19-й
-exports добавляют cancellable-вариант этой проверки и точечную отмену по `probe_id`, чтобы
-закрытие Android-экрана действительно закрывало native UDP socket, а не только coroutine.
+Все четыре first-party библиотеки собираются из одного Rust-крейта `qeli`
+с `--no-default-features --features transport-core-ffi`; серверный/web stack
+в них не входит. Экспортная поверхность содержит 6 Reality C ABI,
+22 `qeli_client_*`, `qeli_config_request` (чистый API редактора INI),
+а Android дополнительно требует 21 `Java_com_qeli_TransportCore_*`.
+Платформенные приложения хранят интерфейс, системные разрешения и TUN;
+общее ядро выполняет parsing/policy, transport, handshake и data plane.
+Исходный `qeli/src/client` Linux `rp_filter` код компилируется только для Linux
+и не меняет API этих библиотек, но изменение общего исходного дерева всё равно
+требует новой подтверждённой A/B сборки и provenance. iOS XCFramework
+собирается отдельно с macOS/Xcode и не хранится в этом каталоге.
 
 ## Как собрать (всё на лаб-сервере .10/.11, на Windows Rust-тулчейна нет)
 

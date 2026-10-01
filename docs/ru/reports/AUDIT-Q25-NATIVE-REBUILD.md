@@ -1,6 +1,6 @@
 # Q25-F202 — воспроизводимые native cores и Android runtime
 
-<!-- normative-sync: audit-q25-native-rebuild-v3 -->
+<!-- normative-sync: audit-q25-native-rebuild-v4 -->
 
 Последующая [проверка F203](AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md) объяснила
 фоновые пакеты и закрыла D12 в согласованном доступном объёме.
@@ -94,5 +94,37 @@ D11 закрыт для актуальных native cores, A/B, ABI, копий,
 lifecycle-сценариев; базовый Android VPN handshake и двусторонний ICMP PASS. Windows VM, Mac/Xcode/iOS и router runtime пропущены по
 решению пользователя; macOS dylib структурно проверена, приложение и поведение
 на Mac не подтверждены. Сборка APK — debug, не release-публикация.
+
+## Обновление после Q25-F204: 1 октября 2026
+
+Linux-only исправление candidate `rp_filter` изменило общий исходный digest,
+поэтому прежние native cores не оставлены с устаревшим provenance. Из чистого
+коммита `f638d957` (source digest
+`d39a334335d8a0110a59683bbdf354dfbfb4bd8e5919bdc5981a4b08278f43a5`)
+повторены два независимых прохода A/B для всех четырёх ABI 1.16 библиотек:
+
+| Цель | Новый SHA-256, одинаковый в A/B |
+|---|---|
+| Windows x64 DLL | `653522e6bade8fce705a12ec1566c4c119d49b27d55cb7ba088c018b2bd1dd92` |
+| macOS universal2 dylib | `61292c140318590e7441ba891d1ca39266a22f3ee72c6f31fb2d6b39ed474e6a` |
+| Android arm64-v8a so | `0255a5d8f60114301761031331c7fdf3ce7a6d6895790f93ad9b760a445c1522` |
+| Android x86_64 so | `4ae6eb05b0a498e6fb9aab6014fbc1f0d50552dd48c6f49541c94b90f561ba30` |
+
+Проверены 6 Reality + 22 client exports, `qeli_config_request`, 21 Android
+JNI exports и обе Mach-O архитектуры. Все четыре canonical/consumed пары,
+14 записей `SHA256SUMS`, оба JSON A/B evidence и `provenance.py --check`
+PASS. Windows Release-сборка: 0 ошибок/предупреждений, selftest **143/143**.
+Android JVM XML: **167/167**, 0 failures/errors/skipped. Новый debug APK
+0.8.2/code 722: SHA-256
+`324e19e8460ec4f81956bb7931ff305643e538a6b288873460d0d18e1e55d1ca`;
+обе `.so` внутри APK побайтно совпадают с A/B библиотеками.
+На read-only Android 14/API 34 x86_64 AVD свежие основной и тестовый
+APK установились; прямой `am instrument` дал **11/11 PASS**. Эмулятор
+остановлен. Полный VPN-трафик на этом новом APK не повторялся:
+проверенный выше E2E относится к прежнему APK, а исправление F204
+компилируется только на Linux.
+Прежние хеши и runtime-результаты выше относятся к прежней ревизии;
+Windows VM, Mac/Xcode/iOS и router runtime по решению пользователя
+не добавлены к этому обновлению. D11 остаётся DONE для нового исходника.
 
 [Реестр техдолга](../plans/AUDIT-DEBT.md) · [Рецепты native](../../../native-libs/README.md)

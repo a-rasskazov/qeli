@@ -1,6 +1,6 @@
 # Q25-F202 — reproducible native cores and Android runtime
 
-<!-- normative-sync: audit-q25-native-rebuild-v3 -->
+<!-- normative-sync: audit-q25-native-rebuild-v4 -->
 
 A later [F203 check](AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md) explained
 the background packets and closed D12 within the agreed available scope.
@@ -97,5 +97,37 @@ lifecycle scenarios; basic Android VPN handshake and bidirectional ICMP pass. Wi
 excluded by user decision; the macOS dylib was structurally checked but the
 Mac app and its behavior were not validated. This APK is a debug build, not a
 published release.
+
+## Refresh after Q25-F204: 1 October 2026
+
+The Linux-only candidate `rp_filter` fix changed the shared source digest,
+so the native cores were rebuilt instead of leaving stale provenance.
+Two independent A/B passes from clean commit `f638d957` (source digest
+`d39a334335d8a0110a59683bbdf354dfbfb4bd8e5919bdc5981a4b08278f43a5`)
+reproduced all four ABI 1.16 libraries:
+
+| Target | New SHA-256, identical in A/B |
+|---|---|
+| Windows x64 DLL | `653522e6bade8fce705a12ec1566c4c119d49b27d55cb7ba088c018b2bd1dd92` |
+| macOS universal2 dylib | `61292c140318590e7441ba891d1ca39266a22f3ee72c6f31fb2d6b39ed474e6a` |
+| Android arm64-v8a so | `0255a5d8f60114301761031331c7fdf3ce7a6d6895790f93ad9b760a445c1522` |
+| Android x86_64 so | `4ae6eb05b0a498e6fb9aab6014fbc1f0d50552dd48c6f49541c94b90f561ba30` |
+
+Six Reality and 22 client exports, `qeli_config_request`, 21 Android
+JNI exports, and both Mach-O architectures were checked. All four
+canonical/consumed pairs, 14 `SHA256SUMS` entries, both JSON A/B evidence
+files, and `provenance.py --check` pass. Windows Release build had zero
+errors/warnings; selftest **143/143** passed. Android JVM XML reports
+**167/167** with zero failures/errors/skips. The new 0.8.2/code 722 debug
+APK has SHA-256
+`324e19e8460ec4f81956bb7931ff305643e538a6b288873460d0d18e1e55d1ca`;
+both embedded `.so` files match their A/B artifacts byte for byte.
+The refreshed app and test APKs installed on the read-only Android 14/API 34
+x86_64 AVD; direct `am instrument` passed **11/11**. The emulator was stopped.
+Full VPN traffic was not rerun with this new APK: the E2E above belongs to
+the previous APK, while F204's fix is compiled only on Linux.
+The older hashes and runtime results above describe the previous revision.
+Windows VM, Mac/Xcode/iOS, and router runtime remain excluded by the
+user's decision. D11 remains DONE for the refreshed source.
 
 [Debt register](../plans/AUDIT-DEBT.md) · [Native recipes](../../../native-libs/README.md)

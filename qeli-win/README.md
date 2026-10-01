@@ -214,11 +214,13 @@ Managed crypto/codec/config KAT и benchmark вынесены из production EX
 `dotnet run --project ../qeli-shared/QeliConformance -c Release -- selftest` и
 `... -- packetbench --ci`.
 
-## Состояние сборки и release gate 0.8.0
+## Состояние сборки и release gate 0.8.2
 
-Windows-клиент сохраняет compatibility floor ABI 1.16, а fail-closed roaming использует
-типизированные path results ABI 1.14. После переноса редактора в ABI 1.16 закоммиченная `qeli.dll` требует новой
-reproducible A/B-пересборки и обновления provenance. Перед выпуском 0.8.0 обязательно:
+Windows-клиент требует ABI 1.16 и использует типизированные path results для
+fail-closed roaming. Текущая `qeli.dll` пересобрана двумя независимыми проходами
+из исходника с digest `d39a3343…`; canonical и EmbeddedResource-копии совпадают,
+`native-libs/provenance.py --check` проходит. После изменения Rust-исходника
+нужна новая A/B-пересборка. Перед публикацией 0.8.2 обязательно:
 
 - пересобрать core только если изменилось Rust-дерево, но всегда заново собрать оба EXE;
 - пройти `native-libs/provenance.py --check`, hash/ABI/package/signing gates;
