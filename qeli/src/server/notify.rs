@@ -7,7 +7,7 @@
 //! Outbound HTTPS reuses the existing rustls(ring) stack + the Mozilla root bundle (webpki-roots) so
 //! certificates are properly verified — no MITM hole for the notification path.
 
-pub use crate::config::notify::{ChannelEvents, NotifyConfig};
+pub use crate::config::notify::{ChannelEvents, ConditionalSave, NotifyConfig};
 use crate::notify_tasks::DeliveryQueue;
 #[cfg(target_os = "linux")]
 use crate::server::usage;
@@ -222,9 +222,13 @@ impl Event {
 
 /// Read the sidecar without hiding an I/O or parse failure. The panel uses this path so a
 /// failed GET can never be followed by a PUT layered over empty defaults that erases secrets.
-pub fn load_checked() -> Result<NotifyConfig, String> {
-    crate::config::notify::load_path(std::path::Path::new(NOTIFY_PATH))
+pub fn load_checked_with_raw() -> Result<(NotifyConfig, String), String> {
+    crate::config::notify::load_path_with_raw(std::path::Path::new(NOTIFY_PATH))
         .map_err(|error| format!("cannot load {NOTIFY_PATH}: {error}"))
+}
+
+pub fn load_checked() -> Result<NotifyConfig, String> {
+    load_checked_with_raw().map(|(config, _)| config)
 }
 
 /// Runtime reads fail closed to disabled channels, but log loudly; unlike the panel they cannot
@@ -297,13 +301,19 @@ pub fn load_cached() -> NotifyConfig {
     cfg
 }
 
-/// Persist atomically (temp + rename) so a crash can't truncate the file.
-pub fn save(cfg: &NotifyConfig) -> anyhow::Result<()> {
+/// Persist atomically only while the sidecar still matches the editor snapshot.
+pub fn save_if_unchanged(cfg: &NotifyConfig, checked_raw: &str) -> anyhow::Result<ConditionalSave> {
     let cell = NOTIFY_CACHE.get_or_init(|| Mutex::new(None));
     let mut cached = cell.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    crate::config::notify::save_path(std::path::Path::new(NOTIFY_PATH), cfg)?;
-    *cached = Some((file_stamp(), cfg.clone()));
-    Ok(())
+    let outcome = crate::config::notify::save_path_if_unchanged(
+        std::path::Path::new(NOTIFY_PATH),
+        cfg,
+        checked_raw,
+    )?;
+    if matches!(outcome, ConditionalSave::Saved(_)) {
+        *cached = Some((file_stamp(), cfg.clone()));
+    }
+    Ok(outcome)
 }
 
 /// Reject enabled channels that cannot deliver anything. Keeping disabled channel fields is

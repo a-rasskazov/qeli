@@ -303,3 +303,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F160: INI revision for lockout-policy saves](reports/AUDIT-Q25-SERVER-BLOCKED-REVISION.md)
 - [Q25-F161: archive restore directory scan errors](reports/AUDIT-Q25-SERVER-ARCHIVE-SCAN.md)
 - [Q25-F162: INI-only notification settings](reports/AUDIT-Q25-SERVER-NOTIFY-INI.md)
+- [Q25-F163: concurrent notification saves](reports/AUDIT-Q25-SERVER-NOTIFY-REVISION.md)

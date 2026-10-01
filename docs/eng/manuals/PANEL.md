@@ -756,6 +756,10 @@ settings to INI and remove the old file. Panel backups omit `notify.json`,
 and archive restore rejects it. JSON remains only in the internal API and
 webhook messages.
 
+On save, the panel checks a revision of the exact notify.ini bytes. If another
+tab or a manual editor has changed the file, the write is rejected; reload
+the page and review the new values before saving again.
+
 - **Server name** — a label prefixed to every message (`[name] …`) and put in the
   webhook JSON `server` field, so several servers reporting into one chat / hook are
   distinguishable. Empty = no prefix.

@@ -168,12 +168,12 @@ static IO_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// parsing, and do not silently replace an old JSON-only installation with defaults.
 pub const MAX_NOTIFY_INI_BYTES: u64 = 64 * 1024;
 
-pub fn load_path(path: &Path) -> anyhow::Result<NotifyConfig> {
-    let _guard = IO_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+fn load_path_unlocked(path: &Path) -> anyhow::Result<(NotifyConfig, String)> {
     match crate::config_source::load_bounded(path, MAX_NOTIFY_INI_BYTES) {
         Ok(snapshot) => {
             let (raw, _) = snapshot.into_parts();
-            NotifyConfig::from_ini(&raw)
+            let config = NotifyConfig::from_ini(&raw)?;
+            Ok((config, raw))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let legacy = path.with_extension("json");
@@ -183,25 +183,64 @@ pub fn load_path(path: &Path) -> anyhow::Result<NotifyConfig> {
                     legacy.display()
                 );
             }
-            Ok(NotifyConfig::default())
+            Ok((NotifyConfig::default(), String::new()))
         }
         Err(error) => Err(error.into()),
     }
 }
 
-pub fn save_path(path: &Path, config: &NotifyConfig) -> anyhow::Result<()> {
+/// Return parsed settings and the exact INI bytes from one stable file snapshot.
+pub fn load_path_with_raw(path: &Path) -> anyhow::Result<(NotifyConfig, String)> {
+    let _guard = IO_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    load_path_unlocked(path)
+}
+
+pub fn load_path(path: &Path) -> anyhow::Result<NotifyConfig> {
+    load_path_with_raw(path).map(|(config, _)| config)
+}
+
+fn bounded_ini(config: &NotifyConfig) -> anyhow::Result<String> {
     let raw = config.to_ini_string()?;
     anyhow::ensure!(
         raw.len() as u64 <= MAX_NOTIFY_INI_BYTES,
         "notification INI is {} bytes; maximum is {MAX_NOTIFY_INI_BYTES}",
         raw.len()
     );
+    Ok(raw)
+}
+
+pub fn save_path(path: &Path, config: &NotifyConfig) -> anyhow::Result<()> {
+    let raw = bounded_ini(config)?;
     let _guard = IO_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     #[cfg(unix)]
     let _file_lock = crate::util::FileLock::acquire(path)?;
     crate::util::write_atomic_private(path, raw.as_bytes())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConditionalSave {
+    Saved(String),
+    Conflict(String),
+}
+
+/// Serialize panel writers and compare exact bytes again immediately before publication.
+/// A non-cooperating external editor can still race the final rename.
+pub fn save_path_if_unchanged(
+    path: &Path,
+    config: &NotifyConfig,
+    checked_raw: &str,
+) -> anyhow::Result<ConditionalSave> {
+    let raw = bounded_ini(config)?;
+    let _guard = IO_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    #[cfg(unix)]
+    let _file_lock = crate::util::FileLock::acquire(path)?;
+    let (_, current_raw) = load_path_unlocked(path)?;
+    if current_raw != checked_raw {
+        return Ok(ConditionalSave::Conflict(current_raw));
+    }
+    crate::util::write_atomic_private(path, raw.as_bytes())?;
+    Ok(ConditionalSave::Saved(raw))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +331,35 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn conditional_save_rejects_stale_tab_and_manual_ini_edit() {
+        let dir = directory("revision");
+        let ini = dir.join("notify.ini");
+        let (mut config, initial_raw) = load_path_with_raw(&ini).unwrap();
+        assert!(initial_raw.is_empty());
+        config.server_name = "first".into();
+        let saved_raw = match save_path_if_unchanged(&ini, &config, &initial_raw).unwrap() {
+            ConditionalSave::Saved(raw) => raw,
+            other => panic!("unexpected result: {other:?}"),
+        };
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), saved_raw);
+
+        config.server_name = "stale".into();
+        assert_eq!(
+            save_path_if_unchanged(&ini, &config, &initial_raw).unwrap(),
+            ConditionalSave::Conflict(saved_raw.clone())
+        );
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), saved_raw);
+
+        let edited_raw = format!("# manual edit\n{saved_raw}");
+        std::fs::write(&ini, &edited_raw).unwrap();
+        assert_eq!(
+            save_path_if_unchanged(&ini, &config, &saved_raw).unwrap(),
+            ConditionalSave::Conflict(edited_raw.clone())
+        );
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), edited_raw);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn invalid_or_oversized_ini_is_rejected_without_overwriting() {
         let dir = directory("bounded");

@@ -145,6 +145,7 @@ function notificationsPage() {
       webhook_enabled: false, webhook_url: '',
       webhook_events: { on_server_start: true, on_quota_breach: true, on_login_lockout: true, on_auth_lockout: true, on_restore: true, on_client_connect: false, on_client_disconnect: false },
     },
+    revision: '',
     tokenSet: false,
     tokenHint: '',
     loaded: false,
@@ -172,6 +173,7 @@ function notificationsPage() {
         const d = await apiFetch('api/notify');
         if (!d.ok) throw new Error(d.error || 'Load failed');
         const c = d.config;
+        this.revision = d.revision || '';
         this.cfg.server_name = c.server_name || '';
         this.cfg.telegram_enabled = c.telegram_enabled;
         this.cfg.telegram_chat_id = c.telegram_chat_id || '';
@@ -195,7 +197,7 @@ function notificationsPage() {
     async save() {
       if (!this.loaded || this.loading || this.busy || this.loadFailed) return;
       this.busy = true;
-      const submitted = JSON.stringify(this.cfg);
+      const submitted = JSON.stringify(Object.assign({}, this.cfg, { expected_revision: this.revision }));
       const submittedToken = this.cfg.telegram_token;
       try {
         const d = await apiFetch('api/notify', {
@@ -204,6 +206,7 @@ function notificationsPage() {
         });
         if (d.ok) {
           const saved = d.config || {};
+          this.revision = d.revision || this.revision;
           this.$dispatch('notify', { msg: 'Notification settings saved', type: 'success' });
           this.tokenSet = !!saved.telegram_token_set;
           this.tokenHint = saved.telegram_token_hint || '';
