@@ -313,3 +313,4 @@
 - [Q25-F196: проверка пароля share URI во всех адаптерах](reports/AUDIT-Q25-CLIENT-SHARE-PARITY.md)
 - [Q25-F197: матрица общего INI-редактора](reports/AUDIT-Q25-CLIENT-INI-MATRIX.md)
 - [Q25-F198: бюджет прямого импорта qeli://](reports/AUDIT-Q25-CLIENT-URI-BUDGET.md)
+- [Q25-F199: входы воспроизводимой native-сборки](reports/AUDIT-Q25-NATIVE-BUILD-INPUTS.md)

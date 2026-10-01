@@ -143,15 +143,21 @@ def sync_qeli_source(
     local_qeli: str | os.PathLike[str],
     remote_source: str,
 ) -> int:
-    """Replace remote sources/assets/manifests with the exact local build inputs."""
+    """Replace remote sources/assets/manifests/Cargo config with exact local inputs."""
     if not remote_source.startswith("/") or remote_source == "/" or ".." in remote_source.split("/"):
         raise ValueError(f"unsafe remote source root: {remote_source!r}")
     local_root = Path(local_qeli)
     remote_src = posixpath.join(remote_source, "src")
+    remote_cargo = posixpath.join(remote_source, ".cargo")
+    local_cargo_config = local_root / ".cargo" / "config.toml"
+    if not local_cargo_config.is_file():
+        raise RuntimeError(f"native build input is missing: {local_cargo_config}")
     connection.checked(
-        f"rm -rf {shlex.quote(remote_src)} && mkdir -p {shlex.quote(remote_src)}",
-        "clean remote source",
+        f"rm -rf {shlex.quote(remote_src)} {shlex.quote(remote_cargo)} "
+        f"&& mkdir -p {shlex.quote(remote_src)} {shlex.quote(remote_cargo)}",
+        "clean remote source and Cargo config",
     )
+    sftp.put(os.fspath(local_cargo_config), posixpath.join(remote_cargo, "config.toml"))
     count = 0
     for root, directories, names in os.walk(local_root / "src"):
         directories.sort()

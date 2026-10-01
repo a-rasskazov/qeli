@@ -313,3 +313,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F196: share URI password contract across adapters](reports/AUDIT-Q25-CLIENT-SHARE-PARITY.md)
 - [Q25-F197: shared INI editor matrix](reports/AUDIT-Q25-CLIENT-INI-MATRIX.md)
 - [Q25-F198: direct qeli:// import budget](reports/AUDIT-Q25-CLIENT-URI-BUDGET.md)
+- [Q25-F199: reproducible native build inputs](reports/AUDIT-Q25-NATIVE-BUILD-INPUTS.md)

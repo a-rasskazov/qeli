@@ -18,7 +18,9 @@ targets       : x86_64-pc-windows-gnu · universal2-apple-darwin ·
                 aarch64-linux-android · x86_64-linux-android
 
 `source-digest` is SHA256 over `"<path> <sha256>
-"` for every `qeli/src/**/*.rs` plus
-`qeli/Cargo.toml` and `qeli/Cargo.lock`, paths sorted. Recompute it with
+"` for every `qeli/src/**/*.rs`,
+`qeli/Cargo.toml`, `qeli/Cargo.lock`, `qeli/.cargo/config.toml` and the executable
+native recipes listed in `scripts/native_repro.py` (`BUILD_INPUTS`), paths sorted.
+Recompute it with
 `python native-libs/provenance.py --check`: a mismatch means the cores are stale relative
 to the source in this tree and must be rebuilt before release.

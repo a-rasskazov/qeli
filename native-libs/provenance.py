@@ -26,6 +26,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+from native_repro import BUILD_INPUTS
 from native_repro import source_digest as reproducible_source_digest
 from native_repro import validate_evidence
 
@@ -33,7 +34,7 @@ PROVENANCE = os.path.join("native-libs", "PROVENANCE")
 
 
 def source_digest() -> str:
-    """SHA256 over every source and locked manifest that lands in the cdylib."""
+    """SHA256 over Rust sources, Cargo inputs and executable build recipes."""
     return reproducible_source_digest(".")
 
 
@@ -77,13 +78,13 @@ def main() -> int:
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True
         ).stdout.strip()
         dirty = subprocess.run(
-            ["git", "status", "--porcelain", "qeli/src", "qeli/Cargo.toml", "qeli/Cargo.lock"],
+            ["git", "status", "--porcelain", "--", "qeli/src", *BUILD_INPUTS],
             capture_output=True,
             text=True,
         ).stdout.strip()
         if dirty:
             print(
-                "REFUSING TO UPDATE PROVENANCE: qeli source/manifests are dirty:\n"
+                "REFUSING TO UPDATE PROVENANCE: native build inputs are dirty:\n"
                 + dirty,
                 file=sys.stderr,
             )
@@ -129,8 +130,8 @@ def main() -> int:
         f"  recorded : {expected}\n"
         f"  actual   : {actual}\n"
         "\n"
-        "qeli/src has changed since the .so/.dll/.dylib were built, so the GUI clients\n"
-        "would ship an older realtls/FFI core than this tree describes. Rebuild them:\n"
+        "A native source or build recipe has changed since the .so/.dll/.dylib build;\n"
+        "the GUI clients may ship cores that do not match this tree. Rebuild them:\n"
         "  python scripts/build_native_libs_p4.py   # windows + macos, on lab .10\n"
         "  python scripts/build_android_so_11.py    # android, on lab .11\n"
         "then `bash native-libs/verify.sh --update` and\n"

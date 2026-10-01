@@ -20,6 +20,11 @@ class NativeReproTests(unittest.TestCase):
         (self.root / "qeli" / "src" / "lib.rs").write_text("pub fn qeli() {}\n")
         (self.root / "qeli" / "Cargo.toml").write_text("[package]\nname='qeli'\n")
         (self.root / "qeli" / "Cargo.lock").write_text("version = 4\n")
+        for relative in native_repro.BUILD_INPUTS:
+            path = self.root / relative
+            if not path.is_file():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"{relative}\n")
         for paths in native_repro.EVIDENCE_SPECS.values():
             for relative in paths:
                 path = self.root / relative
@@ -138,6 +143,19 @@ class NativeReproTests(unittest.TestCase):
                 toolchain,
                 self.hashes("desktop"),
             )
+
+    def test_cargo_config_and_recipe_changes_invalidate_evidence(self):
+        self.write_all()
+        original = self.identity["source_digest"]
+        for relative in ("qeli/.cargo/config.toml", "scripts/macho_repro.py"):
+            path = self.root / relative
+            previous = path.read_bytes()
+            path.write_bytes(previous + b"changed\n")
+            changed = native_repro.source_digest(self.root)
+            self.assertNotEqual(changed, original)
+            errors = native_repro.validate_evidence(self.root, changed)
+            self.assertTrue(any("source digest" in error for error in errors))
+            path.write_bytes(previous)
 
     def test_wrong_source_digest_is_rejected(self):
         self.write_all()
