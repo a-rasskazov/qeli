@@ -19,16 +19,18 @@ public static class ProfileStore
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private static readonly ProfileStoreFile StoreFile = new(FilePath);
 
     public static List<VpnConfig> Load()
     {
         // Absent file = normal first run. Only a PRESENT-but-unreadable file is dangerous.
-        if (!File.Exists(FilePath)) return new List<VpnConfig>();
+        var stored = StoreFile.Read();
+        if (stored is null) return new List<VpnConfig>();
         List<VpnConfig> profiles;
         bool needsMigration;
         try
         {
-            var bytes = File.ReadAllBytes(FilePath);
+            var bytes = stored;
             string json;
             bool wasLegacyPlaintext = false;
             try
@@ -55,7 +57,7 @@ public static class ProfileStore
         {
             // Do not expose an empty store while the unreadable file remains at FilePath.
             // A failed quarantine is fatal so a later Save cannot overwrite that file.
-            var preserved = ProfileStoreRecovery.PreserveUnreadable(FilePath);
+            var preserved = StoreFile.PreserveUnreadable();
             System.Diagnostics.Debug.WriteLine(
                 $"ProfileStore: profiles.json unreadable, preserved at {preserved} ({ex.Message})");
             return new List<VpnConfig>();
@@ -72,13 +74,6 @@ public static class ProfileStore
         Directory.CreateDirectory(Dir);
         var json = JsonSerializer.Serialize(profiles, Options);
         var enc = ProtectedData.Protect(Encoding.UTF8.GetBytes(json), null, DataProtectionScope.CurrentUser);
-        // Atomic write: a crash mid-write must not truncate the only copy. `File.Replace`
-        // swaps in the new file and keeps a one-generation `.bak` of the prior one.
-        var tmp = FilePath + ".tmp";
-        File.WriteAllBytes(tmp, enc);
-        if (File.Exists(FilePath))
-            File.Replace(tmp, FilePath, FilePath + ".bak");
-        else
-            File.Move(tmp, FilePath);
+        StoreFile.Write(enc);
     }
 }

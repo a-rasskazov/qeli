@@ -17,16 +17,18 @@ public static class ProfileStore
     private static readonly string FilePath = Path.Combine(Dir, "profiles.json");
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private static readonly ProfileStoreFile StoreFile = new(FilePath);
 
     public static List<VpnConfig> Load()
     {
         // Absent file = normal first run. Only a PRESENT-but-unreadable file is dangerous.
-        if (!File.Exists(FilePath)) return new List<VpnConfig>();
+        var stored = StoreFile.Read();
+        if (stored is null) return new List<VpnConfig>();
         List<VpnConfig> profiles;
         bool needsMigration;
         try
         {
-            var raw = File.ReadAllBytes(FilePath);
+            var raw = stored;
             var plaintext = EncryptedEnvelope.Open(
                 raw, SecureKey.GetOrCreate(), allowLegacyArray: true, out bool needsEnvelopeMigration);
             string json = StrictUtf8.GetString(plaintext);
@@ -41,7 +43,7 @@ public static class ProfileStore
         {
             // Keep the unreadable original before attempting .bak recovery. Failure to
             // preserve it must stop loading, rather than allow a later Save to overwrite it.
-            var preserved = ProfileStoreRecovery.PreserveUnreadable(FilePath);
+            var preserved = StoreFile.PreserveUnreadable();
             System.Diagnostics.Debug.WriteLine(
                 $"ProfileStore: profiles.json unreadable, preserved at {preserved} ({ex.Message})");
 
@@ -82,15 +84,6 @@ public static class ProfileStore
         var key = SecureKey.GetOrCreate();
         var pt = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(profiles, Options));
         var blob = EncryptedEnvelope.Seal(pt, key);
-        // Atomic write (temp born 0600 + replace): a crash mid-write must not truncate the
-        // only copy, and the secret ciphertext must never briefly be world-readable.
-        var tmp = FilePath + ".tmp";
-        File.WriteAllBytes(tmp, blob);
-        if (!OperatingSystem.IsWindows())
-            try { File.SetUnixFileMode(tmp, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { }
-        if (File.Exists(FilePath))
-            File.Replace(tmp, FilePath, FilePath + ".bak");
-        else
-            File.Move(tmp, FilePath);
+        StoreFile.Write(blob);
     }
 }

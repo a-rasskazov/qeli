@@ -21,6 +21,56 @@ internal static class ProfileStoreConformance
             try { ProfileStoreRecovery.PreserveUnreadable(path); }
             catch (IOException) { failedClosed = true; }
             check("profile store: failed quarantine refuses empty recovery", failedClosed);
+
+            var livePath = Path.Combine(dir, "live-profiles.json");
+            var first = new ProfileStoreFile(livePath);
+            var second = new ProfileStoreFile(livePath);
+            check("profile store: both instances observe an absent initial file",
+                first.Read() is null && second.Read() is null);
+            first.Write([1, 2, 3]);
+            bool staleCreateRejected = false;
+            try { second.Write([4]); }
+            catch (IOException) { staleCreateRejected = true; }
+            check("profile store: stale create cannot replace another instance",
+                staleCreateRejected && File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 1, 2, 3 }));
+
+            check("profile store: second instance reloads the current bytes",
+                second.Read()?.SequenceEqual(new byte[] { 1, 2, 3 }) == true);
+            second.Write([4, 5]);
+            bool staleUpdateRejected = false;
+            try { first.Write([6]); }
+            catch (IOException) { staleUpdateRejected = true; }
+            check("profile store: stale update preserves the newer file and backup",
+                staleUpdateRejected
+                && File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 4, 5 })
+                && File.ReadAllBytes(livePath + ".bak").SequenceEqual(new byte[] { 1, 2, 3 }));
+
+            first.Read();
+            second.Write([7]);
+            bool staleQuarantineRejected = false;
+            try { first.PreserveUnreadable(); }
+            catch (IOException) { staleQuarantineRejected = true; }
+            check("profile store: stale quarantine cannot move a newer valid file",
+                staleQuarantineRejected && File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 7 }));
+
+            first.Read();
+            var quarantine = first.PreserveUnreadable();
+            first.Write([8]);
+            check("profile store: quarantine allows a fresh store while preserving original bytes",
+                File.ReadAllBytes(quarantine).SequenceEqual(new byte[] { 7 })
+                && File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 8 }));
+
+            bool lockRejected = false;
+            using (var held = new FileStream(livePath + ".lock", FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                try { first.Write([9]); }
+                catch (IOException) { lockRejected = true; }
+            }
+            check("profile store: sidecar lock prevents a concurrent write",
+                lockRejected && File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 8 }));
+            first.Write([9]);
+            check("profile store: write succeeds after the lock is released",
+                File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 9 }));
         }
         finally
         {
