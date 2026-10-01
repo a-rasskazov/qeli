@@ -72,6 +72,22 @@ internal static class ProfileStoreConformance
             check("profile store: write succeeds after the lock is released",
                 File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 9 }));
 
+            Task<byte[]?> waitingRead;
+            using (var held = new FileStream(livePath + ".lock", FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                using var started = new ManualResetEventSlim();
+                waitingRead = Task.Run(() =>
+                {
+                    started.Set();
+                    return new ProfileStoreFile(livePath).Read();
+                });
+                check("profile store: a transient lock keeps the second reader waiting",
+                    started.Wait(TimeSpan.FromSeconds(2)) && !waitingRead.Wait(100));
+            }
+            check("profile store: the waiting reader loads after lock release",
+                waitingRead.Wait(TimeSpan.FromSeconds(3))
+                && waitingRead.Result?.SequenceEqual(new byte[] { 9 }) == true);
+
             var oversizedPath = Path.Combine(dir, "oversized-profiles.json");
             using (var large = File.Create(oversizedPath))
                 large.SetLength(ProfileStoreFile.MaximumStoredBytes + 1L);

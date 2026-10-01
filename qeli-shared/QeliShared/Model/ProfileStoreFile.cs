@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 
 namespace Qeli.Shared.Model;
@@ -79,7 +80,20 @@ public sealed class ProfileStoreFile(string path)
     private FileStream AcquireLock()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        return new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var wait = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                return new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (wait.Elapsed < TimeSpan.FromSeconds(1))
+            {
+                // Another Qeli instance may hold the sidecar for a short read or write.
+                // Keep the wait bounded so a wedged owner cannot freeze the UI.
+                Thread.Sleep(25);
+            }
+        }
     }
 
     private void AssertUnchanged()
