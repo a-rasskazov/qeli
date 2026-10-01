@@ -12,6 +12,7 @@ use crate::server::client_manager::ClientManager;
 use crate::server::web::auth::{self, AuthError};
 use crate::server::ServerState;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::{json, Value};
 use std::path::Path as FsPath;
@@ -43,6 +44,13 @@ fn profile_revision_conflict(body: &Value, current: Option<&str>) -> Option<Valu
             "current_revision": revision,
         })),
     }
+}
+
+fn delete_revision_conflict(headers: &HeaderMap, current_raw: &str) -> Option<Value> {
+    let expected = headers
+        .get("x-qeli-revision")
+        .and_then(|value| value.to_str().ok());
+    profile_revision_conflict(&json!({ "expected_revision": expected }), Some(current_raw))
 }
 
 fn write_profile_if_unchanged(
@@ -181,11 +189,12 @@ fn panel_state_from_diagnostics(status: &Value) -> &'static str {
 /// Parse a stored profile's `[qeli]` essentials for the list view (best-effort).
 fn profile_summary(name: &str) -> Value {
     let path = ClientManager::profile_path(name);
-    let cfg = read_profile(&path)
-        .ok()
-        .flatten()
-        .and_then(|s| crate::config::parse_client_config_strict(&s).ok());
-    match cfg {
+    let raw = read_profile(&path).ok().flatten();
+    let revision = raw.as_deref().map(super::config::config_revision);
+    let cfg = raw
+        .as_deref()
+        .and_then(|s| crate::config::parse_client_config_strict(s).ok());
+    let mut summary = match cfg {
         Some(c) => json!({
             "name": name,
             "server": crate::util::join_host_port(&c.server.address, c.server.port),
@@ -200,7 +209,11 @@ fn profile_summary(name: &str) -> Value {
             "allow_ipv6_leak": c.routing.allow_ipv6_leak,
         }),
         None => json!({ "name": name, "server": "?", "invalid": true }),
+    };
+    if let Some(revision) = revision {
+        summary["revision"] = json!(revision);
     }
+    summary
 }
 
 pub async fn list_profiles(
@@ -591,7 +604,10 @@ pub async fn save_profile(
         return Json(conflict);
     }
     match persist(&name, &ini, current.as_deref()) {
-        Ok(true) => Json(json!({ "ok": true, "name": name })),
+        Ok(true) => {
+            let requires_reconnect = state.client_manager.is_running(&name).await;
+            Json(json!({ "ok": true, "name": name, "requires_reconnect": requires_reconnect }))
+        }
         Ok(false) => Json(super::err_json(
             "The client profile changed on disk during this save. Reload and review it.",
         )),
@@ -673,16 +689,12 @@ pub async fn delete_profile(
     State(state): State<Arc<ServerState>>,
     _g: auth::AuthGuard,
     Path(name): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
     if !ClientManager::valid_name(&name) {
         return Json(super::err_json("invalid name"));
     }
     let _write_guard = state.config_write_lock.lock().await;
-    if let Err(error) = state.client_manager.disconnect(&name).await {
-        return Json(super::err_json(format!(
-            "could not stop profile '{name}': {error}"
-        )));
-    }
     let profile_path = ClientManager::profile_path(&name);
     if !FsPath::new(crate::server::client_manager::CLIENTS_DIR).is_dir() {
         return Json(super::err_json("profile not found"));
@@ -691,6 +703,33 @@ pub async fn delete_profile(
         Ok(lock) => lock,
         Err(error) => return Json(super::err_json(error)),
     };
+    let checked_raw = match read_profile(&profile_path) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return Json(super::err_json("profile not found")),
+        Err(error) => return Json(super::err_json(error.to_string())),
+    };
+    if let Some(conflict) = delete_revision_conflict(&headers, &checked_raw) {
+        return Json(conflict);
+    }
+    if let Err(error) = state.client_manager.disconnect(&name).await {
+        return Json(super::err_json(format!(
+            "could not stop profile '{name}': {error}"
+        )));
+    }
+    // Detect a manual edit during graceful disconnect before unlinking the file.
+    match read_profile(&profile_path) {
+        Ok(Some(raw)) if raw == checked_raw => {}
+        Ok(Some(raw)) => {
+            return Json(json!({
+                "ok": false,
+                "kind": "config_conflict",
+                "error": "The client profile changed during disconnect. Nothing was deleted; reload it.",
+                "current_revision": super::config::config_revision(&raw),
+            }))
+        }
+        Ok(None) => return Json(super::err_json("profile not found")),
+        Err(error) => return Json(super::err_json(error.to_string())),
+    }
     match std::fs::remove_file(&profile_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -774,6 +813,28 @@ mod diagnostic_tests {
             .unwrap();
         assert!(read_structured_status(path_str, "alpha").is_none());
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn delete_revision_header_rejects_missing_and_stale_versions() {
+        let original = "[qeli]\nserver = first:443\n";
+        let modified = "# edited\n[qeli]\nserver = first:443\n";
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            delete_revision_conflict(&headers, original).unwrap()["kind"],
+            "config_revision_required"
+        );
+        headers.insert(
+            "x-qeli-revision",
+            super::super::config::config_revision(original)
+                .parse()
+                .unwrap(),
+        );
+        assert!(delete_revision_conflict(&headers, original).is_none());
+        assert_eq!(
+            delete_revision_conflict(&headers, modified).unwrap()["kind"],
+            "config_conflict"
+        );
     }
 
     #[test]

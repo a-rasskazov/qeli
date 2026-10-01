@@ -704,6 +704,8 @@
       'TX queue length': 'Длина очереди TX',
       'Kernel transmit queue size. Higher = more buffering.': 'Размер очереди передачи в ядре. Больше = больше буферизации.',
       'TUN queues (multi-queue)': 'Очереди TUN (multi-queue)',
+      'IFF_MULTI_QUEUE: 0 = auto (CPU count), 1 = single queue, up to 256 explicitly.':
+        'IFF_MULTI_QUEUE: 0 = автоматически (по числу CPU), 1 = одна очередь, явное значение — до 256.',
       'IFF_MULTI_QUEUE: 0 = auto (CPU count) so the kernel RSS-spreads packets across cores. 1 = single queue.':
         'IFF_MULTI_QUEUE: 0 = авто (число CPU), ядро RSS-распределяет пакеты по ядрам. 1 = одна очередь.',
 
@@ -757,6 +759,8 @@
       'TCP (reliable)': 'TCP (надёжнее)',
       'Cache size': 'Размер кэша',
       'Number of DNS entries to cache': 'Сколько DNS-записей кэшировать',
+      '0 disables caching; up to 10000 entries and 16 MiB of cached packets per profile':
+        '0 отключает кэш; до 10 000 записей и 16 МиБ кэшированных пакетов на профиль',
       'Timeout (seconds)': 'Таймаут (сек)',
       'Upstream query timeout': 'Таймаут upstream-запроса',
       'Upstream DNS servers': 'Upstream DNS-серверы',
@@ -800,6 +804,8 @@
       'Required for obfs mode — must match the client exactly': 'Обязательно для режима obfs — должно точно совпадать с клиентом',
       'Generate': 'Сгенерировать',
       'SNI (Server Name)': 'SNI (имя сервера)',
+      'SNI in generated fake-TLS share links. REALITY links use the proxy target automatically.':
+        'SNI в создаваемых ссылках fake-TLS. В ссылках REALITY автоматически используется адрес прокси.',
       'Domain in the fake TLS ClientHello — should be a real CDN/HTTPS site': 'Домен в фейковом TLS ClientHello — должен быть реальным CDN/HTTPS-сайтом',
       'TLS session ID': 'TLS session ID',
       'Include a random TLS session ID (more realistic handshake)': 'Включать случайный TLS session ID (реалистичнее рукопожатие)',
@@ -1447,6 +1453,10 @@
 
       // ── JS-built toasts / dialogs (wrapped in qeliT() at the call site) ──
       'Copied': 'Скопировано',
+      'Profile revision unavailable. Reload before deleting.': 'Ревизия профиля недоступна. Обновите список перед удалением.',
+      'Saved "{}"': 'Профиль «{}» сохранён',
+      'Saved "{}". Disconnect and Connect to apply changes.':
+        'Профиль «{}» сохранён. Для применения изменений отключите его и подключите снова.',
       'Link copied': 'Ссылка скопирована',
       'Network error:': 'Сетевая ошибка:',
       'Failed to load config:': 'Не удалось загрузить конфигурацию:',

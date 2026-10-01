@@ -627,7 +627,9 @@ Creating or importing requires an unused name; an existing client profile is nev
 silently replaced. The editor saves with the exact INI revision it loaded. If another
 tab or a manual edit changes the file, the save is rejected: reopen the profile,
 review the newer contents, and save again. INI reads use the client runtime's
-256 KiB limit.
+256 KiB limit. Saving a connected profile writes the INI but does not change the
+running client process. Use Disconnect, then Connect to apply it; the process's
+internal reconnect loop does not reload the file.
 
 **Where things live.**
 - Profiles: `/etc/qeli/clients/<name>.conf`, mode `0600` (they contain the password in
@@ -643,7 +645,10 @@ review the newer contents, and save again. INI reads use the client runtime's
 **Connect / Disconnect.** Connect spawns `qeli client -c <file>` as a child of the
 supervisor (inheriting its privileges, so it can bring up its TUN and routes). Disconnect
 sends SIGTERM — the client restores DNS and routes and exits; if it hasn't left after 5 s
-it is SIGKILLed. **Delete** disconnects first, then removes the profile and its log. A
+it is SIGKILLed. **Delete** checks the INI revision before disconnecting, then
+removes the profile and its log. A stale page leaves the tunnel running and the
+file intact; refresh the list. Direct Delete API calls require the
+X-Qeli-Revision header from the profile list. A
 profile with `autostart = true` is connected when the supervisor starts. Autostart
 reads only a stable client INI up to 256 KiB; a file that changes during reading
 or exceeds the limit is skipped.
