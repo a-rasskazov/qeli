@@ -35,19 +35,27 @@ mount -t tmpfs tmpfs /var/lib
 mount -t tmpfs tmpfs /var/log
 mkdir -p /var/lib/qeli /var/log/qeli "$case_root/etc" "$case_root/tmp"
 mount --bind "$case_root/etc" /etc/qeli
-export QELI_KEEP_WORK=1 TMPDIR="$case_root/tmp" LC_ALL=C
+mount --bind "$case_root/tmp" /tmp
+export QELI_KEEP_WORK=1 TMPDIR=/tmp LC_ALL=C
 exec bash "$@"
 '''
 
 
 def snapshot(lab):
-    return {name: lab.checked(command, name, timeout=30) for name, command in {
+    result = {name: lab.checked(command, name, timeout=30) for name, command in {
         'addresses4': 'ip -br -4 addr', 'addresses6': 'ip -br -6 addr',
         'routes4': 'ip -4 route show table all', 'routes6': 'ip -6 route show table all',
         'firewall4': 'iptables-save', 'firewall6': 'ip6tables-save',
+        'firewall4_legacy': 'iptables-legacy-save', 'firewall6_legacy': 'ip6tables-legacy-save',
+        'nft': 'nft list ruleset',
         'listener': "ss -lntp | grep ':443'", 'resolver_sha256': 'sha256sum /etc/resolv.conf',
         'named_namespaces': 'ip netns list',
     }.items()}
+    for key in ('firewall4', 'firewall6', 'firewall4_legacy', 'firewall6_legacy'):
+        result[key] = re.sub(r'\[\d+:\d+\]', '[COUNTERS]', '\n'.join(
+            line for line in result[key].splitlines() if not line.startswith('#')))
+    result['nft'] = re.sub(r'counter packets \d+ bytes \d+', 'counter packets COUNTER bytes COUNTER', result['nft'])
+    return result
 
 
 def put(sftp, path, data):
@@ -156,7 +164,8 @@ def main():
             checks = re.findall(r'=== RESULT .*?: (\d+) passed, (\d+) failed ===', output)
             row = dict(id=name, status='passed' if code == 0 and checks and all(int(f)==0 for p,f in checks) else 'failed',
                        exit_code=code, duration_seconds=round(time.monotonic()-start,3),
-                       checks_passed=sum(int(p) for p,f in checks), checks_failed=sum(int(f) for p,f in checks),
+                       checks_passed=sum(int(p) for p,f in checks) if checks else len(re.findall(r'^\s*PASS  ', output, re.M)),
+                       checks_failed=sum(int(f) for p,f in checks) if checks else len(re.findall(r'^\s*FAIL  ', output, re.M)),
                        command=command_text, log=name+'.log')
             data['results'].append(row); save()
             print(row['status'].upper(), name, row['checks_passed'], row['checks_failed'], flush=True)
@@ -166,6 +175,9 @@ def main():
                 pull_logs(sftp, cell, local)
             finally:
                 sftp.close()
+            if row['status'] != 'passed':
+                data['stopped_on_failure'] = name
+                break
         data['aggregate_leak_passed'] = set(name for name, _ in MATRIX_CASES).issubset(
             {row['id'] for row in data['results'] if row['status']=='passed'})
     finally:
