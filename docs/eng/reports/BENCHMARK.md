@@ -1,13 +1,13 @@
 # qeli load testing
 
-This document keeps the historical narrative measurements in the "Version 0.7.x" sections
-below (through the 0.7.11 candidate); the detailed per-mode tables at the bottom are the
-**0.6.0 reference base** (2026-06-11; 2-VM lab, release binary LTO=fat/strip/panic=abort).
-The canonical [release/benchmark_results.json](../../../release/benchmark_results.json) always
-holds the **latest structured run** — **qeli 0.8.0**, 2026-08-26, full binary SHA-256
-`2f69b48f102571518e2582de64a51d48442baf22b80b8f1586ba369d164d0b49`.
-The dated copy is `benchmark_v0.8.0_2026-08-26_combined_12modes.json`; older files remain
-historical snapshots. The orchestrator — [scripts/benchmark.py](../../../scripts/benchmark.py).
+The latest structured measurement is **qeli 0.8.2, 1 October 2026**:
+[canonical JSON](../../../release/benchmark_results.json) and
+[dated snapshot](../../../release/benchmark_v0.8.2_2026-10-01_isolated_12modes.json).
+Tested release SHA-256: `a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0`.
+12 modes were measured in one sweep; `recordizer=off`, TCP `P=1`.
+**This is a measurement result, not proof of no regression or certification.**
+The previous [0.8.0 run](../../../release/benchmark_v0.8.0_2026-08-26_combined_12modes.json)
+is retained; the 0.7.x sections and detailed 0.6.0 tables below are historical.
 
 ## Isolated benchmark on an active lab
 
@@ -43,6 +43,50 @@ threshold or a no-regression claim.
 Historical [benchmark.py](../../../scripts/benchmark.py) stops services,
 uses host-wide `pkill`, replaces binaries and the resolver file. It now
 requires explicit `--allow-host-wide-benchmark` before SSH access.
+
+## Current 0.8.2 measurement — 1 October 2026
+
+All 12 modes returned `COMPLETED`: 24 TCP phases and 8 UDP phases.
+Both VMs: Linux 6.12.105+deb13-amd64, 2 vCPU, iperf3 3.18.
+Direct network: 25143.0 ↑ / 24578.1 ↓ Mbps; UDP 500: 500.0 Mbps, no loss.
+
+| Mode | TCP ↑ Mbps | TCP ↓ Mbps | UDP 100 received | UDP 500 received | UDP 500 loss, % |
+|---|---:|---:|---:|---:|---:|
+| tcp-plain-raw | 468.8 | 548.0 | — | — | — |
+| tcp-faketls | 454.2 | 528.2 | — | — | — |
+| tcp-padding | 458.3 | 531.1 | — | — | — |
+| tcp-frag | 458.9 | 536.7 | — | — | — |
+| tcp-obfs | 378.1 | 512.5 | — | — | — |
+| tcp-reality | 460.4 | 525.9 | — | — | — |
+| tcp-reality-tls | 896.5 | 936.2 | — | — | — |
+| udp-faketls | 524.4 | 873.5 | 100.0 | 472.5 | 5.49 |
+| udp-padding | 536.5 | 731.4 | 100.0 | 411.0 | 14.38 |
+| udp-quic | 497.6 | 794.7 | 100.0 | 399.8 | 19.80 |
+| tcp-obfs-awg | 408.6 | 551.6 | — | — | — |
+| udp-faketls-awg | 488.0 | 958.6 | 100.0 | 441.7 | 11.39 |
+
+UDP 100 Mbps has no loss in all four modes.
+Every phase has `server_session_drops=0`. `kernel_rcvbuf_drops=0` except
+**287 client drops** during TCP download over UDP+AWG (958.6 Mbps).
+Zero values in these counters do not exclude loss elsewhere.
+Highest measured Qeli CPU over a sampling window: server 127.5%, client 140.7%
+(100% is one core). Sampled peak RSS: server 119.0 MiB, client 56.8 MiB.
+The CPU window is one second longer than iperf and includes workload edges.
+Per-phase CPU/RSS, retransmits, jitter and metadata are retained in JSON;
+raw logs and samples live in `audit-debt-20260924/d14-benchmark-20261001/`,
+with 106 full file SHA-256 values listed in the snapshot.
+
+Only the ambiguous QUIC UDP 500 measurement was repeated: first 399.8 Mbps
+and 19.80% loss with server/client CPU steal 7.13/5.80%; repeat 452.8 Mbps
+and 9.22% with steal 0.09/0.00%. These are two observations, not statistical proof
+of the cause of loss. Host addresses/routes/listener matched before and after both runs.
+
+The old 0.8.0 sweep used `recordizer=prefer` with recordizer active;
+this sweep uses `off` and a different topology. The separate comparison report
+from 2026-09-01 also used TCP `P=4`. No regression percentage is calculated
+from these different tables; such a conclusion requires equivalent A/B.
+This set does not close IPv6/DNS/leak/PMTU/legacy or physical certification gates.
+
 
 > **Latest 0.8.0 cross-protocol run:** the
 > [full 34-mode report](benchmarks/vpn_protocol_benchmark_repeat_2026-09-01.md)
@@ -861,7 +905,7 @@ work"); `.11` has no `/opt/qeli-src` → copy the binary to the client; apply ne
 on `ens18` or the loss hits the control SSH; clear netem + `systemctl restart qeli-server.service`
 in finally.
 
-## Final summary
+## Historical summary
 
 | | TCP | UDP |
 |---|---|---|
@@ -878,7 +922,10 @@ For the measured legacy set, `plain`/`fake-tls` were the fastest and cheapest on
 `obfs` paid a moderate cost and legacy `reality-tls` a noticeable download cost. Current H2
 requires a separate clean throughput result.
 
-## Reproduction
+## Historical reproduction
+
+The commands below assume a dedicated lab with authorized service resets.
+Use the isolated runner above for an active lab.
 
 ```bash
 # from a local machine (paramiko); flat-INI configs, write to /etc/qeli/bench-*.conf.
@@ -887,7 +934,7 @@ python scripts/reboot_vms.py         # clean lab: kills emulator/qeli/netem → 
 python scripts/lab_reset.py          # same without a reboot (emulator, qeli units, iperf3, orphan TUNs, tc/netem)
 python scripts/stability_gate.py     # MANDATORY before a sweep: 5 raw no-tunnel runs in BOTH directions;
                                      # spread >8% either way → the host is noisy and the numbers are fiction (exit 1)
-python scripts/benchmark.py          # baseline + 12 modes × {ping, iperf, CPU/RSS} ≈ 10 min
+python scripts/benchmark.py --allow-host-wide-benchmark # baseline + 12 modes × {ping, iperf, CPU/RSS} ≈ 10 min
                                      # → release/benchmark_<version>_<date>.json (+ a benchmark_results.json copy)
 python scripts/reality_tls_repeat.py # reality-tls ×5 → median/σ (release/reality_tls_5x_<version>_<date>.json)
 python scripts/ab_071_072.py         # host-neutral A/B (0.7.1 from tag vs 0.7.2 interleaved) — when the host is under steal/contention
