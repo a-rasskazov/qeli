@@ -3475,6 +3475,9 @@ not create the directory or file; it reports the refusal on stderr and logs
 there instead. Level and timestamp settings remain readable without a file
 write. This applies to Linux server/worker/client before main validation.
 
+Changing `level`, `file`, or `time_format` on a running server requires a full
+process restart: restarting only the VPN worker does not reconfigure supervisor logging.
+
 | Key | Default | Purpose |
 |---|---|---|
 | `level` | `info` | `error` \| `warn` \| `info` \| `debug` \| `trace`. The `RUST_LOG` env var takes priority |

@@ -86,7 +86,7 @@ pub async fn restart(
         return Ok(Json(json!({
             "ok": false,
             "kind": "full_restart_required",
-            "error": "A startup-only setting changed (panel listener, session-key source or auth.users_file); a worker restart cannot apply it. Restart the full qeli process.",
+            "error": "A startup-only setting changed (panel listener, session-key source, auth.users_file or logging settings); a worker restart cannot apply it. Restart the full qeli process.",
         })));
     }
     if let Err(error) = validate_restart_candidate(&config, |config| observed.check(config)) {
@@ -108,7 +108,7 @@ pub async fn restart(
 }
 
 /// FULL process restart via systemd — needed for startup-only settings the worker
-/// cannot apply (panel listener, session-key source and auth.users_file). The panel
+/// cannot apply (panel listener, session-key source, auth.users_file and logging). The panel
 /// session survives when `web.persist_session_key` is on (the default).
 ///
 /// Before firing, we PRE-FLIGHT so a restart that cannot work fails *loudly* with an
@@ -233,7 +233,7 @@ pub async fn full_restart(
                 "This server runs inside a container — systemctl is not available here, so \
                  \"Apply & Restart\" cannot restart the process. Profile / data-plane changes apply \
                  with the in-process worker restart. To change startup-only settings \
-                 (panel listener, session-key source or auth.users_file), recreate the \
+                 (panel listener, session-key source, auth.users_file or logging settings), recreate the \
                  container (e.g. `docker restart <name>`) after saving."
                     .to_string()
             } else {

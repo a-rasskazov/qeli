@@ -471,7 +471,9 @@ The panel has two different restarts and the difference matters.
 **A full restart is REQUIRED** for the fields the panel listens on: `web.enabled`,
 `web.bind`, `web.port`, `web.tls`, `web.tls_cert`, `web.tls_key` (and `web.base_path`) —
 they are bound when the supervisor starts and a worker restart does not reapply them. A
-save that touched any of them says so: apply it with a FULL restart.
+save that touched any of them says so: apply it with a FULL restart. A full restart
+is also required after changing `auth.users_file`, `web.persist_session_key`, or the
+active logging settings `logging.level`, `logging.file`, and `logging.time_format`.
 
 - **The panel session survives a full restart** as long as `web.persist_session_key` is
   on (the default: the session-signing key is kept in a `0600` file). Turn it off and
@@ -507,7 +509,10 @@ must be inside `/var/log/qeli`; `auth.users_file` and `identity_key` inside
 place to lock yourself out with a typo);
 `routing.post_up`/`post_down` can neither be introduced nor changed through the panel;
 and the config must pass the same profile validation the server runs at startup. Panel
-settings apply live; changing `auth.users_file` or `web.persist_session_key` requires a full supervisor restart through `Apply & Restart` (or `systemctl restart qeli`). Profile/bind/tun changes also need a restart.
+settings apply live; changing `auth.users_file`, `web.persist_session_key`,
+`logging.level`, `logging.file`, or `logging.time_format` requires a full supervisor
+restart through `Apply & Restart` (or `systemctl restart qeli`). Profile/bind/tun
+changes also need a restart.
 
 ### Server identity: show & rotate
 **Config → Global → Server identity keys** (`GET /api/identity`) lists each profile with

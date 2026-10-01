@@ -207,7 +207,13 @@ pub(super) fn needs_full_restart_for_config(
     current: &crate::config::server::ServerConfig,
     next: &crate::config::server::ServerConfig,
 ) -> bool {
-    needs_full_restart(&current.web, &next.web) || current.auth.users_file != next.auth.users_file
+    needs_full_restart(&current.web, &next.web)
+        || current.auth.users_file != next.auth.users_file
+        // The supervisor and worker each initialise their logger before parsing the
+        // full config. Restarting only the worker would split their log policy.
+        || current.logging.level != next.logging.level
+        || current.logging.file != next.logging.file
+        || current.logging.time_format != next.logging.time_format
 }
 
 pub async fn get_config(
@@ -1543,7 +1549,7 @@ pub async fn put_config(
     // UI cannot preserve hand-written comments — for comment-heavy configs, edit
     // the file directly. We serialize the validated struct so the output is a
     // faithful, lossless round-trip of the config.
-    // Panel listener, session-key source and users-file path are bound at supervisor startup.
+    // Panel listener, session-key source, users-file path and logging are bound at supervisor startup.
     // A worker-only restart cannot apply them; compare with the boot-time snapshot.
     let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
 
@@ -1658,9 +1664,9 @@ pub async fn put_config(
     state.reload_web_settings().await;
 
     let message = if needs_full_restart {
-        "config saved. A startup-only setting changed (panel listener, session-key source or \
-         auth.users_file) — apply it with a FULL restart using `Apply & Restart` or \
-         `systemctl restart qeli`."
+        "config saved. A startup-only setting changed (panel listener, session-key source, \
+         auth.users_file or logging settings) — apply it with a FULL restart using \
+         `Apply & Restart` or `systemctl restart qeli`."
     } else {
         "config saved — web/panel settings applied live; restart to apply profile/bind/tun changes"
     };
@@ -2134,11 +2140,12 @@ pub async fn put_config_raw(
     state.reload_web_settings().await;
 
     // Report startup-only changes exactly as the structured editor does. A worker-only
-    // restart cannot change the panel listener, session-key source or users-file path.
+    // restart cannot change the panel listener, session-key source, users-file path
+    // or supervisor logging.
     let needs_full_restart = needs_full_restart_for_config(&state.config, &parsed);
 
     let message = if needs_full_restart {
-        "raw config saved (comments preserved). A startup-only setting changed (panel listener, session-key source or auth.users_file); apply it with a FULL restart using `Apply & Restart` or `systemctl restart qeli`."
+        "raw config saved (comments preserved). A startup-only setting changed (panel listener, session-key source, auth.users_file or logging settings); apply it with a FULL restart using `Apply & Restart` or `systemctl restart qeli`."
     } else {
         "raw config saved (comments preserved) — web/panel settings applied live; restart to apply profile/bind/tun changes"
     };
@@ -2611,6 +2618,25 @@ mod raw_secret_tests {
             &current_config,
             &next_config
         ));
+        for change in ["level", "file", "time_format"] {
+            let mut next_config = current_config.clone();
+            match change {
+                "level" => next_config.logging.level = "debug".into(),
+                "file" => next_config.logging.file = Some("/var/log/qeli/alternate.log".into()),
+                "time_format" => next_config.logging.time_format = "none".into(),
+                _ => unreachable!(),
+            }
+            assert!(
+                needs_full_restart_for_config(&current_config, &next_config),
+                "logging.{change} must restart the supervisor too"
+            );
+        }
+        next_config = current_config.clone();
+        next_config.logging.format = "json".into();
+        assert!(
+            !needs_full_restart_for_config(&current_config, &next_config),
+            "logging.format is a documented inert compatibility field"
+        );
     }
 
     #[test]
