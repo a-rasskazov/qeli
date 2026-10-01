@@ -696,10 +696,10 @@ GETTING-STARTED §10).
 
 Each has its own **on/off switch**, *Max attempts*, *Window* and *Lockout*, so the tunnel
 and the panel are limited (or disabled) separately. **Save policy** validates the complete
-resulting INI before writing it and applies the panel policy immediately; it requests a VPN
-worker SIGHUP without dropping sessions. Successful live application resets that surface's
+resulting INI before writing it and applies the panel policy through a live settings reload; it requests a VPN
+worker SIGHUP without dropping sessions. Applying changed thresholds resets that surface's
 failure counters. If the worker is unavailable, the tab reports that the saved VPN policy
-will apply at its next start. A failed INI read is shown as an error rather than defaults.
+will apply at its next start. If the panel reload fails, the INI remains saved while the active policy stays unchanged; the tab flags the saved/live mismatch and asks the operator to check the INI and logs before restarting. A failed INI read is shown as an error rather than defaults.
 Turn a
 switch off to disable rate-limiting for that surface entirely (only safe for panel login on
 a trusted / loopback bind). The same policies are also editable in **Config → Authentication**

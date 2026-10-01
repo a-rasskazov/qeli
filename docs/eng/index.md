@@ -298,3 +298,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F155: SIGHUP restart hints for unapplied settings](reports/AUDIT-Q25-SERVER-SIGHUP-RESTART-HINTS.md)
 - [Q25-F156: panel Argon2 validation at admission and live reload](reports/AUDIT-Q25-SERVER-WEB-HASH-VALIDATION.md)
 - [Q25-F157: truthful panel live-reload result](reports/AUDIT-Q25-SERVER-WEB-RELOAD-RESULT.md)
+- [Q25-F158: saved versus active lockout policy](reports/AUDIT-Q25-SERVER-BLOCKED-LIVE.md)

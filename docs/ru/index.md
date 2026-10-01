@@ -298,3 +298,4 @@
 - [Q25-F155: предупреждения SIGHUP о настройках, требующих рестарта](reports/AUDIT-Q25-SERVER-SIGHUP-RESTART-HINTS.md)
 - [Q25-F156: проверка Argon2-хеша панели при загрузке и live reload](reports/AUDIT-Q25-SERVER-WEB-HASH-VALIDATION.md)
 - [Q25-F157: достоверный статус live reload панели](reports/AUDIT-Q25-SERVER-WEB-RELOAD-RESULT.md)
+- [Q25-F158: сохранённая и действующая политика блокировок](reports/AUDIT-Q25-SERVER-BLOCKED-LIVE.md)

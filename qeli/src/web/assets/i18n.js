@@ -1154,13 +1154,16 @@
       'Lockout policy': 'Политика блокировки',
       '— panel login and VPN auth are limited independently':
         '— вход в панель и VPN-аутентификация ограничиваются независимо',
-      "Applied live (no restart); saving resets that surface's failure counters. Turn a switch off to disable rate-limiting for that surface entirely.":
-        'Применяется на лету (без рестарта); сохранение сбрасывает счётчики этой поверхности. Выключите переключатель, чтобы полностью отключить ограничение для неё.',
+      "Policies are saved to INI and applied live when reload succeeds; applying changed thresholds resets that surface's failure counters. Turn a switch off to disable rate-limiting for that surface entirely.":
+        'Политики сохраняются в INI и применяются без рестарта при успешной перезагрузке; изменение порогов сбрасывает счётчики этой поверхности. Выключите переключатель, чтобы полностью отключить ограничение для неё.',
       'VPN authentication': 'Аутентификация VPN',
       'Panel login': 'Вход в панель',
       'Saved — applied live': 'Сохранено — применено на лету',
       'Saved — VPN reload requested': 'Сохранено — запрошено обновление VPN worker',
       'Saved — VPN policy awaits worker restart': 'Сохранено — VPN-политика применится при следующем запуске worker',
+      'Saved panel policy is not active; check INI and logs before restart': 'Сохранённая политика панели не действует; проверьте INI и журнал перед рестартом',
+      'Saved — panel reload failed; VPN policy awaits worker restart': 'Сохранено — перезагрузка панели не удалась; VPN-политика ждёт рестарта worker',
+      'Saved — panel settings reload failed; check INI and logs': 'Сохранено — перезагрузка панели не удалась; проверьте INI и журнал',
       'Applies to both web-panel login and VPN authentication':
         'Действует и на вход в веб-панель, и на аутентификацию VPN',
       'After this many failed attempts within the window, a source IP is locked out for the lockout duration.':

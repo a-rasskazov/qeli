@@ -9,7 +9,7 @@
       <h3 class="text-sm font-semibold text-white">Lockout policy</h3>
       <span class="text-xs text-slate-500">— panel login and VPN auth are limited independently</span>
     </div>
-    <p class="text-xs text-slate-500 mb-4">Applied live (no restart); saving resets that surface's failure counters. Turn a switch off to disable rate-limiting for that surface entirely.</p>
+    <p class="text-xs text-slate-500 mb-4">Policies are saved to INI and applied live when reload succeeds; applying changed thresholds resets that surface's failure counters. Turn a switch off to disable rate-limiting for that surface entirely.</p>
 
     <div class="grid grid-cols-2 gap-4">
       <!-- VPN authentication policy -->
@@ -217,6 +217,8 @@ function blockedPage() {
             vpn: Object.assign(defPolicy(), d.settings.vpn || {}),
             panel: Object.assign(defPolicy(), d.settings.panel || {}),
           };
+          this.policyOk = d.panel_applied !== false;
+          this.policyMsg = this.policyOk ? '' : this.t('Saved panel policy is not active; check INI and logs before restart');
         } else {
           this.policyOk = false;
           this.policyMsg = d.error || this.t('Request failed');
@@ -232,8 +234,11 @@ function blockedPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vpn: this.policy.vpn, panel: this.policy.panel }),
         });
-        this.policyOk = !!r.ok;
+        this.policyOk = !!r.ok && r.panel_applied !== false && r.vpn_reload_requested !== false;
         this.policyMsg = !r.ok ? (r.error || this.t('Save failed'))
+          : r.panel_applied === false && r.vpn_reload_requested === false
+            ? this.t('Saved — panel reload failed; VPN policy awaits worker restart')
+          : r.panel_applied === false ? this.t('Saved — panel settings reload failed; check INI and logs')
           : r.vpn_reload_requested === false ? this.t('Saved — VPN policy awaits worker restart')
           : r.vpn_reload_requested === true ? this.t('Saved — VPN reload requested')
           : this.t('Saved — applied live');

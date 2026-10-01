@@ -1232,9 +1232,10 @@ impl ServerState {
             // would apply it live, leaving the panel unauthenticated until a restart — at
             // which point the startup gate would refuse to serve it at all. So the two
             // paths disagreed about the same config, in the unsafe direction.
-            // (Audit 2026-07-27, D2.)
+            // Apply this gate only when the startup panel is enabled: disabled panels
+            // have no listener or login to protect. (Audit 2026-07-27, D2.)
             let bind = self.config.web.bind.as_str();
-            if web.password_hash.is_empty() && !web.insecure_no_auth {
+            if web.enabled && web.password_hash.is_empty() && !web.insecure_no_auth {
                 log::error!(
                     "panel: REFUSING live web-settings reload — it would leave the panel \
                      (bind {bind}) with NO admin password. Set one with \
@@ -1246,7 +1247,7 @@ impl ServerState {
             }
             // Going password-less deliberately must be as loud live as it is at startup —
             // previously the only trace was a cheerful "settings reloaded".
-            if web.password_hash.is_empty() {
+            if web.enabled && web.password_hash.is_empty() {
                 log::warn!(
                     "panel on bind {bind} is now running WITHOUT AUTHENTICATION \
                      (web.insecure_no_auth): every local process — and any SSRF on this \
@@ -8906,6 +8907,14 @@ pool.cidr = 10.{net}.0.0/24
             startup.web.password_hash
         );
         assert_eq!(state.failed_auth.lock().await.thresholds().1, 2);
+
+        candidate.web.password_hash.clear();
+        std::fs::write(&path, candidate.to_ini_string()).unwrap();
+        assert!(!state.reload_web_settings().await);
+        assert_eq!(
+            state.live_web.read().await.password_hash,
+            startup.web.password_hash
+        );
 
         candidate.web.password_hash = startup.web.password_hash.clone();
         candidate.web.session_ttl_secs = 0;
