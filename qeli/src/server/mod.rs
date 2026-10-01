@@ -1646,9 +1646,11 @@ fn validate_configured_interface(profile: &str, key: &str, value: &str) -> anyho
 }
 
 pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
-    // The worker refuses an all-disabled server. Use the same gate for
-    // check-config, panel saves and supervisor startup before any panel appears.
-    if !config.profiles.is_empty() && !config.profiles.iter().any(|profile| profile.enabled) {
+    // Match worker startup in check-config, panel saves and restart preflight.
+    if config.profiles.is_empty() {
+        anyhow::bail!("no profiles defined in server config");
+    }
+    if !config.profiles.iter().any(|profile| profile.enabled) {
         anyhow::bail!("all profiles are disabled (enabled = false) — enable at least one");
     }
     config.web.validate_active().map_err(anyhow::Error::msg)?;
@@ -3572,9 +3574,6 @@ pub async fn run_worker(cfg_path: &str) -> anyhow::Result<()> {
         ensure_identity_key_trust(profile, &config_command_trust)?;
     }
 
-    if config.profiles.is_empty() {
-        anyhow::bail!("no profiles defined in server config");
-    }
     validate_profiles(&config)?;
     // Filesystem control sockets do not coordinate different mount namespaces or
     // QELI_CONTROL_SOCKET paths. Hold this kernel network-namespace reservation
@@ -4207,9 +4206,6 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     ensure_tls_paths_trust(&config, &config_command_trust)?;
     for profile in &config.profiles {
         ensure_identity_key_trust(profile, &config_command_trust)?;
-    }
-    if config.profiles.is_empty() {
-        anyhow::bail!("no profiles defined in server config");
     }
     validate_profiles(&config)?;
 
@@ -8838,6 +8834,14 @@ pool.cidr = 10.{net}.0.0/24
         untrusted.validate_tls_paths_trust(&config).unwrap();
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn empty_profile_set_fails_shared_validation() {
+        let error = validate_profiles(&ServerConfig::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no profiles defined"), "{error}");
     }
 
     #[test]

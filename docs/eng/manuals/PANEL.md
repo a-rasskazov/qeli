@@ -475,6 +475,9 @@ they are bound when the supervisor starts and a worker restart does not reapply 
 save that touched any of them says so: apply it with a FULL restart. A full restart
 is also required after changing `auth.users_file`, `web.persist_session_key`, or the
 active logging settings `logging.level`, `logging.file`, and `logging.time_format`.
+Before a full restart, the panel also checks for an enabled profile, admission
+for an enabled panel, and a readable certificate/key pair when TLS files exist.
+If this fails, the running process stays up; correct the configuration and retry.
 
 - **The panel session survives a full restart** as long as `web.persist_session_key` is
   on (the default: the session-signing key is kept in a `0600` file). Turn it off and

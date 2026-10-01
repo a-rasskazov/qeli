@@ -18,6 +18,16 @@ fn validate_restart_candidate(
     })
 }
 
+/// A full process restart replaces the working panel as well as the VPN worker.
+/// Check panel admission and the existing TLS material before stopping either.
+fn validate_full_restart_panel(config: &crate::config::server::ServerConfig) -> Result<(), String> {
+    super::config::validate_web_auth_for_save(&config.web)
+        .map_err(|error| format!("restart refused: {error}"))?;
+    crate::web::tls::check_config_files(&config.web)
+        .map_err(|error| format!("restart refused: panel TLS: {error}"))?;
+    Ok(())
+}
+
 /// Restart preflight must use one config snapshot for both values and file-path trust.
 async fn current_restart_config(
     state: &Arc<ServerState>,
@@ -58,6 +68,7 @@ async fn preflight_restart(
         .await
         .map_err(|error| format!("restart refused: {error}"))?;
     validate_restart_candidate(&config, |config| observed.check(config))?;
+    validate_full_restart_panel(&config)?;
     Ok(guard)
 }
 
@@ -553,7 +564,44 @@ mod restart_validation_tests {
     }
 
     #[test]
+    fn full_restart_refuses_a_panel_that_cannot_start() {
+        let mut config = crate::config::server::ServerConfig::default();
+        config.web.enabled = true;
+        let error = validate_full_restart_panel(&config).unwrap_err();
+        assert!(error.contains("web.password_hash"), "{error}");
+
+        config.web.insecure_no_auth = true;
+        config.web.tls = true;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-full-restart-tls-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let cert = dir.join("cert.pem");
+        let key = dir.join("key.pem");
+        std::fs::write(&cert, b"not a certificate").unwrap();
+        std::fs::write(&key, b"not a private key").unwrap();
+        config.web.tls_cert = cert.to_string_lossy().into_owned();
+        config.web.tls_key = key.to_string_lossy().into_owned();
+        let error = validate_full_restart_panel(&config).unwrap_err();
+        assert!(error.contains("panel TLS"), "{error}");
+        assert!(error.contains("no certificates"), "{error}");
+        assert_eq!(std::fs::read(&cert).unwrap(), b"not a certificate");
+
+        config.web.enabled = false;
+        validate_full_restart_panel(&config).expect("disabled panel ignores dormant TLS files");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn restart_requires_valid_profiles_users_and_host_networking() {
+        let empty = crate::config::server::ServerConfig::default();
+        let error = validate_restart_candidate(&empty, |_| {
+            panic!("must reject empty config before host preflight")
+        })
+        .unwrap_err();
+        assert!(error.contains("no profiles defined"), "{error}");
         let mut config = crate::config::parse_server_config("[profile:p]\nbind.port=443\ntun.name=vpn0\ntun.address=10.0.0.1\npool.cidr=10.0.0.0/24\n").unwrap();
         let path =
             std::env::temp_dir().join(format!("qeli-restart-users-{}.conf", std::process::id()));
