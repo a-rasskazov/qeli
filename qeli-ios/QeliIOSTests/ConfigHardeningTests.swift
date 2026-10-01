@@ -10,6 +10,37 @@ import XCTest
 /// ``VPNConfig/validate()`` is what refuses. Same split as the Kotlin, C# and Rust ports.
 final class ConfigHardeningTests: XCTestCase {
 
+    func testBackupActiveIndexRejectsInvalidValuesWithoutSelectingFirstProfile() throws {
+        let store = ProfileStore(suiteName: "qeli.import.index." + UUID().uuidString)
+        let rows: [[String: Any]] = [
+            ["name": "first", "cfg": ini()],
+            ["name": "second", "cfg": ini()]
+        ]
+        func imported(_ active: Any?) throws -> ProfileArchive {
+            var payload: [String: Any] = ["profiles": rows]
+            if let active { payload["active"] = active }
+            return try store.importJSON(JSONSerialization.data(withJSONObject: payload))
+        }
+
+        XCTAssertEqual(try imported(nil).profiles.count, 2)
+        for value in [NSNumber(value: 1), NSNumber(value: 1.0)] {
+            let archive = try imported(value)
+            XCTAssertEqual(
+                archive.profiles.first(where: { $0.id == archive.activeProfileID })?.name,
+                "second"
+            )
+        }
+        let invalidValues: [Any] = [NSNull(), true, "1", 1.5, -1, 2, 2_147_483_648]
+        for value in invalidValues {
+            XCTAssertThrowsError(try imported(value)) { error in
+                guard let storeError = error as? ProfileStoreError,
+                      case .invalidActiveProfile = storeError else {
+                    return XCTFail("unexpected error: \(error)")
+                }
+            }
+        }
+    }
+
     func testMalformedZeroPinsCannotBecomeTOFUAfterSave() throws {
         for pin in ["0", String(repeating: "0", count: 63), String(repeating: "0", count: 65)] {
             let draft = try VPNConfig.fromINI(ini("key = \(pin)"))

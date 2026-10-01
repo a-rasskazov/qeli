@@ -1,4 +1,5 @@
 import CryptoKit
+import CoreFoundation
 import Foundation
 
 final class ProfileStore: @unchecked Sendable {
@@ -135,14 +136,34 @@ final class ProfileStore: @unchecked Sendable {
             )
         }
         guard !profiles.isEmpty else { throw ProfileStoreError.notQeliBackup }
-        let activeIndex = (root["active"] as? NSNumber)?.intValue ?? 0
-        guard profiles.indices.contains(activeIndex) else {
-            throw ProfileStoreError.invalidActiveProfile
-        }
+        let activeIndex = try Self.readActiveProfileIndex(root, count: profiles.count)
         var archive = ProfileArchive(activeProfileID: profiles[activeIndex].id, profiles: profiles)
         archive.normalize()
         try Self.validate(archive)
         return archive
+    }
+
+    /// Missing active is a legacy default; a malformed number must never select profile zero.
+    static func readActiveProfileIndex(_ root: [String: Any], count: Int) throws -> Int {
+        guard (1...maximumProfiles).contains(count) else {
+            throw ProfileStoreError.invalidActiveProfile
+        }
+        guard let raw = root["active"] else { return 0 }
+        guard let number = raw as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            throw ProfileStoreError.invalidActiveProfile
+        }
+        let decimal = NSDecimalNumber(
+            string: number.stringValue,
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+        let index = decimal.intValue
+        guard decimal != .notANumber,
+              decimal == NSDecimalNumber(value: index),
+              (0..<count).contains(index) else {
+            throw ProfileStoreError.invalidActiveProfile
+        }
+        return index
     }
 
     /// Security-scoped providers are streams, not necessarily local files. Reading in
