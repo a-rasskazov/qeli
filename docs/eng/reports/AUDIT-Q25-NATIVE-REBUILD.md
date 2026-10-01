@@ -1,6 +1,6 @@
 # Q25-F202 — reproducible native cores and Android runtime
 
-<!-- normative-sync: audit-q25-native-rebuild-v1 -->
+<!-- normative-sync: audit-q25-native-rebuild-v2 -->
 
 Date: 1 October 2026. A/B source: `27db1a22`, digest
 `dce152196ab7b13ba42f9808a571ba95ac494c7ccbbd1c69578bd0de90c1979c`.
@@ -54,11 +54,43 @@ from its cache; that was a Gradle launch failure, not a test failure. The
 first emulator hung while Gradle ran concurrently; the tests passed separately
 on a memory-limited instance.
 
+## Bounded two-VM Android VPN E2E
+
+An existing dedicated `e2e` profile (`tcp://0.0.0.0:8503`, `e2e0`,
+REALITY) ran on .10 separately from the normal service under a 240-second
+`timeout`; after it expired, it was restarted for 180 seconds solely to
+check reverse ICMP. On .11, the same APK was installed on a read-only
+Android 14 AVD; a test **INI** was imported through the supported legacy
+store migration and Connect was tapped in the UI. The service JSON store
+container is not the config format.
+
+Android logcat recorded `Auth OK`, assigned `10.60.0.2`,
+`Native NetworkPlan 1 APPLIED`, and `Rust owns the TUN payload`; the UI
+showed `Connected`/`Tunnel active`. Server → client over `e2e0`:
+**4/4 ICMP, 0% loss**. After the bounded server stopped, the client
+automatically reconnected: a second `Auth OK` and
+`NetworkPlan 2 APPLIED`. Client → server after reconnect:
+**4/4 ICMP** with the default source and **2/2** with explicit
+`10.60.0.2`. A 0/3 probe performed after the first server had already
+expired is retained as a timing control, not counted as a tunnel failure.
+
+After app `force-stop` and AVD shutdown, the owned test process ended;
+`:8503` and `e2e0` were gone. The regular `qeli-server.service` stayed
+active and kept listening on `:443`; its files and service were untouched.
+
+The server log also contained rejected inner packets with the emulator's
+physical address `10.0.2.16` rather than assigned `10.60.0.2`.
+The tested Android shell ICMP used the correct source and passed. The
+source of the background packets is unknown; server anti-spoofing
+correctly rejected them. Targeted checks of another Android UID,
+background traffic, and VPN lifecycle across network changes remain
+under D12. This is not proof of a main-tunnel defect.
+
 ## Scope
 
 D11 is complete for current native cores, A/B, ABI, copies, provenance, and
-available packages. D12 remains open for Android VPN handshake/traffic and
-other runtime scenarios. Windows VM, Mac/Xcode/iOS, and router runtime were
+available packages. D12 remains open for the background inner-packet anomaly and untested
+lifecycle scenarios; basic Android VPN handshake and bidirectional ICMP pass. Windows VM, Mac/Xcode/iOS, and router runtime were
 excluded by user decision; the macOS dylib was structurally checked but the
 Mac app and its behavior were not validated. This APK is a debug build, not a
 published release.
