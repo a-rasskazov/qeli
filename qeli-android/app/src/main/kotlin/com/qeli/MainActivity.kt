@@ -1173,7 +1173,7 @@ ipv6 = auto
                 when (which) {
                     0 -> startQrScan()
                     1 -> showPasteLinkDialog()
-                    2 -> try { importConfigLauncher.launch(arrayOf("text/plain", "application/json", "*/*")) }
+                    2 -> try { importConfigLauncher.launch(arrayOf("text/plain", "*/*")) }
                          catch (e: Exception) { Toast.makeText(this, getString(R.string.cannot_open_picker, e.message ?: ""), Toast.LENGTH_LONG).show() }
                 }
             }
@@ -1233,11 +1233,14 @@ ipv6 = auto
         lifecycleScope.launch {
             try {
                 val bytes = readUriBytesBounded(uri, MAX_IMPORTED_CONFIG_BYTES)
-                val text = try { bytes.decodeToString().trim() } finally { bytes.fill(0) }
-                require(text.isNotEmpty()) { "Empty file" }
-                // A file may hold a qeli:// link or an INI config. A JSON one is refused by
-                // `parse` below, by name — see `VpnConfig.jsonRetired`.
-                if (text.startsWith("qeli://")) {
+                // Decode strictly: replacement characters could silently alter credentials.
+                // Preserve the INI tail so the shared parser can reject malformed controls.
+                val text = try { bytes.decodeToString(throwOnInvalidSequence = true) } finally { bytes.fill(0) }
+                require(text.isNotBlank()) { "Empty file" }
+                val content = text.trimStart(' ', '\t', '\r', '\n', '\uFEFF')
+                // A file may hold a qeli:// link or an INI config. JSON config is refused
+                // by the shared parser; JSON backup files use the separate Restore action.
+                if (content.startsWith("qeli://")) {
                     addProfileFromQeliUri(text)
                     return@launch
                 }
@@ -1250,7 +1253,7 @@ ipv6 = auto
                 val cfg = VpnConfig.parse(text).also { it.validate() }
                 // Stored verbatim: what parsed is already INI, so re-emitting it through `toIni`
                 // would only drop the author's comments and ordering for no gain.
-                val label = commentLabel(text).orEmpty().ifBlank { cfg.serverAddress }
+                val label = commentLabel(content).orEmpty().ifBlank { cfg.serverAddress }
                 val candidate = profiles.map { it.copy() }.toMutableList()
                 candidate.add(Profile(label, text))
                 val candidateActive = activeAfterAdd(candidate.size)
