@@ -71,6 +71,35 @@ internal static class ProfileStoreConformance
             first.Write([9]);
             check("profile store: write succeeds after the lock is released",
                 File.ReadAllBytes(livePath).SequenceEqual(new byte[] { 9 }));
+
+            var oversizedPath = Path.Combine(dir, "oversized-profiles.json");
+            using (var large = File.Create(oversizedPath))
+                large.SetLength(ProfileStoreFile.MaximumStoredBytes + 1L);
+            var bounded = new ProfileStoreFile(oversizedPath);
+            bool oversizedReadRejected = false;
+            try { bounded.Read(); }
+            catch (IOException) { oversizedReadRejected = true; }
+            check("profile store: oversized input is refused before loading and preserved",
+                oversizedReadRejected
+                && new FileInfo(oversizedPath).Length == ProfileStoreFile.MaximumStoredBytes + 1L);
+
+            File.WriteAllBytes(oversizedPath, [1]);
+            bounded.Read();
+            using (var large = new FileStream(oversizedPath, FileMode.Open, FileAccess.Write, FileShare.None))
+                large.SetLength(ProfileStoreFile.MaximumStoredBytes + 1L);
+            bool oversizedRevisionRejected = false;
+            try { bounded.Write([2]); }
+            catch (IOException) { oversizedRevisionRejected = true; }
+            check("profile store: an oversized replacement blocks a stale write",
+                oversizedRevisionRejected
+                && new FileInfo(oversizedPath).Length == ProfileStoreFile.MaximumStoredBytes + 1L);
+
+            bool oversizedOutputRejected = false;
+            try { bounded.Write(new byte[ProfileStoreFile.MaximumStoredBytes + 1]); }
+            catch (IOException) { oversizedOutputRejected = true; }
+            check("profile store: oversized output is refused without changing the file",
+                oversizedOutputRejected
+                && new FileInfo(oversizedPath).Length == ProfileStoreFile.MaximumStoredBytes + 1L);
         }
         finally
         {

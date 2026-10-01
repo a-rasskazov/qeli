@@ -56,7 +56,7 @@ public static class ProfileStore
                 if (File.Exists(backup))
                 {
                     var plaintext = EncryptedEnvelope.Open(
-                        File.ReadAllBytes(backup), SecureKey.GetOrCreate(), true, out _);
+                        ProfileStoreFile.ReadBounded(backup), SecureKey.GetOrCreate(), true, out _);
                     recovered = JsonSerializer.Deserialize<List<VpnConfig>>(
                         StrictUtf8.GetString(plaintext), Options) ?? new List<VpnConfig>();
                 }
