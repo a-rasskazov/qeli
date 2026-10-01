@@ -1543,8 +1543,9 @@ pub struct WebConfig {
     /// `false` disables the Origin/Referer check entirely — only acceptable on a
     /// loopback-only bind reached via an SSH forward, NEVER on a public/LAN bind (any
     /// site you open in the same browser could then drive your logged-in panel).
-    /// Loopback origins are already trusted on any port, so a normal SSH forward works
-    /// WITHOUT disabling this. See docs/*/manuals/CONFIG.md.
+    /// Loopback origins are trusted on the panel's port. For an SSH forward on a
+    /// different local port, list that origin in allowed_origins instead of
+    /// disabling CSRF. See docs/*/manuals/CONFIG.md.
     #[serde(default = "default_true")]
     pub csrf: bool,
     /// Panel login-session lifetime in seconds — governs BOTH the session cookie's

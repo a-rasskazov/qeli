@@ -284,7 +284,7 @@ async fn csrf_same_origin(
         if allowed_hosts.iter().any(|h| host_port == h.as_str()) {
             return true;
         }
-        // Trust a loopback Origin regardless of PORT — but only when the panel itself is
+        // The former port-agnostic exception trusted loopback only when the panel was
         // bound to loopback.
         //
         // The reasoning behind the port-agnostic rule is sound as far as it goes: a REMOTE
