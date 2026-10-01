@@ -198,6 +198,7 @@ final class ProfileStore: @unchecked Sendable {
 enum ProfileStoreError: LocalizedError {
     case corruptStore
     case unavailableAfterLoadFailure
+    case staleProfile
     case encryptionFailed
     case notQeliBackup
     case archiveTooLarge
@@ -212,6 +213,7 @@ enum ProfileStoreError: LocalizedError {
         switch self {
         case .corruptStore: return "The encrypted profile store is corrupt."
         case .unavailableAfterLoadFailure: return "Saved profiles could not be read. Restart the app or restore a backup before making changes."
+        case .staleProfile: return String(localized: "Profile changed while the editor was open. Reopen it before saving.")
         case .encryptionFailed: return "Could not encrypt the profile store."
         case .notQeliBackup: return "The file is not a Qeli profile backup."
         case .archiveTooLarge: return "The profile file exceeds the supported size limit."

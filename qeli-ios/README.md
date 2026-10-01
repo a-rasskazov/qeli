@@ -33,6 +33,7 @@ every other client, not because a build of it was released.
 - QR scanning/generation, profile editing, duplication, ordering and sharing.
   Editing the active profile while connected saves it, then asks for a manual disconnect
   and reconnect so the running tunnel takes the new settings.
+  An editor or delete confirmation opened before that profile changes is refused on save/delete.
 - Android-compatible encrypted backups (`QELI-ENC-1`, PBKDF2-SHA256, AES-256-GCM).
 - Opt-in release checks that run only with a fail-closed full-tunnel route.
 - `NETunnelProviderManager` lifecycle, VPN On Demand and status/statistics bridge.

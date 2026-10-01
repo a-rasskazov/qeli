@@ -155,6 +155,9 @@
 "Carrier" = "Внешний канал";
 "Packet recordizer" = "Рекордайзер пакетов";
 "Legacy packet-per-record" = "Устаревший пакет на запись";
+"Profile changed" = "Профиль изменился";
+"Profile changed while the dialog was open. Reopen it before deleting." = "Профиль изменился, пока окно было открыто. Откройте его снова перед удалением.";
+"Profile changed while the editor was open. Reopen it before saving." = "Профиль изменился, пока редактор был открыт. Откройте его снова перед сохранением.";
 "Reconnect required" = "Требуется переподключение";
 "The active profile was saved. Disconnect and connect again to apply it to the running tunnel." = "Активный профиль сохранён. Отключитесь и подключитесь снова, чтобы применить его к работающему туннелю.";
 "Reconnect fallback" = "Обычное переподключение";

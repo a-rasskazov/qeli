@@ -155,6 +155,9 @@
 "Carrier" = "Carrier";
 "Packet recordizer" = "Packet recordizer";
 "Legacy packet-per-record" = "Legacy packet-per-record";
+"Profile changed" = "Profile changed";
+"Profile changed while the dialog was open. Reopen it before deleting." = "Profile changed while the dialog was open. Reopen it before deleting.";
+"Profile changed while the editor was open. Reopen it before saving." = "Profile changed while the editor was open. Reopen it before saving.";
 "Reconnect required" = "Reconnect required";
 "The active profile was saved. Disconnect and connect again to apply it to the running tunnel." = "The active profile was saved. Disconnect and connect again to apply it to the running tunnel.";
 "Reconnect fallback" = "Reconnect fallback";

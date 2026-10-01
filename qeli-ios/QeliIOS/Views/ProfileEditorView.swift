@@ -58,7 +58,7 @@ struct ProfileEditorView: View {
                             editedConfig.roamingPolicy = roamingPolicy
                             let normalized = try editedConfig.toINI()
                             let reconnectRequired = try model.saveProfile(
-                                id: profile?.id, name: name, configText: normalized
+                                original: profile, name: name, configText: normalized
                             )
                             if reconnectRequired { showingReconnectNotice = true }
                             else { dismiss() }
