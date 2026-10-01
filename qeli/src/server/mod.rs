@@ -4400,6 +4400,68 @@ fn signal_worker(
     Ok(())
 }
 
+/// Startup-only fields must be named when SIGHUP applies the live users/policy subset.
+fn sighup_startup_only_fields(
+    startup: &ServerConfig,
+    candidate: &ServerConfig,
+) -> Vec<&'static str> {
+    let mut changed = Vec::new();
+    if startup.auth.require_client_key_proof != candidate.auth.require_client_key_proof {
+        changed.push("auth.require_client_key_proof");
+    }
+    if startup.auth.bind_static_to_session != candidate.auth.bind_static_to_session {
+        changed.push("auth.bind_static_to_session");
+    }
+    if startup.logging.level != candidate.logging.level {
+        changed.push("logging.level");
+    }
+    if startup.logging.file != candidate.logging.file {
+        changed.push("logging.file");
+    }
+    if startup.logging.time_format != candidate.logging.time_format {
+        changed.push("logging.time_format");
+    }
+    changed
+}
+
+fn enabled_profile_names(config: &ServerConfig) -> HashSet<String> {
+    config
+        .profiles
+        .iter()
+        .filter(|profile| profile.enabled)
+        .map(|profile| profile.name.clone())
+        .collect()
+}
+
+/// Compare parsed profiles structurally. The in-memory serde value is used only
+/// for equality; the persisted config remains INI. Map insertion order is ignored,
+/// while every runtime field (including repeated routes/listeners) is compared.
+fn changed_live_profile_settings(
+    startup: &ServerConfig,
+    candidate: &ServerConfig,
+    live: &HashSet<String>,
+) -> Vec<String> {
+    candidate
+        .profiles
+        .iter()
+        .filter(|profile| profile.enabled && live.contains(&profile.name))
+        .filter(|profile| {
+            let Some(old) = startup
+                .profiles
+                .iter()
+                .find(|old| old.enabled && old.name == profile.name)
+            else {
+                return true;
+            };
+            match (serde_json::to_value(old), serde_json::to_value(profile)) {
+                (Ok(before), Ok(after)) => before != after,
+                _ => true,
+            }
+        })
+        .map(|profile| profile.name.clone())
+        .collect()
+}
+
 /// Handle SIGHUP: re-read the config file from disk and hot-reload everything
 /// that can be swapped without dropping live tunnels — the users database and
 /// the brute-force thresholds. Changes to profiles (bind/tun/transport) require
@@ -4520,19 +4582,37 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
         }
     }
 
-    // 3. Profile-level changes are not hot-reloadable (each owns a TUN device,
-    //    socket and runtime task). Warn if the profile set changed on disk.
-    let live: std::collections::HashSet<String> =
-        state.profiles.read().await.keys().cloned().collect();
-    let on_disk: std::collections::HashSet<String> =
-        new_config.profiles.iter().map(|p| p.name.clone()).collect();
+    // 3. The worker keeps the handshake and logger settings it started with.
+    //    A successful users reload must not imply that these changes applied.
+    let startup_only = sighup_startup_only_fields(&state.config, &new_config);
+    if !startup_only.is_empty() {
+        log::warn!(
+            "SIGHUP: startup-only setting(s) changed on disk: {} — restart qeli to apply them",
+            startup_only.join(", ")
+        );
+    }
+
+    // 4. Only ENABLED profiles own live sockets/TUNs. A dormant profile in the
+    //    INI is not a set change. Compare full parsed settings too: bind/tun or
+    //    routing edits to an existing name otherwise went unreported.
+    let live: HashSet<String> = state.profiles.read().await.keys().cloned().collect();
+    let on_disk = enabled_profile_names(&new_config);
     if live != on_disk {
         log::warn!(
-            "SIGHUP: profile set changed on disk (live: {:?}, config: {:?}) — \
-            restart qeli to apply profile/bind/tun changes",
+            "SIGHUP: enabled profile set changed on disk (live: {:?}, config: {:?}) — \
+             restart qeli to apply profile changes",
             live,
             on_disk
         );
+    } else {
+        let changed = changed_live_profile_settings(&state.config, &new_config, &live);
+        if !changed.is_empty() {
+            log::warn!(
+                "SIGHUP: live profile settings changed on disk for {:?} — \
+                 restart qeli to apply bind/tun/routing and other profile changes",
+                changed
+            );
+        }
     }
 }
 
@@ -8809,6 +8889,81 @@ pool.cidr = 10.{net}.0.0/24
         assert_eq!(state.live_web.read().await.public_host, "panel.example");
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn sighup_restart_hints_cover_auth_logging_and_live_profiles() {
+        let mut startup = ServerConfig::default();
+        let mut active = ProfileConfig::baseline();
+        active.name = "active".into();
+        let mut dormant = ProfileConfig::baseline();
+        dormant.name = "dormant".into();
+        dormant.enabled = false;
+        startup.profiles = vec![active, dormant];
+        let live = HashSet::from(["active".to_string()]);
+
+        let mut candidate = startup.clone();
+        assert_eq!(enabled_profile_names(&candidate), live);
+        assert!(changed_live_profile_settings(&startup, &candidate, &live).is_empty());
+        assert!(sighup_startup_only_fields(&startup, &candidate).is_empty());
+
+        // Editing a still-disabled profile does not change the live generation.
+        candidate.profiles[1].bind.port += 1;
+        assert!(changed_live_profile_settings(&startup, &candidate, &live).is_empty());
+
+        candidate = startup.clone();
+        candidate.profiles[0].bind.port += 1;
+        assert_eq!(
+            changed_live_profile_settings(&startup, &candidate, &live),
+            vec!["active"]
+        );
+
+        candidate = startup.clone();
+        candidate.profiles[0]
+            .pool
+            .static_reservations
+            .insert("alice".into(), "10.9.0.50".into());
+        candidate.profiles[0]
+            .pool
+            .static_reservations
+            .insert("bob".into(), "10.9.0.51".into());
+        let mut same_map = candidate.clone();
+        same_map.profiles[0].pool.static_reservations.clear();
+        same_map.profiles[0]
+            .pool
+            .static_reservations
+            .insert("bob".into(), "10.9.0.51".into());
+        same_map.profiles[0]
+            .pool
+            .static_reservations
+            .insert("alice".into(), "10.9.0.50".into());
+        assert!(changed_live_profile_settings(&candidate, &same_map, &live).is_empty());
+
+        candidate = startup.clone();
+        candidate.profiles[1].enabled = true;
+        assert_ne!(enabled_profile_names(&candidate), live);
+
+        candidate = startup.clone();
+        candidate.auth.brute_force.max_attempts += 1;
+        assert!(sighup_startup_only_fields(&startup, &candidate).is_empty());
+        candidate.auth.require_client_key_proof = !startup.auth.require_client_key_proof;
+        candidate.auth.bind_static_to_session = !startup.auth.bind_static_to_session;
+        candidate.logging.level = "debug".into();
+        candidate.logging.file = Some("/var/log/qeli/alternate.log".into());
+        candidate.logging.time_format = "none".into();
+        assert_eq!(
+            sighup_startup_only_fields(&startup, &candidate),
+            vec![
+                "auth.require_client_key_proof",
+                "auth.bind_static_to_session",
+                "logging.level",
+                "logging.file",
+                "logging.time_format",
+            ]
+        );
+        candidate = startup.clone();
+        candidate.logging.format = "json".into();
+        assert!(sighup_startup_only_fields(&startup, &candidate).is_empty());
     }
 
     #[tokio::test]

@@ -2939,6 +2939,8 @@ Beyond pinning / H-1 (above), the `[auth]` section carries:
 
 If the external `users_file` is genuinely absent and the server INI has no inline users or groups, first startup and `qeli check-config` use an empty database. A malformed or unreadable existing file remains an error. If inline entries exist, they are used without the external file. A non-default `auth.users_file` is accepted only from a trusted server INI (regular file, owned by root or the effective UID, with no group/world write and no symlink). This is checked by `check-config`, worker/supervisor startup, panel user operations, and CLI operations that write users. Use `chmod 600 server.conf` after choosing a custom path. Changing `auth.users_file` requires a full supervisor restart: SIGHUP and a worker-only restart retain the startup path.
 
+In the VPN worker, `SIGHUP` applies the users database and `auth.brute_force.*` policy without a full restart. Changes to `auth.require_client_key_proof`, `auth.bind_static_to_session`, `logging.level`, `logging.file`, `logging.time_format`, and enabled-profile settings require a restart; the server logs them. Edits to profiles that remain disabled do not produce a warning about live profiles.
+
 > **Removed from here: `password_hash` and `token_ttl_secs`.** Both are listed in `RETIRED_KEYS`
 > (`config/mod.rs`) and are not honoured; `qeli check-config` names them as stale (rather than
 > as typos), and an ordinary server start simply ignores them. The hashing
