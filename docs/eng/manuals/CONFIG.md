@@ -3005,7 +3005,7 @@ All keys are per-profile; the defaults below are the serde defaults (in the exam
 
 | Key | Default | Purpose |
 |---|---|---|
-| `obf.tls.server_name` | `www.cloudflare.com` | SNI baked into a generated share link. **fake-tls:** cosmetic (the server ignores the client's SNI). **reality / reality-tls:** must equal `reality_proxy.target`. |
+| `obf.tls.server_name` | `www.cloudflare.com` | SNI for generated non-REALITY share links. **fake-tls:** cosmetic (the server ignores client SNI). With REALITY enabled, generated links take SNI from `reality_proxy.target`; manually configured clients must also match the target. |
 
 **Schema baseline: Padding / Fragmentation / Heartbeat** (enabled unless a shipped profile overrides them; Reality/H2 templates disable padding and heartbeat):
 

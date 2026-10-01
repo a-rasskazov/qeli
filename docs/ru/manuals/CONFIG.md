@@ -2979,7 +2979,7 @@ routing.post_down = ip route del 192.168.254.0/24 via 10.9.0.2
 
 | Ключ | Дефолт | Назначение |
 |---|---|---|
-| `obf.tls.server_name` | `www.cloudflare.com` | SNI, зашиваемый в share-ссылку. **fake-tls:** косметика (сервер игнорирует SNI клиента). **reality / reality-tls:** обязан равняться `reality_proxy.target`. |
+| `obf.tls.server_name` | `www.cloudflare.com` | SNI для share-ссылки без REALITY. **fake-tls:** косметика (сервер игнорирует SNI клиента). При включённом REALITY share-ссылка берёт SNI из `reality_proxy.target`; при ручной настройке клиента SNI тоже должен совпадать с target. |
 
 **Schema baseline: Padding / Fragmentation / Heartbeat** (включены, если поставляемый профиль не переопределяет их; Reality/H2-шаблоны отключают padding и heartbeat):
 

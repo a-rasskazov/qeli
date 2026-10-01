@@ -210,6 +210,14 @@ impl ClientLink {
         } else {
             None
         };
+        // The proxy forwards probes to this target and borrows its TLS identity.
+        // A separate server_name can disagree with it (including its default), so
+        // generated REALITY links must derive SNI from the active target itself.
+        let link_sni = if reality_on {
+            &rp.target
+        } else {
+            &obf.tls.server_name
+        };
         ClientLink {
             host,
             port,
@@ -218,7 +226,7 @@ impl ClientLink {
             proto: profile.bind.transport.clone(),
             mode,
             server_key,
-            sni: Some(obf.tls.server_name.clone()).filter(|s| !s.is_empty()),
+            sni: Some(link_sni.clone()).filter(|s| !s.is_empty()),
             reality_sid,
             obfs_key: Some(obf.obfs_key.clone()).filter(|s| !s.is_empty()),
             fronting: Some(obf.fronting.clone()).filter(|s| !s.is_empty() && s != "websocket"),
@@ -657,6 +665,39 @@ mod tests {
             roaming: "auto".into(),
             label: Some("My VPN".into()),
         }
+    }
+
+    #[test]
+    fn reality_share_sni_uses_target_even_when_fake_tls_name_differs() {
+        let mut profile = crate::config::server::ProfileConfig::baseline();
+        profile.obfuscation.tls.server_name = "wrong.example".into();
+        let rp = &mut profile.obfuscation.tls.reality_proxy;
+        rp.enabled = true;
+        rp.target = "decoy.example".into();
+        rp.short_ids = vec!["0123456789abcdef".into()];
+        let link = |profile: &crate::config::server::ProfileConfig| {
+            ClientLink::for_profile(
+                profile,
+                "vpn.example".into(),
+                443,
+                "alice".into(),
+                "password".into(),
+                "0a33d308295d5dc49bff020ca8a73e86b3f6797cbcc7d3aa440eee754729223a".into(),
+                None,
+            )
+        };
+        for real_tls in [false, true] {
+            profile.obfuscation.tls.reality_proxy.real_tls = real_tls;
+            let generated = link(&profile);
+            assert_eq!(generated.sni.as_deref(), Some("decoy.example"));
+            assert_eq!(generated.reality_sid.as_deref(), Some("0123456789abcdef"));
+            assert_eq!(
+                ClientLink::from_uri(&generated.to_uri()).unwrap().sni,
+                generated.sni
+            );
+        }
+        profile.obfuscation.tls.reality_proxy.enabled = false;
+        assert_eq!(link(&profile).sni.as_deref(), Some("wrong.example"));
     }
 
     #[test]
