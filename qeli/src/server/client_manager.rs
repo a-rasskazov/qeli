@@ -87,8 +87,13 @@ impl ClientManager {
     /// file fresh (the panel rewrites it on every save), so it reflects the on-disk
     /// truth — a hand-edited file works exactly the same as a panel toggle.
     pub fn profile_autostarts(name: &str) -> bool {
-        std::fs::read_to_string(Self::profile_path(name))
+        Self::profile_autostarts_file(std::path::Path::new(&Self::profile_path(name)))
+    }
+
+    fn profile_autostarts_file(path: &std::path::Path) -> bool {
+        crate::config_source::load_bounded(path, crate::transport_core::MAX_CONFIG_BYTES as u64)
             .ok()
+            .map(|snapshot| snapshot.into_parts().0)
             .and_then(|s| crate::config::parse_client_config_strict(&s).ok())
             .map(|c| c.autostart)
             .unwrap_or(false)
@@ -276,5 +281,29 @@ impl ClientManager {
                 log::error!("shutdown: client tunnel '{n}' did not stop cleanly: {error}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientManager;
+
+    #[test]
+    fn autostart_reads_bounded_client_ini() {
+        let path = std::env::temp_dir().join(format!(
+            "qeli-autostart-{}-{}.conf",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::write(&path, "[qeli]\nserver = host:443\nautostart = true\n").unwrap();
+        assert!(ClientManager::profile_autostarts_file(&path));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(crate::transport_core::MAX_CONFIG_BYTES as u64 + 1)
+            .unwrap();
+        assert!(!ClientManager::profile_autostarts_file(&path));
+        std::fs::remove_file(path).unwrap();
     }
 }

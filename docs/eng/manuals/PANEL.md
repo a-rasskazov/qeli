@@ -644,7 +644,9 @@ review the newer contents, and save again. INI reads use the client runtime's
 supervisor (inheriting its privileges, so it can bring up its TUN and routes). Disconnect
 sends SIGTERM — the client restores DNS and routes and exits; if it hasn't left after 5 s
 it is SIGKILLed. **Delete** disconnects first, then removes the profile and its log. A
-profile with `autostart = true` is connected when the supervisor starts.
+profile with `autostart = true` is connected when the supervisor starts. Autostart
+reads only a stable client INI up to 256 KiB; a file that changes during reading
+or exceeds the limit is skipped.
 
 **The status is honest, not "is the process alive".** The list refreshes every 5 s and reads
 the Rust client's structured status: **● Connected**, **◌ Connecting…**, **⚠ Error —
@@ -652,7 +654,9 @@ retrying** (the process is alive but the tunnel is looping on reconnect — e.g.
 `reality-tls` with no short_id) or **○ Disconnected**. **Details** shows carrier/tunnel
 addresses, MTU, DNS, effective routes, full-tunnel/kill-switch/multipath decisions and
 TX/RX/UDP buffer/drop counters. The short log tail remains a human audit trail and a
-compatibility fallback for a client process started by an older binary.
+compatibility fallback for a client process started by an older binary. A
+structured status file over 64 KiB or changed during reading is ignored,
+leaving the log fallback.
 
 ### Panel source and visual checks
 `python3 scripts/check_panel.py` is a dependency-free CI gate for shared control styling,

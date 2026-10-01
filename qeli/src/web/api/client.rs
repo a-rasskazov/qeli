@@ -151,13 +151,15 @@ fn tunnel_ip(log_path: &str) -> Option<String> {
 /// contract; the log parsers above remain only as compatibility fallback for an older client
 /// process that was started before the server binary was upgraded.
 fn structured_status(name: &str) -> Option<Value> {
+    read_structured_status(&ClientManager::status_path(name), name)
+}
+
+fn read_structured_status(path: &str, name: &str) -> Option<Value> {
     const MAX_STATUS_BYTES: u64 = 64 * 1024;
-    let path = ClientManager::status_path(name);
-    let metadata = std::fs::metadata(&path).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_STATUS_BYTES {
-        return None;
-    }
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::config_source::load_bounded(path, MAX_STATUS_BYTES)
+        .ok()?
+        .into_parts()
+        .0;
     let value: Value = serde_json::from_str(&raw).ok()?;
     if value.get("schema").and_then(Value::as_u64) != Some(1)
         || value.get("profile").and_then(Value::as_str) != Some(name)
@@ -675,12 +677,20 @@ pub async fn delete_profile(
     if !ClientManager::valid_name(&name) {
         return Json(super::err_json("invalid name"));
     }
+    let _write_guard = state.config_write_lock.lock().await;
     if let Err(error) = state.client_manager.disconnect(&name).await {
         return Json(super::err_json(format!(
             "could not stop profile '{name}': {error}"
         )));
     }
     let profile_path = ClientManager::profile_path(&name);
+    if !FsPath::new(crate::server::client_manager::CLIENTS_DIR).is_dir() {
+        return Json(super::err_json("profile not found"));
+    }
+    let _file_lock = match super::config::lock_server_config(FsPath::new(&profile_path)).await {
+        Ok(lock) => lock,
+        Err(error) => return Json(super::err_json(error)),
+    };
     match std::fs::remove_file(&profile_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -719,6 +729,7 @@ pub async fn connect(
     _g: auth::AuthGuard,
     Path(name): Path<String>,
 ) -> Json<Value> {
+    let _write_guard = state.config_write_lock.lock().await;
     match state.client_manager.connect(&name).await {
         Ok(()) => Json(json!({ "ok": true, "message": format!("connecting '{name}'") })),
         Err(e) => Json(super::err_json(e.to_string())),
@@ -740,6 +751,30 @@ pub async fn disconnect(
 mod diagnostic_tests {
     use super::*;
     use crate::config::format::IniDoc;
+
+    #[test]
+    fn client_status_requires_matching_profile_and_stable_size_limit() {
+        let path = std::env::temp_dir().join(format!(
+            "qeli-client-status-{}-{}.json",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let path_str = path.to_str().unwrap();
+        std::fs::write(&path, r#"{"schema":1,"profile":"alpha","state":"running"}"#).unwrap();
+        assert_eq!(
+            read_structured_status(path_str, "alpha").unwrap()["state"],
+            "running"
+        );
+        assert!(read_structured_status(path_str, "beta").is_none());
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(64 * 1024 + 1)
+            .unwrap();
+        assert!(read_structured_status(path_str, "alpha").is_none());
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn client_profile_revision_rejects_stale_edit_and_name_collision() {
