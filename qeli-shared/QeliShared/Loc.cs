@@ -89,6 +89,8 @@ public static class Loc
         ["ImportError"] = ("Could not parse the config:\n{0}", "Не удалось разобрать конфиг:\n{0}"),
         ["DeleteConfirm"] = ("Delete profile “{0}”?", "Удалить профиль «{0}»?"),
         ["DeleteTitle"] = ("Delete", "Удаление"),
+        ["ProfileListChanged"] = ("Profiles changed while this dialog was open. Reopen it before saving.",
+                                  "Профили изменились, пока окно было открыто. Откройте его снова перед сохранением."),
 
         // ── about ──
         ["AboutVersion"] = ("version {0}", "версия {0}"),

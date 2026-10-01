@@ -117,6 +117,8 @@
     <string name="paste_link_hint">qeli://…</string>
     <string name="duplicate_suffix">%1$s (copy)</string>
     <string name="active_profile_toast">Active: %1$s</string>
+    <string name="profile_changed_during_edit">Profiles changed while this dialog was open. Reopen it before saving.</string>
+    <string name="profile_reconnect_required">Profile saved. Disconnect and reconnect to apply the new settings.</string>
     <string name="switch_blocked">Disconnect first to switch profile</string>
     <string name="delete_profile_confirm">Delete “%1$s”?</string>
     <string name="import_profile_title">Import profile?</string>

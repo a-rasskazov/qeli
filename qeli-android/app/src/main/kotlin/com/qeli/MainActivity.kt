@@ -112,6 +112,7 @@ class MainActivity : AppCompatActivity() {
     private val profiles = mutableListOf<Profile>()
     private var activeIndex = 0
     private var profileStoreLoadRejected = false
+    private var profileRevision = 0L
     private val reach = HashMap<Int, Long>()   // profile index -> ping ms (-1 = down, -2 = checking)
 
     /** Encrypted-at-rest profile store: profiles carry the server password and
@@ -1132,6 +1133,7 @@ ipv6 = auto
             "Could not commit profile store"
         }
         profileStoreLoadRejected = false
+        profileRevision++
     }
 
     private fun persist() = persistCandidate(profiles, activeIndex)
@@ -1172,6 +1174,7 @@ ipv6 = auto
 
     /** index = -1 to create a new profile. */
     private fun showEditor(index: Int) {
+        val openedAtRevision = profileRevision
         val dlgBinding = DialogConfigEditorBinding.inflate(LayoutInflater.from(this))
         val editing = profiles.getOrNull(index)
         dlgBinding.editName.setText(editing?.name ?: getString(R.string.new_profile_title))
@@ -1200,6 +1203,12 @@ ipv6 = auto
             val iniText = cfg.toIni()
             var name = dlgBinding.editName.text.toString().trim()
             if (name.isBlank()) name = cfg.serverAddress.ifBlank { getString(R.string.profile_fallback_name) }
+            if (profileRevision != openedAtRevision) {
+                Toast.makeText(this, R.string.profile_changed_during_edit, Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            val reconnectNeeded = editing != null && index == activeIndex &&
+                editing.text != iniText && (isConnected || isConnecting || isTrustedPaused)
             val candidate = profiles.map { it.copy() }.toMutableList()
             if (index < 0) candidate.add(Profile(name, iniText))
             else candidate[index] = Profile(name, iniText)
@@ -1213,6 +1222,9 @@ ipv6 = auto
             profiles.clear(); profiles.addAll(candidate); activeIndex = candidateActive
             renderProfileList(); renderActiveProfile(); pingActive()
             dialog.dismiss()
+            if (reconnectNeeded) {
+                Toast.makeText(this, R.string.profile_reconnect_required, Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -1650,6 +1662,8 @@ ipv6 = auto
 
     /** Overflow (⋮) menu for a profile row: Share / Edit / Duplicate / Apps / Move / Delete. */
     private fun showRowMenu(anchor: View, i: Int) {
+        val openedAtRevision = profileRevision
+        val openedProfile = profiles.getOrNull(i) ?: return
         val menu = android.widget.PopupMenu(this, anchor)
         menu.menu.add(0, 1, 0, R.string.share_profile)
         menu.menu.add(0, 2, 1, R.string.edit_profile)
@@ -1659,6 +1673,10 @@ ipv6 = auto
         menu.menu.add(0, 5, 5, R.string.move_down).isEnabled = i < profiles.size - 1
         menu.menu.add(0, 6, 6, R.string.delete_profile)
         menu.setOnMenuItemClickListener { item ->
+            if (profileRevision != openedAtRevision || profiles.getOrNull(i) !== openedProfile) {
+                Toast.makeText(this, R.string.profile_changed_during_edit, Toast.LENGTH_LONG).show()
+                return@setOnMenuItemClickListener true
+            }
             when (item.itemId) {
                 1 -> { shareProfile(i); true }
                 2 -> { showEditor(i); true }
@@ -1681,6 +1699,7 @@ ipv6 = auto
      */
     private fun showAppsDialog(i: Int) {
         val profile = profiles.getOrNull(i) ?: return
+        val openedAtRevision = profileRevision
         val cfg = try { VpnConfig.parse(profile.text) } catch (_: Exception) { null }
         val startMode = cfg?.appsMode ?: "all"
         val startSel = cfg?.apps?.toHashSet() ?: hashSetOf()
@@ -1721,10 +1740,16 @@ ipv6 = auto
             .setView(root)
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.save) { _, _ ->
+                if (profileRevision != openedAtRevision) {
+                    Toast.makeText(this, R.string.profile_changed_during_edit, Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
                 val mode = when (rgMode.checkedRadioButtonId) { rbInc.id -> "include"; rbExc.id -> "exclude"; else -> "all" }
                 val sel = checks.filterValues { it.isChecked }.keys.toList()
                 val candidate = profiles.map { it.copy() }.toMutableList()
                 candidate[i].text = writeAppsIntoIni(profile.text, mode, sel)
+                val reconnectNeeded = i == activeIndex && candidate[i].text != profile.text &&
+                    (isConnected || isConnecting || isTrustedPaused)
                 try {
                     VpnConfig.parse(candidate[i].text).validate()
                     persistCandidate(candidate, activeIndex)
@@ -1735,6 +1760,9 @@ ipv6 = auto
                 profiles.clear(); profiles.addAll(candidate)
                 val n = if (mode == "all") 0 else sel.size
                 Toast.makeText(this, if (mode == "all") getString(R.string.per_app_all_toast) else getString(R.string.per_app_selected_toast, n), Toast.LENGTH_SHORT).show()
+                if (reconnectNeeded) {
+                    Toast.makeText(this, R.string.profile_reconnect_required, Toast.LENGTH_LONG).show()
+                }
             }
             .create()
         dialog.show()
@@ -1903,10 +1931,15 @@ ipv6 = auto
 
     private fun deleteProfile(i: Int) {
         val p = profiles.getOrNull(i) ?: return
+        val openedAtRevision = profileRevision
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.delete_profile).setMessage(getString(R.string.delete_profile_confirm, p.name))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.delete_profile) { _, _ ->
+                if (profileRevision != openedAtRevision) {
+                    Toast.makeText(this, R.string.profile_changed_during_edit, Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
                 val currentIndex = profiles.indexOfFirst { it === p }
                 if (currentIndex < 0) return@setPositiveButton
                 val candidate = profiles.map { it.copy() }.toMutableList()

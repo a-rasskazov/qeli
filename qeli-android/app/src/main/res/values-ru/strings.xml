@@ -129,6 +129,8 @@
     <string name="paste_link_hint">qeli://…</string>
     <string name="duplicate_suffix">%1$s (копия)</string>
     <string name="active_profile_toast">Активен: %1$s</string>
+    <string name="profile_changed_during_edit">Профили изменились, пока окно было открыто. Откройте его снова перед сохранением.</string>
+    <string name="profile_reconnect_required">Профиль сохранён. Отключитесь и подключитесь снова, чтобы применить новые настройки.</string>
     <string name="switch_blocked">Сначала отключитесь, чтобы сменить профиль</string>
     <string name="delete_profile_confirm">Удалить «%1$s»?</string>
     <string name="import_profile_title">Импортировать профиль?</string>

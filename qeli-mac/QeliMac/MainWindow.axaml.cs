@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     // import, delete, filter), so the OnProfileSelected auto-restart fires ONLY for a genuine
     // user pick — not for a selection that shifts because the collection/filter was mutated.
     private bool _suppressAutoSwitch;
+    private long _profileRevision;
     private VpnStatus _status = VpnStatus.Disconnected;
     // Status observed when the current Connect/Disconnect began, so the poll can tell a
     // state the daemon has actually REACHED from the one it started in.
@@ -965,8 +966,14 @@ public partial class MainWindow : Window
 
     private async Task EditProfile(VpnConfig p)
     {
+        long openedAtRevision = _profileRevision;
         var edited = await ConfigEditorWindow.ShowAsync(this, p);
         if (edited == null) return;
+        if (_profileRevision != openedAtRevision)
+        {
+            await Dialogs.InfoAsync(this, Loc.T("ProfileListChanged"), "Qeli");
+            return;
+        }
         bool wasRunning = IsRunning(p);
         if (wasRunning && !_serviceMode)
         {
@@ -986,6 +993,13 @@ public partial class MainWindow : Window
         // The replace + ApplyFilter + reselect all raise SelectionChanged; suppress so they
         // don't restart the tunnel — the wasRunning branch below owns the restart (and only
         // when the LIVE profile was the one edited).
+        if (_profileRevision != openedAtRevision)
+        {
+            await Dialogs.InfoAsync(this, Loc.T("ProfileListChanged"), "Qeli");
+            if (wasRunning && !_serviceMode && !_tunnel.IsRunning && _profiles.Contains(p))
+                await StartTunnel(p);
+            return;
+        }
         int idx = _profiles.IndexOf(p);
         if (idx < 0) return;
         var updated = _profiles.ToList();
@@ -997,6 +1011,7 @@ public partial class MainWindow : Window
             if (wasRunning && !_serviceMode) await StartTunnel(p);
             return;
         }
+        _profileRevision++;
         Programmatic(() =>
         {
             _profiles[idx] = edited;
@@ -1016,7 +1031,13 @@ public partial class MainWindow : Window
 
     private async Task DeleteProfile(VpnConfig p)
     {
+        long openedAtRevision = _profileRevision;
         if (!await Dialogs.ConfirmAsync(this, Loc.F("DeleteConfirm", p.DisplayName), Loc.T("DeleteTitle"))) return;
+        if (_profileRevision != openedAtRevision)
+        {
+            await Dialogs.InfoAsync(this, Loc.T("ProfileListChanged"), "Qeli");
+            return;
+        }
         // Tear down the tunnel FIRST if we're deleting the profile it's running on —
         // otherwise its reconnect loop (owned by the tunnel, not the list) keeps trying
         // the deleted server's IP long after the profile is gone.
@@ -1039,6 +1060,13 @@ public partial class MainWindow : Window
         // Removing the selected item + ApplyFilter shift the selection → SelectionChanged;
         // suppress so a delete of a NON-running profile while connected doesn't restart onto
         // whatever becomes selected. The running-profile case is handled above.
+        if (_profileRevision != openedAtRevision)
+        {
+            await Dialogs.InfoAsync(this, Loc.T("ProfileListChanged"), "Qeli");
+            if (wasRunning && !_serviceMode && !_tunnel.IsRunning && _profiles.Contains(p))
+                await StartTunnel(p);
+            return;
+        }
         if (!_profiles.Contains(p)) return;
         try { ProfileStore.Save(_profiles.Where(item => !ReferenceEquals(item, p)).ToList()); }
         catch (Exception error)
@@ -1047,6 +1075,7 @@ public partial class MainWindow : Window
             if (wasRunning && !_serviceMode) await StartTunnel(p);
             return;
         }
+        _profileRevision++;
         Programmatic(() =>
         {
             _profiles.Remove(p);
@@ -1253,6 +1282,7 @@ public partial class MainWindow : Window
             await Dialogs.InfoAsync(this, error.Message, "Qeli");
             return;
         }
+        _profileRevision++;
         // New/imported/duplicated profile: select it but don't hijack a live tunnel.
         Programmatic(() =>
         {

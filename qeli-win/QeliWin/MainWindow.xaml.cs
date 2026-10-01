@@ -37,6 +37,7 @@ public partial class MainWindow : Window
     // import, delete), so the OnProfileSelected auto-restart fires ONLY for a genuine user
     // pick — not for a selection that shifts because the collection was mutated.
     private bool _suppressAutoSwitch;
+    private long _profileRevision;
     private VpnStatus _status = VpnStatus.Disconnected;
     private VpnStatus _prevStatus = VpnStatus.Disconnected;
     private string? _lastExtra;
@@ -810,8 +811,15 @@ public partial class MainWindow : Window
 
     private async void EditProfile(VpnConfig p)
     {
+        long openedAtRevision = _profileRevision;
         var edited = ConfigEditorWindow.Show(this, p);
         if (edited == null) return;
+        if (_profileRevision != openedAtRevision)
+        {
+            MessageBox.Show(this, Loc.T("ProfileListChanged"), "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         bool wasRunning = IsRunning(p);
         if (wasRunning && !_serviceMode)
         {
@@ -830,6 +838,14 @@ public partial class MainWindow : Window
         // Replacing the item + reselecting it both raise SelectionChanged; suppress the
         // auto-switch so it doesn't restart the tunnel here — the wasRunning branch below
         // owns the restart (and only when the LIVE profile was the one edited).
+        if (_profileRevision != openedAtRevision)
+        {
+            MessageBox.Show(this, Loc.T("ProfileListChanged"), "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (wasRunning && !_serviceMode && !_tunnel.IsRunning && _profiles.Contains(p))
+                await StartTunnel(p);
+            return;
+        }
         int idx = _profiles.IndexOf(p);
         if (idx < 0) return;
         var updated = _profiles.ToList();
@@ -842,6 +858,7 @@ public partial class MainWindow : Window
             if (wasRunning && !_serviceMode) await StartTunnel(p);
             return;
         }
+        _profileRevision++;
         Programmatic(() =>
         {
             _profiles[idx] = edited;
@@ -860,8 +877,15 @@ public partial class MainWindow : Window
 
     private async void DeleteProfile(VpnConfig p)
     {
+        long openedAtRevision = _profileRevision;
         if (MessageBox.Show(this, Loc.F("DeleteConfirm", p.DisplayName), Loc.T("DeleteTitle"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (_profileRevision != openedAtRevision)
+        {
+            MessageBox.Show(this, Loc.T("ProfileListChanged"), "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         // Tear down the tunnel FIRST if we're deleting the profile it's running on —
         // otherwise its reconnect loop (owned by the tunnel, not the list) keeps trying
         // the deleted server's IP long after the profile is gone.
@@ -880,6 +904,14 @@ public partial class MainWindow : Window
         // Removing the selected item shifts the selection → SelectionChanged; suppress so a
         // delete of a NON-running profile while connected doesn't restart onto whatever
         // becomes selected. The running-profile case is handled above.
+        if (_profileRevision != openedAtRevision)
+        {
+            MessageBox.Show(this, Loc.T("ProfileListChanged"), "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (wasRunning && !_serviceMode && !_tunnel.IsRunning && _profiles.Contains(p))
+                await StartTunnel(p);
+            return;
+        }
         if (!_profiles.Contains(p)) return;
         try { ProfileStore.Save(_profiles.Where(item => !ReferenceEquals(item, p)).ToList()); }
         catch (Exception error)
@@ -889,6 +921,7 @@ public partial class MainWindow : Window
             if (wasRunning && !_serviceMode) await StartTunnel(p);
             return;
         }
+        _profileRevision++;
         Programmatic(() => _profiles.Remove(p));
         UpdateEmptyHint();
     }
@@ -1091,6 +1124,7 @@ public partial class MainWindow : Window
     {
         // Persist a proposed list before changing the visible collection.
         ProfileStore.Save(_profiles.Append(cfg));
+        _profileRevision++;
         // New/imported/duplicated profile: select it but don't hijack a live tunnel.
         Programmatic(() =>
         {
