@@ -1759,12 +1759,13 @@ ipv6 = auto
                     return@setPositiveButton
                 }
                 val mode = when (rgMode.checkedRadioButtonId) { rbInc.id -> "include"; rbExc.id -> "exclude"; else -> "all" }
-                val sel = checks.filterValues { it.isChecked }.keys.toList()
+                val sel = checks.filterValues { it.isChecked }.keys.sorted()
                 val candidate = profiles.map { it.copy() }.toMutableList()
-                candidate[i].text = writeAppsIntoIni(profile.text, mode, sel)
-                val reconnectNeeded = i == activeIndex && candidate[i].text != profile.text &&
-                    (isConnected || isConnecting || isTrustedPaused)
+                val reconnectNeeded: Boolean
                 try {
+                    candidate[i].text = ProfileAppsEditor.replace(profile.text, mode, sel)
+                    reconnectNeeded = i == activeIndex && candidate[i].text != profile.text &&
+                        (isConnected || isConnecting || isTrustedPaused)
                     VpnConfig.parse(candidate[i].text).validate()
                     persistCandidate(candidate, activeIndex)
                 } catch (e: Exception) {
@@ -1832,23 +1833,6 @@ ipv6 = auto
         }
         out.sortBy { it.label.lowercase() }
         return out
-    }
-
-    /** Replace the `apps_mode`/`apps` lines in an INI config with the given selection
-     *  (removes both keys when mode == "all"). Purely textual so it preserves any
-     *  fields [VpnConfig.toIni] doesn't model (e.g. split-tunnel include/exclude routes). */
-    private fun writeAppsIntoIni(ini: String, mode: String, pkgs: List<String>): String {
-        val appsKey = Regex("^apps\\s*=")
-        val kept = ini.lineSequence().filterNot {
-            val t = it.trimStart()
-            t.startsWith("apps_mode") || appsKey.containsMatchIn(t)
-        }.joinToString("\n").trimEnd()
-        if (mode == "all" || pkgs.isEmpty()) return kept + "\n"
-        return buildString {
-            append(kept).append('\n')
-            append("apps_mode = ").append(mode).append('\n')
-            append("apps = ").append(pkgs.joinToString(", ")).append('\n')
-        }
     }
 
     /** Duplicate a profile (inserted right after it, name + " (copy)"). */

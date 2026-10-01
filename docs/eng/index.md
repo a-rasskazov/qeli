@@ -307,3 +307,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F190: server INI history errors](reports/AUDIT-Q25-SERVER-INI-HISTORY.md)
 - [Q25-F191: null fields in desktop profile stores](reports/AUDIT-Q25-DESKTOP-STORE-NULL-FIELDS.md)
 - [Q25-F192: shared Windows/macOS settings storage](reports/AUDIT-Q25-DESKTOP-SETTINGS-STORE.md)
+- [Q25-F193: Android per-app editor and INI sections](reports/AUDIT-Q25-ANDROID-APPS-INI.md)
