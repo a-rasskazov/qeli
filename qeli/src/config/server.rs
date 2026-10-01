@@ -1566,6 +1566,18 @@ pub const WEB_SESSION_TTL_MIN_SECS: i64 = 60;
 pub const WEB_SESSION_TTL_MAX_SECS: i64 = 30 * 24 * 3600;
 
 impl WebConfig {
+    /// An enabled panel needs an admin password unless no-auth is explicitly requested.
+    /// Keep this separate from validate_active so dormant syntax checks stay independent.
+    pub fn validate_auth_admission(&self) -> Result<(), String> {
+        if self.enabled && self.password_hash.is_empty() && !self.insecure_no_auth {
+            return Err(
+                "web.enabled = true requires web.password_hash or explicit web.insecure_no_auth = true; set a password with `qeli set-web-password` before enabling the panel"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
     /// Validate only settings consumed while the panel is enabled. Hidden dormant values
     /// are preserved losslessly and checked when the operator enables their parent feature.
     pub fn validate_active(&self) -> Result<(), String> {

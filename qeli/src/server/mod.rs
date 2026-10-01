@@ -1654,6 +1654,10 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         anyhow::bail!("all profiles are disabled (enabled = false) — enable at least one");
     }
     config.web.validate_active().map_err(anyhow::Error::msg)?;
+    config
+        .web
+        .validate_auth_admission()
+        .map_err(anyhow::Error::msg)?;
     // Both brute-force policies, before anything profile-specific. This function is the
     // one gate every write path shares — `check-config`, worker startup, `PUT /api/config`
     // and `PUT /api/config/raw` all call it — so validating here is what stops a policy
@@ -7643,7 +7647,8 @@ pool.cidr = 10.{net}.0.0/24
                  {extra}"
             )
         }
-        let web = |port: &str| format!("[web]\nenabled = true\nport = {port}\n");
+        let web =
+            |port: &str| format!("[web]\nenabled = true\ninsecure_no_auth = true\nport = {port}\n");
 
         // Control: a panel on its own port, and per-profile services on distinct addresses.
         validate_profiles(&cfg(&(web("8443")
@@ -7900,6 +7905,7 @@ pool.cidr = 10.{net}.0.0/24
             crate::config::parse_server_config(&format!(
                 "[web]\n\
                  enabled = true\n\
+                 insecure_no_auth = true\n\
                  port = {port}\n\
                  [profile:p]\n\
                  bind.address = 0.0.0.0\n\
@@ -8411,6 +8417,7 @@ pool.cidr = 10.{net}.0.0/24
         validate_profiles(&cfg).expect("disabled web panel must ignore its hidden policy");
 
         cfg.web.enabled = true;
+        cfg.web.insecure_no_auth = true;
         let error = validate_profiles(&cfg).unwrap_err().to_string();
         assert!(error.contains("[web]"), "wrong error: {error}");
     }
@@ -8842,6 +8849,17 @@ pool.cidr = 10.{net}.0.0/24
             .unwrap_err()
             .to_string();
         assert!(error.contains("no profiles defined"), "{error}");
+    }
+
+    #[test]
+    fn enabled_panel_without_auth_fails_shared_validation() {
+        let mut config = cfg_with("fake-tls", "tcp");
+        config.web.enabled = true;
+        let error = validate_profiles(&config).unwrap_err().to_string();
+        assert!(error.contains("web.password_hash"), "{error}");
+
+        config.web.insecure_no_auth = true;
+        validate_profiles(&config).expect("explicit no-auth is permitted");
     }
 
     #[test]

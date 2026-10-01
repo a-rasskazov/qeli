@@ -192,12 +192,7 @@ pub(super) fn write_server_config(path: &FsPath, raw: &str) -> anyhow::Result<()
 pub(super) fn validate_web_auth_for_save(
     web: &crate::config::server::WebConfig,
 ) -> Result<(), String> {
-    if web.enabled && web.password_hash.is_empty() && !web.insecure_no_auth {
-        return Err(
-            "web.enabled = true requires web.password_hash or explicit web.insecure_no_auth = true; set a password with `qeli set-web-password` before saving"
-                .into(),
-        );
-    }
+    web.validate_auth_admission()?;
     if web.enabled && !web.password_hash.is_empty() {
         super::users::validate_argon2_hash(&web.password_hash)
             .map_err(|error| format!("web.password_hash: {error}"))?;
