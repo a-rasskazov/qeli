@@ -771,7 +771,16 @@ public partial class MainWindow : Window
     private static VpnConfig? Ctx(object sender) => (sender as FrameworkElement)?.DataContext as VpnConfig;
     private void OnMenuEdit(object sender, RoutedEventArgs e) { if (Ctx(sender) is { } p) EditProfile(p); }
     private void OnMenuDelete(object sender, RoutedEventArgs e) { if (Ctx(sender) is { } p) DeleteProfile(p); }
-    private void OnMenuShare(object sender, RoutedEventArgs e) { if (Ctx(sender) is { } p) QrShareWindow.Show(this, p); }
+    private void OnMenuShare(object sender, RoutedEventArgs e)
+    {
+        if (Ctx(sender) is not { } p) return;
+        try { QrShareWindow.Show(this, p); }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
 
     private void OnMenuDuplicate(object sender, RoutedEventArgs e)
     {

@@ -54,6 +54,7 @@
 "Disabled" = "Disabled";
 "Auto keeps the authenticated session across network changes when supported, otherwise reconnects. Required refuses unsupported servers or platforms." = "Auto keeps the authenticated session across network changes when supported, otherwise reconnects. Required refuses unsupported servers or platforms.";
 "Share profile" = "Share profile";
+"Cannot share profile" = "Cannot share profile";
 "The share link contains the profile credentials." = "The share link contains the profile credentials.";
 "Done" = "Done";
 "Connection log" = "Connection log";

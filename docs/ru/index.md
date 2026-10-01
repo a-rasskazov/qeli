@@ -309,3 +309,4 @@
 - [Q25-F192: общее хранение настроек Windows/macOS](reports/AUDIT-Q25-DESKTOP-SETTINGS-STORE.md)
 - [Q25-F193: Android per-app редактор и секции INI](reports/AUDIT-Q25-ANDROID-APPS-INI.md)
 - [Q25-F194: переносимый пароль в ссылке и сборка редактора](reports/AUDIT-Q25-CLIENT-SHARE-PASSWORD.md)
+- [Q25-F195: ошибки выдачи ссылки в клиентском UI](reports/AUDIT-Q25-CLIENT-SHARE-UI.md)

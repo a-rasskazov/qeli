@@ -309,3 +309,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F192: shared Windows/macOS settings storage](reports/AUDIT-Q25-DESKTOP-SETTINGS-STORE.md)
 - [Q25-F193: Android per-app editor and INI sections](reports/AUDIT-Q25-ANDROID-APPS-INI.md)
 - [Q25-F194: portable password in share links and editor build](reports/AUDIT-Q25-CLIENT-SHARE-PASSWORD.md)
+- [Q25-F195: share-link errors in client UI](reports/AUDIT-Q25-CLIENT-SHARE-UI.md)

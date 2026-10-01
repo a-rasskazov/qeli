@@ -928,10 +928,16 @@ public partial class MainWindow : Window
         }
         Item("Edit", () => _ = EditProfile(p));
         Item("Duplicate", () => _ = DuplicateProfile(p));
-        Item("ShareQr", () => _ = QrShareWindow.ShowAsync(this, p));
+        Item("ShareQr", () => _ = ShareProfile(p));
         flyout.Items.Add(new Separator());
         Item("Delete", () => _ = DeleteProfile(p));
         flyout.ShowAt(b);
+    }
+
+    private async Task ShareProfile(VpnConfig profile)
+    {
+        try { await QrShareWindow.ShowAsync(this, profile); }
+        catch (Exception error) { await Dialogs.InfoAsync(this, error.Message, "Qeli"); }
     }
 
     private async Task DuplicateProfile(VpnConfig p)
