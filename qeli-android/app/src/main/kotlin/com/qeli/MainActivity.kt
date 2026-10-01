@@ -1035,9 +1035,14 @@ ipv6 = auto
                     "stored profile set exceeds the safety limit"
                 }
                 val root = JSONObject(raw)
-                val arr = root.optJSONArray("profiles") ?: JSONArray()
-                require(arr.length() <= MAX_IMPORTED_PROFILES) {
-                    "stored profile set exceeds $MAX_IMPORTED_PROFILES entries"
+                val arr = root.optJSONArray("profiles")
+                    ?: throw IllegalArgumentException("stored profiles must be an array")
+                require(arr.length() in 1..MAX_IMPORTED_PROFILES) {
+                    "stored profile set must contain 1..$MAX_IMPORTED_PROFILES entries"
+                }
+                val storedActive = root.optInt("active", 0)
+                require(storedActive in 0 until arr.length()) {
+                    "stored active profile index is out of range"
                 }
                 val loaded = ArrayList<Profile>(arr.length())
                 for (i in 0 until arr.length()) {
@@ -1052,7 +1057,7 @@ ipv6 = auto
                 // replace a previously usable in-memory set with a partial prefix.
                 profiles.clear()
                 profiles.addAll(loaded)
-                activeIndex = root.optInt("active", 0)
+                activeIndex = storedActive
             } catch (e: Exception) {
                 profileStoreLoadRejected = true
                 Log.e("VpnMain", "profiles load: ${e.message}")

@@ -11,6 +11,7 @@ import com.google.crypto.tink.aead.AeadConfig
 import com.google.crypto.tink.daead.DeterministicAeadConfig
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
 import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -108,7 +109,9 @@ object ProfileStore {
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                 cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
                 cipher.updateAAD(aad(preferenceKey))
-                return cipher.doFinal(ciphertext).toString(Charsets.UTF_8)
+                val plaintext = cipher.doFinal(ciphertext)
+                try { return decodeProfileStoreUtf8(plaintext) }
+                finally { plaintext.fill(0) }
             } catch (error: SecurityException) {
                 throw error
             } catch (error: Exception) {
@@ -229,7 +232,9 @@ object ProfileStore {
             require(length >= 0 && length == buffer.remaining()) {
                 "legacy profile entry has an invalid length"
             }
-            return ByteArray(length).also(buffer::get).toString(Charsets.UTF_8)
+            val plaintext = ByteArray(length).also(buffer::get)
+            try { return decodeProfileStoreUtf8(plaintext) }
+            finally { plaintext.fill(0) }
         }
 
         fun erase(context: Context) {
@@ -239,3 +244,11 @@ object ProfileStore {
         }
     }
 }
+
+/** Never replace malformed stored bytes with U+FFFD inside credentials or INI text. */
+internal fun decodeProfileStoreUtf8(bytes: ByteArray): String =
+    Charsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(ByteBuffer.wrap(bytes))
+        .toString()
