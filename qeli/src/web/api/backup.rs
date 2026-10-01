@@ -443,6 +443,7 @@ const SERVER_FAULT_MARKERS: &[&str] = &[
     "could not run tar for the pre-restore snapshot",
     "could not take the pre-restore snapshot",
     "staged tree unreadable",
+    "cannot inspect staged entry",
     "cannot normalize restored config/key permissions",
 ];
 
@@ -584,7 +585,14 @@ fn prune_absent(
         Ok(e) => e,
         Err(e) => return (0, vec![format!("cannot scan {dest}: {e}")]),
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(format!("cannot inspect live directory entry: {error}"));
+                continue;
+            }
+        };
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') || name.ends_with(".lock") {
             continue; // snapshots, in-flight artefacts and sidecar writer locks
@@ -785,10 +793,18 @@ fn restore_blocking(
     // the archive contained. Reading it later reported "the archive has nothing" and pruned
     // away the very files that had just been restored. (Р1)
     let archive_names: std::collections::HashSet<String> = match std::fs::read_dir(&staged_root) {
-        Ok(rd) => rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect(),
+        Ok(rd) => {
+            let names: std::io::Result<std::collections::HashSet<String>> = rd
+                .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+                .collect();
+            match names {
+                Ok(names) => names,
+                Err(error) => {
+                    stage_cleanup();
+                    return Err(format!("staged tree unreadable: {error}"));
+                }
+            }
+        }
         Err(e) => {
             stage_cleanup();
             return Err(format!("staged tree unreadable: {e}"));
@@ -1055,7 +1071,8 @@ fn vet_staged_dir(
     hook_files: &std::collections::HashSet<String>,
 ) -> Result<(), String> {
     let entries = std::fs::read_dir(root).map_err(|e| format!("staged tree unreadable: {e}"))?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot inspect staged entry: {error}"))?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         // Refuse to replace a file an existing hook executes — see hook_referenced_files.
@@ -1336,7 +1353,8 @@ fn vet_publish_shape(
 /// filesystem, so each `rename` is atomic.
 fn publish_staged_tree(root: &str, dest: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
-    for entry in std::fs::read_dir(root)?.flatten() {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
         // A restored lock inode would split flock participants across two files
         // while a save or restore is in progress. Locks are operational state.
         if entry.file_name().to_string_lossy().ends_with(".lock") {

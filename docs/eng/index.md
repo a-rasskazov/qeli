@@ -301,3 +301,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F158: saved versus active lockout policy](reports/AUDIT-Q25-SERVER-BLOCKED-LIVE.md)
 - [Q25-F159: stable ordering of dynamic INI fields](reports/AUDIT-Q25-SERVER-INI-ORDER.md)
 - [Q25-F160: INI revision for lockout-policy saves](reports/AUDIT-Q25-SERVER-BLOCKED-REVISION.md)
+- [Q25-F161: archive restore directory scan errors](reports/AUDIT-Q25-SERVER-ARCHIVE-SCAN.md)
