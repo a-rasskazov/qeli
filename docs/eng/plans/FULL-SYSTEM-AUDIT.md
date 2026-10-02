@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v4 -->
+<!-- normative-sync: full-system-audit-v5 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -140,7 +140,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 
 | ID | Module | Historical checks | New pass |
 |---|---|---|---|
-| 01 | Server INI and schema | H01, H04, H08–H10 | IN_PROGRESS |
+| 01 | Server INI and schema | H01, H04, H08–H10 | PASS |
 | 02 | Client parsers and qeli:// | H04, H06, H08–H10 | IN_PROGRESS |
 | 03 | Panel UI and state | H02, H09–H11 | TODO |
 | 04 | Web auth and API protection | H01–H03, H08–H09 | TODO |
@@ -192,13 +192,13 @@ Trace every key through parse → validate → runtime → serialize; defaults, 
 
 **Existing harness/fixtures:** `qeli/tests/config_examples.rs`.
 
-- [ ] Review and dead code.
+- [x] Review and dead code: strict entry points, serde/function-pointer/OS consumers, documented inactive fields; 3 October.
 - [x] Parser positive, boundary and negative scenarios: 12 new regressions and the existing suite.
 - [x] Failures/concurrency: D07/Q25-F209, 201 unit, 4 privileged and 44 runtime checks.
 - [x] Linux integration: check-config/startup/SIGHUP/HTTP save/Quick Start, Q25-F209; final D15 candidate.
 - [x] First-pass fixes, retesting and evidence (Q01-F001–F007).
 
-**Status: IN_PROGRESS.**
+**Status: PASS.**
 
 **First pass, 2026-09-22:** [Q01 report](../reports/AUDIT-Q01-SERVER-INI.md).
 Fixed 6 INI processing defects and a fixture coverage gap. 651 portable Rust tests,
@@ -211,7 +211,7 @@ D07/Q25-F209 covers failures/concurrency and Linux save/reload/import; D15 verif
 all 288 Rust hashes unchanged and validates the final release. The no-Linux blocker
 is obsolete. [Applicability evidence](../../../release/certification/evidence/q01-reconciliation-20261003.json)
 retains the original debug SHA/limits; it does not claim a new run of those 44 checks.
-**Open:** targeted review and dead code; no overall PASS yet.
+**3 October completion:** targeted review found no new confirmed defects; fixture check rerun. All five section 01 criteria are closed. PASS covers server schema and configuration paths, not networking implementations in later sections.
 
 ### 02. Client parsers and qeli://
 
@@ -234,9 +234,9 @@ Fixed Q02-F001–F006: ambiguous query parameters, scalar/UTF-8/default behavior
 JVM corpus reruns. 651 Rust tests, 438 C# checks and 137 JVM tests passed.
 Shared corpus: 21 valid + 29 reject; the 81-key-name contract is preserved.
 
-**Open:** complete INI/editor pass, Swift build/test and platform integration.
+**Current state, 3 October:** targeted INI/editor review continues. D08 already exercised available models/stores and the Android emulator; D15 refreshed release native A/B and provenance. Apple and unavailable physical environments were excluded by the user, not given runtime PASS. [Reconciliation](../../../release/certification/evidence/q02-reconciliation-20261003.json): 81 keys, 84 editor fields, 164 adapter + 288 Rust hashes match; six static tests and projection generation passed. Existing runtime results are not claimed as new executions.
 **User's architecture proposal:** [shared configuration module](CLIENT-CONFIG-CORE.md)
-inside the existing Rust core is implemented in source (ABI 1.16). Local parsers are removed; generated projections/defaults and shared routing/reconnect/version/route-file policies are active. Apple runtime and release-native A/B rebuilding remain open.
+inside the existing Rust core is implemented in source (ABI 1.16). Local parsers are removed; generated projections/defaults and shared routing/reconnect/version/route-file policies are active. Release A/B is covered by D15; Apple runtime was excluded by the user.
 
 **22 September continuation — configuration boundaries:** eight reproduced INI/URI
 scenarios (Q02-F007–F014) were fixed in the core: character/DNS-error loss, invalid overlay names, BOM

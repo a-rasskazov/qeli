@@ -184,3 +184,26 @@ and [machine reconciliation](../../../release/certification/evidence/q01-reconci
 verify applicability: all 288 Rust hashes match; 201 unit / 4 privileged /
 44 runtime retain their original artifact/environment limits. No repeated
 executions are claimed. Targeted dead-code review remains before overall PASS.
+
+## Review completion — 3 October 2026
+
+**Section 01: PASS.** Reviewed builders/codec, strict loading, diagnostic CLI,
+form admission, users loading and locked update; traced references through serde
+attributes, function pointers and OS/feature gates. Strict paths examine document
+findings after conversion and before publication. The client editor remains in
+section 02 and networking implementations in sections 13–25.
+
+No new confirmed defects or safely removable dead runtime code were found.
+`set_bandwidth` and `notify::save_path` serve test fixtures; a helper name does not
+establish a runtime API. `logging.format`, read-only `tun.netmask`, fields inactive
+on another transport and AWG normalization have documented contracts and are not
+removed as forgotten implementations. The serde baseline is an internal DTO,
+not a JSON configuration loader.
+
+Fresh `python scripts/gen_roundtrip_fixture.py --check`: PASS, 163 key names,
+three dynamic families, embedded fixture matches. All 288 Rust hashes were checked
+again against Q25-F209. Its 201 unit / 4 privileged / 44 runtime checks and fresh D15
+validation cover the other criteria; runtime was not repeated here. [Machine reconciliation](../../../release/certification/evidence/q01-reconciliation-20261003.json)
+records the original commit, reviewed file hashes and suspect-branch decisions.
+This section PASS does not complete the full audit or alter the accepted D06
+limitation for WAN replacement.

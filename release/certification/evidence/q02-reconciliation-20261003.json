@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "kind": "q02-current-contract-reconciliation",
+  "captured_at": "2026-10-02T23:44:54.332613+00:00",
+  "status": "IN_PROGRESS",
+  "review_source_commit": "13dc2922fd4cade482b0bd35cdfc8340d06f344d",
+  "static_checks": [
+    {
+      "command": "python scripts/test_native_config_keys.py",
+      "exit_code": 0,
+      "output_sha256": "a25b5619af971eae96a8c9d37ebc69133b4c28e990455e210be0507206df182c"
+    },
+    {
+      "command": "python scripts/gen_config_bindings.py --check",
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "key_names": 81,
+  "editor_fields_including_logging": 84,
+  "reused_evidence": "release/certification/evidence/client-store-20261002.json",
+  "reused_evidence_sha256": "6c3214c5da59b09e61274ad083350fc799b58893b17afeb15abfa977c50b76aa",
+  "matched_inputs": {
+    "tested_adapter_input_sha256": 164,
+    "unchanged_rust_input_sha256": 288
+  },
+  "managed_checks": 511,
+  "android_jvm": {
+    "tests": 167,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "android_runtime_summary": {
+    "ro.build.version.sdk": "34",
+    "ro.build.version.release": "14",
+    "ro.product.cpu.abi": "x86_64",
+    "status": "PASS",
+    "instrumented_tests": 12,
+    "elapsed_seconds": 77.37
+  },
+  "new_platform_test_execution": false,
+  "remaining": "Targeted INI/editor/URI caller review and final criterion reconciliation; no overall PASS",
+  "limits": "Apple and physical platform runtime excluded by user; prior original artifact identities and test times retained, no new QR/UI/storage/device claims"
+}
