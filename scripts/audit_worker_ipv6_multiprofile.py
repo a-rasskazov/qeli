@@ -24,7 +24,11 @@ def main():
     for name in ('qeli', 'sha256', 'artifacts', 'parent-net', 'parent-mnt', 'parent-pid'):
         ap.add_argument('--' + name, required=True)
     ap.add_argument('--backend', choices=('nft', 'legacy'), required=True)
+    ap.add_argument('--firewalld', help='read-only extracted private runtime; enables mixed backends and packet policy probes')
+    ap.add_argument('--ipv4', choices=('nft', 'legacy'))
+    ap.add_argument('--ipv6', choices=('nft', 'legacy'))
     args = ap.parse_args()
+    assert bool(args.firewalld) == bool(args.ipv4 and args.ipv6)
     for kind in ('net', 'mnt', 'pid'):
         assert os.readlink('/proc/self/ns/' + kind) != getattr(args, 'parent_' + kind)
     binary = Path(args.qeli).resolve(strict=True)
@@ -33,11 +37,12 @@ def main():
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     results, commands = [], []
     worker = None
+    mixed = None
     completed = False
 
-    def run(argv, check=True):
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=25)
-        commands.append(dict(argv=argv, exit_code=p.returncode, output=p.stdout + p.stderr))
+    def run(argv, check=True, env=None, executable=None):
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=25, env=env, executable=executable)
+        commands.append(dict(argv=argv, executable=executable, exit_code=p.returncode, output=p.stdout + p.stderr))
         (root / 'commands.json').write_text(json.dumps(commands, indent=2) + '\n')
         if check:
             assert p.returncode == 0, (argv, p.stdout, p.stderr)
@@ -57,7 +62,10 @@ def main():
             assert time.monotonic() < end, 'readiness timeout'
             time.sleep(.05)
 
-    if args.backend == 'legacy':
+    if args.firewalld:
+        from audit_firewalld_profiles import MixedFirewall
+        mixed = MixedFirewall(root, args.firewalld, args.ipv4, args.ipv6, run, record)
+    if args.backend == 'legacy' and mixed is None:
         # The standard iptables family shares this multicall binary on this lab.
         # Private mount only; dispatch on argv0 preserves iptables/ip6tables/save.
         target = Path('/usr/sbin/iptables').resolve(strict=True)
@@ -67,7 +75,7 @@ def main():
         wrapper.chmod(0o700)
         run(['mount', '--bind', str(wrapper), str(target)])
     version = run(['iptables', '--version']).stdout.strip()
-    record('selected real firewall backend', ('legacy' if args.backend == 'legacy' else 'nf_tables') in version, version)
+    record('selected real firewall backend', ('legacy' if (args.ipv4 or args.backend) == 'legacy' else 'nf_tables') in version, version)
     for cmd in (['ip', 'link', 'set', 'lo', 'up'], ['ip', 'link', 'add', 'wan0', 'type', 'dummy'],
                 ['ip', 'link', 'set', 'wan0', 'up'], ['ip', 'addr', 'add', '192.0.2.1/24', 'dev', 'wan0'],
                 ['ip', '-6', 'addr', 'add', '2001:db8:ffff::1/64', 'dev', 'wan0', 'nodad']):
@@ -84,7 +92,14 @@ def main():
         run([tool, '-A', 'FORWARD', '-m', 'comment', '--comment', 'audit-foreign', '-j', 'DROP'])
         run([tool, '-P', 'INPUT', 'DROP'])
         run([tool, '-P', 'FORWARD', 'DROP'])
-    time.sleep(1.2)
+    if mixed:
+        try:
+            mixed.prepare()
+        except BaseException:
+            mixed.close()
+            (root / 'result.json').write_text(json.dumps(dict(status='FAIL', backends=mixed.backends, check_count=len(results), checks=results), indent=2) + '\n')
+            raise
+    until(lambda:'scope link' in run(['ip','-6','addr','show','dev','wan0']).stdout and 'tentative' not in run(['ip','-6','addr','show','dev','wan0']).stdout)
 
     def snapshot():
         rules = {}
@@ -94,6 +109,7 @@ def main():
         return dict(rules=rules, routes4=run(['ip', '-4', 'route', 'show', 'table', 'all']).stdout,
                     routes6=run(['ip', '-6', 'route', 'show', 'table', 'all']).stdout,
                     links=json.loads(run(['ip', '-j', 'link']).stdout),
+                    mixed_firewall=mixed.snapshot() if mixed else None,
                     sysctls={name:Path('/proc/sys/net/' + name).read_text().strip() for name in
                              ('ipv4/ip_forward', 'ipv6/conf/all/forwarding', 'ipv6/conf/default/forwarding', 'ipv6/conf/wan0/accept_ra')})
 
@@ -228,6 +244,12 @@ obf.mode = fake-tls
                     for qtype in (1, 28):
                         query(i, m, ipv6, tcp, qtype)
         record('DNS cache remains independent per profile', len(queries) == 8, queries)
+        if mixed:
+            mixed.reload(active['mixed_firewall'], 'active-firewalld-reload')
+            mixed.policy_transition(active['mixed_firewall'])
+            for i, m in enumerate(modes):
+                query(i, 'post-firewalld-' + m, True, True, 1)
+            record('firewalld policy changes preserve DNS cache', len(queries) == 8)
         cfg.write_text(text + 'tun.mtu = broken\n')
         worker.send_signal(signal.SIGHUP)
         until(lambda:"SIGHUP: refusing to apply" in (root / 'four-profiles.log').read_text())
@@ -237,9 +259,18 @@ obf.mode = fake-tls
         until(lambda:"SIGHUP: reloaded users database" in (root / 'four-profiles.log').read_text())
         record('valid reload preserves network generation', snapshot() == active)
         halt('four-profile-stop')
+        if mixed:
+            mixed.reload(before['mixed_firewall'], 'stopped-firewalld-reload')
+            launch(text, 'four-profile-restart', list(enumerate(modes)))
+            restarted = snapshot()
+            record('four-profile restart restores ordered profile rules and foreign firewall', mixed.restart_equivalent(active['mixed_firewall'], restarted['mixed_firewall']))
+            mixed.reload(restarted['mixed_firewall'], 'restarted-firewalld-reload')
+            for i, m in enumerate(modes):
+                query(i, 'restart-' + m, True, False, 28)
+            halt('four-profile-restart-stop')
         launch(base + profile(1, 'manual'), 'manual-only', [(1, 'manual')])
         standalone = snapshot()
-        record('manual required NDP starts with forwarding disabled', standalone['sysctls']['ipv6/conf/all/forwarding'] == '0' and standalone['sysctls']['ipv6/conf/wan0/accept_ra'] == before['sysctls']['ipv6/conf/wan0/accept_ra'])
+        record('manual required NDP preserves administrator forwarding and RA', standalone['sysctls']['ipv6/conf/all/forwarding'] == before['sysctls']['ipv6/conf/all/forwarding'] and standalone['sysctls']['ipv6/conf/wan0/accept_ra'] == before['sysctls']['ipv6/conf/wan0/accept_ra'])
         record('manual-only leaves IPv6 firewall unchanged', standalone['rules']['v6'] == before['rules']['v6'])
         for tcp in (False, True):
             query(1, 'manual-only', True, tcp, 1)
@@ -263,8 +294,10 @@ obf.mode = fake-tls
         stop.set()
         thread.join(timeout=2)
         upstream.close()
+        if mixed:
+            mixed.close()
         (root / 'upstream-queries.json').write_text(json.dumps(queries, indent=2))
-        (root / 'result.json').write_text(json.dumps(dict(status='PASS' if completed else 'FAIL', backend=args.backend, artifact_sha256=args.sha256, check_count=len(results), checks=results), indent=2) + '\n')
+        (root / 'result.json').write_text(json.dumps(dict(status='PASS' if completed else 'FAIL', backend=args.backend, backends=mixed.backends if mixed else [args.backend,args.backend], artifact_sha256=args.sha256, check_count=len(results), checks=results), indent=2) + '\n')
     return 0
 
 

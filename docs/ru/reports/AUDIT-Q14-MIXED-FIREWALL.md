@@ -91,3 +91,5 @@ Native opaque-правила администратора нельзя авто�
 [Реестр](../plans/AUDIT-DEBT.md) · [Эксплуатация](../manuals/OPERATIONS.md).
 
 Итоговое продолжение D04: [клиентская mixed packet/recovery матрица и Q25-F102](AUDIT-Q25-CLIENT-MIXED-FIREWALL.md) завершены, D04 DONE в текущем реестре. Исторические IN_PROGRESS выше относятся к прежнему снимку. D10 (расширенные политики/топологии) и D13 (рост состояния) остаются открытыми.
+
+Продолжение 2 октября 2026: D13 закрыт [worker churn/lifecycle](AUDIT-Q25-WORKER-RESOURCE-CHURN.md); D10 закрыт в поддерживаемом Linux-объёме Q25-F211/F212/F213 в [текущем реестре](../plans/AUDIT-DEBT.md). Новый пакет проверил четыре mixed backend с четырьмя IPv6-профилями, public zone/policy firewalld и reload/restart: 416 checks + 19 адресных тестов PASS. [Evidence](../../../release/certification/evidence/firewalld-profiles-20261002.json). Исторические открытые статусы выше сохранены; произвольные root rewrites/автоматическая миграция backend и все зоны/политики не сертифицированы.

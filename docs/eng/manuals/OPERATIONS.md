@@ -487,6 +487,16 @@ recovery. Rule preservation and actual traffic through zones/policies are separa
 validation steps.
 [Troubleshooting §6.83](TROUBLESHOOTING.md#683-linux-mixed-nftlegacyfirewalld-recovery).
 
+A Qeli iptables/ip6tables permit does not override DROP in another nftables/firewalld
+chain. The administrator configures zones/policies for WAN/TUN, the VPN listener,
+forwarding and DNS. In `manual`, they also provide IPv6 forwarding, INPUT and
+port-53 DNS delivery when the DNS proxy is enabled. Qeli preserves foreign
+restrictions on stop/restart; change a restriction through its owner. Four mixed
+backend pairs with four IPv6 profiles and a public policy passed reload/restart
+and real permitted/denied IPv4/IPv6 control-port probes; this does not guarantee
+traffic through every administrator policy.
+[Validation scope](../plans/AUDIT-DEBT.md).
+
 Keep both families' original backend until client recovery/stop finishes. Exact legacy-table
 advice is permitted alongside a recognized missing-rule/chain diagnostic; unknown errors
 are not ignored. Do not flush operator tables to silence that advice.

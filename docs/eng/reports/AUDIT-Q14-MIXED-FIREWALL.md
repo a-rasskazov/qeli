@@ -93,3 +93,5 @@ Overall register: **3/15 DONE, 10 IN_PROGRESS, 2 TODO — 20% by closed groups**
 [Register](../plans/AUDIT-DEBT.md) · [Operations](../manuals/OPERATIONS.md).
 
 Final D04 follow-up: [client mixed packet/recovery matrix and Q25-F102](AUDIT-Q25-CLIENT-MIXED-FIREWALL.md) completed; D04 is DONE in the current register. Historical IN_PROGRESS statements above refer to earlier snapshots. D10 (broader policies/topologies) and D13 (state growth) remain open.
+
+Follow-up, 2 October 2026: D13 is closed by [worker churn/lifecycle](AUDIT-Q25-WORKER-RESOURCE-CHURN.md); D10 is closed within supported Linux scope by Q25-F211/F212/F213 in the [current register](../plans/AUDIT-DEBT.md). The new batch checks four mixed backend pairs with four IPv6 profiles, public firewalld zone/policy and reload/restart: 416 checks + 19 targeted tests PASS. [Evidence](../../../release/certification/evidence/firewalld-profiles-20261002.json). Historical open statuses above are retained; arbitrary root rewrites/automatic backend migration and every zone/policy are not certified.
