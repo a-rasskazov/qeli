@@ -807,3 +807,14 @@ and administrator policy: with `FORWARD DROP`, Qeli does not open that LAN. CGNA
 exception. The checked scenario changes routes while retaining devices; it does not
 protect replacing a WAN with a different device under the same name.
 [Packet checks and remaining D06 scope](../plans/AUDIT-DEBT.md).
+
+### Retained WAN identity limitation
+
+For managed NAT44/NAT66 and client `exit_node`, the selected WAN name remains the
+firewall selector. Startup device-presence checks and the client monitor do not
+protect against a new device reusing that name. Stop the profile and verify cleanup
+before WAN rename/delete/recreate; then change the interface and restart the profile.
+
+On 3 October 2026 production BPF protection was excluded by user decision; current
+Qeli requires no additional CAP_BPF or bpffs.
+[Known P2 and disposition](../reports/AUDIT-Q25-WAN-NAME-REUSE.md).

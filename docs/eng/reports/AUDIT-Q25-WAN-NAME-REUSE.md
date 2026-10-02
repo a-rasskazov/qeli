@@ -1,7 +1,12 @@
 # Q25-A125: WAN name reuse
 
-Date: 25 September 2026. Base: `37104b1e`. D06 remains **IN_PROGRESS**.
+Date: 25 September 2026. Base: `37104b1e`. Original D06 status: **IN_PROGRESS**.
 Priority: P2 (egress through an unselected physical interface; the client address is NATed).
+
+**Disposition on 3 October 2026:** the user cancelled production BPF integration.
+Q25-A125 remains a known P2; D06 is dispositioned as **ACCEPTED_LIMITATION**,
+not a fix. Earlier sections below are the investigation history.
+
 
 Exit-node MARK, MASQUERADE, and FORWARD permits use `-o <wan>`. The remembered
 WAN is a name, not a continuous network-device identity.
@@ -193,3 +198,20 @@ SIGKILL, and synthetic veth packets are not authenticated VPN E2E. Foreign TC/
 mangle/firewalld policies and older kernels are not certified by this batch. The
 current active WAN rename/delete/recreate restriction remains until integration.
 **Q25-A125 / D06 IN_PROGRESS; D15 awaits the final production candidate.**
+
+## 3 October 2026 disposition: production guard cancelled
+
+The user declined BPF integration and expanded service capabilities. The unfinished
+Rust draft was removed from the working tree and .11 build source; the running
+binary and unit were unchanged. Previous prototype checks remain research evidence,
+not proof of a production fix.
+
+The known limitation remains: do not rename, delete or replace the selected WAN
+while managed NAT44/NAT66 or client exit-node is active. Stop the profile and verify
+cleanup first; then change the interface and restart the profile. Startup WAN
+presence checks and the name monitor do not provide continuous device identity
+or protection from name reuse.
+
+[D06 user disposition](../plans/AUDIT-DEBT.md) ·
+[rollback record](../../../release/certification/evidence/wan-identity-disposition-20261003.json).
+The remainder is not represented as fixed. Next work is D15, then the full audit.
