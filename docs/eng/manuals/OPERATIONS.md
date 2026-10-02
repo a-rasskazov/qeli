@@ -771,3 +771,20 @@ syscalls, kernel exit/reaping and synchronous spawn under the command-registry
 lock cannot safely be interrupted by this timer; there is no absolute wall-clock
 guarantee during kernel failure. A stalled filesystem worker is verified with
 forced process exit and subsequent recovery.
+
+## Linux client system context
+
+Use separate processes for independent CLI clients. One `run_client` holds process
+admission through normal cleanup; forced Drop requires a process restart. For
+`dns = tunnel`, client and resolver must share the supported network/PID context;
+a changed D-Bus owner does not authorize Qeli to mutate the new service. With
+`dev_attach = true`, the external manager keeps the device and packet features
+stable during attach and sysfs matches the calling network namespace. Index
+checks reject observed replacement, but equal numeric indices in separate
+namespaces do not prove identity.
+
+A late IPv4 default route or global IPv6 does not remove an installed kill-switch:
+checked on four nft/legacy pairs. Do not delete/replace a selected WAN while
+retaining its name during an active profile; stop the profile and confirm cleanup
+first. The default-WAN name monitor does not remove this limitation.
+[Checks and remaining D06 scope](../plans/AUDIT-DEBT.md).
