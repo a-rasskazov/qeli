@@ -131,3 +131,39 @@ Windows VM, Mac/Xcode/iOS, and router runtime remain excluded by the
 user's decision. D11 remains DONE for the refreshed source.
 
 [Debt register](../plans/AUDIT-DEBT.md) · [Native recipes](../../../native-libs/README.md)
+
+## Final native reconciliation for D15: 3 October 2026
+
+Fresh independent A/B builds from clean `93cb845d` cover Windows x64,
+macOS universal2 and both Android ABIs. Source/recipe digest:
+`1bcee8e99b5a365e28821122b19fe190adce0277a6a6cba5fcb1a14c600f48d9`.
+All four libraries are byte-identical to the 1 October results in the table
+above: the later changes concern Linux process ownership and shutdown.
+ABI/exports, both Mach-O architectures, canonical/consumed pairs, 14
+SHA256SUMS entries and refreshed provenance pass. Windows Release has zero
+errors/warnings; a fresh read-only selftest passes **143/143**.
+
+D08 applicability compares **164 adapter input and 288 Rust input hashes**,
+with no changes; the DLL and both packaged Android libraries are unchanged.
+The previous **511 .NET, 167 JVM and 12 instrumentation** results therefore
+remain applicable within their original limits; these are not new executions
+or a new VPN traffic test. Seven recent Linux reports also match all 288
+Rust source hashes.
+
+Android host networking and the working service PID are unchanged. Desktop
+A/B and ABI pass, but the host wrapper returned FAILED: three legacy
+FORWARD/MASQUERADE rules disappeared on .10. Journal and the exact
+`vpn-nat.sh`/`vpn-nat-stop.sh` scripts establish that the unrelated `vpn-nat`
+service adds/removes them while its `vpn-obfuscated` dependency repeatedly
+fails (missing `/etc/vpn-obfuscated`). The working Qeli PID stayed unchanged;
+build commands made no firewall/service mutations. The original FAILED is
+retained; whole-host firewall invariance is not claimed. No lab service or
+privilege settings were changed. The initial Android disk preflight failure
+is retained too; only verified compiler caches were removed and the 8 GiB
+floor was not reduced.
+
+[Machine evidence](../../../release/certification/evidence/final-native-refresh-20261003.json)
+and raw `audit-debt-20260924/d15-final-20261003/` record commands, hashes and limits.
+D15 remains IN_PROGRESS pending a fresh Linux release, common runtime matrix,
+soak, benchmark and current certification reconciliation. User platform
+exclusions remain; BPF integration is cancelled and Q25-A125 is not fixed.

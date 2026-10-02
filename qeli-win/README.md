@@ -218,7 +218,7 @@ Managed crypto/codec/config KAT и benchmark вынесены из production EX
 
 Windows-клиент требует ABI 1.16 и использует типизированные path results для
 fail-closed roaming. Текущая `qeli.dll` пересобрана двумя независимыми проходами
-из исходника с digest `d39a3343…`; canonical и EmbeddedResource-копии совпадают,
+из исходника с digest `1bcee8e9…`; canonical и EmbeddedResource-копии совпадают,
 `native-libs/provenance.py --check` проходит. После изменения Rust-исходника
 нужна новая A/B-пересборка. Перед публикацией 0.8.2 обязательно:
 

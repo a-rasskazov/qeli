@@ -1,6 +1,6 @@
 # Техдолг начатых аудитов
 
-<!-- normative-sync: audit-debt-v66 -->
+<!-- normative-sync: audit-debt-v67 -->
 
 Дата сверки: 3 октября 2026. По запросу пользователя новые разделы полного аудита
 приостановлены до закрытия этого реестра. Это **15 групп обязательств**, а не 15 найденных
@@ -1247,3 +1247,14 @@ release SHA `a526c03b` и сервис .11 (MainPID 777) сохранены. `.1
 **Остался D15:** единый финальный кандидат, native/provenance/build/benchmark
 сверка с точным source/artifact SHA и применимость ранее полученного evidence.
 Не требуется внедрять BPF или повторять поиск WAN identity кандидатов.
+
+### Итоговый native checkpoint D15 — 3 октября
+
+Новые A/B и ABI для четырёх native-библиотек прошли; байты совпали с прежними,
+provenance обновлён на digest `1bcee8e9…`. Windows read-only selftest 143/143 PASS.
+Сверка 164 adapter + 288 Rust input SHA сохраняет применимость прежних D08
+результатов; семь Linux-отчётов совпадают по всем 288 Rust-файлам. На .10
+сторонний vpn-nat меняет три legacy-правила: host wrapper FAILED сохранён и
+объяснён журналом; A/B reproducibility от этого не зависит. [Подробности](../reports/AUDIT-Q25-NATIVE-REBUILD.md).
+D15 остаётся IN_PROGRESS до свежих Linux release/runtime/soak/benchmark и
+certification; 13/15 DONE + D06 ACCEPTED_LIMITATION не меняются.

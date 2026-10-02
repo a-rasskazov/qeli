@@ -1,6 +1,6 @@
 # Technical debt from started audits
 
-<!-- normative-sync: audit-debt-v66 -->
+<!-- normative-sync: audit-debt-v67 -->
 
 Reconciled on 3 October 2026. At the user’s request, new full-audit sections
 are paused until this register is closed. These are **15 groups of obligations**,
@@ -1119,3 +1119,15 @@ untouched. The draft build is not PASS and its test artifacts are not certified.
 **D15 remains:** reconcile one final candidate, native/provenance/build/benchmark
 evidence against exact source/artifact SHA and reuse applicable previous results.
 BPF integration and further WAN-identity candidate searches are not required.
+
+### Final native D15 checkpoint — 3 October
+
+Fresh A/B and ABI checks pass for all four native libraries; bytes match the
+previous artifacts and provenance now binds digest `1bcee8e9…`. Windows
+read-only selftest passes 143/143. Unchanged 164 adapter + 288 Rust input hashes
+preserve D08 applicability; seven Linux reports match all 288 Rust files.
+The unrelated vpn-nat service on .10 changes three legacy rules: the FAILED
+host wrapper is retained and journal-qualified; byte reproducibility is
+independent of that drift. [Details](../reports/AUDIT-Q25-NATIVE-REBUILD.md).
+D15 remains IN_PROGRESS for fresh Linux release/runtime/soak/benchmark and
+certification; 13/15 DONE + D06 ACCEPTED_LIMITATION remain unchanged.
