@@ -1290,5 +1290,13 @@
     "D15": "DONE",
     "full_37_section_audit": "not complete",
     "physical_advisories": "21 original statuses retained, not PASS"
+  },
+  "certification_binding": {
+    "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+    "documentation_commit": "85afe70f88caf4cc2e4f797585d58e13d7441023",
+    "qeli_tree": "f145eb20b133a1b6e36cd226583ab3ce94960270",
+    "automated_cases_passed": 20,
+    "physical_statuses_preserved": 21,
+    "validation_errors": []
   }
 }
