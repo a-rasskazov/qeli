@@ -41,3 +41,71 @@ simple rename/name-reuse exposure, but an interface index can itself be
 reused. Moving an isolated rule to nft without mixed iptables/nft/firewalld
 and cleanup validation is not a complete fix. Design and packet/recovery
 coverage remain in D06/D10.
+
+
+## 2 October 2026 continuation: kernel guard selection
+
+On baseline `5bbffe4b`, candidates were qualified; **Qeli was not fixed**:
+[runner](../../../scripts/audit_wan_identity_candidates.py) and
+[evidence](../../../release/certification/evidence/wan-identity-candidates-20261002.json).
+Synthetic exit-shaped MARK/NAT/FORWARD rules use real IPv4/IPv6 UDP packets across
+nft/nft, nft/legacy, legacy/nft and legacy/legacy. No worker or VPN runs in this
+batch; existing working binaries are only SHA-checked. Rust and INI keys are unchanged.
+
+There are **168 expected-outcome checks**, including reproduction of unsafe variants:
+88 probes, 264 datagrams, 168 validated echo replies and 96 expected blocked sends.
+In 32 negative checks the specific DROP counter increases by 3. This is not 168
+proofs of a security fix.
+
+| Candidate / state | Packet outcome on all four pairs |
+|---|---|
+| Old WAN name | A new device with the former name inherits MARK/NAT and forwards traffic |
+| Preinstalled native nft `meta oif` | A forcibly created device reusing ifindex, name and MAC is also admitted; the native counter sees six packets per cell |
+| `devgroup --dst-group` with a separate token | The original retains its token across rename; a new device starts with group 0 after deletion. Name/index/MAC reuse and an incorrect group are blocked |
+| Root copies the token to the replacement | The new device is admitted again; the token is neither a secret nor protection against a privileged administrator |
+| Foreign `--dst-group 0 -j DROP` rule | Assigning the token instead of group 0 stops this rule from applying to the WAN; restoring group 0 restores blocking |
+
+The kernel `devgroup` matcher reads the outgoing device group:
+[Linux source](https://raw.githubusercontent.com/torvalds/linux/master/net/netfilter/xt_devgroup.c).
+That group belongs to host network policy. In addition to the demonstrated firewall
+conflict, RPDB `suppress_ifgroup` uses it in
+[IPv4](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/ipv4/fib_rules.c) and
+[IPv6](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/ipv6/fib6_rules.c).
+The RPDB effect is established from source, not a separate packet runtime in this
+fixture. Automatic group mutation without an administrator ownership contract is
+therefore rejected as a transparent fix. A current group of zero does not establish
+that foreign rules, masks, sets/maps or route suppression do not use it.
+
+The client monitor was reconciled: `ExitWanSnapshot` in
+[gateway.rs](../../../qeli/src/client/gateway.rs) stores only IPv4/IPv6 WAN names.
+[spawn_exit_wan_monitor](../../../qeli/src/client/mod.rs) compares snapshots every
+five seconds and skips an equal snapshot after successful refresh. Name reuse alone
+does not change it. Carrier path observation in
+[roaming_linux.rs](../../../qeli/src/client/roaming_linux.rs) can include an index,
+but observes a different path and supplies no continuous egress guard. The existing
+TCP/UDP [Q25-F127](AUDIT-Q25-EXIT-WAN-MONITOR.md) evidence still covers default WAN
+changes to a different name; no fresh monitor E2E is claimed here. Adding an index
+to the sampler would still leave the interval before observation and index reuse.
+
+One coherent implementation batch remains: a kernel guard with an explicit ownership
+contract for its per-device label, shared IPv4/IPv6 and profile/process leases,
+namespace/device witnesses and a unique generation token, journal/rollback/cleanup/
+crash recovery that cannot restore labels onto replacements. Then real client/server
+packets, established conntrack/marks, mixed backends and recovery must be checked.
+The group must not silently change foreign policy; restoration cannot trust only a
+name, ifindex or MAC. These requirements have not been implemented.
+
+The intermediate 164 outcomes from r2 are retained separately and not added to the
+final 168: r3 installs the ifindex guard on the original WAN and verifies that the
+rule stays unchanged across device deletion/recreation.
+
+The first fixture failure is retained: down/up removed its manually assigned IPv6
+address and the new default could not be installed. Private `keep_addr_on_down=1`
+corrected the fixture; production code is unchanged. Every attempt restores the outer
+host snapshot; the final comparison includes link groups, RPDB and no added/removed
+kernel modules. Working services and `.10` are untouched. The passing matrix does
+not cover a persistent group lease, SIGKILL/recovery or a real firewalld daemon.
+
+**Q25-A125 / D06 remains an open P2.** D10 is closed for its previously supported
+firewall composition; a future identity guard will need targeted rechecks of that
+composition. The manual restriction on active WAN rename/delete/recreate remains.
