@@ -1,6 +1,6 @@
 # Техдолг начатых аудитов
 
-<!-- normative-sync: audit-debt-v67 -->
+<!-- normative-sync: audit-debt-v68 -->
 
 Дата сверки: 3 октября 2026. По запросу пользователя новые разделы полного аудита
 приостановлены до закрытия этого реестра. Это **15 групп обязательств**, а не 15 найденных
@@ -31,13 +31,14 @@
 | D12 | 24/25/27/34 | DONE | Платформенное подтверждение в доступном объёме | [Q25-F203](../reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md): Android 0.8.2 APK/JNI, 167 JVM, 11 instrumentation, двусторонний ICMP, WebView HTTP 200 с VPN-адреса, reconnect и Wi-Fi toggle PASS. Физический inner-source локализован в системном Private DNS `netd`; серверный антиспуфинг сохранился. Windows VM, Mac/Xcode/iOS и router runtime **SKIPPED по решению пользователя**, не PASS. После нового native A/B и APK [instrumentation 11/11](../reports/AUDIT-Q25-NATIVE-REBUILD.md#обновление-после-q25-f204-1-октября-2026) повторена; полный VPN-трафик этого нового APK не повторялся. Physical Android/LTE/Doze/always-on и release APK остаются полным аудитом раздела 29, не сертифицированы этим пунктом. |
 | D13 | 14/19/22/25 | DONE | Удержание ресурсов под нагрузкой | [Q25-F204](../reports/AUDIT-Q25-WORKER-RESOURCE-CHURN.md): 8/8 worker TCP/UDP × IPv6-mode, 80 reload, fd/socket/tasks Δ=0; точный release SHA `a526c03b` дал 100 TCP handover (16/16), 100 UDP QUIC handover (17/17), 3 UDP адаптера ×20 (по 17/17), без смены сессии/процессов/TUN и с восстановлением sysctl lease. Два одновременно работающих TCP/UDP профиля: 14/14 stop/reload/SIGKILL/recovery, fd/socket/tasks 26/11/7→26/11/7, сеть/journal после stop восстановлены. Пиковый RSS измерен выборочно; недоступные платформенные runtime не сертифицированы. |
 | D14 | 00/34 | DONE | Текущий benchmark и certification | [Текущий кандидат](../reports/BENCHMARK.md#проверки-текущего-release-кандидата--1-октября-2026): exact SHA `a526c03b`, 12-mode benchmark/32 фазы, 18 release-сценариев/327 проверок и 144 адресные проверки после устранения старого lab restart loop; полный host snapshot восстановлен. Certification 20/20 automated gates, same-SHA 100 TCP + 100 QUIC soak и 2238 Linux unit переиспользованы по идентичному qeli tree. Первичные host-расхождения объяснены точными scripts/journal vpn-nat; raw и partial manifest сохранены. 21 physical advisory не объявлен PASS; это не полный release preflight/CI/package аудит. При изменении source/artifact certification требуется обновить. |
-| D15 | Все начатые разделы | IN_PROGRESS | Согласование evidence и документации | Сопоставить старые открытые пункты с поздними fixes; проверить применимость патчей, diff/commit и RU/EN ссылки. Каждый долг закрывать отдельным результатом, не числом коммитов. [Q25-F200](../reports/AUDIT-Q25-DOC-PARITY.md): 32 индексных, 3 ссылочных и 26 парных ошибок устранены; 494 Markdown-файла, все 9 проверок check_docs PASS. Сверка старых runtime-свидетельств остаётся. [Q25-F201](../reports/AUDIT-Q25-PATCH-RECONCILIATION.md): 625 архивных патчей классифицированы без применения; возраст D09 evidence уточнён. Все 22 адресно рассмотрены: для 20 кодовых кандидатов отсутствующий фикс не найден, 2 касаются пользовательского CHANGELOG; D15 остаётся открыт для итогового runtime/evidence. |
+| D15 | Все начатые разделы | DONE | Итоговое согласование | [Q25-F200](../reports/AUDIT-Q25-DOC-PARITY.md)/[Q25-F201](../reports/AUDIT-Q25-PATCH-RECONCILIATION.md): docs и 625 архивных патчей сверены. Финал 3 октября: native A/B/ABI/provenance, Windows 143; 164 adapter + 288 Rust SHA неизменны; release `09af8fb0`, Linux 2257 unit, fmt/Clippy, 18/327 runtime, 100 TCP + 100 QUIC/33 checks, 45,02 с shutdown/recovery, benchmark 12/32, certification 20/20 automated. [Evidence](../../../release/certification/evidence/final-candidate-20261003.json). 21 physical advisory не PASS; D06 принят как ограничение. |
 
-Текущий статус: **13/15 DONE, D06 ACCEPTED_LIMITATION, D15 IN_PROGRESS**.
-Урегулированы **14/15 групп (93,3%)**: 13 закрыты по evidence, остаток D06 снят
-пользователем с обязательной реализации. Это не 14 исправленных групп и не доля полного аудита.
-Это закрытие групп техдолга; сертификат нового HEAD ещё требует финального D15.
-Исторические числа ниже относятся к прежним снимкам и не пересчитываются задним числом.
+Текущий статус: **14/15 DONE, D06 ACCEPTED_LIMITATION**.
+Урегулированы **15/15 групп (100%)**: 14 закрыты по evidence, остаток D06
+снят пользователем с обязательной реализации. Q25-A125 не исправлен: перед
+заменой выбранного WAN остановить профиль и подтвердить cleanup. Завершён
+реестр техдолга, не все 37 разделов. Полный аудит возобновляется по плану.
+Исторические числа ниже остаются результатами прежних снимков.
 
 ## Завершение техдолга: порядок с 25 сентября
 
@@ -1258,3 +1259,15 @@ provenance обновлён на digest `1bcee8e9…`. Windows read-only selftes
 объяснён журналом; A/B reproducibility от этого не зависит. [Подробности](../reports/AUDIT-Q25-NATIVE-REBUILD.md).
 D15 остаётся IN_PROGRESS до свежих Linux release/runtime/soak/benchmark и
 certification; 13/15 DONE + D06 ACCEPTED_LIMITATION не меняются.
+
+### Итоговое закрытие D15 — 3 октября
+
+Финальный кандидат проверен, benchmark и automated certification обновлены.
+Ошибки обвязки сохранены: пропущенные compile-time conformance fixtures и
+SSH NOFILE 1024 для 512 пар TCP-сокетов. После полного архива inputs и
+process-local лимита 4096: 2257 PASS, 0 failed, 60 штатно ignored. Лимит
+рабочего сервиса 65536 и PID не менялись. Soak: fd/socket counts стабильны,
+выборочный RSS в пределах 32 МиБ на 100 циклах; бесконечный прогон не заявлен.
+Старые отчёты остаются историческими. Неизменённые модули переиспользуются
+по SHA с исходными границами. Общий набор не повторяется без релевантного
+изменения. Полный release preflight/публикация и physical exclusions не PASS.

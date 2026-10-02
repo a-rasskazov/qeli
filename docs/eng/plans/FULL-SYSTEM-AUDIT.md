@@ -1,14 +1,16 @@
 # Full Qeli audit: previous coverage and sequential test plan
 
-**Priority from 24 September:** close [debt from started audits](AUDIT-DEBT.md) first;
-do not start new sections yet. Existing statuses do not imply that debt verification is complete.
+**Status on 3 October:** [audit debt](AUDIT-DEBT.md) is dispositioned: 14 DONE
+and D06 ACCEPTED_LIMITATION by user decision. Full audit resumes; the 37 section
+statuses below require criterion-based reconciliation, not automatic PASS.
+
 
 **Completion workflow from 25 September:** [four batches and test-selection rules](AUDIT-DEBT.md)
 replace full-suite repetition after every fix. The levels below remain section coverage
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v2 -->
+<!-- normative-sync: full-system-audit-v3 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.

@@ -1,13 +1,51 @@
 # qeli load testing
 
-The latest structured measurement is **qeli 0.8.2, 1 October 2026**:
+The latest structured measurement is **qeli 0.8.2, 3 October 2026**:
 [canonical JSON](../../../release/benchmark_results.json) and
-[dated snapshot](../../../release/benchmark_v0.8.2_2026-10-01_isolated_12modes.json).
-Tested release SHA-256: `a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0`.
+[dated snapshot](../../../release/benchmark_v0.8.2_2026-10-03_isolated_12modes.json).
+Tested release SHA-256: `09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45`.
 12 modes were measured in one sweep; `recordizer=off`, TCP `P=1`.
 **This is a measurement result, not proof of no regression or certification.**
 The previous [0.8.0 run](../../../release/benchmark_v0.8.0_2026-08-26_combined_12modes.json)
 is retained; the 0.7.x sections and detailed 0.6.0 tables below are historical.
+
+
+## Final D15 measurement — 3 October 2026
+
+Fresh release `09af8fb0…`, one 12-mode / 32-phase sweep. Builds and runtime tests
+finished before measurement. Method and both VMs match 1 October. The previous
+[snapshot](../../../release/benchmark_v0.8.2_2026-10-01_isolated_12modes.json) is retained;
+two observations are not a statistical A/B or proof of causation.
+
+Baseline TCP: 24338.3 ↑ / 25414.2 ↓ Mbps; UDP 500: 500.0 Mbps, loss 0%.
+
+| Mode | TCP up Mbps | TCP down Mbps | UDP 100 received | UDP 500 received | UDP 500 loss, % |
+|---|---:|---:|---:|---:|---:|
+| tcp-plain-raw | 428.5 | 548.0 | — | — | — |
+| tcp-faketls | 444.5 | 562.0 | — | — | — |
+| tcp-padding | 472.5 | 534.1 | — | — | — |
+| tcp-frag | 474.2 | 556.8 | — | — | — |
+| tcp-obfs | 431.0 | 572.3 | — | — | — |
+| tcp-reality | 488.8 | 542.4 | — | — | — |
+| tcp-reality-tls | 960.2 | 971.8 | — | — | — |
+| udp-faketls | 565.4 | 1068.5 | 100.0 | 437.6 | 12.46 |
+| udp-padding | 543.4 | 1081.2 | 100.0 | 471.1 | 5.76 |
+| udp-quic | 598.1 | 1047.8 | 100.0 | 459.0 | 7.94 |
+| tcp-obfs-awg | 427.5 | 567.6 | — | — | — |
+| udp-faketls-awg | 579.2 | 1013.9 | 100.0 | 456.5 | 8.56 |
+
+Max CPU server/client: 131.4/142.0%; sampled peak RSS: 121.9/55.1 MiB; max CPU steal: 0.09/0.09%.
+
+COMPLETED means measurement obtained; UDP 500 losses are not called loss-free
+results. Addresses/routes/:443 match before/after; an outer wrapper retains full
+firewall/resolver/namespaces/service snapshots for both VMs. The known vpn-nat
+loop on .10 is recorded in host qualification; unknown changes fail. Working
+services/binaries were not replaced.
+
+[Candidate checks](../../../release/certification/evidence/final-candidate-20261003.json):
+2257 Linux unit, fmt/Clippy, 18 cases / 327 checks, 100 TCP + 100 QUIC / 33 checks,
+45.02s forced shutdown/recovery. No PASS for 21 physical advisories or full release
+preflight. Logs/hashes: `audit-debt-20260924/d15-final-20261003/`.
 
 ## Isolated benchmark on an active lab
 

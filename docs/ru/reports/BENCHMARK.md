@@ -1,13 +1,51 @@
 # Нагрузочное тестирование qeli
 
-Последний структурированный замер — **qeli 0.8.2, 1 октября 2026**:
+Последний структурированный замер — **qeli 0.8.2, 3 октября 2026**:
 [canonical JSON](../../../release/benchmark_results.json) и
-[датированный снимок](../../../release/benchmark_v0.8.2_2026-10-01_isolated_12modes.json).
-Проверен release SHA-256 `a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0`.
+[датированный снимок](../../../release/benchmark_v0.8.2_2026-10-03_isolated_12modes.json).
+Проверен release SHA-256 `09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45`.
 12 режимов измерены за один проход; `recordizer=off`, TCP `P=1`.
 **Это результат измерений, а не подтверждение отсутствия регрессии или certification.**
 Прежний [прогон 0.8.0](../../../release/benchmark_v0.8.0_2026-08-26_combined_12modes.json)
 сохранён; разделы 0.7.x и развёрнутые таблицы 0.6.0 ниже являются историческими.
+
+
+## Итоговый замер D15 — 3 октября 2026
+
+Новый release `09af8fb0…`, один проход 12 режимов / 32 фазы. Сборки и runtime
+завершены до измерения. Методика и две VM совпадают с 1 октября. Предыдущий
+[снимок](../../../release/benchmark_v0.8.2_2026-10-01_isolated_12modes.json) сохранён;
+это два наблюдения, не статистический A/B и не доказательство причины различий.
+
+Baseline TCP: 24338.3 ↑ / 25414.2 ↓ Mbps; UDP 500: 500.0 Mbps, loss 0%.
+
+| Режим | TCP ↑ Мбит/с | TCP ↓ Мбит/с | UDP 100 принято | UDP 500 принято | Потери UDP 500, % |
+|---|---:|---:|---:|---:|---:|
+| tcp-plain-raw | 428.5 | 548.0 | — | — | — |
+| tcp-faketls | 444.5 | 562.0 | — | — | — |
+| tcp-padding | 472.5 | 534.1 | — | — | — |
+| tcp-frag | 474.2 | 556.8 | — | — | — |
+| tcp-obfs | 431.0 | 572.3 | — | — | — |
+| tcp-reality | 488.8 | 542.4 | — | — | — |
+| tcp-reality-tls | 960.2 | 971.8 | — | — | — |
+| udp-faketls | 565.4 | 1068.5 | 100.0 | 437.6 | 12.46 |
+| udp-padding | 543.4 | 1081.2 | 100.0 | 471.1 | 5.76 |
+| udp-quic | 598.1 | 1047.8 | 100.0 | 459.0 | 7.94 |
+| tcp-obfs-awg | 427.5 | 567.6 | — | — | — |
+| udp-faketls-awg | 579.2 | 1013.9 | 100.0 | 456.5 | 8.56 |
+
+Max CPU server/client: 131.4/142.0%; sampled peak RSS: 121.9/55.1 MiB; max CPU steal: 0.09/0.09%.
+
+COMPLETED означает получение замера; потери UDP 500 не объявляются loss-free
+результатом. Адреса/routes/:443 совпали до/после; дополнительная обёртка сохраняет
+полные firewall/resolver/namespaces/service snapshots обеих VM. Известный цикл
+vpn-nat на .10 указан в host qualification; неизвестные изменения не допускаются.
+Работающие сервисы и их файлы не заменялись.
+
+[Итог кандидата](../../../release/certification/evidence/final-candidate-20261003.json):
+2257 Linux unit, fmt/Clippy, 18 cases / 327 checks, 100 TCP + 100 QUIC / 33 checks,
+45,02 с forced shutdown/recovery. 21 physical advisory и полный release preflight
+не объявлены PASS. Логи и SHA: `audit-debt-20260924/d15-final-20261003/`.
 
 ## Изолированный benchmark на действующей лабе
 

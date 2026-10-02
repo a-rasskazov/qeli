@@ -1,6 +1,6 @@
 # Technical debt from started audits
 
-<!-- normative-sync: audit-debt-v67 -->
+<!-- normative-sync: audit-debt-v68 -->
 
 Reconciled on 3 October 2026. At the user’s request, new full-audit sections
 are paused until this register is closed. These are **15 groups of obligations**,
@@ -33,13 +33,13 @@ it is neither a fix nor PASS.
 | D12 | 24/25/27/34 | DONE | Platform evidence within available scope | [Q25-F203](../reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md): Android 0.8.2 APK/JNI, 167 JVM, 11 instrumentation, bidirectional ICMP, WebView HTTP 200 from VPN address, reconnect and Wi-Fi toggle PASS. The physical inner source was localized to system Private DNS `netd`; server anti-spoofing held. Windows VM, Mac/Xcode/iOS and router runtime are **SKIPPED by user decision**, not PASS. After the new native A/B and APK, [instrumentation 11/11](../reports/AUDIT-Q25-NATIVE-REBUILD.md#refresh-after-q25-f204-1-october-2026) was repeated; full VPN traffic for this new APK was not. Physical Android/LTE/Doze/always-on and a release APK remain part of full audit section 29, not certified here. |
 | D13 | 14/19/22/25 | DONE | Resource retention under load | [Q25-F204](../reports/AUDIT-Q25-WORKER-RESOURCE-CHURN.md): 8/8 worker TCP/UDP × IPv6-mode, 80 reloads, fd/socket/task delta zero; exact release SHA `a526c03b` completed 100 TCP handovers (16/16), 100 UDP QUIC handovers (17/17), and three UDP adapters ×20 (17/17 each), retaining session/processes/TUN and restoring sysctl leases. Concurrent TCP/UDP profiles: 14/14 stop/reload/SIGKILL/recovery, fd/socket/tasks 26/11/7→26/11/7, network/journal restored after stop. RSS peaks were sampled; unavailable platform runtime is not certified. |
 | D14 | 00/34 | DONE | Current benchmark and certification | [Current candidate](../reports/BENCHMARK.md#current-release-candidate-checks--1-october-2026): exact SHA `a526c03b`, 12-mode benchmark/32 phases, 18 release cases/327 checks and 144 targeted checks after stopping the old lab restart loop; full host snapshot restored. Certification 20/20 automated gates, same-SHA 100 TCP + 100 QUIC soak and 2238 Linux unit reused with identical qeli tree. Initial parent differences attributed to exact vpn-nat scripts/journal; raw and partial manifest retained. No physical advisory is promoted to PASS; this is not full release preflight/CI/package audit. Source/artifact changes require certification refresh. |
-| D15 | All started sections | IN_PROGRESS | Evidence and documentation reconciliation | Map historical open items to later fixes; verify patch applicability, diff/commit and RU/EN links. Close each debt item with evidence, not a commit count. [Q25-F200](../reports/AUDIT-Q25-DOC-PARITY.md): 32 index, 3 link and 26 language-parity findings resolved; 494 Markdown files and all 9 check_docs checks PASS. Older runtime evidence reconciliation remains. [Q25-F201](../reports/AUDIT-Q25-PATCH-RECONCILIATION.md): 625 archived patches classified without applying them; D09 evidence age corrected. All 22 received targeted review: no missing fix found among 20 code candidates; 2 touch the user-modified CHANGELOG. D15 remains open for final runtime/evidence reconciliation. |
+| D15 | All started sections | DONE | Final reconciliation | [Q25-F200](../reports/AUDIT-Q25-DOC-PARITY.md)/[Q25-F201](../reports/AUDIT-Q25-PATCH-RECONCILIATION.md): docs and 625 archived patches reconciled. Final 3 October: native A/B/ABI/provenance, Windows 143; unchanged 164 adapter + 288 Rust hashes; release `09af8fb0`, Linux 2257 unit, fmt/Clippy, 18/327 runtime, 100 TCP + 100 QUIC/33 checks, 45.02s shutdown/recovery, benchmark 12/32, certification 20/20 automated. [Evidence](../../../release/certification/evidence/final-candidate-20261003.json). 21 physical advisories not PASS; D06 accepted limitation. |
 
-Current status: **13/15 DONE, D06 ACCEPTED_LIMITATION, D15 IN_PROGRESS**.
-**14/15 groups (93.3%) are dispositioned**: 13 closed with evidence; the user waived
-the mandatory D06 remainder. This is not 14 fixed groups or full-audit completion.
-These are closed debt groups; current-HEAD certification still requires final D15.
-Historical counts below belong to earlier snapshots and are not retroactively changed.
+Current status: **14/15 DONE, D06 ACCEPTED_LIMITATION**.
+**15/15 groups (100%) are dispositioned**: 14 closed with evidence; the user
+waived the D06 remainder. Q25-A125 is not fixed: stop the profile and confirm
+cleanup before selected WAN replacement. This closes debt, not all 37 audit
+sections. Full audit resumes. Historical counts retain their original scope.
 
 ## Debt completion: workflow from 25 September
 
@@ -1131,3 +1131,15 @@ host wrapper is retained and journal-qualified; byte reproducibility is
 independent of that drift. [Details](../reports/AUDIT-Q25-NATIVE-REBUILD.md).
 D15 remains IN_PROGRESS for fresh Linux release/runtime/soak/benchmark and
 certification; 13/15 DONE + D06 ACCEPTED_LIMITATION remain unchanged.
+
+### Final D15 closure — 3 October
+
+Candidate validated; benchmark and automated certification refreshed. Initial
+harness failures retained: missing compile-time conformance fixtures and SSH
+NOFILE 1024 for 512 TCP pairs. Complete inputs plus process-local 4096 yield
+2257 PASS, zero failed, 60 normally ignored. Working service limit 65536 and
+PID unchanged. Soak bounds fd/socket counts and sampled RSS within 32 MiB over
+100 cycles; no indefinite soak claimed. Old reports stay historical; unchanged
+module evidence is reused by SHA within original limits. No repeated common
+campaign without relevant changes. Full release preflight/publication and
+physical exclusions are not PASS.
