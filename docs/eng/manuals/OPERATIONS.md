@@ -788,3 +788,22 @@ checked on four nft/legacy pairs. Do not delete/replace a selected WAN while
 retaining its name during an active profile; stop the profile and confirm cleanup
 first. The default-WAN name monitor does not remove this limitation.
 [Checks and remaining D06 scope](../plans/AUDIT-DEBT.md).
+
+## Server routes with an active profile
+
+A server NAT44/NAT66 WAN is selected when installing the profile. A default-route
+change does not automatically move its NAT/permits to another interface. If a route
+or policy rule sends client traffic through another WAN, NAT66 blocks that egress;
+NAT44 blocks non-RFC1918 destinations. Returning the route to the selected WAN
+restores traffic without reconnecting clients. To change the selected WAN itself,
+restart the profile with the desired configuration and confirm old-generation
+cleanup. Client `exit_node` has a separate default-WAN monitor; that behavior does
+not apply to server profiles.
+
+In IPv6 `route`, kernel routes select WAN/LAN egress and preserve the source address.
+NAT44 toward RFC1918 networks on another interface also preserves client addresses
+and administrator policy: with `FORWARD DROP`, Qeli does not open that LAN. CGNAT
+`100.64.0.0/10` and public address space outside RFC1918 do not qualify for this NAT44
+exception. The checked scenario changes routes while retaining devices; it does not
+protect replacing a WAN with a different device under the same name.
+[Packet checks and remaining D06 scope](../plans/AUDIT-DEBT.md).

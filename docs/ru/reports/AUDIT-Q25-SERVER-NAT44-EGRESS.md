@@ -58,3 +58,4 @@ Rustfmt, **19/19** тестов `server::nat`, **11/11** тестов
 остаются в D06/D10.
 
 Артефакты: `C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260925/server-nat44-egress-phase/`.
+Продолжение 2 октября 2026 — Q25-F215 в [текущем реестре](../plans/AUDIT-DEBT.md): 4 mixed IPv4/IPv6 backend, настоящие TCP NAT44/NAT66 и UDP route с изменением default/policy routes и RFC1918/CGNAT/public-LAN дали 204 checks PASS. [Packet evidence](../../../release/certification/evidence/server-route-policy-20261002.json). Runtime-маршруты при сохранении устройств проверены в указанном объёме; непрерывная WAN identity при повторном использовании имени остаётся D06. Исторические открытые статусы выше описывают прежний снимок.

@@ -58,3 +58,5 @@ WANs, same-name device replacement, live route changes and mixed-backend
 recovery remain D06/D10 work.
 
 Artifacts: `C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260925/server-nat44-egress-phase/`.
+
+Follow-up, 2 October 2026 — Q25-F215 in the [current register](../plans/AUDIT-DEBT.md): 4 mixed IPv4/IPv6 backend pairs, real TCP NAT44/NAT66 and UDP route with default/policy route and RFC1918/CGNAT/public-LAN changes gave 204 checks PASS. [Packet evidence](../../../release/certification/evidence/server-route-policy-20261002.json). Runtime routing with retained devices is checked within this scope; continuous WAN identity under name reuse remains D06. Historical open statuses above describe the earlier snapshot.
