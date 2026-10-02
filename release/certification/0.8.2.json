@@ -1,227 +1,247 @@
 {
   "schema_version": 1,
   "release_version": "0.8.2",
-  "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+  "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
   "cases": [
     {
       "id": "linux.outer4.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer4.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer6.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer6.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer4.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer4.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer6.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer6.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer4.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer4.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer6.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.outer6.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.dual.tcp.split",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.dual.udp.split",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.dns.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.mtu.1280-pmtu-ptb",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.leak.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.tap.ndp-ra",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.legacy-peer",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
       "executed_at": "2026-10-02T22:59:03.373269+00:00",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "linux.roaming-flap-soak",
       "kind": "automated",
       "status": "passed",
       "evidence": "release/certification/evidence/final-candidate-20261003.json",
-      "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+      "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
       "artifact_sha256": "09af8fb0412acafa05aed669bfd1e754a077e607aabc146c13e3f8e43e6add45",
       "executed_at": "2026-10-02T23:01:01.374395+00:00",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained."
+      "acceptance_basis": "Fresh exact release in private network/mount/PID namespaces; 18 cases/327 checks and aggregate leak pass, same-artifact 100 TCP+100 QUIC soak/33 checks. Source qeli tree and complete normalized build input hashes verified unchanged through documentation/benchmark commit; physical exclusions retained.",
+      "documentation_reconciliation": "Q01 coverage notes only: no Rust/Cargo/build recipe/fixture/artifact changes; original fresh runtime timestamps retained."
     },
     {
       "id": "android.wifi-to-cellular",

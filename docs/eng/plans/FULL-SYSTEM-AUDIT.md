@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v3 -->
+<!-- normative-sync: full-system-audit-v4 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -194,8 +194,8 @@ Trace every key through parse → validate → runtime → serialize; defaults, 
 
 - [ ] Review and dead code.
 - [x] Parser positive, boundary and negative scenarios: 12 new regressions and the existing suite.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
+- [x] Failures/concurrency: D07/Q25-F209, 201 unit, 4 privileged and 44 runtime checks.
+- [x] Linux integration: check-config/startup/SIGHUP/HTTP save/Quick Start, Q25-F209; final D15 candidate.
 - [x] First-pass fixes, retesting and evidence (Q01-F001–F007).
 
 **Status: IN_PROGRESS.**
@@ -205,9 +205,13 @@ Fixed 6 INI processing defects and a fixture coverage gap. 651 portable Rust tes
 25 JS groups and the Linux all-targets check passed. Fixture coverage checks 163 key
 names and 3 dynamic families. Diagnostic isolation was exercised across 32 parses.
 
-**Open:** complete per-field runtime tracing and broader failures; Linux startup/CLI/
-SIGHUP/HTTP save execution is BLOCKED by the missing configured Linux environment.
-Compilation does not close this item. The section does not receive overall PASS yet.
+**3 October reconciliation:** field tracing is covered by [global keys](../reports/AUDIT-Q25-SERVER-GLOBAL-FIELDS.md),
+[profile foundation](../reports/AUDIT-Q25-SERVER-PROFILE-FOUNDATION.md) and [obf](../reports/AUDIT-Q25-SERVER-PROFILE-OBF.md).
+D07/Q25-F209 covers failures/concurrency and Linux save/reload/import; D15 verifies
+all 288 Rust hashes unchanged and validates the final release. The no-Linux blocker
+is obsolete. [Applicability evidence](../../../release/certification/evidence/q01-reconciliation-20261003.json)
+retains the original debug SHA/limits; it does not claim a new run of those 44 checks.
+**Open:** targeted review and dead code; no overall PASS yet.
 
 ### 02. Client parsers and qeli://
 

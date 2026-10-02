@@ -1292,11 +1292,16 @@
     "physical_advisories": "21 original statuses retained, not PASS"
   },
   "certification_binding": {
-    "source_digest": "ee33fbbfd793f8915c0526b4ed6d55bd5654f6bb6e8b30c9f1678853251bbbaa",
+    "source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0",
     "documentation_commit": "85afe70f88caf4cc2e4f797585d58e13d7441023",
     "qeli_tree": "f145eb20b133a1b6e36cd226583ab3ce94960270",
     "automated_cases_passed": 20,
     "physical_statuses_preserved": 21,
-    "validation_errors": []
+    "validation_errors": [],
+    "docs_only_reconciliation": {
+      "prospective_index_tree": "ae5aa269a166c90ea9095a82c6d1345c1b9770ef",
+      "purpose": "Q01 obsolete blocker/coverage reconciliation; all runtime source and artifacts unchanged",
+      "evidence": "release/certification/evidence/q01-reconciliation-20261003.json"
+    }
   }
 }

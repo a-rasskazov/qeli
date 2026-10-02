@@ -174,3 +174,13 @@ results. `source-manifest.txt` records tested file SHA-256 hashes;
    Hashes and attestations were not rewritten merely to make checks pass.
 
 The next independent plan section is **02: client parsers and qeli://**.
+
+## Open-item reconciliation — 3 October 2026
+
+The list above describes the first pass on 22 September. Linux runtime, full
+field tracing and broader failures were subsequently covered by D07/Q25-F209;
+native provenance and certification were refreshed by D15. The [current plan](../plans/FULL-SYSTEM-AUDIT.md#01-server-ini-and-schema)
+and [machine reconciliation](../../../release/certification/evidence/q01-reconciliation-20261003.json)
+verify applicability: all 288 Rust hashes match; 201 unit / 4 privileged /
+44 runtime retain their original artifact/environment limits. No repeated
+executions are claimed. Targeted dead-code review remains before overall PASS.

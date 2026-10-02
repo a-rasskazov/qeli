@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "kind": "q01-audit-criteria-reconciliation",
+  "captured_at": "2026-10-02T23:30:48.443150+00:00",
+  "status": "IN_PROGRESS",
+  "remaining": "Targeted review/dead-code criterion; no automatic overall PASS",
+  "runtime_evidence": "release/certification/evidence/config-mixed-20261002.json",
+  "runtime_evidence_sha256": "7fdaec31ced5a361b186363d7cd43891e154ea8d31ad6f40d97307de61d33df3",
+  "matched_rust_inputs": 288,
+  "reused_unit": 201,
+  "reused_privileged_executions": 4,
+  "reused_runtime_checks": 44,
+  "new_runtime_execution": false,
+  "candidate_evidence": "release/certification/evidence/final-candidate-20261003.json",
+  "field_trace_reports": [
+    "AUDIT-Q25-SERVER-GLOBAL-FIELDS.md",
+    "AUDIT-Q25-SERVER-PROFILE-FOUNDATION.md",
+    "AUDIT-Q25-SERVER-PROFILE-OBF.md"
+  ],
+  "corrections": [
+    "Linux-unavailable blocker obsolete",
+    "Complete field tracing covered by D07",
+    "Failures/concurrency and Linux integration covered by Q25-F209",
+    "Native provenance and 20/20 candidate certification refreshed by D15"
+  ]
+}
