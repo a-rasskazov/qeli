@@ -109,3 +109,87 @@ not cover a persistent group lease, SIGKILL/recovery or a real firewalld daemon.
 **Q25-A125 / D06 remains an open P2.** D10 is closed for its previously supported
 firewall composition; a future identity guard will need targeted rechecks of that
 composition. The manual restriction on active WAN rename/delete/recreate remains.
+
+
+## 3 October 2026 continuation: working DEVMAP prototype
+
+A kernel guard was found without device-group mutation or TC redirection:
+[low-level helper](../../../scripts/audit_wan_devmap.py),
+[packet runner](../../../scripts/audit_wan_devmap_packets.py),
+[evidence](../../../release/certification/evidence/wan-devmap-20261003.json).
+**This is a prototype, not an integrated Qeli production fix.** Working Rust,
+client monitor, unit file and installed services are unchanged.
+
+The original WAN is inserted into `BPF_MAP_TYPE_DEVMAP`, then `BPF_MAP_FREEZE`
+rejects userspace updates. The kernel notifier removes the entry on
+`NETDEV_UNREGISTER`; later numeric ifindex reuse cannot recreate it. This is
+implemented in [Linux 6.12](https://raw.githubusercontent.com/torvalds/linux/v6.12/kernel/bpf/devmap.c).
+DEVMAP lookup is permitted by the
+[verifier](https://raw.githubusercontent.com/torvalds/linux/v6.12/kernel/bpf/verifier.c);
+[xt_bpf](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/netfilter/xt_bpf.c)
+executes the socket-filter program.
+
+A 16-instruction program runs in `mangle/POSTROUTING` before NAT. It ignores
+unrelated ingress and compares the selected TUN packet's **actual outgoing ifindex**
+with the live map entry. An absent entry or different index causes DROP. The rule
+is also scoped to the selected WAN name. Map presence alone is insufficient: the
+original WAN may still live under another name while a different device claims
+its former name. A separate negative scenario tests this case.
+
+**4/4 pairs nft/nft, nft/legacy, legacy/nft, legacy/legacy** each execute 39 checks,
+**156 total**; 72 packet probes / 216 UDP datagrams / 168 validated echo replies /
+48 expected blocked sends. Every one of the 16 negative probes increments the new
+mangle DROP by 3; direct queries prove receiver availability.
+
+| State | Verified IPv4/IPv6 outcome |
+|---|---|
+| Original WAN | Consumer traffic retains the expected MASQUERADE source; local OUTPUT is unaffected |
+| Owner FDs closed and pinned objects reopened | Live entry and normal NAT survive |
+| Original renamed, another device claims its old name | Map remains live, but actual out index differs: DROP |
+| Original deleted; replacement reuses name/index/MAC | Map stays empty across reopen; consumer DROP, local positive controls work |
+| Attempt to update live or retired map | EPERM; old generation cannot reauthorize the replacement |
+| Old guard rules removed; new generation created | The newly selected WAN is admitted with NAT |
+| Cleanup | Original snapshot of both backends/native nft restored; rules removed before unpin/close/unmount |
+
+**Two capability checks** also run as the actual `qeli` user (UID 103/GID 105)
+through setpriv. With the unit's three stock capabilities, `CapEff=0x3400`, MAP_CREATE
+fails with EPERM. Adding only `CAP_BPF` gives `CapEff=0x8000003400`: map/program
+creation, freeze and pin succeed without process CAP_SYS_ADMIN. Privileged fixture
+setup prepared bpffs and a writable directory beforehand. This is not systemd
+startup/install verification; integration must test that. Working service privileges
+have not changed.
+
+A simpler TC workaround is rejected: mirred's device reference is visible in
+[source](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/sched/act_mirred.c),
+but redirect changes packet handling and a WAN-only filter cannot supply a firewall
+deny on its replacement. **No TC packet scenario was executed**: source analysis
+led to DEVMAP, which preserves the ordinary routing/NAT path.
+
+Fixture failures are retained: ordinary verifier.log creation inside bpffs, DROP
+counter lookup without `-t mangle`, then an unprimed empty native mangle POSTROUTING
+hook in the baseline. The final fixture primes this hook before its snapshot; no
+kernel/foreign objects are removed after verification to manufacture equality.
+The intermediate 156 outcomes from r3 are not added to final r4; r4 removes the
+unused old devgroup branch from the runner. AST, runtime fixture hashes and docs
+are checked.
+
+All outer firewall/routes/addresses/link groups/RPDB/listener/resolver snapshots
+match before/after. One global effect is explicitly retained: the first xt_bpf use
+autoloaded that kernel module, which is left loaded. Final r4 adds no modules. The
+module set across all attempts is not described as unchanged. `.10` is untouched.
+No full before/after global BPF-object inventory was taken.
+
+D06 now needs **integration of the selected guard**, not another candidate search:
+a shared Linux Rust helper with portable syscall ABI; trusted bpffs/bootstrap and
+minimal service privileges; persistent owner/journal for server NAT44/NAT66 and
+client exit; installation before admission and pins retained until exact rule
+cleanup; a monitor that distinguishes lease loss and creates a new generation
+without refilling the old map. Then real Qeli TUN, multiprofile, established
+conntrack, policy/RFC1918/delegated paths, SIGKILL/recovery and missing-capability/
+bpffs refusal must be tested on mixed backends. Unit/build/Clippy follow Rust edits.
+
+The prototype helper is intentionally Linux x86_64 only. FD close/reopen is not
+SIGKILL, and synthetic veth packets are not authenticated VPN E2E. Foreign TC/
+mangle/firewalld policies and older kernels are not certified by this batch. The
+current active WAN rename/delete/recreate restriction remains until integration.
+**Q25-A125 / D06 IN_PROGRESS; D15 awaits the final production candidate.**

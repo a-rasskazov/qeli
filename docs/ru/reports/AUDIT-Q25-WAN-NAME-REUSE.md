@@ -56,7 +56,7 @@ UDP пакетами на четырёх парах nft/nft, nft/legacy, legacy/
 Всего **168 проверок ожидаемых результатов**, включая воспроизведение дефектных
 вариантов: 88 probes, 264 datagrams, 168 валидных echo replies и 96 ожидаемых
 блокировок. В 32 отрицательных проверках счётчик конкретного DROP увеличился на
-3. Это не 168 доказательства исправленной безопасности.
+3. Это не 168 доказательств исправленной безопасности.
 
 | Кандидат / состояние | Пакетный результат на всех четырёх парах |
 |---|---|
@@ -110,3 +110,86 @@ SIGKILL/recovery или настоящий firewalld daemon.
 **Q25-A125 / D06 остаётся открытым P2.** D10 закрыт прежней поддерживаемой
 firewall-композицией; будущий identity guard потребует её целевых повторных проверок.
 Ограничение active WAN rename/delete/recreate в мануале сохраняется.
+
+
+## Продолжение 3 октября 2026: работающий прототип DEVMAP
+
+Найден kernel guard без изменения device group и без перенаправления пакетов через
+TC: [низкоуровневый helper](../../../scripts/audit_wan_devmap.py),
+[packet runner](../../../scripts/audit_wan_devmap_packets.py),
+[evidence](../../../release/certification/evidence/wan-devmap-20261003.json).
+**Это прототип, ещё не production исправление Qeli.** Рабочий Rust, клиентский
+monitor, unit-файл и установленные сервисы не изменены.
+
+В `BPF_MAP_TYPE_DEVMAP` помещается исходный WAN, затем `BPF_MAP_FREEZE` запрещает
+userspace обновления. Kernel notifier удаляет запись при `NETDEV_UNREGISTER`;
+позднее совпадение числового ifindex не создаёт её заново. Это свойство
+[реализации Linux 6.12](https://raw.githubusercontent.com/torvalds/linux/v6.12/kernel/bpf/devmap.c).
+Разрешение lookup для DEVMAP есть в
+[verifier](https://raw.githubusercontent.com/torvalds/linux/v6.12/kernel/bpf/verifier.c),
+а socket-filter программа исполняется через
+[xt_bpf](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/netfilter/xt_bpf.c).
+
+Программа из 16 инструкций ставится в `mangle/POSTROUTING` перед NAT. Она игнорирует
+чужой ingress, а для выбранного TUN сравнивает **фактический выходной ifindex пакета**
+с живой записью map. Отсутствие записи или другой индекс дают DROP. Дополнительно
+правило ограничено выбранным WAN name. Сама по себе непустая map недостаточна:
+старый WAN может ещё жить под новым именем, пока другое устройство уже заняло
+прежнее имя. Это проверено отдельным отрицательным сценарием.
+
+На **4/4 парах nft/nft, nft/legacy, legacy/nft, legacy/legacy** выполнено по 39,
+всего **156 проверок**; 72 packet probes / 216 UDP datagrams / 168 валидных echo
+replies / 48 ожидаемых блокировок. Все 16 отрицательных probes увеличили именно
+новый mangle DROP на 3; прямые запросы подтверждают живых приёмников.
+
+| Состояние | Проверенный результат IPv4/IPv6 |
+|---|---|
+| Исходный WAN | Трафик consumer проходит с прежним MASQUERADE source; локальный OUTPUT не затронут |
+| Owner FD закрыт и pinned объекты снова открыты | Живая запись и нормальный NAT сохраняются |
+| Исходный WAN переименован, другое устройство заняло старое имя | Map ещё жива, но фактический out index другой: DROP |
+| Исходный WAN удалён, новое устройство получило прежние name/index/MAC | Map пустая и после reopen; consumer DROP, локальные положительные контроли работают |
+| Попытка обновить live или retired map | EPERM; прежняя generation не переавторизует замену |
+| Старые guard rules удалены, создана новая generation | Новый выбранный WAN снова допускается с NAT |
+| Cleanup | Исходный снимок обоих backend/native nft восстановлен; rules удалены перед unpin/close/unmount |
+
+Дополнительно выполнены **две capability проверки** с настоящим пользователем
+`qeli` (UID 103/GID 105) через setpriv. С тремя штатными capabilities юнита
+`CapEff=0x3400` MAP_CREATE отказывает EPERM. Добавление только `CAP_BPF` даёт
+`CapEff=0x8000003400`: map/program создаются, замораживаются и pin работают без
+CAP_SYS_ADMIN у процесса. При этом bpffs и доступный каталог заранее создал
+привилегированный fixture. Это не проверка systemd startup/install: её нужно
+выполнить при интеграции. Рабочий сервис не получил дополнительных прав.
+
+Не принимается более простой TC обход: привязка mirred к устройству видна в
+[исходнике](https://raw.githubusercontent.com/torvalds/linux/v6.12/net/sched/act_mirred.c),
+но redirect меняет путь пакета, а фильтр только на WAN не создаёт firewall deny
+для заменившего его устройства. TC пакетный сценарий здесь **не выполнялся**:
+после source-разбора выбран DEVMAP, сохраняющий обычный routing/NAT путь.
+
+Сохранены fixture отказы: запись обычного verifier.log внутри bpffs, запрос DROP
+counter без `-t mangle`, затем неподготовленный пустой native mangle POSTROUTING
+hook в baseline. Финальный fixture prime-ит hook до снимка; никакие kernel/чужие
+объекты ради совпадения результата после проверки не удаляются. Промежуточные
+156 результатов r3 не прибавляются к финальным r4; r4 удаляет неиспользуемую старую
+ветку devgroup из runner. AST, hashes runtime fixtures и документация проверены.
+
+Все внешние firewall/routes/addresses/link groups/RPDB/listener/resolver snapshots
+совпали до/после. Есть явно сохранённый глобальный эффект: первый вызов xt_bpf
+автозагрузил одноимённый kernel module; он оставлен загруженным. В финальном r4
+новых модулей нет. Набор модулей за все попытки не называется неизменным. `.10` не
+затронут. Полная инвентаризация BPF объектов до/после не выполнялась.
+
+Для закрытия D06 остаётся **интеграция выбранного guard**, а не новый поиск кандидатов:
+общий Linux Rust helper с переносимым syscall ABI; trusted bpffs/bootstrap и
+минимальные service права; persistent owner/journal для server NAT44/NAT66 и
+client exit; установка до допуска пакетов и сохранение pin до подтверждённой
+очистки rules; monitor должен различать потерю lease и создавать новую generation,
+не заполняя старую map. Далее — настоящий Qeli TUN, multiprofile, established
+conntrack, policy/RFC1918/delegated paths, SIGKILL/recovery и отказ без capabilities/
+bpffs на mixed backend. Обычные unit/build/Clippy нужны после изменения Rust.
+
+Helper прототипа намеренно только Linux x86_64. Close/reopen FD не равен SIGKILL,
+а synthetic veth packet proof не равен authenticated VPN E2E. Политики чужого TC/
+mangle/firewalld и старые kernels этим пакетом не сертифицированы. Текущий
+контракт запрета active WAN rename/delete/recreate сохраняется до интеграции.
+**Q25-A125 / D06 IN_PROGRESS; D15 ожидает конечный production кандидат.**
