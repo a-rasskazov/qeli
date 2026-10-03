@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v13 -->
+<!-- normative-sync: full-system-audit-v14 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -324,13 +324,13 @@ Inline + users_file, duplicate precedence, missing groups, invalid types versus 
 
 **Existing harness/fixtures:** `scripts/test_user_reload.py`, `scripts/test_l3_user_limits.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
 - [x] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: PASS.**
 
 **3 October, first batch:** five confirmed defects fixed in API, inline overrides, routes, live revoke and bandwidth writers. 119 API + 57 TCP/UDP checks PASS; fresh Linux units/lint and 293/75 HTTP regressions PASS. Q06 remains open for filesystem/concurrency and additional policies. [Report](../reports/AUDIT-Q06-USERS-ACCESS.md).
 
@@ -344,6 +344,9 @@ covered. Destructive legacy drivers replaced by isolated batches. Storage faults
 and concurrent writers are closed; overall Q06 remains IN_PROGRESS for bandwidth
 measurement and remaining admission/access-issuance scenarios.
 [Report](../reports/AUDIT-Q06-USERS-ACCESS.md#third-batch-live-permissions-and-ini-publication-failures).
+
+
+**3 October, complete:** Q06-F012–F014 fixed: shared TCP/UDP admission, terminal session replacement, effective bandwidth/legacy burst and share-reset recovery. 387 Q06 checks, 2265 Linux units / 60 ignored, 118 JS groups, fresh matrix 18/327 and soak 100 TCP + 100 QUIC/33 PASS. Native A/B matches byte-for-byte; .11 preserved, .10 SDK PASS with explicit firewall-snapshot limitation. No physical qualification claimed. [Final report](../reports/AUDIT-Q06-USERS-ACCESS.md), [evidence](../../../release/certification/evidence/q06-users-access-complete-20261003.json).
 
 ### 07. Backup, restore and history
 

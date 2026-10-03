@@ -1138,126 +1138,40 @@ where
             // Devices evicted by the per-user session cap below whose pool IP must be
             // released AFTER the sessions write lock drops (lock order: sessions → pool).
             let mut cap_evicted = Vec::new();
-            let mut superseded = Vec::new();
-            {
-                let mut sessions = profile.sessions.write().await;
-                let stale: Vec<std::net::IpAddr> = sessions
-                    .by_ip
-                    .iter()
-                    .filter(|(_, s)| s.device_key == dkey)
-                    .map(|(ip, _)| *ip)
-                    .collect();
-                for ip in stale {
-                    if let Some(old) = sessions.remove(ip) {
-                        old.kick_all();
-                        // Strip the old session's inbound iroutes from the map — a dead
-                        // ClientRoute would otherwise win route_lookup or stack a duplicate
-                        // on this same-device reconnect. Kernel deletion is deferred until
-                        // after the sessions lock drops, then completed under the same
-                        // admission guard before the replacement uses fail-closed `route add`.
-                        evicted_client_routes.extend(sessions.take_client_routes(ip));
-                        log::info!(
-                            "Superseding previous session for device '{}' (was {}) on profile '{}' — reconnect from {}",
-                            dkey, ip, profile.name, addr
-                        );
-                        superseded.push(old);
-                    }
-                }
-                // Static IP (variant-b): evict whoever currently holds this user's fixed
-                // address — a different device of theirs, or a dynamic user who grabbed it
-                // while the owner was offline — so we can steal it below. (Our own prior
-                // session was already dropped by the supersede loop above.)
-                let fixed_addresses = fixed_ip
-                    .filter(|_| {
-                        matches!(
-                            negotiated_ip_mode,
-                            crate::config::server::IpMode::Ipv4
-                                | crate::config::server::IpMode::Dual
-                        )
-                    })
-                    .map(std::net::IpAddr::V4)
-                    .into_iter()
-                    .chain(
-                        fixed_ipv6
-                            .filter(|_| {
-                                matches!(
-                                    negotiated_ip_mode,
-                                    crate::config::server::IpMode::Ipv6
-                                        | crate::config::server::IpMode::Dual
-                                )
-                            })
-                            .map(std::net::IpAddr::V6),
+            let fixed_addresses = fixed_ip
+                .filter(|_| {
+                    matches!(
+                        negotiated_ip_mode,
+                        crate::config::server::IpMode::Ipv4 | crate::config::server::IpMode::Dual
                     )
-                    .collect::<Vec<_>>();
-                for address in fixed_addresses {
-                    let holder_primary = sessions
-                        .get_by_address(address)
-                        .map(|holder| holder.client_ip);
-                    if let Some(old) = holder_primary.and_then(|primary| sessions.remove(primary)) {
-                        old.kick_all();
-                        // Strip the evicted holder's iroutes (map only — see the supersede
-                        // note above; the admitted session re-programs the kernel).
-                        evicted_client_routes.extend(sessions.take_client_routes(old.client_ip));
-                        log::info!(
-                            "Static IP {} for user '{}' — evicting current holder device '{}' on profile '{}'",
-                            address, crate::util::log_identity(&username), crate::util::log_device_identity(&old.device_key), profile.name
-                        );
-                        cap_evicted.push(old);
-                    }
+                })
+                .map(std::net::IpAddr::V4)
+                .into_iter()
+                .chain(
+                    fixed_ipv6
+                        .filter(|_| {
+                            matches!(
+                                negotiated_ip_mode,
+                                crate::config::server::IpMode::Ipv6
+                                    | crate::config::server::IpMode::Dual
+                            )
+                        })
+                        .map(std::net::IpAddr::V6),
+                )
+                .collect::<Vec<_>>();
+            let (evicted, routes) = supersede_admission_sessions(
+                &profile,
+                &username,
+                &dkey,
+                max_sessions,
+                &fixed_addresses,
+            )
+            .await;
+            evicted_client_routes.extend(routes);
+            for old in evicted {
+                if old.device_key != dkey {
+                    cap_evicted.push(old);
                 }
-                // This device freed its own slot above, so the remaining count is of
-                // OTHER devices of this user; evict the oldest until the new one fits.
-                if max_sessions > 0 {
-                    loop {
-                        let mut user_sessions: Vec<(std::net::IpAddr, Instant)> = sessions
-                            .by_ip
-                            .iter()
-                            .filter(|(_, s)| s.username == username)
-                            .map(|(ip, s)| (*ip, s.connected_at))
-                            .collect();
-                        if user_sessions.len() < max_sessions as usize {
-                            break;
-                        }
-                        user_sessions.sort_by_key(|(_, t)| *t); // oldest first
-                        let oldest_ip = user_sessions[0].0;
-                        match sessions.remove(oldest_ip) {
-                            Some(old) => {
-                                old.kick_all();
-                                // Strip the evicted device's iroutes (map only).
-                                evicted_client_routes
-                                    .extend(sessions.take_client_routes(oldest_ip));
-                                log::info!(
-                                    "User '{}' at session cap {} — evicting oldest device {} on profile '{}' for new device '{}'",
-                                    crate::util::log_identity(&username), max_sessions, oldest_ip, profile.name, crate::util::log_device_identity(&dkey)
-                                );
-                                // This evicted device's own stream won't release its IP
-                                // (it's no longer in by_ip under its session_id), so the
-                                // address would leak — release it post-lock below.
-                                cap_evicted.push(old);
-                            }
-                            None => break,
-                        }
-                    }
-                }
-            }
-            // Notify (opt-in): forcibly evicted (static-IP steal / session-cap).
-            // Already out of by_ip, so the TCP teardown guard won't double-fire.
-            //
-            // The addresses themselves are NOT released here any more — see the single
-            // pool-lock block below. This loop used to release each one under its own
-            // `profile.pool.lock()`, i.e. released → dropped the lock → hit at least two
-            // more await points (`sessions.read()`, then re-taking the pool lock) before
-            // allocating our own. `IpPool::release` pushes onto `freed` and `allocate` pops
-            // `freed` FIRST, so a concurrent handler in that window was HANDED the address
-            // we had just evicted someone from. Our `allocate_fixed` then took it back — but
-            // only in the pool's bookkeeping (`user_allocations.retain`), because killing the
-            // session is the caller's job and this caller only knew about the holders it
-            // had seen under the earlier write lock. Result: two live sessions on one tunnel
-            // IP. The orphan keeps injecting packets with that source while all return
-            // traffic — including replies to its own connections — is routed to the other
-            // client. (Audit 2026-08-04.)
-            for s in superseded.iter().chain(&cap_evicted) {
-                crate::server::notify::fire_disconnect(&s.username, &profile.name, s.peer);
             }
 
             let max_clients = pcfg.performance.connection.max_clients;
@@ -1476,7 +1390,6 @@ where
                 // competing authenticator. Handle an inconsistent pre-existing owner
                 // defensively instead of silently dropping its routes and lease.
                 if let Some(old) = sessions.insert(session.clone()) {
-                    old.kick_all();
                     replaced_routes.extend(sessions.take_client_routes(old.client_ip));
                     replaced_session = Some(old);
                 }
@@ -1502,6 +1415,7 @@ where
                 let _ = program_client_subnet_route(false, cidr, &pcfg.tun.name).await;
             }
             if let Some(old) = &replaced_session {
+                supersede_sessions(std::slice::from_ref(old)).await;
                 if old.device_key != dkey {
                     profile.pool.lock().await.release(&old.device_key);
                 }
@@ -2132,6 +2046,105 @@ fn handle_server_control(
     }
     None
 }
+/// Select old owners while admission is held, deliver the terminal reason while their
+/// routing/carriers are still live, then remove only those exact session IDs. Both TCP
+/// and UDP use this transition; their callers release leases under the allocation lock.
+pub(crate) async fn supersede_admission_sessions(
+    profile: &Arc<ProfileRuntime>,
+    username: &str,
+    device_key: &str,
+    max_sessions: u32,
+    fixed_addresses: &[std::net::IpAddr],
+) -> (Vec<Arc<SessionShared>>, Vec<String>) {
+    let victims = {
+        let sessions = profile.sessions.read().await;
+        let mut ids = std::collections::HashSet::new();
+        let mut victims = Vec::new();
+        for session in sessions.by_ip.values() {
+            if session.device_key == device_key && ids.insert(session.session_id) {
+                victims.push(session.clone());
+            }
+        }
+        for address in fixed_addresses {
+            if let Some(holder) = sessions.get_by_address(*address) {
+                if ids.insert(holder.session_id) {
+                    victims.push(holder.clone());
+                }
+            }
+        }
+        if max_sessions > 0 {
+            let mut remaining = sessions
+                .by_ip
+                .values()
+                .filter(|s| s.username == username && !ids.contains(&s.session_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            remaining.sort_by_key(|s| (s.connected_at, s.session_id));
+            let evict_count = remaining.len().saturating_sub(max_sessions as usize - 1);
+            victims.extend(remaining.into_iter().take(evict_count));
+        }
+        victims
+    };
+    supersede_sessions(&victims).await;
+    let mut removed = Vec::new();
+    let mut routes = Vec::new();
+    {
+        let mut sessions = profile.sessions.write().await;
+        for victim in victims {
+            if sessions
+                .by_ip
+                .get(&victim.client_ip)
+                .is_some_and(|current| current.session_id == victim.session_id)
+            {
+                sessions.remove(victim.client_ip);
+                routes.extend(sessions.take_client_routes(victim.client_ip));
+                removed.push(victim);
+            }
+        }
+    }
+    for victim in &removed {
+        log::info!(
+            "Replacing session for user '{}' at {} on profile '{}' with a newer connection",
+            crate::util::log_identity(&victim.username),
+            victim.peer,
+            profile.name
+        );
+        crate::server::notify::fire_disconnect(&victim.username, &profile.name, victim.peer);
+    }
+    (removed, routes)
+}
+
+/// Tell supported clients that replacement is terminal before closing their carriers.
+/// One deadline covers the entire eviction batch; an unresponsive/legacy peer cannot
+/// multiply admission latency. Leases remain owned until this bounded delivery ends.
+async fn supersede_sessions(sessions: &[Arc<SessionShared>]) {
+    #[cfg(feature = "experimental-roaming")]
+    {
+        let mut deliveries = tokio::task::JoinSet::new();
+        for session in sessions {
+            let session = session.clone();
+            deliveries.spawn(async move {
+                let event = crate::protocol::control_v2::ManagementEvent::Kick(
+                    crate::protocol::control_v2::Kick {
+                        reason: crate::protocol::control_v2::KickReason::SessionSuperseded,
+                        message: "Session replaced by a newer connection".to_string(),
+                        reconnect_allowed: false,
+                    },
+                );
+                let _ = session.send_management(&event).await;
+            });
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(4), async {
+            while deliveries.join_next().await.is_some() {}
+        })
+        .await;
+        // Dropping JoinSet aborts any remaining delivery before leases are reassigned.
+    }
+    for session in sessions {
+        session.kick_all();
+    }
+}
+
 async fn forward_server_uplink_packet(
     packet: ServerTunPacket,
     profile: &Arc<ProfileRuntime>,

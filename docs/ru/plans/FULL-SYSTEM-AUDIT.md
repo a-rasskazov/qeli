@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v13 -->
+<!-- normative-sync: full-system-audit-v14 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -329,13 +329,13 @@ Inline + users_file, duplicates/precedence, missing group, неверные ти
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_user_reload.py`, `scripts/test_l3_user_limits.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
 - [x] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: PASS.**
 
 **3 октября, первый пакет:** исправлены пять подтверждённых проблем API, inline override, routes, live revoke и bandwidth writers. 119 API + 57 TCP/UDP checks PASS; свежие Linux units/lint и 293/75 HTTP regressions PASS. Q06 остаётся открытым для filesystem/concurrency и дополнительных политик. [Отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md).
 
@@ -349,6 +349,9 @@ writers проверены. Опасные legacy drivers заменены из�
 Файловые отказы и конкурентные писатели закрыты; Q06 остаётся IN_PROGRESS для
 измерения bandwidth и оставшихся сценариев admission/выдачи доступа.
 [Отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md#третий-пакет-live-права-и-отказы-публикации-ini).
+
+
+**3 октября, завершение:** Q06-F012–F014 исправлены; общий TCP/UDP admission, терминальная замена сессий, effective bandwidth/legacy burst и recovery share-reset. 387 Q06 checks, 2265 Linux units / 60 ignored, 118 JS-групп, свежие matrix 18/327 и soak 100 TCP + 100 QUIC/33 PASS. Native A/B побайтно совпадает; .11 сохранён, .10 SDK PASS с явно сохранённым ограничением firewall snapshots. Physical qualification не заявляется. [Итоговый отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md), [evidence](../../../release/certification/evidence/q06-users-access-complete-20261003.json).
 
 ### 07. Backup, restore и history
 

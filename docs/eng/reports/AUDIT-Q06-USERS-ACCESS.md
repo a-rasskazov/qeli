@@ -1,9 +1,9 @@
-# Q06: users and access revocation — batches 1–2
+# Q06: users and access revocation — complete
 
-Date: 3 October 2026. **Batch status: PASS; overall Q06: IN_PROGRESS.**
+Date: 3 October 2026. **Overall Q06: PASS; four batches complete.**
 
-The fixes were tested on isolated Linux release `c15280a7f83f185c10014b08ccf1dddbaf6660ef987d6de2799e4e85bf1d2b21`.
-**Latest qualification is the second batch below: 199 Q06 checks.**
+The fixes were tested on isolated Linux release `fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc`.
+**Latest qualification is the fourth batch below: 387 Q06 checks.**
 Configurations remain INI. JSON is only the service body of HTTP/control APIs.
 
 ## Confirmed defects and fixes
@@ -133,3 +133,50 @@ panel presentation of legacy burst. No new benchmark or physical qualification
 is claimed.
 
 [Third batch evidence](../../../release/certification/evidence/q06-users-policy-durability-20261003.json).
+
+## Fourth batch: admission, bandwidth and Q06 completion
+
+**PASS; Q06 complete.** Final release `fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc`.
+
+| ID | Confirmed defect | Fix |
+| --- | --- | --- |
+| Q06-F012 | Same-device/static-IP replacement and max_sessions eviction closed carriers without a terminal reason; automatic retries evicted the winner again. TCP and UDP duplicated admission logic. | Shared helper selects unique holders and oldest excess devices, delivers `session_superseded` while ownership remains valid, then releases routes, carriers and leases. Modern management clients stop retrying; one four-second budget covers the batch. Legacy peers without ACK are still revoked at deadline but may reconnect. |
+| Q06-F013 | Panel zero own bandwidth ignored inherited group limits; legacy burst appeared to be active. | Display effective own/group cap and zero inheritance. Burst is explicitly read-only and unenforced; edit/save preserves its stored value. |
+| Q06-F014 | Share password reset after rename/directory-fsync failure missed published INI readback and worker reload. | Ninth API writer uses shared published-write recovery after releasing DB lock; reissuing the share uses persisted credentials without another reset. |
+
+Final release: **387 Q06 checks PASS** — admission 35, bandwidth 33,
+durability 76, policy 67, API 119, live 57. TCP/UDP same-device, static IPv4,
+cap=1, winner stability for ten seconds, lease release, two-profile scope,
+selective revoke and all-profile deletion covered. An intermediate TCP-only fix
+failed cap/UDP checks and was replaced by the shared helper. Admission fixtures
+raise only their private pre-auth budget for rapid source-IP reuse; production
+rate limits remain unchanged.
+
+Actual iperf3 over TCP/UDP uses two parallel flows, three measured seconds after
+one warmup second; upload/download have independent buckets. Group=2 yields
+1.77–2.10 Mbps, own=1 yields 0.92–1.05; group=3 does not override own=1,
+own=0 inherits 3 (2.80), and group=0 restores unlimited. Unlimited headroom
+exceeds 5 Mbps; 0.4–1.35 cap tolerance serves this short functional measurement.
+This verifies enforcement, not release performance. Stored legacy burst=99
+is preserved without separate burst allowance.
+
+2265 Linux units PASS / 60 ignored, full/minimal Clippy and rustfmt PASS;
+118 JS groups and static panel PASS. Fresh 18 scenarios / 327 assertions,
+aggregate leak and 100 TCP + 100 QUIC / 33 soak checks PASS on the exact release.
+All four native cores passed fresh A/B, ABI/provenance and match the previous
+batch byte-for-byte; client copies agree. RU/ENG CONFIG/PANEL and plan updated.
+Shared services and deployed binaries were not replaced.
+
+Full .11 network/service snapshots match. Desktop .10 SDK A/B passes, but its
+default IPv4 firewall dump differs; repeated read-only snapshots also produced
+default/legacy dump differences. Final SDK run preserves nft, explicit legacy,
+other fields, service PID/start and deployed binary. Full .10 network-preservation
+PASS is not claimed; the earlier firewall deviation remains unattributed and
+rules were not removed/restored. This is an evidence limitation, not a confirmed
+new Qeli defect. Completed debug binaries were losslessly archived with fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc
+verification to free space. No physical qualification is claimed.
+
+All five Q06 criteria are closed within accepted scope, with no remaining Q06
+items. Q07 follows: archive and transaction checks for backup/restore/history.
+
+[Final evidence](../../../release/certification/evidence/q06-users-access-complete-20261003.json).

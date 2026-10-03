@@ -416,6 +416,8 @@
       'New Password': 'Новый пароль',
       'Hash': 'Хешировать',
       'Password hashed with argon2id': 'Пароль захеширован argon2id',
+    'Legacy burst (not enforced)': 'Устаревший burst (не применяется)',
+    '0 = inherit group or unlimited': '0 = лимит группы или без ограничения',
       'Bandwidth limit (Mbps)': 'Лимит полосы (Мбит/с)',
       'Burst (Mbps)': 'Burst (Мбит/с)',
       '0 = unlimited': '0 = без лимита',

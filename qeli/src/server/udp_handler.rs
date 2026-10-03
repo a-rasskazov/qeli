@@ -4107,109 +4107,7 @@ async fn handle_udp_auth(
     // (Audit 2026-08-04.)
     let mut deferred_release: Vec<String> = Vec::new();
     let mut evicted_iroutes: Vec<String> = Vec::new();
-    let mut evicted_sessions: Vec<Arc<handler::SessionShared>> = Vec::new();
 
-    // Supersede this exact device before enforcing either limit. Its pool lease is kept
-    // for the replacement, but its session and iroutes must no longer be authoritative.
-    let stale_device_sessions: Vec<std::net::IpAddr> = {
-        let session_map = profile.sessions.read().await;
-        session_map
-            .by_ip
-            .iter()
-            .filter(|(_, session)| session.device_key == dkey)
-            .map(|(primary, _)| *primary)
-            .collect()
-    };
-    for primary in stale_device_sessions {
-        let old = {
-            let mut session_map = profile.sessions.write().await;
-            let old = session_map.remove(primary);
-            if old.is_some() {
-                evicted_iroutes.extend(session_map.take_client_routes(primary));
-            }
-            old
-        };
-        if let Some(old) = old {
-            old.kick_all();
-            sessions
-                .write()
-                .await
-                .remove_session_owner(old.session_id, old.peer);
-            evicted_sessions.push(old);
-        }
-    }
-
-    // Per-user session cap (0 = unlimited): evict this user's oldest device(s) so the
-    // new one fits. A reconnecting device keeps its own IP (pool is per-device), so we
-    // count only OTHER devices here; its self-supersede happens at the IP step below.
-    {
-        let max_sessions = {
-            let db = server_state.users_db.read().await;
-            db.find_user(&username)
-                .map(|u| u.effective_max_sessions(&db.groups))
-                .unwrap_or(0)
-        };
-        if max_sessions > 0 {
-            loop {
-                let victim = {
-                    let sess_map = profile.sessions.read().await;
-                    let mut others: Vec<(
-                        SocketAddr,
-                        std::net::IpAddr,
-                        std::time::Instant,
-                        String,
-                    )> = sess_map
-                        .by_ip
-                        .iter()
-                        .filter(|(_, s)| s.username == username && s.device_key != dkey)
-                        .map(|(ip, s)| (s.peer, *ip, s.connected_at, s.device_key.clone()))
-                        .collect();
-                    if others.len() < max_sessions as usize {
-                        None
-                    } else {
-                        others.sort_by_key(|(_, _, t, _)| *t); // oldest first
-                        Some(others.swap_remove(0))
-                    }
-                };
-                match victim {
-                    Some((peer, ip, _, ev_dkey)) => {
-                        let old = {
-                            let mut sm = profile.sessions.write().await;
-                            match sm.remove(ip) {
-                                Some(old) => {
-                                    // Strip the evicted session's iroutes (map only — a new
-                                    // session is admitted at this IP; no kernel del to race it).
-                                    evicted_iroutes.extend(sm.take_client_routes(ip));
-                                    Some(old)
-                                }
-                                None => None,
-                            }
-                        };
-                        deferred_release.push(ev_dkey.clone());
-                        if let Some(old) = old {
-                            old.kick_all();
-                            sessions
-                                .write()
-                                .await
-                                .remove_session_owner(old.session_id, peer);
-                            evicted_sessions.push(old);
-                        }
-                        log::info!(
-                            "User '{}' at session cap {} — evicting oldest device {} on profile '{}' for new device '{}'",
-                            crate::util::log_identity(&username), max_sessions, ip, profile.name, crate::util::log_device_identity(&dkey)
-                        );
-                    }
-                    None => break,
-                }
-            }
-        }
-    }
-
-    // Static IP (variant-b): a user's fixed address always wins. Resolved from the LIVE
-    // users db (a panel edit + SIGHUP applies at once). Evict its current holder (a
-    // different device, or a dynamic user who took it while the owner was offline) from
-    // BOTH the shared session map and the per-source-addr UDP map, then steal it below —
-    // so a reconnect from a new source IP always lands on the same tunnel address.
     let fixed_addresses = {
         let db = server_state.users_db.read().await;
         handler::resolve_static_addresses(&db, pcfg, &username, negotiated_ip_mode)
@@ -4226,85 +4124,34 @@ async fn handle_udp_auth(
             return;
         }
     };
-    if negotiated_ip_mode != crate::config::server::IpMode::Ipv6 {
-        if let Some(ip) = fixed_ip {
-            let primary = std::net::IpAddr::V4(ip);
-            let holder = {
-                let sess_map = profile.sessions.read().await;
-                sess_map
-                    .by_ip
-                    .get(&primary)
-                    .map(|s| (s.peer, s.device_key.clone()))
-            };
-            if let Some((peer, ev_dkey)) = holder {
-                if ev_dkey != dkey {
-                    let old = {
-                        let mut sm = profile.sessions.write().await;
-                        match sm.remove(primary) {
-                            Some(old) => {
-                                // Strip the evicted holder's iroutes (map only — a new session is
-                                // admitted at this IP; no kernel del to race its re-program).
-                                evicted_iroutes.extend(sm.take_client_routes(primary));
-                                Some(old)
-                            }
-                            None => None,
-                        }
-                    };
-                    deferred_release.push(ev_dkey.clone());
-                    if let Some(old) = old {
-                        old.kick_all();
-                        sessions
-                            .write()
-                            .await
-                            .remove_session_owner(old.session_id, peer);
-                        evicted_sessions.push(old);
-                    }
-                    log::info!(
-                    "Static IP {} for user '{}' — evicting current holder device '{}' on profile '{}'",
-                    ip, crate::util::log_identity(&username), crate::util::log_device_identity(&ev_dkey), profile.name
-                );
-                }
-            }
+    let requested = fixed_ip
+        .filter(|_| negotiated_ip_mode != crate::config::server::IpMode::Ipv6)
+        .map(std::net::IpAddr::V4)
+        .into_iter()
+        .chain(
+            fixed_ipv6
+                .filter(|_| negotiated_ip_mode != crate::config::server::IpMode::Ipv4)
+                .map(std::net::IpAddr::V6),
+        )
+        .collect::<Vec<_>>();
+    let max_sessions = {
+        let db = server_state.users_db.read().await;
+        db.find_user(&username)
+            .map(|u| u.effective_max_sessions(&db.groups))
+            .unwrap_or(0)
+    };
+    let (removed, routes) =
+        handler::supersede_admission_sessions(profile, &username, &dkey, max_sessions, &requested)
+            .await;
+    evicted_iroutes.extend(routes);
+    for old in removed {
+        if old.device_key != dkey {
+            deferred_release.push(old.device_key.clone());
         }
-    }
-    if negotiated_ip_mode != crate::config::server::IpMode::Ipv4 {
-        if let Some(address) = fixed_ipv6 {
-            let requested = std::net::IpAddr::V6(address);
-            let holder = {
-                let session_map = profile.sessions.read().await;
-                session_map
-                    .get_by_address(requested)
-                    .map(|session| (session.client_ip, session.peer, session.device_key.clone()))
-            };
-            if let Some((primary, peer, evicted_key)) = holder {
-                if evicted_key != dkey {
-                    let old = {
-                        let mut session_map = profile.sessions.write().await;
-                        let old = session_map.remove(primary);
-                        if let Some(old) = &old {
-                            evicted_iroutes.extend(session_map.take_client_routes(old.client_ip));
-                        }
-                        old
-                    };
-                    deferred_release.push(evicted_key.clone());
-                    if let Some(old) = old {
-                        old.kick_all();
-                        sessions
-                            .write()
-                            .await
-                            .remove_session_owner(old.session_id, peer);
-                        evicted_sessions.push(old);
-                    }
-                    log::info!(
-                        "Static IPv6 {} for user '{}' evicts holder device '{}' on profile '{}'",
-                        address,
-                        crate::util::log_identity(&username),
-                        crate::util::log_device_identity(&evicted_key),
-                        profile.name
-                    );
-                }
-            }
-        }
+        sessions
+            .write()
+            .await
+            .remove_session_owner(old.session_id, old.peer);
     }
 
     let max_clients = profile.config.performance.connection.max_clients as usize;
@@ -4312,9 +4159,6 @@ async fn handle_udp_auth(
         let session_map = profile.sessions.read().await;
         session_map.by_ip.len() >= max_clients
     };
-    for old in &evicted_sessions {
-        crate::server::notify::fire_disconnect(&old.username, &profile.name, old.peer);
-    }
     if capacity_rejected {
         {
             let mut pool = profile.pool.lock().await;

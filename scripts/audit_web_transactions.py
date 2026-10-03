@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -324,11 +324,14 @@ obf.mode = fake-tls
     ('bandwidth','/api/users/uncertain/bandwidth','POST',{'limit_mbps':7,'burst_mbps':9}),
     ('group-upsert','/api/groups/uncertain-template','PUT',{'max_sessions':2}),
     ('group-delete','/api/groups/uncertain-template','DELETE',None),
+    ('share-reset','/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'uncertain','allow_reset':'true'}),
     ('delete','/api/users/uncertain','DELETE',None),
    ]:
     old=users_path.read_bytes();action.write_text('dir-fsync');r=api(path,method,body)
     probe(label+' API reports published durability failure truthfully',r.get('ok') is False and users_path.read_bytes()!=old and 'persistence is uncertain' in r.get('error','') and 'NOT applied' not in r.get('error','') and r.get('published') is True and r.get('reload_requested') is True,r)
     if label=='create':wait(lambda:control('show-routes','uncertain').get('ok') is True,'published create did not reload worker');check('published failed create is accepted by worker readback',True)
+    if label=='share-reset':
+     again=api('/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'uncertain'});check('published failed reset reissues persisted credentials without another reset',again.get('ok') is True and again.get('reset') is False and again.get('new_password') is None,again.get('ok'))
     if label=='delete':wait(lambda:control('show-routes','uncertain').get('ok') is False,'published delete did not reload worker');check('published failed delete revokes worker auth record',True)
    for cmd in ('disable-user','enable-user','set-limit','set-bandwidth'):
     old=users_path.read_bytes();action.write_text('dir-fsync');r=control(cmd,'parallel-0',mbps=8,data_limit_gb=11)
@@ -516,6 +519,148 @@ obf.mode = fake-tls
     stop()
    complete=all(x['status']=='PASS' for x in checks)
   finally:
+   client_stop();stop()
+   for i in range(3):
+    srv='q6srv'+str(i);run(['iptables','-D','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP']);run(['ip','link','del',srv]);run(['ip','netns','del',ns+'-'+str(i)])
+   run(['iptables','-D','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP']);subprocess.run(['ip','link','del','q06-srv'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT);run(['ip','netns','del',ns]);save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');after=network();(root/'network.json').write_text(json.dumps(dict(before=before,after=after),indent=2));check('private namespace network restored',after==before,[key for key in before if before[key]!=after[key]]);save(True)
+  assert complete,'live revoke regression recorded'
+ elif a.scenario=='users-admission':
+  clients=[];streams=[];ns='q06-client'
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());assert r[0]==200,(method,path,r[0]);return r[1]
+  def loaded(name):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(2);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps({'cmd':'show-routes','username':name})+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536)).get('ok') is True
+  def present(name):return any(x.get('username')==name for x in api('/api/clients').get('clients',[]))
+  def client_stop():
+   for p in clients:
+    if p.poll() is None:
+     p.terminate()
+     try:p.wait(timeout=25)
+     except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5)
+   clients.clear()
+   for f in streams:f.close()
+   streams.clear()
+  try:
+   for cmd in (['ip','netns','add',ns],['ip','link','add','q06-srv','type','veth','peer','name','q06-cli'],['ip','link','set','q06-cli','netns',ns],['ip','addr','add','198.18.0.1/30','dev','q06-srv'],['ip','link','set','q06-srv','up'],['ip','netns','exec',ns,'ip','link','set','lo','up'],['ip','netns','exec',ns,'ip','addr','add','198.18.0.2/30','dev','q06-cli'],['ip','netns','exec',ns,'ip','link','set','q06-cli','up'],['ip','netns','exec',ns,'ip','route','add','default','via','198.18.0.1']):run(cmd)
+   run(['iptables','-A','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP'])
+   for i in range(3):
+    device_ns=ns+'-'+str(i);srv='q6srv'+str(i);cli='q6cli'+str(i);subnet='198.18.'+str(i+1)
+    for cmd in (['ip','netns','add',device_ns],['ip','link','add',srv,'type','veth','peer','name',cli],['ip','link','set',cli,'netns',device_ns],['ip','addr','add',subnet+'.1/30','dev',srv],['ip','link','set',srv,'up'],['ip','netns','exec',device_ns,'ip','link','set','lo','up'],['ip','netns','exec',device_ns,'ip','addr','add',subnet+'.2/30','dev',cli],['ip','netns','exec',device_ns,'ip','link','set',cli,'up'],['ip','netns','exec',device_ns,'ip','route','add','default','via',subnet+'.1']):run(cmd)
+    run(['iptables','-A','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP'])
+   original=cfg.read_text().replace('[auth]','[auth]\nrequire_client_key_proof = false\nbind_static_to_session = false').replace('bind.address = 127.0.0.1','bind.address = 198.18.0.1')+'\nperf.connection.new_session_rate_max = 200\n'
+   usage=Path('/etc/qeli/usage.json');usage.write_text(json.dumps({'live-'+t+'-quota':dict(used_down=1000000000,used_up=0,used_bytes=1000000000,last_seen=1,sessions=0) for t in ('tcp','udp')}));usage.chmod(0o600)
+   for transport in ('tcp','udp'):
+    cfg.write_text(original.replace('bind.transport = tcp','bind.transport = '+transport));cfg.chmod(0o600);start()
+    for action in ('same-device','fixed-ip','session-cap'):
+     name='admit-'+transport+'-'+action;body={'username':name,'password':'fixture-client-password','max_sessions':1 if action=='session-cap' else 0}
+     if action=='fixed-ip':body['static_ip']='10.77.0.42'
+     check(name+' seed',api('/api/users','POST',body).get('ok') is True);wait(lambda:loaded(name),'admission seed reload')
+     for i in range(2):
+      device_ns=ns+'-'+str(i);key=name+'-'+str(i);config=root/(key+'.conf');config.write_text('[qeli]\nserver = 198.18.0.1:24843\nproto = '+transport+'\nuser = '+name+'\npass = fixture-client-password\nmode = fake-tls\nbind_static = false\nquic = false\ndev = q06d'+str(i)+'\ngateway = false\ndns = off\nkill_switch = false\ntimeout = 8\n[logging]\nlevel = info\n');config.chmod(0o600)
+      device_file=root/(name+'-shared-device-id' if action=='same-device' else key+'-device-id')
+      client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(key+'-known-hosts')),QELI_DEVICE_ID_FILE=str(device_file));log=(root/(key+'.log')).open('w');streams.append(log);proc=subprocess.Popen(['ip','netns','exec',device_ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT);clients.append(proc)
+      wait(lambda:any(x['username']==name and x['peer'].startswith('198.18.'+str(i+1)+'.2:') for x in api('/api/clients')['clients']),'device admission')
+      wait(lambda:subprocess.run(['ip','netns','exec',device_ns,'ip','link','show','q06d'+str(i)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'device tunnel setup')
+      if action=='fixed-ip':check(key+' owns its fixed IPv4',any(x['username']==name and x['ip']=='10.77.0.42' for x in api('/api/clients')['clients']))
+      run(['ip','netns','exec',device_ns,'ping','-I','q06d'+str(i),'-c','1','-W','2','10.77.0.1'])
+     # Keep both processes alive: a plain EOF can trigger the old client's reconnect loop.
+     samples=[];end=time.monotonic()+10
+     while time.monotonic()<end:
+      rows=[x for x in api('/api/clients')['clients'] if x['username']==name];samples.append([x['peer'] for x in rows]);time.sleep(.25)
+     probe=subprocess.run(['ip','netns','exec',ns+'-1','ping','-I','q06d1','-c','1','-W','2','10.77.0.1'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=5)
+     old_log=(root/(name+'-0.log')).read_text();terminal='server terminated the session: Session replaced by a newer connection' in old_log
+     # The CLI must stop retrying even though the OS process may remain alive for cleanup.
+     ok=all(len(x)==1 and x[0].startswith('198.18.2.2:') for x in samples) and probe.returncode==0 and terminal
+     checks.append(dict(name=name+' replacement remains newest without automatic reconnect',status='PASS' if ok else 'FAIL',detail=dict(samples=samples,old_client_exit=clients[0].poll(),new_client_exit=clients[1].poll(),terminal=terminal,probe=probe.stdout)));save();print(('PASS ' if ok else 'FAIL ')+name+' stable replacement',flush=True)
+     client_stop();api('/api/clients/'+name+'/kick','POST',{})
+     wait(lambda:not present(name),'admission teardown')
+     # Reopen after both owners terminate to detect leaked or stolen device leases.
+     check(name+' no orphan session after both clients stop',not present(name))
+     check(name+' user teardown',api('/api/users/'+name,'DELETE').get('ok') is True)
+    stop()
+   # A device cap belongs to each profile, even when the account is shared.
+   second='\n[profile:fixture2]\nbind.address = 198.18.0.1\nbind.port = 24844\nbind.transport = tcp\ntun.name = qauth2\ntun.address = 10.78.0.1\npool.cidr = 10.78.0.0/24\nrouting.nat.enabled = false\nrouting.ipv6.mode = off\ndns.enabled = false\nobf.mode = fake-tls\n'
+   cfg.write_text(original+second);cfg.chmod(0o600);start();name='admit-profile-scope'
+   check(name+' scoped user seed',api('/api/users','POST',{'username':name,'password':'fixture-client-password','max_sessions':1,'profiles':['fixture','fixture2']}).get('ok') is True);wait(lambda:loaded(name),'profile seed reload')
+   for i in range(2):
+    key=name+'-'+str(i);device_ns=ns+'-'+str(i);config=root/(key+'.conf');config.write_text('[qeli]\nserver = 198.18.0.1:'+str(24843+i)+'\nproto = tcp\nuser = '+name+'\npass = fixture-client-password\nmode = fake-tls\nbind_static = false\nquic = false\ndev = q06d'+str(i)+'\ngateway = false\ndns = off\nkill_switch = false\ntimeout = 8\n[logging]\nlevel = info\n');config.chmod(0o600)
+    log=(root/(key+'.log')).open('w');streams.append(log);client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(key+'-known-hosts')),QELI_DEVICE_ID_FILE=str(root/(key+'-device-id')));clients.append(subprocess.Popen(['ip','netns','exec',device_ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT))
+    wait(lambda:len([x for x in api('/api/clients')['clients'] if x['username']==name])==i+1,'profile device admission');wait(lambda:subprocess.run(['ip','netns','exec',device_ns,'ip','link','show','q06d'+str(i)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'profile device setup');run(['ip','netns','exec',device_ns,'ping','-I','q06d'+str(i),'-c','1','-W','2','10.'+str(77+i)+'.0.1'])
+   rows=[x for x in api('/api/clients')['clients'] if x['username']==name];check(name+' one device remains active on each profile',sorted(x['profile'] for x in rows)==['fixture','fixture2'])
+   check(name+' narrow profile allowlist saved',api('/api/users/'+name,'PUT',{'profiles':['fixture2']}).get('ok') is True);wait(lambda:[x['profile'] for x in api('/api/clients')['clients'] if x['username']==name]==['fixture2'],'profile selective revoke')
+   kept=subprocess.run(['ip','netns','exec',ns+'-1','ping','-I','q06d1','-c','1','-W','2','10.78.0.1'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=5);check(name+' allowed profile retains tunnel traffic',kept.returncode==0,kept.stdout)
+   check(name+' deleting account accepted',api('/api/users/'+name,'DELETE').get('ok') is True);wait(lambda:not present(name),'profile delete revoke');check(name+' deletion removes all profile sessions',not present(name));client_stop();stop()
+   complete=all(x['status']=='PASS' for x in checks)
+  finally:
+   client_stop();stop()
+   for i in range(3):
+    srv='q6srv'+str(i);run(['iptables','-D','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP']);run(['ip','link','del',srv]);run(['ip','netns','del',ns+'-'+str(i)])
+   run(['iptables','-D','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP']);subprocess.run(['ip','link','del','q06-srv'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT);run(['ip','netns','del',ns]);save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');after=network();(root/'network.json').write_text(json.dumps(dict(before=before,after=after),indent=2));check('private namespace network restored',after==before,[key for key in before if before[key]!=after[key]]);save(True)
+  assert complete,'live revoke regression recorded'
+ elif a.scenario=='users-bandwidth':
+  meter=None;meter_log=None;clients=[];streams=[];ns='q06-client'
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());assert r[0]==200,(method,path,r[0]);return r[1]
+  def loaded(name):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(2);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps({'cmd':'show-routes','username':name})+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536)).get('ok') is True
+  def present(name):return any(x.get('username')==name for x in api('/api/clients').get('clients',[]))
+  def client_stop():
+   for p in clients:
+    if p.poll() is None:
+     p.terminate()
+     try:p.wait(timeout=25)
+     except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5)
+   clients.clear()
+   for f in streams:f.close()
+   streams.clear()
+  try:
+   for cmd in (['ip','netns','add',ns],['ip','link','add','q06-srv','type','veth','peer','name','q06-cli'],['ip','link','set','q06-cli','netns',ns],['ip','addr','add','198.18.0.1/30','dev','q06-srv'],['ip','link','set','q06-srv','up'],['ip','netns','exec',ns,'ip','link','set','lo','up'],['ip','netns','exec',ns,'ip','addr','add','198.18.0.2/30','dev','q06-cli'],['ip','netns','exec',ns,'ip','link','set','q06-cli','up'],['ip','netns','exec',ns,'ip','route','add','default','via','198.18.0.1']):run(cmd)
+   run(['iptables','-A','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP'])
+   for i in range(3):
+    device_ns=ns+'-'+str(i);srv='q6srv'+str(i);cli='q6cli'+str(i);subnet='198.18.'+str(i+1)
+    for cmd in (['ip','netns','add',device_ns],['ip','link','add',srv,'type','veth','peer','name',cli],['ip','link','set',cli,'netns',device_ns],['ip','addr','add',subnet+'.1/30','dev',srv],['ip','link','set',srv,'up'],['ip','netns','exec',device_ns,'ip','link','set','lo','up'],['ip','netns','exec',device_ns,'ip','addr','add',subnet+'.2/30','dev',cli],['ip','netns','exec',device_ns,'ip','link','set',cli,'up'],['ip','netns','exec',device_ns,'ip','route','add','default','via',subnet+'.1']):run(cmd)
+    run(['iptables','-A','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP'])
+   original=cfg.read_text().replace('[auth]','[auth]\nrequire_client_key_proof = false\nbind_static_to_session = false').replace('bind.address = 127.0.0.1','bind.address = 198.18.0.1')
+   usage=Path('/etc/qeli/usage.json');usage.write_text(json.dumps({'live-'+t+'-quota':dict(used_down=1000000000,used_up=0,used_bytes=1000000000,last_seen=1,sessions=0) for t in ('tcp','udp')}));usage.chmod(0o600)
+   for transport in ('tcp','udp'):
+    cfg.write_text(original.replace('bind.transport = tcp','bind.transport = '+transport));cfg.chmod(0o600);start()
+    name='bw-'+transport;group=name+'-group'
+    check(name+' unlimited group seed',api('/api/groups/'+group,'PUT',{'bandwidth_limit_mbps':0}).get('ok') is True)
+    check(name+' inherited user seed',api('/api/users','POST',{'username':name,'password':'fixture-client-password','group':group,'bandwidth':{'limit_mbps':0,'burst_mbps':0}}).get('ok') is True);wait(lambda:loaded(name),'bandwidth seed reload')
+    config=root/(name+'.conf');config.write_text('[qeli]\nserver = 198.18.0.1:24843\nproto = '+transport+'\nuser = '+name+'\npass = fixture-client-password\nmode = fake-tls\nbind_static = false\nquic = false\ndev = q06bw\ngateway = false\ndns = off\nkill_switch = false\ntimeout = 8\n[logging]\nlevel = info\n');config.chmod(0o600)
+    client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(name+'-known-hosts')),QELI_DEVICE_ID_FILE=str(root/(name+'-device-id')));log=(root/(name+'.log')).open('w');streams.append(log);proc=subprocess.Popen(['ip','netns','exec',ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT);clients.append(proc)
+    wait(lambda:present(name),'bandwidth client admission');wait(lambda:subprocess.run(['ip','netns','exec',ns,'ip','link','show','q06bw'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'bandwidth device setup')
+    run(['ip','netns','exec',ns,'ping','-I','q06bw','-c','1','-W','2','10.77.0.1'])
+    meter_port=24900
+    def measure(label,cap,reverse=False):
+     nonlocal meter,meter_log,meter_port
+     meter_port+=1;meter_log=(root/(name+'-'+label+'-iperf-server.log')).open('w')
+     meter=subprocess.Popen(['iperf3','--server','--one-off','--bind','10.77.0.1','--port',str(meter_port)],stdout=meter_log,stderr=subprocess.STDOUT);wait(lambda:(':'+str(meter_port)) in run(['ss','-lnt']),'private meter readiness')
+     cmd=['ip','netns','exec',ns,'iperf3','--client','10.77.0.1','--port',str(meter_port),'--time','3','--omit','1','--parallel','2','--json']
+     if reverse:cmd+=['--reverse']
+     result=json.loads(run(cmd));assert 'error' not in result,result.get('error');(root/(name+'-'+label+'.json')).write_text(json.dumps(result,indent=2)+'\n');mbps=result['end']['sum_received']['bits_per_second']/1000000
+     ok=mbps>5 if cap==0 else .40*cap<=mbps<=1.35*cap
+     check(name+' '+label+' actual aggregate throughput',ok,dict(receiver_mbps=round(mbps,3),limit_mbps=cap,direction='download' if reverse else 'upload',parallel_flows=2,measured_seconds=3,omitted_warmup_seconds=1))
+     assert meter.wait(timeout=10)==0,'private meter exit';meter_log.close();meter=None;meter_log=None
+    def applied(cap):wait(lambda:next(x['bandwidth_limit_mbps'] for x in api('/api/clients')['clients'] if x['username']==name)==cap,'live bandwidth policy')
+    measure('unlimited-upload',0);measure('unlimited-download',0,True)
+    check(name+' group cap 2 saved',api('/api/groups/'+group,'PUT',{'bandwidth_limit_mbps':2}).get('ok') is True);applied(2)
+    measure('group-upload',2);measure('group-download',2,True)
+    check(name+' own cap 1 and legacy burst 99 saved',api('/api/users/'+name,'PUT',{'bandwidth':{'limit_mbps':1,'burst_mbps':99}}).get('ok') is True);applied(1)
+    measure('own-upload',1);measure('own-download',1,True)
+    check(name+' group cap 3 saved',api('/api/groups/'+group,'PUT',{'bandwidth_limit_mbps':3}).get('ok') is True);applied(1);measure('own-override',1,True)
+    check(name+' zero own cap restores inheritance',api('/api/users/'+name,'PUT',{'bandwidth':{'limit_mbps':0,'burst_mbps':99}}).get('ok') is True);applied(3);measure('inherit-after-clear',3,True)
+    check(name+' zero group cap restores unlimited',api('/api/groups/'+group,'PUT',{'bandwidth_limit_mbps':0}).get('ok') is True);applied(0);measure('unlimited-after-clear',0,True)
+    client_stop()
+    stop()
+   complete=all(x['status']=='PASS' for x in checks)
+  finally:
+   if meter and meter.poll() is None:meter.terminate();meter.wait(timeout=5)
+   if meter_log:meter_log.close()
    client_stop();stop()
    for i in range(3):
     srv='q6srv'+str(i);run(['iptables','-D','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP']);run(['ip','link','del',srv]);run(['ip','netns','del',ns+'-'+str(i)])

@@ -156,7 +156,11 @@ pub async fn share_link(
                     }
                     Err(e) => {
                         log::error!("share/reset: failed to save users file: {}", e);
-                        return Json(super::err_json(format!("could not persist reset: {}", e)));
+                        drop(users);
+                        return Json(
+                            super::users::users_write_failure(&state, &config, &users_file, e)
+                                .await,
+                        );
                     }
                 }
             }

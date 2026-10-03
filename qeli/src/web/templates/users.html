@@ -112,12 +112,9 @@
               <div x-show="addressRows(u).length === 0">—</div>
             </td>
             <td class="tbl-td text-xs">
-              <span class="text-slate-500" x-show="!u.bandwidth || (!u.bandwidth.limit_mbps && !u.bandwidth.burst_mbps)">Unlimited</span>
-              <span class="text-slate-300" x-show="u.bandwidth && u.bandwidth.limit_mbps > 0">
-                <span x-text="u.bandwidth.limit_mbps"></span> Mbps
-                <span class="text-slate-500" x-show="u.bandwidth.burst_mbps && u.bandwidth.burst_mbps !== u.bandwidth.limit_mbps">
-                  / <span x-text="u.bandwidth.burst_mbps"></span> burst
-                </span>
+              <span class="text-slate-500" x-show="effectiveBandwidth(u) === 0">Unlimited</span>
+              <span class="text-slate-300" x-show="effectiveBandwidth(u) > 0">
+                <span x-text="effectiveBandwidth(u)"></span> Mbps
               </span>
             </td>
             <td class="tbl-td text-xs">
@@ -264,11 +261,11 @@
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Bandwidth limit (Mbps)</label>
-            <input class="inp" type="number" min="0" x-model.number="form.bandwidth_limit" placeholder="0 = unlimited">
+            <input class="inp" type="number" min="0" x-model.number="form.bandwidth_limit" placeholder="0 = inherit group or unlimited">
           </div>
           <div>
-            <label class="block text-xs font-medium text-slate-400 mb-1.5">Burst (Mbps)</label>
-            <input class="inp" type="number" min="0" x-model.number="form.bandwidth_burst" placeholder="0 = same as limit">
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">Legacy burst (not enforced)</label>
+            <input class="inp" type="number" min="0" :value="form.bandwidth_burst" disabled>
           </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -578,6 +575,11 @@ function usersPage() {
 
     get onlineCount() { return this.usage.filter(u => u.online).length; },
     get userSummary() { return this.filteredUsers.length + ' shown · ' + this.users.length + ' total · ' + this.onlineCount + ' online'; },
+    effectiveBandwidth(user) {
+      const own = Number(user.bandwidth?.limit_mbps || 0);
+      if (own > 0) return own;
+      return Number(this.groups.find(g => g.name === user.group)?.bandwidth_limit_mbps || 0);
+    },
     addressRows(user) {
       const rows = new Map();
       const add = (address, kind) => {

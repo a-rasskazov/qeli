@@ -1455,9 +1455,16 @@ It can be set by editing `users.conf` (then restart/reload) or via the web UI
 without a device-id (if any exist) count as one key = username → one "device" per
 login.
 
-> Backward compatibility: `max_sessions = 0` (default) = unlimited = the previous
-> behavior. The profile's `max_clients` always applies on top — a user cannot exceed
+> `max_sessions = 0` (default) inherits the group cap; without a group cap the number of devices is unlimited. The profile's `max_clients` always applies on top — a user cannot exceed
 > the profile capacity even if their `max_sessions` is larger.
+
+When replacing the same device, a fixed-address holder or an older device at the
+session cap, the server sends management-capable clients `session_superseded`.
+Automatic reconnect stops so the evicted client cannot take the connection back.
+Connect manually to return. One delivery budget of up to four seconds covers the
+whole eviction batch; revocation and address transfer complete even without ACK.
+Clients without management support receive transport closure and may retry.
+The server device cap still applies to them.
 
 > **`static_ip` (a user's fixed tun IP).** Set in `[user:<name>]` (`static_ip = 10.9.0.50`,
 > or via `qeli add-client --static-ip` / the web UI. It must be a usable host inside the

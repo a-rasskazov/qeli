@@ -569,7 +569,7 @@ config/link to all of that profile's clients, so don't do it "just in case".
 ### Users & groups
 - **Create/edit:** enter the password in **plaintext** — the server hashes it
   (argon2id) and stores a reversibly-encrypted copy (for config re-issue, below).
-  Fields: bandwidth/burst, optional static IPv4 and IPv6 addresses, group, max sessions,
+  Fields: bandwidth limit and read-only legacy burst, optional static IPv4 and IPv6 addresses, group, max sessions,
   **allowed profiles** (interface isolation), allowed networks and **per-user routes**.
   Clearing either static-address field or the group really removes the stored value; the API
   distinguishes an omitted field (leave unchanged) from `null`/blank (clear it).
@@ -966,13 +966,13 @@ applies new listener settings and retains sessions with healthy persistent keys.
 
 ### Users API and live access
 
-<!-- normative-sync: panel-user-mutations-v2 -->
+<!-- normative-sync: panel-user-mutations-v3 -->
 
 User/group/limit mutation bodies must be objects; wrong types cannot become Unlimited or a successful no-op. `enabled` is boolean, `bandwidth` an object, password/hash strings, route gateway string/null. Configurations are saved only as INI.
 
 A file entry overrides its namesake inline definition. Deleting this override is refused: it would restore inline access or previous group limits. Use Disable or remove the inline definition in server.conf.
 
-After successful Users reload in the worker, removed/disabled users and entries forbidding the current profile lose open TCP/UDP sessions. Effective bandwidth, including group inheritance, applies to live sessions. API success confirms persistence and queued reload; new authentication readiness may follow later. Periodic sweep rechecks rights, quota and expiry. `burst_mbps` remains a stored legacy field; separate burst enforcement is unconfirmed.
+After successful Users reload in the worker, removed/disabled users and entries forbidding the current profile lose open TCP/UDP sessions. Effective bandwidth, including group inheritance, applies to live sessions. API success confirms persistence and queued reload; new authentication readiness may follow later. Periodic sweep rechecks rights, quota and expiry. `burst_mbps` remains a stored legacy field; there is no separate burst enforcement.
 
 After accepted SIGHUP, enable-user, disable-user, set-limit and set-bandwidth use
 current inline users/groups. Removed inline accounts cannot return from the startup
@@ -992,3 +992,18 @@ returns an error with `published=true` and uncertain durability, reads back user
 and attempts to queue worker reload. `reload_requested` reports queue success,
 not application acknowledgement. Inspect saved INI and live client state before
 retrying. Control commands also read back published users and never promise rollback.
+
+Users displays effective bandwidth: a positive own cap, otherwise the group cap,
+otherwise Unlimited. A zero own cap restores inheritance. Legacy burst is read-only
+in the form and remains stored when editing other fields; it does not raise the
+permitted rate.
+
+Replacing a device, a fixed-IP holder or an older session at a full cap ends the
+previous connection with `session_superseded`. Management-capable clients stop
+retrying automatically; connect manually to return. Caps apply separately on each
+profile. Narrowing allowed profiles disconnects only forbidden connections;
+account deletion removes all its sessions.
+
+Password reset during link issuance uses the same published-write recovery.
+If fsync fails after rename, inspect `published`/`reload_requested` and reissue the
+link without another reset: the persisted password can be recovered from the database.

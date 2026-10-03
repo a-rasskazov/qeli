@@ -294,7 +294,7 @@ async fn reload_worker(state: &Arc<ServerState>) -> bool {
 /// Distinguish a pre-publication refusal from a published but unsynced INI.
 /// Refresh the panel and request worker reload after publication even when the
 /// API returns failure: the file now contains the candidate's permissions.
-async fn users_write_failure(
+pub(super) async fn users_write_failure(
     state: &Arc<ServerState>,
     config: &crate::config::server::ServerConfig,
     users_file: &str,

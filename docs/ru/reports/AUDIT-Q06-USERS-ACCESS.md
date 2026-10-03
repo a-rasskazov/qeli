@@ -1,9 +1,9 @@
-# Q06: пользователи и отзыв доступа — пакеты 1–2
+# Q06: пользователи и отзыв доступа — завершение
 
-Дата: 3 октября 2026. **Статус пакета: PASS; Q06 в целом: IN_PROGRESS.**
+Дата: 3 октября 2026. **Q06: PASS; четыре пакета завершены.**
 
-Исправления проверены на изолированном Linux release `c15280a7f83f185c10014b08ccf1dddbaf6660ef987d6de2799e4e85bf1d2b21`.
-**Последняя квалификация — второй пакет ниже: 199 Q06 checks.**
+Исправления проверены на изолированном Linux release `fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc`.
+**Последняя квалификация — четвёртый пакет ниже: 387 Q06 checks.**
 Конфигурации остаются INI. JSON используется только как служебное тело HTTP/control API.
 
 ## Подтверждённые ошибки и исправления
@@ -131,3 +131,50 @@ bandwidth, дополнительные admission-сценарии same-device/f
 не заявляются.
 
 [Свидетельства третьего пакета](../../../release/certification/evidence/q06-users-policy-durability-20261003.json).
+
+## Четвёртый пакет: admission, bandwidth и завершение Q06
+
+**PASS; Q06 завершён.** Финальный release `fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc`.
+
+| ID | Подтверждённая проблема | Исправление |
+| --- | --- | --- |
+| Q06-F012 | Замена same-device, fixed-IP или вытеснение по max_sessions закрывали транспорт без терминальной причины; автоматические reconnect повторно вытесняли победителя. TCP и UDP имели разные реализации. | Общий admission helper выбирает уникальных владельцев и самые старые устройства, доставляет `session_superseded` при ещё действующем владении, затем освобождает маршруты, carrier и lease. Modern management клиент прекращает retry; один бюджет 4 секунды на весь пакет. Legacy без ACK также отзывается по deadline, но может reconnect. |
+| Q06-F013 | Панель показывала нулевой собственный bandwidth как отсутствие ограничения, игнорируя группу; legacy burst выглядел действующим контролем. | Отображается эффективный собственный/групповой cap, 0 наследует группу. Burst read-only с явной пометкой отсутствия enforcement; прежнее значение сохраняется при edit/save. |
+| Q06-F014 | Share password reset после rename и отказа directory fsync не перечитывал опубликованный INI и не запрашивал reload. | Девятый API writer использует общий published-write recovery после освобождения DB lock; повторная выдача ссылки использует уже сохранённые credentials без нового reset. |
+
+Финальная сборка: **387 Q06 checks PASS** — admission 35, bandwidth 33,
+durability 76, policy 67, API 119, live 57. Проверены TCP/UDP same-device,
+static IPv4, cap=1, устойчивость победителя 10 секунд, освобождение адреса,
+два профиля, selective revoke и удаление пользователя во всех профилях.
+Промежуточный TCP-only фикс не прошёл cap/UDP проверки и заменён общим helper.
+Повторное использование source IP в admission fixture имеет отдельный повышенный
+pre-auth budget; production rate limit не менялся.
+
+Bandwidth измерен реальным iperf3 через TCP/UDP, по два параллельных потока,
+3 секунды после 1 секунды warmup; upload/download имеют отдельные buckets.
+Group=2 даёт 1.77–2.10 Mbps, own=1 — 0.92–1.05 Mbps; group=3 не перекрывает
+own=1, own=0 наследует 3 (2.80 Mbps), group=0 возвращает unlimited.
+Unlimited headroom превышает 5 Mbps; допуск cap 0.4–1.35 используется для короткого
+функционального измерения. Это проверка enforcement, а не release benchmark.
+Legacy burst=99 сохранён и не добавляет отдельного burst-запаса.
+
+2265 Linux units PASS / 60 ignored, full/minimal Clippy и rustfmt PASS;
+118 JS-групп и static panel PASS. Свежие 18 сценариев / 327 assertions,
+aggregate leak и 100 TCP + 100 QUIC / 33 soak checks PASS на точном release fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc.
+Все четыре native cores прошли свежие A/B, ABI/provenance и побайтно совпали
+с предыдущим пакетом; клиентские copies согласованы. CONFIG/PANEL и план RU/ENG
+синхронизированы. Совместные службы и working binaries не заменялись.
+
+На .11 полный снимок сети и служба сохранены. На .10 SDK A/B PASS,
+но default IPv4 firewall dump отличается; повторные read-only снимки тоже дали
+расхождения default/legacy dumps. Финальный SDK run сохранил nft, explicit legacy,
+остальные поля, PID/start и deployed binary. Полный network-preservation PASS .10
+не заявляется; прежнее отклонение firewall исторически не атрибутировано, правила
+не удалялись и не восстанавливались. Это ограничение доказательства, не новый
+подтверждённый defect Qeli. Завершённые debug binaries архивированы losslessly
+с проверкой fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc для освобождения места. Physical qualification не заявляется.
+
+Все пять критериев Q06 закрыты в принятой области; следующих долгов Q06 нет.
+Далее Q07: backup/restore/history с отдельной проверкой архивов и транзакций.
+
+[Итоговые свидетельства](../../../release/certification/evidence/q06-users-access-complete-20261003.json).

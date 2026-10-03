@@ -1,227 +1,227 @@
 {
   "schema_version": 1,
   "release_version": "0.8.2",
-  "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
+  "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
   "cases": [
     {
       "id": "linux.outer4.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer4.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer6.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer6.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer4.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer4.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer6.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer6.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer4.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer4.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer6.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.outer6.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.dual.tcp.split",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.dual.udp.split",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.dns.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.mtu.1280-pmtu-ptb",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.leak.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.tap.ndp-ra",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.legacy-peer",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T08:59:39.808965+00:00",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "linux.roaming-flap-soak",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-policy-durability-20261003.json",
-      "source_digest": "cb7e2ea27a34a3b6c41d45f5e75e7e5396b2cb0c1ade563ceb652ab558ec2066",
-      "artifact_sha256": "25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c",
-      "executed_at": "2026-10-03T08:59:41.852723+00:00",
+      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
+      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "executed_at": "2026-10-03T10:44:35.560076+00:00",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "acceptance_basis": "Q06 policy/durability batch: 315 HTTP/real TCP/UDP checks, 2265 Linux units, full/minimal Clippy and rustfmt PASS. Five defects reproduced before fixes (14 failed checks). Eight API mutation paths and four control writers handle published fsync failures; real ENOSPC/EACCES and rename crash boundaries PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. 27 Q05 atomic-config crash regressions PASS. Fresh native A/B, ABI and provenance; all four cores and consumed copies updated. Both lab hosts, services and working binaries preserved. Prior .10 firewall deviation remains historically unattributed. Overall Q06 remains IN_PROGRESS."
+      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
     },
     {
       "id": "android.wifi-to-cellular",
@@ -354,7 +354,7 @@
     "status": "complete",
     "automated_cases_passed": 20,
     "functional_matrix": "18 PASS / 327 assertions; 100 TCP + 100 QUIC / 33 checks",
-    "lab_integrity": "Private namespace runs and independent native A/B preserve full lab snapshots and running services; no deployed service replacement.",
-    "scope": "Current committed candidate; user uncommitted changes are outside this certificate. Physical checks and canary remain advisory and are not reported as passed."
+    "lab_integrity": ".11 full snapshots preserved; .10 SDK A/B PASS with explicit firewall-dump limitation, nft/service/binary unchanged. No deployed service replacement.",
+    "scope": "Q06 complete for current committed candidate; user uncommitted changes outside certificate. Physical rows unchanged and advisory; no new performance benchmark."
   }
 }
