@@ -504,10 +504,13 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
             // Re-read under the lock and apply the change there: this worker's copy may
             // be older than the file (the supervisor/CLI also write it).
             let (disabled, save_err) = {
-                let users_file = state.config.auth.users_file.clone();
+                let auth_config = state.live_auth_config.read().await;
+                let mut config = state.config.clone();
+                config.auth = auth_config.clone();
+                let users_file = config.auth.users_file.clone();
                 let mut users = state.users_db.write().await;
                 match UsersDb::update_locked_checked(&users_file, |db| {
-                    let found = match external_or_inline_user(db, &state.config, &req.username) {
+                    let found = match external_or_inline_user(db, &config, &req.username) {
                         Some(u) => {
                             u.enabled = false;
                             true
@@ -515,7 +518,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                         None => false,
                     };
                     let effective =
-                        crate::server::effective_users_from_external(&state.config, db.clone())?;
+                        crate::server::effective_users_from_external(&config, db.clone())?;
                     Ok((found, effective))
                 }) {
                     Ok((_fresh, (found, effective))) => {
@@ -579,10 +582,13 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                 };
             }
             let (found, save_err) = {
-                let users_file = state.config.auth.users_file.clone();
+                let auth_config = state.live_auth_config.read().await;
+                let mut config = state.config.clone();
+                config.auth = auth_config.clone();
+                let users_file = config.auth.users_file.clone();
                 let mut users = state.users_db.write().await;
                 match UsersDb::update_locked_checked(&users_file, |db| {
-                    let found = match external_or_inline_user(db, &state.config, &req.username) {
+                    let found = match external_or_inline_user(db, &config, &req.username) {
                         Some(u) => {
                             u.data_limit_gb = req.data_limit_gb;
                             u.expire_at = req.expire_at;
@@ -591,7 +597,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                         None => false,
                     };
                     let effective =
-                        crate::server::effective_users_from_external(&state.config, db.clone())?;
+                        crate::server::effective_users_from_external(&config, db.clone())?;
                     Ok((found, effective))
                 }) {
                     Ok((_fresh, (found, effective))) => {
@@ -670,18 +676,20 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                     message: None,
                 };
             }
-            let users_file = state.config.auth.users_file.clone();
+            let auth_config = state.live_auth_config.read().await;
+            let mut config = state.config.clone();
+            config.auth = auth_config.clone();
+            let users_file = config.auth.users_file.clone();
             let mut users = state.users_db.write().await;
             let outcome = UsersDb::update_locked_checked(&users_file, |db| {
-                let found = match external_or_inline_user(db, &state.config, &req.username) {
+                let found = match external_or_inline_user(db, &config, &req.username) {
                     Some(u) => {
                         u.enabled = true;
                         true
                     }
                     None => false,
                 };
-                let effective =
-                    crate::server::effective_users_from_external(&state.config, db.clone())?;
+                let effective = crate::server::effective_users_from_external(&config, db.clone())?;
                 Ok((found, effective))
             });
             let found = match &outcome {
@@ -761,10 +769,13 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
             drop(profiles);
 
             let (found, save_err) = {
-                let users_file = state.config.auth.users_file.clone();
+                let auth_config = state.live_auth_config.read().await;
+                let mut config = state.config.clone();
+                config.auth = auth_config.clone();
+                let users_file = config.auth.users_file.clone();
                 let mut users = state.users_db.write().await;
                 match UsersDb::update_locked_checked(&users_file, |db| {
-                    let found = match external_or_inline_user(db, &state.config, &req.username) {
+                    let found = match external_or_inline_user(db, &config, &req.username) {
                         Some(user) => {
                             user.bandwidth.limit_mbps = req.mbps;
                             user.bandwidth.burst_mbps = req.mbps.saturating_add(req.mbps / 4);
@@ -773,7 +784,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                         None => false,
                     };
                     let effective =
-                        crate::server::effective_users_from_external(&state.config, db.clone())?;
+                        crate::server::effective_users_from_external(&config, db.clone())?;
                     Ok((found, effective))
                 }) {
                     Ok((_fresh, (found, effective))) => {
@@ -991,6 +1002,66 @@ mod tests {
             !effective.users[0].enabled,
             "external override must keep precedence over the inline entry"
         );
+    }
+
+    #[tokio::test]
+    async fn control_mutations_use_accepted_inline_auth_instead_of_startup_users() {
+        use crate::config::users::UserEntry;
+        let dir = std::env::temp_dir().join(format!(
+            "qeli-control-live-inline-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let users_file = dir.join("users.conf");
+        std::fs::write(&users_file, "").unwrap();
+        let mut config = crate::config::server::ServerConfig::default();
+        config.auth.users_file = users_file.to_string_lossy().into_owned();
+        config.auth.users.push(UserEntry {
+            username: "removed-inline".into(),
+            password_hash: "x".into(),
+            enabled: true,
+            ..Default::default()
+        });
+        let state = crate::server::test_api_state(config, &dir.join("server.conf"));
+        let new_user = UserEntry {
+            username: "new-inline".into(),
+            password_hash: "y".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        state.live_auth_config.write().await.users = vec![new_user.clone()];
+        state.users_db.write().await.users = vec![new_user];
+        for cmd in ["enable-user", "disable-user", "set-limit", "set-bandwidth"] {
+            let request = parse(&format!(
+                r#"{{"cmd":"{cmd}","username":"removed-inline","mbps":7,"data_limit_gb":9}}"#
+            ))
+            .unwrap();
+            assert!(
+                !dispatch(request, &state).await.ok,
+                "{cmd} resurrected an account"
+            );
+            assert!(!UsersDb::load(&users_file)
+                .unwrap()
+                .users
+                .iter()
+                .any(|u| u.username == "removed-inline"));
+            let request = parse(&format!(
+                r#"{{"cmd":"{cmd}","username":"new-inline","mbps":7,"data_limit_gb":9}}"#
+            ))
+            .unwrap();
+            assert!(
+                dispatch(request, &state).await.ok,
+                "{cmd} ignored the accepted inline account"
+            );
+        }
+        let db = UsersDb::load(&users_file).unwrap();
+        let user = &db.users[0];
+        assert_eq!(user.username, "new-inline");
+        assert!(!user.enabled);
+        assert_eq!(user.data_limit_gb, 9);
+        assert_eq!(user.bandwidth.limit_mbps, 7);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

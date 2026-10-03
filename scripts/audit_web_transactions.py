@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -214,6 +214,51 @@ obf.mode = fake-tls
    stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
   assert complete,'Q06 regression failures recorded in result.json'
   print('PASS Q06 users '+str(len(checks))+' checks',flush=True)
+ elif a.scenario=='users-storage':
+  users_path=Path('/etc/qeli/users.conf');mounted=[]
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());check(method+' '+path+' HTTP response',r[0]==200,r[0]);return r[1]
+  def control(cmd,name):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(8);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps({'cmd':cmd,'username':name})+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536))
+  def reload_worker():
+   old=(root/'server.log').read_text().count('SIGHUP: reloaded users database')
+   m=re.search(r'127\.0\.0\.1:24843\s+.*pid=(\d+)',run(['ss','-lntp']));assert m
+   os.kill(int(m[1]),signal.SIGHUP);wait(lambda:(root/'server.log').read_text().count('SIGHUP: reloaded users database')>old,'worker reload not observed')
+  def probe(name,ok,detail):
+   checks.append(dict(name=name,status='PASS' if ok else 'FAIL',detail=detail));save();print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+  try:
+   start();hashed=api('/api/hash-password','POST',{'password':'fixture-client-password'})['hash']
+   bodies=[{'username':'parallel-'+str(i),'password_hash':hashed,'max_sessions':i+1,'bandwidth':{'limit_mbps':i+1,'burst_mbps':i+3}} for i in range(8)]
+   with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:responses=list(pool.map(lambda b:req('/api/users','POST',b,headers=basic()),bodies))
+   check('eight concurrent creates all succeed',all(r[0]==200 and r[1].get('ok') is True for r in responses),[r[1].get('error') for r in responses])
+   listed=api('/api/users')['users'];check('concurrent creates lose no accounts',all(any(u['username']==b['username'] and u['max_sessions']==b['max_sessions'] and u['bandwidth']==b['bandwidth'] for u in listed) for b in bodies))
+   def mutate(i):return req('/api/users/parallel-0','PUT',{'max_sessions':17} if i==0 else {'bandwidth':{'limit_mbps':21,'burst_mbps':27}},headers=basic())
+   with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:responses=list(pool.map(mutate,range(2)))
+   check('parallel disjoint updates succeed',all(r[0]==200 and r[1].get('ok') is True for r in responses));u=api('/api/users/parallel-0')['user'];check('disjoint edits survive both writers',u['max_sessions']==17 and u['bandwidth']=={'limit_mbps':21,'burst_mbps':27})
+   valid=users_path.read_bytes()
+   for name,data in [('unknown-key',valid+b'\nmisspelled_limit = 7\n'),('bad-value',valid.replace(b'max_sessions = 17',b'max_sessions = garbage')),('bad-utf8',valid+b'\xff')]:
+    assert data!=valid;users_path.write_bytes(data)
+    r=req('/api/users/parallel-0','PUT',{'max_sessions':99},headers=basic());check(name+' refuses exact corrupted INI',r[0]==200 and r[1].get('ok') is False and users_path.read_bytes()==data,{'ok':r[1].get('ok'),'error':r[1].get('error')})
+   users_path.write_bytes(valid);users_path.chmod(0o600)
+   run(['mount','--bind',str(users_path),str(users_path)]);mounted.append(users_path)
+   try:r=api('/api/users/parallel-0','PUT',{'max_sessions':99});check('rename EBUSY refuses without publication',r.get('ok') is False and users_path.read_bytes()==valid,r);check('rename EBUSY leaves no fragments',not list(users_path.parent.glob('.users.conf.qeli-tmp-*')))
+   finally:run(['umount',str(users_path)]);mounted.pop()
+   parent=Path('/etc/qeli');run(['mount','--bind',str(parent),str(parent)]);mounted.append(parent);run(['mount','-o','remount,bind,ro',str(parent)])
+   try:r=api('/api/users/parallel-0','PUT',{'max_sessions':99});check('read-only users storage refuses and preserves bytes',r.get('ok') is False and users_path.read_bytes()==valid,r)
+   finally:run(['umount',str(parent)]);mounted.pop()
+   check('storage recovery succeeds',api('/api/users/parallel-0','PUT',{'max_sessions':18}).get('ok') is True)
+   stop();initial_cfg=cfg.read_text();cfg.write_text(initial_cfg+'\n[user:removed-inline]\npassword_hash = '+hashed+'\nenabled = true\n');cfg.chmod(0o600);start();check('inline user loaded initially',control('show-routes','removed-inline').get('ok') is True)
+   cfg.write_text(initial_cfg);cfg.chmod(0o600);reload_worker();check('inline removal visible in worker before mutation',control('show-routes','removed-inline').get('ok') is False)
+   old=users_path.read_bytes();r=control('enable-user','removed-inline');after=control('show-routes','removed-inline');probe('removed inline account cannot be resurrected by control enable',r.get('ok') is False and users_path.read_bytes()==old and after.get('ok') is False,{'enable':r,'loaded_after':after,'persisted_account':b'[user:removed-inline]' in users_path.read_bytes()})
+   cfg.write_text(initial_cfg+'\n[user:new-inline]\npassword_hash = '+hashed+'\nenabled = true\n');cfg.chmod(0o600);reload_worker();check('new inline user loaded after reload',control('show-routes','new-inline').get('ok') is True)
+   r=control('disable-user','new-inline');probe('new inline account can be disabled by control after reload',r.get('ok') is True and b'[user:new-inline]' in users_path.read_bytes(),r)
+   complete=all(c['status']=='PASS' for c in checks)
+  finally:
+   for target in reversed(mounted):run(['umount',str(target)])
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  assert complete,'Q06 storage/control regressions recorded'
  elif a.scenario=='users-live':
   clients=[];streams=[];ns='q06-client'
   def api(path,method='GET',body=None):

@@ -1036,6 +1036,9 @@ pub use crate::server_supervisor::WorkerCmd;
 /// socket; `worker_tx = Some` to drive the worker child).
 pub struct ServerState {
     pub config: ServerConfig,
+    /// Last validated auth configuration accepted by SIGHUP. Control mutations hold
+    /// a read lease until their users-file transaction and live snapshot are complete.
+    pub live_auth_config: Arc<RwLock<crate::config::server::AuthConfig>>,
     /// Authorization derived from the descriptor supplying the immutable startup config.
     config_command_trust: crate::config_source::CommandTrust,
     pub users_db: Arc<RwLock<UsersDb>>,
@@ -1145,6 +1148,7 @@ pub(crate) fn test_api_state(
     config_path: &std::path::Path,
 ) -> Arc<ServerState> {
     Arc::new(ServerState {
+        live_auth_config: Arc::new(RwLock::new(config.auth.clone())),
         live_web: Arc::new(RwLock::new(config.web.clone())),
         udp_buffer_budget: server_udp_buffer_budget(&config).unwrap(),
         config,
@@ -3678,6 +3682,7 @@ async fn run_worker_inner(
     let mut control_socket = control::bind_control_server()?;
     let live_web = Arc::new(RwLock::new(config.web.clone()));
     let state = Arc::new(ServerState {
+        live_auth_config: Arc::new(RwLock::new(config.auth.clone())),
         config,
         config_command_trust,
         users_db,
@@ -4318,6 +4323,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let live_web = Arc::new(RwLock::new(config.web.clone()));
     let udp_buffer_budget = server_udp_buffer_budget(&config)?;
     let state = Arc::new(ServerState {
+        live_auth_config: Arc::new(RwLock::new(config.auth.clone())),
         config,
         config_command_trust,
         users_db,
@@ -4650,8 +4656,16 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
     //    even when the config also carries inline users.
     let count = db.users.len();
     let dummy_password_hashes = handler::dummy_password_hash_candidates(&db);
-    *state.users_db.write().await = db;
-    *state.dummy_password_hashes.write().await = dummy_password_hashes;
+    {
+        // Same lock order as the control writers: auth lease, then users database.
+        // A writer sees either the old accepted auth generation or the new one,
+        // never the startup inline users merged into a newly reloaded database.
+        let mut auth = state.live_auth_config.write().await;
+        let mut users = state.users_db.write().await;
+        *auth = new_config.auth.clone();
+        *users = db;
+        *state.dummy_password_hashes.write().await = dummy_password_hashes;
+    }
     log::info!("SIGHUP: reloaded users database ({} users)", count);
     let revoked = control::apply_user_policy_to_sessions(state).await;
     if revoked > 0 {
