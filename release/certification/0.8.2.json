@@ -1,227 +1,227 @@
 {
   "schema_version": 1,
   "release_version": "0.8.2",
-  "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
+  "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
   "cases": [
     {
       "id": "linux.outer4.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer4.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer6.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer6.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer4.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer4.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer6.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer6.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer4.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer4.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer6.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.outer6.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.dual.tcp.split",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.dual.udp.split",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.dns.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.mtu.1280-pmtu-ptb",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.leak.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.tap.ndp-ra",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.legacy-peer",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "linux.roaming-flap-soak",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q06-users-access-complete-20261003.json",
-      "source_digest": "ce020a857d385d8b0537d13b56bed9014b6668b31c39c4233072ac19dece2f8a",
-      "artifact_sha256": "fa6d2e9457575b63315a7e5fbcc3e342b448849814c0ebe7e9e98549ca8ce0cc",
-      "executed_at": "2026-10-03T10:44:35.560076+00:00",
+      "evidence": "release/certification/evidence/q07-backup-restore-20261003.json",
+      "source_digest": "2d3564e8ea42a3df5ab50c4586273f4105a2a3b0928e9dd5f7a0352e7bfbef62",
+      "artifact_sha256": "d502a58df16f6d86062edaf17d3ee55bc3bb786ae4909bfe9e6d63e56612e7b3",
+      "executed_at": "2026-10-03T11:19:51.267630+00:00",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "acceptance_basis": "Q06 complete: 387 API/storage/live/admission/bandwidth checks PASS on exact release; shared TCP/UDP terminal eviction, effective bandwidth panel and ninth published-write recovery fixed. 2265 Linux units / 60 ignored, full/minimal Clippy, rustfmt and 118 JS groups PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI and provenance; all four client cores unchanged byte-for-byte. Full .11 snapshots preserved. .10 SDK A/B PASS but default IPv4 firewall dump differs and repeated read-only dumps are inconsistent; nft, explicit legacy, other host fields, service PID/start and deployed binary preserved in final SDK run. Full .10 network-preservation PASS is not claimed; historical firewall deviation remains unattributed. No deployed service replacement or physical qualification."
+      "acceptance_basis": "Q07 archive-admission first batch qualified; full Q07 IN_PROGRESS. Four fixes reproduced as six failed baseline checks: nested exact lock, missing/malformed identity, missing/invalid TLS and archive UID. Final release 38 archive HTTP/system + 75 history/config checks PASS; 2265 Linux units / 60 ignored, full/minimal Clippy and rustfmt PASS. Fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC/33 soak PASS. Fresh native A/B, ABI/provenance; all four cores match Q06 byte-for-byte. .11 full snapshots preserved. .10 SDK PASS but default/explicit legacy IPv4 dumps differ; nft, other host fields, service PID/start and deployed binary unchanged. Full .10 network-preservation PASS not claimed; historical variability retained. No deployment, physical qualification or performance benchmark. Remaining Q07: archive publication failures/crashes/recovery, cross-process dependencies, mixed users/panel-secret, operational snapshots and additional trust/query boundaries."
     },
     {
       "id": "android.wifi-to-cellular",
@@ -354,7 +354,7 @@
     "status": "complete",
     "automated_cases_passed": 20,
     "functional_matrix": "18 PASS / 327 assertions; 100 TCP + 100 QUIC / 33 checks",
-    "lab_integrity": ".11 full snapshots preserved; .10 SDK A/B PASS with explicit firewall-dump limitation, nft/service/binary unchanged. No deployed service replacement.",
-    "scope": "Q06 complete for current committed candidate; user uncommitted changes outside certificate. Physical rows unchanged and advisory; no new performance benchmark."
+    "lab_integrity": ".11 complete snapshots preserved; .10 SDK A/B PASS with explicit default/legacy IPv4 dump limitation, nft/service/binary unchanged. No deployed service replacement.",
+    "scope": "Current candidate qualifies Q07 first archive-admission batch; overall Q07 IN_PROGRESS. User WIP outside certificate. Physical rows unchanged/advisory; no new benchmark."
   }
 }

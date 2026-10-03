@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v14 -->
+<!-- normative-sync: full-system-audit-v15 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -350,11 +350,11 @@ measurement and remaining admission/access-issuance scenarios.
 
 ### 07. Backup, restore and history
 
-**Source:** `qeli/src/web/api/backup.rs`, `qeli/src/web/api/backup_listing.rs`.
+**Source:** `qeli/src/web/api/backup.rs`, `qeli/src/web/api/backup_listing.rs`, `qeli/src/web/api/config.rs` (history), `qeli/src/web/tls.rs`.
 
 Fresh restore with custom paths, mixed user sources, identity and panel secret. Tar bombs, traversal, links, missing files, overlay/exact, staged compatibility and concurrent restore. Snapshots never recursively archive themselves; prove recovery after interrupted publication.
 
-**Existing harness/fixtures:** `scripts/test_web_reload.py`.
+**Existing harness/fixtures:** `scripts/audit_web_auth_lab.py --audit q07 --scenario archives --fixture scripts/audit_web_transactions.py`; shared Q05 `basic` for history/config regression.
 
 - [ ] Review and dead code.
 - [ ] Positive, boundary and negative scenarios.
@@ -362,7 +362,10 @@ Fresh restore with custom paths, mixed user sources, identity and panel secret. 
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
+
+
+**3 October, first batch:** HTTP reproduction found exact rejection with nested locks, missing identity/TLS validation and archive UID retention. Fixes and current qualification are recorded in the [Q07 report](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Overall Q07 remains open: crash/partial publication and recovery, filesystem faults, cross-process users/identity writers, mixed users/panel-secret, operational files/rotation and additional INI trust boundaries.
 
 ### 08. Cryptography, identity and keys
 

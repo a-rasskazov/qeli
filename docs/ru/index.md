@@ -355,3 +355,5 @@
 - [Q05: конфигурационные транзакции и restart](reports/AUDIT-Q05-HTTP-TRANSACTIONS.md)
 
 - [Q06: пользователи и отзыв доступа](reports/AUDIT-Q06-USERS-ACCESS.md)
+
+- [Q07: backup, restore и history](reports/AUDIT-Q07-BACKUP-RESTORE.md)

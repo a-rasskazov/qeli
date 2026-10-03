@@ -343,6 +343,15 @@ The **⤓ Backup** and **⤒ Restore** buttons in the header of the *Host load* 
   not published over active ones. A manual SSH editor does not take this lock:
   do not edit the INI concurrently with a panel or CLI save.
 
+The restored active INI requires all profile identities: managed paths below
+`/etc/qeli` must be supplied as regular 32-byte files, including overlay mode.
+Missing keys are never replaced by newly generated identities. Enabled HTTPS
+requires a complete readable matching PEM pair; managed paths are checked in
+staging, external paths against existing server files. Missing or corrupt
+dependencies are rejected before publication. Archive UID/GID values are ignored:
+extraction creates files as the server user. Nested `.lock` files retain their
+inodes and do not prevent `exact` restore.
+
 Backup/Restore preparation shares 60 seconds across config-lock admission, all tar
 commands and preflight. Portable gzip is limited to 16 MiB, pre-restore gzip to 64 MiB;
 timeout/overflow never yields a partial archive. An unreadable file makes the rollback
@@ -966,7 +975,7 @@ applies new listener settings and retains sessions with healthy persistent keys.
 
 ### Users API and live access
 
-<!-- normative-sync: panel-user-mutations-v3 -->
+<!-- normative-sync: panel-user-mutations-v4 -->
 
 User/group/limit mutation bodies must be objects; wrong types cannot become Unlimited or a successful no-op. `enabled` is boolean, `bandwidth` an object, password/hash strings, route gateway string/null. Configurations are saved only as INI.
 

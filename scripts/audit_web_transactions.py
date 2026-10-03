@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -91,7 +91,88 @@ obf.mode = fake-tls
  before=network()
 
 
- if a.scenario=='basic':
+ if a.scenario=='archives':
+  import io,tarfile
+  old=cfg.read_text();cfg.unlink();cfg=Path('/etc/qeli/nested/server.ini');cfg.parent.mkdir();users=Path('/etc/qeli/auth/users.ini');users.parent.mkdir();users.write_text('')
+  cfg.write_text(old.replace('/etc/qeli/users.conf',str(users)));cfg.chmod(0o600)
+  def archive(items):
+   out=io.BytesIO()
+   with tarfile.open(fileobj=out,mode='w:gz',format=tarfile.PAX_FORMAT) as tar:
+    for name,spec in items.items():
+     spec=spec if isinstance(spec,dict) else {'data':spec};data=spec.get('data',b'');data=data.encode() if isinstance(data,str) else data
+     t=tarfile.TarInfo(name);t.mode=spec.get('mode',0o600);t.uid=spec.get('uid',0);t.gid=spec.get('gid',0);t.type=spec.get('type',tarfile.REGTYPE);t.linkname=spec.get('linkname','');t.size=len(data) if t.type==tarfile.REGTYPE else 0
+     tar.addfile(t,io.BytesIO(data) if t.type==tarfile.REGTYPE else None)
+   return out.getvalue()
+  def unpack(blob):
+   with tarfile.open(fileobj=io.BytesIO(blob),mode='r:gz') as tar:return {m.name:tar.extractfile(m).read() for m in tar if m.isfile()}
+  def live_tree():return {str(p.relative_to('/etc/qeli')):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/etc/qeli').rglob('*') if p.is_file() and not p.name.endswith('.lock') and not any(x.startswith(('.pre-restore-','.restore-','.config-history')) for x in p.relative_to('/etc/qeli').parts)}
+  def probe(name,blob,exact=False):
+   previous=live_tree();r=req('/api/restore'+('?exact=1' if exact else ''),'POST',blob,headers={**basic(),'Content-Type':'application/gzip'})
+   ok=r[0] in (400,409,422) and r[1].get('ok') is False and live_tree()==previous
+   checks.append(dict(name=name+' refuses before publication',status='PASS' if ok else 'FAIL',detail={'http_status':r[0],'response':r[1],'live_unchanged':live_tree()==previous}));save();print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+   # Keep independent baseline probes valid even when the old release accepts one.
+   for path,data in pristine.items():path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);path.chmod(0o600);os.chown(path,0,0)
+   for path in [Path('/etc/qeli/web-tls-cert.pem'),Path('/etc/qeli/web-tls-key.pem')]:path.unlink(missing_ok=True)
+  try:
+   start();identity=Path('/etc/qeli/identity/fixture.key');pristine={cfg:cfg.read_bytes(),users:users.read_bytes(),identity:identity.read_bytes()}
+   check('custom managed active config and identity startup',len(identity.read_bytes())==32 and login()[0]==200)
+   # Both internal and portable archives must exclude earlier snapshots/uploads.
+   Path('/etc/qeli/.pre-restore-old.tgz').write_bytes(b'old');Path('/etc/qeli/.restore-upload-old.tgz').write_bytes(b'old');Path('/etc/qeli/.restore-staging-old').mkdir();Path('/etc/qeli/.restore-staging-old/private').write_bytes(b'old')
+   r=req('/api/backup',headers=basic());check('portable backup HTTP gzip download',r[0]==200 and r[2].get('content-type')=='application/gzip');members=unpack(r[3]);check('portable contains exact custom config users identity',all(members.get(str(p.relative_to('/etc')))==b for p,b in pristine.items()));check('portable excludes operation archives',not any('.pre-restore-' in n or '.restore-' in n for n in members))
+   good=dict(members);good['qeli/roundtrip.txt']=b'archived';blob=archive(good);extra=Path('/etc/qeli/extra.txt');extra.write_text('live')
+   r=req('/api/restore','POST',blob,headers=basic());check('overlay roundtrip succeeds with custom paths',r[0]==200 and r[1].get('ok') is True,r[1]);check('overlay retains live extras and exact identity',extra.exists() and identity.read_bytes()==pristine[identity] and cfg.read_bytes()==pristine[cfg])
+   r=req('/api/restore?exact=1','POST',blob,headers=basic());ok=r[0]==200 and r[1].get('ok') is True and not extra.exists();checks.append(dict(name='exact roundtrip removes top-level extra with nested writer locks',status='PASS' if ok else 'FAIL',detail=r[1]));save();print(('PASS ' if ok else 'FAIL ')+'exact roundtrip',flush=True);extra.unlink(missing_ok=True);check('config users identity restored private modes',all((p.stat().st_mode&0o777)==0o600 for p in pristine));check('sidecar lock remains present',cfg.with_suffix(cfg.suffix+'.lock').exists())
+   snaps=list(Path('/etc/qeli').glob('.pre-restore-*.tgz'));new=[p for p in snaps if p.name!='.pre-restore-old.tgz'];check('rollback snapshots exclude earlier snapshots/uploads',len(new)==2 and all(not any('.pre-restore-' in n or '.restore-' in n for n in unpack(p.read_bytes())) for p in new))
+   # Clear deliberately synthetic operational entries; unrelated host paths remain private.
+   Path('/etc/qeli/.pre-restore-old.tgz').unlink();Path('/etc/qeli/.restore-upload-old.tgz').unlink();run(['rm','-rf','/etc/qeli/.restore-staging-old'])
+   for name,spec in [
+    ('parent traversal',{'qeli/../outside':b'x'}),('absolute path',{'/tmp/q07-escape':b'x'}),
+    ('symlink',{'qeli/link':{'type':tarfile.SYMTYPE,'linkname':'/tmp/outside'}}),('hardlink',{'qeli/link':{'type':tarfile.LNKTYPE,'linkname':'qeli/auth/users.ini'}}),
+    ('fifo',{'qeli/pipe':{'type':tarfile.FIFOTYPE}}),('executable',{'qeli/program':{'data':b'x','mode':0o755}}),
+    ('malformed active INI',{'qeli/nested/server.ini':b'invalid'}),('missing active INI',None),('missing users INI','users'),
+    ('missing profile identity','identity'),('missing identity overlay','identity'),('malformed profile identity',{'qeli/identity/fixture.key':b'bad'}),
+    ('invalid panel password hash',{'qeli/nested/server.ini':re.sub(rb'password_hash\s*=\s*[^\n]+',b'password_hash = bad',pristine[cfg])}),
+    ('missing TLS pair',{'qeli/nested/server.ini':pristine[cfg].replace(b'tls = false',b'tls = true')}),
+    ('invalid TLS pair',{'qeli/nested/server.ini':pristine[cfg].replace(b'tls = false',b'tls = true'),'qeli/web-tls-cert.pem':b'bad','qeli/web-tls-key.pem':b'bad'}),
+    ('foreign config ownership',{'qeli/nested/server.ini':{'data':pristine[cfg],'uid':65534,'gid':65534}})]:
+    candidate=dict(good)
+    if spec is None:candidate.pop('qeli/nested/server.ini')
+    elif spec=='users':candidate.pop('qeli/auth/users.ini')
+    elif spec=='identity':candidate.pop('qeli/identity/fixture.key')
+    else:candidate.update(spec)
+    if name=='foreign config ownership':
+     previous=live_tree();r=req('/api/restore','POST',archive(candidate),headers=basic());ok=r[0]==200 and r[1].get('ok') is True and cfg.stat().st_uid==0 and cfg.stat().st_gid==0
+     checks.append(dict(name='restore normalizes trusted config owner',status='PASS' if ok else 'FAIL',detail={'http_status':r[0],'uid':cfg.stat().st_uid,'gid':cfg.stat().st_gid}));save();print(('PASS ' if ok else 'FAIL ')+'trusted owner',flush=True);os.chown(cfg,0,0)
+    else:probe(name,archive(candidate),exact=name=='missing profile identity')
+   probe('expanded tar size budget',archive({**good,'qeli/bomb':b'0'*(64*1024*1024+1)}))
+   probe('entry count budget',archive({**good,**{'qeli/empty-'+str(i):b'' for i in range(5001)}}))
+   import fcntl
+   fd=os.open(str(cfg)+'.lock',os.O_RDWR);fcntl.flock(fd,fcntl.LOCK_EX)
+   try:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+     pending=pool.submit(req,'/api/restore','POST',blob,basic());time.sleep(.3)
+     t=time.monotonic();second=req('/api/restore','POST',blob,headers=basic());check('concurrent restore immediately returns HTTP 409',second[0]==409 and time.monotonic()-t<2,second[1])
+     t=time.monotonic();healthy=req('/api/status',headers=basic());check('status responds while restore waits on sidecar lock',healthy[0]==200 and time.monotonic()-t<2)
+     fcntl.flock(fd,fcntl.LOCK_UN);first=pending.result();check('admitted restore completes after writer unlock',first[0]==200 and first[1].get('ok') is True,first[1])
+   finally:fcntl.flock(fd,fcntl.LOCK_UN);os.close(fd)
+   # Validate and actually restart an HTTPS panel using custom PEM paths.
+   cert=root/'fixture-cert.pem';key=root/'fixture-key.pem'
+   run(['openssl','req','-x509','-newkey','rsa:2048','-keyout',str(key),'-out',str(cert),'-days','1','-nodes','-subj','/CN=panel.fixture.invalid'])
+   tls_cfg=pristine[cfg].replace(b'tls = false',b'tls = true\ntls_cert = /etc/qeli/tls/custom.pem\ntls_key = /etc/qeli/tls/custom.key')
+   tls_archive={**good,'qeli/nested/server.ini':tls_cfg,'qeli/tls/custom.pem':cert.read_bytes(),'qeli/tls/custom.key':key.read_bytes()}
+   r=req('/api/restore','POST',archive(tls_archive),headers=basic());check('custom matching TLS pair accepted',r[0]==200 and r[1].get('ok') is True,r[1])
+   stop();tls_mode=True;start();check('fresh HTTPS panel starts and authenticates restored custom pair',login()[0]==200)
+   r=req('/api/restore','POST',blob,headers=basic());check('HTTPS panel restores original archive',r[0]==200 and r[1].get('ok') is True,r[1]);stop();tls_mode=False
+   check('malicious paths never escape managed root',not Path('/tmp/q07-escape').exists() and not Path('/etc/outside').exists())
+   check('no operation temporary files leak',not list(Path('/etc/qeli').glob('.restore-*')))
+   # A successful archive can be consumed by a fresh worker with unchanged pin.
+   stop();start();check('fresh worker starts after roundtrip with unchanged identity',identity.read_bytes()==pristine[identity] and login()[0]==200)
+   complete=all(c['status']=='PASS' for c in checks)
+  finally:
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  print(('PASS' if complete else 'FAIL')+' Q07 '+str(len(checks))+' checks',flush=True)
+  if not complete:raise SystemExit(1)
+ elif a.scenario=='basic':
   history=cfg.parent/'.config-history';mounted=[]
   def api(path,method='GET',body=None):
    r=req(path,method,body,headers=basic());check(method+' '+path+' HTTP response',r[0]==200,r[0]);return r[1]

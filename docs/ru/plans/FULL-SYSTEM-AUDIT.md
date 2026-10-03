@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v14 -->
+<!-- normative-sync: full-system-audit-v15 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -355,11 +355,11 @@ writers проверены. Опасные legacy drivers заменены из�
 
 ### 07. Backup, restore и history
 
-**Код:** `qeli/src/web/api/backup.rs`, `qeli/src/web/api/backup_listing.rs`.
+**Код:** `qeli/src/web/api/backup.rs`, `qeli/src/web/api/backup_listing.rs`, `qeli/src/web/api/config.rs` (history), `qeli/src/web/tls.rs`.
 
 Fresh restore с custom paths, inline+external users, identity и panel-secret. Tar bombs, traversal, links, missing files, overlay/exact, совместимость staged-файлов, concurrent restore. Snapshots не архивируют себя; interrupted publish проверяется восстановлением.
 
-**Имеющаяся обвязка/fixtures:** `scripts/test_web_reload.py`.
+**Имеющаяся обвязка/fixtures:** `scripts/audit_web_auth_lab.py --audit q07 --scenario archives --fixture scripts/audit_web_transactions.py`; общий Q05 `basic` для history/config regression.
 
 - [ ] Review и мёртвый код.
 - [ ] Штатные, граничные и негативные сценарии.
@@ -367,7 +367,10 @@ Fresh restore с custom paths, inline+external users, identity и panel-secret. 
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
+
+
+**3 октября, первый пакет:** HTTP-воспроизведение выявило отказ exact при вложенных lock-файлах, отсутствие проверки identity/TLS и сохранение чужого UID из tar. Исправления и текущая квалификация описаны в [отчёте Q07](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Полный Q07 остаётся открытым: crash/partial publication и recovery, файловые отказы, cross-process users/identity writers, mixed users и panel-secret, операционные файлы/rotation и дополнительные INI trust boundaries.
 
 ### 08. Криптография, identity и ключи
 

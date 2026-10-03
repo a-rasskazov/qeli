@@ -732,7 +732,8 @@ fn restore_blocking(
         let _ = std::fs::remove_dir_all(&staging);
     };
     let mut command = tar_command();
-    command.args(["xzf", tmp, "--xattrs", "-C", &staging]);
+    // Archive ownership is not authorization: files must belong to this server user.
+    command.args(["xzf", tmp, "--no-same-owner", "--xattrs", "-C", &staging]);
     let ex = crate::system_command::Command::from(command).output_bounded(
         until,
         ARCHIVE_TEXT_LIMIT,
@@ -943,6 +944,94 @@ fn qeli_relative_path(path: &str) -> Option<std::path::PathBuf> {
     }
 }
 
+/// Managed dependencies must come from staging, even in overlay mode. Checking live
+/// files would approve an incomplete archive and exact restore could delete the pin.
+fn restore_dependency_path(
+    root: &Path,
+    path: &str,
+    label: &str,
+) -> Result<std::path::PathBuf, String> {
+    let path_ref = Path::new(path);
+    if !path_ref.is_absolute() {
+        return Err(format!(
+            "refused: restored {label} path '{path}' must be absolute"
+        ));
+    }
+    if path_ref.strip_prefix(MANAGED_BACKUP_ROOT).is_ok() {
+        let relative = qeli_relative_path(path)
+            .ok_or_else(|| format!("refused: unsafe restored {label} path '{path}'"))?;
+        Ok(root.join(relative))
+    } else {
+        Ok(path_ref.to_path_buf())
+    }
+}
+
+fn vet_restored_runtime_files(
+    root: &Path,
+    config: &crate::config::server::ServerConfig,
+) -> Result<(), String> {
+    use std::io::Read;
+    for profile in &config.profiles {
+        let label = format!("identity key for profile '{}'", profile.name);
+        let path =
+            restore_dependency_path(root, &crate::server::profile_identity_path(profile), &label)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);
+        }
+        let file = options.open(&path).map_err(|error| {
+            format!(
+                "refused: restored {label} '{}' is unavailable: {error}",
+                path.display()
+            )
+        })?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("refused: inspect restored {label}: {error}"))?;
+        if !metadata.is_file() || metadata.len() != 32 {
+            return Err(format!(
+                "refused: restored {label} must be a regular 32-byte file"
+            ));
+        }
+        let mut bytes = Vec::new();
+        file.take(33)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("refused: read restored {label}: {error}"))?;
+        if bytes.len() != 32 {
+            return Err(format!(
+                "refused: restored {label} changed length while reading"
+            ));
+        }
+    }
+    if config.web.enabled && config.web.tls {
+        let mut web = config.web.clone();
+        for (path, default, label) in [
+            (
+                &mut web.tls_cert,
+                "/etc/qeli/web-tls-cert.pem",
+                "panel TLS certificate",
+            ),
+            (
+                &mut web.tls_key,
+                "/etc/qeli/web-tls-key.pem",
+                "panel TLS private key",
+            ),
+        ] {
+            let resolved =
+                restore_dependency_path(root, if path.is_empty() { default } else { path }, label)?;
+            *path = resolved.to_string_lossy().into_owned();
+        }
+        // Explicit staged paths require an existing, matching PEM pair. Never generate
+        // a new panel identity to mask missing files in the uploaded backup.
+        crate::server::web::tls::check_config_files(&web)
+            .map_err(|error| format!("refused: restored panel TLS material is invalid: {error}"))?;
+    }
+    Ok(())
+}
+
 fn vet_staged_tree(root: &str, config_path: &str) -> Result<(), String> {
     // The live server accepts an arbitrary config filename.  Validate that exact
     // staged path as a server config even when it is `server.ini`/`qeli.cfg`; an
@@ -1027,6 +1116,7 @@ fn vet_staged_tree(root: &str, config_path: &str) -> Result<(), String> {
             crate::server::effective_users_from_external(&staged_config, users).map_err(
                 |error| format!("refused: restored config/users are incompatible: {error}"),
             )?;
+            vet_restored_runtime_files(Path::new(root), &staged_config)?;
         } else {
             return Err(format!(
                 "refused: archive does not contain the active server config '{}'",
@@ -1347,7 +1437,8 @@ fn vet_publish_shape(
         for entry in live_entries {
             let entry = entry.map_err(|error| format!("cannot inspect live entry: {error}"))?;
             let name = entry.file_name();
-            if name.to_string_lossy().starts_with('.') {
+            if name.to_string_lossy().starts_with('.') || name.to_string_lossy().ends_with(".lock")
+            {
                 continue;
             }
             if !staged.join(&name).exists() {
@@ -1430,6 +1521,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("server.ini"), srv("")).unwrap();
         std::fs::write(dir.join("users.conf"), "").unwrap();
+        std::fs::create_dir_all(dir.join("identity")).unwrap();
+        std::fs::write(dir.join("identity/p.key"), [7u8; 32]).unwrap();
         std::fs::write(dir.join("notify.json"), "{}").unwrap();
         let error = vet_staged_tree(dir.to_str().unwrap(), "/etc/qeli/server.ini").unwrap_err();
         assert!(error.contains("archive contains notify.json"), "{error}");
@@ -1442,6 +1535,8 @@ mod tests {
         let server = dir.join("server.ini");
         let users = dir.join("users.conf");
         std::fs::write(&server, srv("")).unwrap();
+        std::fs::create_dir_all(dir.join("identity")).unwrap();
+        std::fs::write(dir.join("identity/p.key"), [7u8; 32]).unwrap();
         std::fs::write(&users, "[user:alice]\npassword_hash=fixture\ngroup=staff\n").unwrap();
         let error = vet_staged_tree(dir.to_str().unwrap(), "/etc/qeli/server.ini").unwrap_err();
         assert!(error.contains("group 'staff' does not exist"), "{error}");
@@ -2014,6 +2109,8 @@ mod tests {
 
         std::fs::write(&active, srv("")).unwrap();
         std::fs::write(&users, "").unwrap();
+        std::fs::create_dir_all(root.join("identity")).unwrap();
+        std::fs::write(root.join("identity/p.key"), [7u8; 32]).unwrap();
         assert!(vet_staged_tree(&root.to_string_lossy(), "/etc/qeli/server.ini").is_ok());
 
         std::fs::write(&active, srv("routing.post_up = /bin/evil\n")).unwrap();
@@ -2037,6 +2134,8 @@ mod tests {
         let root = dir.join("qeli");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("server.ini"), srv("")).unwrap();
+        std::fs::create_dir_all(root.join("identity")).unwrap();
+        std::fs::write(root.join("identity/p.key"), [7u8; 32]).unwrap();
 
         let missing = vet_staged_tree(&root.to_string_lossy(), "/etc/qeli/server.ini")
             .expect_err("a non-inline configuration cannot start without its users file");
