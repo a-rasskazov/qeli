@@ -1029,6 +1029,14 @@ in status warnings; inspect unit/journal before retrying. A successful full rest
 applies new listener settings and retains sessions with healthy persistent keys.
 
 
+### Damaged key files
+
+<!-- normative-sync: panel-key-storage-v1 -->
+
+Identity, panel-secret and session keys are read as regular files of exactly 32 bytes. FIFOs, directories and dangling links are not missing keys and are never replaced automatically. Links to existing regular files remain supported; reading does not change their owner/mode. Verify ownership/permissions manually: generated files are private (0600), and the standard identity directory is 0700.
+
+Legacy panel-secret migration holds the same lock as key creation: an already-published modern key takes precedence. A damaged or inaccessible legacy file requires recovering the original key; do not delete it to generate a new key when existing `password_enc` must remain decryptable. Key errors can disable reversible storage of a new password; its Argon2 hash remains a separate authentication mechanism. An unavailable session key is preserved without replacement; the panel uses its existing per-process-key fallback and logs a warning, so those cookies do not survive restart.
+
 ### Users API and live access
 
 <!-- normative-sync: panel-user-mutations-v6 -->

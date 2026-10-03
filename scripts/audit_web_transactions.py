@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults','archive-state','archive-prepare'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults','archive-state','archive-prepare','keys'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -90,6 +90,70 @@ obf.mode = fake-tls
  run([str(binary),'set-web-password','--username','admin','--password',password,'--config',str(cfg)])
  before=network()
 
+
+ if a.scenario=='keys':
+  import fcntl,stat
+  identity=Path('/etc/qeli/identity/fixture.key');identity.parent.mkdir(mode=0o700,exist_ok=True)
+  modern=Path('/var/lib/qeli/panel-secret.key');legacy=Path('/etc/qeli/panel-secret.key')
+  def record(name,ok,detail=None):
+   checks.append(dict(name=name,status='PASS' if ok else 'FAIL',detail=detail));save();print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+  def cli(args,deadline=3,input=None):
+   process=subprocess.Popen([str(binary),*args,'-c',str(cfg)],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+   try:
+    out,err=process.communicate(input=input,timeout=deadline);return dict(completed=True,code=process.returncode,error=err.decode(errors='replace'))
+   except subprocess.TimeoutExpired:
+    process.kill();process.communicate();return dict(completed=False,code=None,error='fixture deadline')
+  def add(name):return cli(['add-client',name,'--password-stdin'],input=b'fixture-only-key-password\n')
+  def reset(path):
+   if path.is_symlink() or path.exists():path.unlink()
+  try:
+   r=cli(['show-identity']);record('identity generated once and born private',r['completed'] and r['code']==0 and len(identity.read_bytes())==32 and identity.stat().st_mode&0o777==0o600)
+   original=identity.read_bytes()
+   with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:rs=list(pool.map(lambda _:cli(['show-identity']),range(8)))
+   record('eight identity readers converge without rotation',all(x['completed'] and x['code']==0 for x in rs) and identity.read_bytes()==original)
+   identity.unlink();os.mkfifo(identity,0o600);inode=identity.lstat().st_ino;r=cli(['show-identity'])
+   record('FIFO identity refused promptly without replacing inode',r['completed'] and r['code']!=0 and stat.S_ISFIFO(identity.lstat().st_mode) and identity.lstat().st_ino==inode)
+   identity.unlink();missing=identity.parent/'absent.key';identity.symlink_to(missing);r=cli(['show-identity'])
+   record('dangling identity link refused without generating a new pin',r['completed'] and r['code']!=0 and identity.is_symlink() and not missing.exists())
+   reset(identity);reset(missing)
+   for size in [0,31,33,4*1024*1024]:
+    identity.write_bytes(b'\x07'*size);r=cli(['show-identity']);record('identity wrong length '+str(size)+' refused and preserved',r['completed'] and r['code']!=0 and identity.stat().st_size==size)
+   identity.unlink();target=identity.parent/'operator.key';target.write_bytes(original);target.chmod(0o600);identity.symlink_to(target);r=cli(['show-identity']);record('operator link to regular identity remains compatible',r['completed'] and r['code']==0 and identity.is_symlink() and target.read_bytes()==original)
+   identity.unlink();identity.write_bytes(original);identity.chmod(0o600)
+   legacy.write_bytes(bytes([3])*32);legacy.chmod(0o600)
+   lock=Path(str(modern)+'.lock').open('a+b');os.chmod(lock.name,0o600);fcntl.flock(lock,fcntl.LOCK_EX)
+   process=subprocess.Popen([str(binary),'add-client','migration-race','--password-stdin','-c',str(cfg)],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+   process.stdin.write(b'fixture-only-key-password\n');process.stdin.close();process.stdin=None;time.sleep(1)
+   record('legacy migration waits for the modern key lock',process.poll() is None and not modern.exists())
+   tmp=modern.with_name('.fixture-key');tmp.write_bytes(bytes([8])*32);tmp.chmod(0o600);os.replace(tmp,modern);fcntl.flock(lock,fcntl.LOCK_UN);lock.close()
+   try:process.communicate(timeout=5)
+   except subprocess.TimeoutExpired:process.kill();process.communicate()
+   record('modern key winner preserved after waiting migration',process.returncode==0 and modern.read_bytes()==bytes([8])*32 and modern.stat().st_mode&0o777==0o600)
+   modern.unlink();r=add('legacy-migrate');record('legacy migration retains bytes and private mode',r['completed'] and r['code']==0 and modern.read_bytes()==legacy.read_bytes() and modern.stat().st_mode&0o777==0o600)
+   modern.unlink();legacy.write_bytes(b'damaged');r=add('legacy-damaged');record('corrupt legacy never generates a replacement encryption key',r['completed'] and r['code']==0 and not modern.exists() and legacy.read_bytes()==b'damaged')
+   reset(modern);legacy.unlink();os.mkfifo(modern,0o600);inode=modern.lstat().st_ino;r=add('panel-fifo');record('FIFO panel key does not park CLI password encryption',r['completed'] and r['code']==0 and stat.S_ISFIFO(modern.lstat().st_mode) and modern.lstat().st_ino==inode)
+   modern.unlink();r=add('panel-create');record('new panel key created privately after recovery',r['completed'] and r['code']==0 and len(modern.read_bytes())==32 and modern.stat().st_mode&0o777==0o600)
+   session=state/'session.key';os.mkfifo(session,0o600);inode=session.lstat().st_ino;start()
+   try:
+    r=login();ok=r[0]==200 and 'set-cookie' in r[2]
+   except (TimeoutError,OSError):ok=False
+   record('FIFO session key falls back promptly without blocking login',ok and stat.S_ISFIFO(session.lstat().st_mode) and session.lstat().st_ino==inode)
+   # Release only this fixture FIFO so the old supervisor can gracefully clean
+   # its worker/network after the expected timeout; never leave an orphan worker.
+   if not ok:
+    fd=os.open(session,os.O_WRONLY|os.O_NONBLOCK)
+    try:os.write(fd,bytes([7])*32)
+    finally:os.close(fd)
+    time.sleep(.3)
+   stop()
+   session.unlink();start();r=login();record('session storage recovers with a private persisted key',r[0]==200 and session.is_file() and len(session.read_bytes())==32 and session.stat().st_mode&0o777==0o600)
+   cookie=token_from(r);stop();start();record('persisted session survives a fresh supervisor',req('/api/status',token=cookie)[0]==200)
+   complete=all(c['status']=='PASS' for c in checks)
+  finally:
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  print(('PASS' if complete else 'FAIL')+' Q08 key storage '+str(len(checks))+' checks',flush=True)
+  assert complete,'Q08 key checks failed'
+  return
 
  if a.scenario=='archives':
   import io,tarfile

@@ -324,23 +324,12 @@ fn load_or_create_persistent_secret_at(path: &std::path::Path) -> anyhow::Result
         std::fs::create_dir_all(parent)?;
     }
     let _lock = crate::util::FileLock::acquire(path)?;
-    match std::fs::read(path) {
-        Ok(bytes) if bytes.len() == 32 => {
-            let mut k = [0u8; 32];
-            k.copy_from_slice(&bytes);
-            log::info!(
-                "web: session-signing key loaded from {} — panel logins survive restarts",
-                path.display()
-            );
-            return Ok(k);
-        }
-        Ok(bytes) => anyhow::bail!(
-            "{} has {} bytes instead of 32; refusing to overwrite the damaged key",
-            path.display(),
-            bytes.len()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => anyhow::bail!("cannot read {}: {error}", path.display()),
+    if let Some(key) = crate::crypto::key_file::read(path)? {
+        log::info!(
+            "web: session-signing key loaded from {} — panel logins survive restarts",
+            path.display()
+        );
+        return Ok(*key);
     }
     let mut k = [0u8; 32];
     rand::Rng::fill_bytes(&mut rand::rng(), &mut k);

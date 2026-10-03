@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v17 -->
+<!-- normative-sync: full-system-audit-v18 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -152,7 +152,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 05 | Транзакции конфигурации и restart | H08–H10 | PASS |
 | 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | PASS |
 | 07 | Backup, restore и history | H03–H04, H08, H10 | PASS |
-| 08 | Криптография, identity и ключи | H01, H04, H08 | TODO |
+| 08 | Криптография, identity и ключи | H01, H04, H08 | IN_PROGRESS |
 | 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | IN_PROGRESS |
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | TODO |
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | IN_PROGRESS |
@@ -390,7 +390,9 @@ X25519/ML-KEM/HKDF/AEAD KAT и negative vectors; static binding, proof до cred
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
+
+**3 октября, первый пакет Q08:** Q08-F001–F003: общее ограниченное чтение 32-byte identity/panel/session keys, отказ на FIFO и dangling links без замены, serialized legacy migration с re-check современного ключа и отказом при повреждённом legacy; client proof verification отвергает low-order static identities. На прежнем release шесть файловых checks FAIL, current runtime и свежая квалификация — в [отчёте Q08](../reports/AUDIT-Q08-CRYPTO-KEYS.md). Для полного Q08 остаются независимые X25519/ML-KEM/AEAD vectors, полный review static binding/proof-before-credentials, TOFU/RNG/nonce exhaustion/rotation/zeroization и owner/mode/link policies. Исправления текущего пакета закрываются с проверками; полный раздел ещё IN_PROGRESS.
 
 ### 09. Handshake и pre-auth TCP/UDP
 

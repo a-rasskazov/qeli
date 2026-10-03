@@ -1441,24 +1441,12 @@ pub fn load_or_generate_profile_key(pcfg: &ProfileConfig) -> anyhow::Result<Stat
     prepare_identity_parent(path_ref)?;
     let _lock = crate::util::FileLock::acquire(path_ref)?;
 
-    match std::fs::read(path_ref) {
-        Ok(bytes) => {
-            if bytes.len() != 32 {
-                return Err(anyhow::anyhow!(
-                    "invalid identity key length in {}: {}",
-                    path,
-                    bytes.len()
-                ));
-            }
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
+    match crate::crypto::key_file::read(path_ref)? {
+        Some(key) => {
             log::info!("Profile '{}': loaded identity key from {}", pcfg.name, path);
-            Ok(StaticKeypair::from_private_bytes(key))
+            Ok(StaticKeypair::from_private_bytes(*key))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            generate_profile_key_unlocked(pcfg, path_ref)
-        }
-        Err(error) => Err(error.into()),
+        None => generate_profile_key_unlocked(pcfg, path_ref),
     }
 }
 

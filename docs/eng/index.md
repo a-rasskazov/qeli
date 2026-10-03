@@ -357,3 +357,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q06: users and access revocation](reports/AUDIT-Q06-USERS-ACCESS.md)
 
 - [Q07: backup, restore and history](reports/AUDIT-Q07-BACKUP-RESTORE.md)
+
+- [Q08: cryptography and key storage](reports/AUDIT-Q08-CRYPTO-KEYS.md)

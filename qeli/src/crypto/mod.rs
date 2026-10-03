@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cipher;
 pub mod derive;
 pub mod exchange;
+pub(crate) mod key_file;
 pub mod mlkem;
 pub mod reality;
 pub mod secret;

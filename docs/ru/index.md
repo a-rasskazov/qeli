@@ -357,3 +357,5 @@
 - [Q06: пользователи и отзыв доступа](reports/AUDIT-Q06-USERS-ACCESS.md)
 
 - [Q07: backup, restore и history](reports/AUDIT-Q07-BACKUP-RESTORE.md)
+
+- [Q08: криптография и хранение ключей](reports/AUDIT-Q08-CRYPTO-KEYS.md)
