@@ -2,12 +2,12 @@ use crate::crypto::{
     build_server_auth_message, derive_keys, derive_keys_bound, derive_keys_hybrid,
     derive_keys_hybrid_bound, handshake_transcript_hash, Keypair,
 };
-#[cfg(feature = "experimental-roaming")]
 use crate::crypto::{
     derive_session_material, derive_session_material_bound, derive_session_material_hybrid,
     derive_session_material_hybrid_bound,
 };
 use crate::protocol::obfs::SplitStream;
+use crate::protocol::stream_io::WriteAllFlush;
 use crate::protocol::{
     read_record, read_record_into, read_tls_record, FakeTlsHandshake, Framing, Obfuscator,
     PacketCodec,
@@ -15,6 +15,7 @@ use crate::protocol::{
 use crate::server::{
     lock_or_recover, ExitAccess, ProfileRuntime, ServerState, ServerTunPacket, TunIngress,
 };
+#[cfg(feature = "experimental-roaming")]
 use crate::transport_core::buffer_pool::{BufferPool, PooledBuffer};
 #[cfg(feature = "experimental-roaming")]
 use crate::transport_core::tcp_roaming::{
@@ -1057,7 +1058,7 @@ where
                     let message = build_auth_error(&reason);
                     if let Ok(record) = server_tx_codec.encrypt_packet(message.as_bytes(), &[]) {
                         if let Err(send_error) = handshake_until(handshake_deadline, async {
-                            stream.write_all(&record).await?;
+                            stream.write_all_flush(&record).await?;
                             Ok(())
                         })
                         .await
@@ -1084,7 +1085,7 @@ where
                     match server_tx_codec.encrypt_packet(message.as_bytes(), &[]) {
                         Ok(record) => {
                             if let Err(send_error) = handshake_until(handshake_deadline, async {
-                                stream.write_all(&record).await?;
+                                stream.write_all_flush(&record).await?;
                                 Ok(())
                             })
                             .await
@@ -1494,7 +1495,7 @@ where
                     capabilities,
                 );
                 let auth_response = server_tx_codec.encrypt_packet(msg.as_bytes(), &[])?;
-                stream.write_all(&auth_response).await?;
+                stream.write_all_flush(&auth_response).await?;
                 Ok::<(), anyhow::Error>(())
             })
             .await;
@@ -1718,7 +1719,7 @@ async fn qeli_handshake<S: AsyncRead + AsyncWrite + Unpin>(
             crate::protocol::capabilities::server_capabilities_for_profile(pcfg.roaming.enabled),
         );
         let encrypted = server_tx.encrypt_packet(&auth_msg, &[])?;
-        stream.write_all(&encrypted).await?;
+        stream.write_all_flush(&encrypted).await?;
         log::debug!("Sent server auth proof to {}", addr);
     }
 
@@ -2353,7 +2354,7 @@ async fn run_stream<R, W>(
         };
         let ack_result = match ack {
             Ok(bytes) => write_half
-                .write_all(&bytes)
+                .write_all_flush(&bytes)
                 .await
                 .map_err(anyhow::Error::from),
             Err(error) => Err(anyhow::Error::from(error)),
@@ -2438,7 +2439,7 @@ async fn run_stream<R, W>(
             };
             let commit_ack_result = match commit_ack {
                 Ok(bytes) => write_half
-                    .write_all(&bytes)
+                    .write_all_flush(&bytes)
                     .await
                     .map_err(anyhow::Error::from),
                 Err(error) => Err(anyhow::Error::from(error)),
@@ -2742,7 +2743,7 @@ async fn run_stream<R, W>(
                             pcfg,
                             &mut wire_record,
                             &mut padding,
-                        ) || write_half.write_all(&wire_record).await.is_err()
+                        ) || write_half.write_all_flush(&wire_record).await.is_err()
                         {
                             delivered = false;
                             break 'terminal;
@@ -2820,7 +2821,7 @@ async fn run_stream<R, W>(
                         } else {
                             false
                         };
-                        if cover_ready && write_half.write_all(&cover_record).await.is_err() {
+                        if cover_ready && write_half.write_all_flush(&cover_record).await.is_err() {
                             break;
                         }
                         let step = Duration::from_millis(rand::rng().random_range(4..=18));
@@ -2859,7 +2860,7 @@ async fn run_stream<R, W>(
                         ) {
                             continue;
                         }
-                        if write_half.write_all(&wire_record).await.is_err() {
+                        if write_half.write_all_flush(&wire_record).await.is_err() {
                             break 'writer;
                         }
                         last_tx_ms = base.elapsed().as_millis() as u64;
@@ -2887,7 +2888,7 @@ async fn run_stream<R, W>(
                     );
                     drop(packet);
                     if encrypted {
-                        if write_half.write_all(&wire_record).await.is_err() {
+                        if write_half.write_all_flush(&wire_record).await.is_err() {
                             break;
                         }
                         last_tx_ms = base.elapsed().as_millis() as u64;
@@ -2915,7 +2916,7 @@ async fn run_stream<R, W>(
                         &mut wire_record,
                         &mut padding,
                     );
-                    if encrypted && write_half.write_all(&wire_record).await.is_err() {
+                    if encrypted && write_half.write_all_flush(&wire_record).await.is_err() {
                         break;
                     }
                     last_tx_ms = base.elapsed().as_millis() as u64;
@@ -2940,7 +2941,7 @@ async fn run_stream<R, W>(
                         .encrypt_packet_into(&[], &padding, &mut cover_record)
                         .is_ok()
                 };
-                if heartbeat_ready && write_half.write_all(&cover_record).await.is_err() {
+                if heartbeat_ready && write_half.write_all_flush(&cover_record).await.is_err() {
                     break;
                 }
                 let now_ms = base.elapsed().as_millis() as u64;
@@ -2973,7 +2974,7 @@ async fn run_stream<R, W>(
                                 .is_ok()
                         };
                         if cover_ready {
-                            if write_half.write_all(&cover_record).await.is_err() {
+                            if write_half.write_all_flush(&cover_record).await.is_err() {
                                 break;
                             }
                             let n = base.elapsed().as_millis() as u64;
@@ -3254,14 +3255,14 @@ async fn server_handshake<S: AsyncRead + AsyncWrite + Unpin>(
             )
         };
         for (i, part) in parts.iter().enumerate() {
-            stream.write_all(part).await?;
+            stream.write_all_flush(part).await?;
             stream.flush().await?;
             if i + 1 < parts.len() {
                 tokio::time::sleep(std::time::Duration::from_millis(2)).await;
             }
         }
 
-        stream.write_all(&ccs).await?;
+        stream.write_all_flush(&ccs).await?;
         stream.flush().await?;
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
@@ -3269,19 +3270,19 @@ async fn server_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         cert_fin.extend_from_slice(&cert);
         cert_fin.extend_from_slice(&finished);
         let cf_split = 3 + (cert_fin.len() - 3) % 7;
-        stream.write_all(&cert_fin[..cf_split]).await?;
+        stream.write_all_flush(&cert_fin[..cf_split]).await?;
         stream.flush().await?;
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        stream.write_all(&cert_fin[cf_split..]).await?;
+        stream.write_all_flush(&cert_fin[cf_split..]).await?;
         stream.flush().await?;
 
-        stream.write_all(&nst).await?;
+        stream.write_all_flush(&nst).await?;
     } else {
-        stream.write_all(&server_hello).await?;
-        stream.write_all(&ccs).await?;
-        stream.write_all(&cert).await?;
-        stream.write_all(&finished).await?;
-        stream.write_all(&nst).await?;
+        stream.write_all_flush(&server_hello).await?;
+        stream.write_all_flush(&ccs).await?;
+        stream.write_all_flush(&cert).await?;
+        stream.write_all_flush(&finished).await?;
+        stream.write_all_flush(&nst).await?;
     }
 
     Ok((client_pub, transcript_hash, mlkem_shared))
@@ -3300,7 +3301,9 @@ async fn raw_server_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         .await
         .map_err(|e| anyhow::anyhow!("failed to read client key (plain): {}", e))?;
     let client_pub = crate::crypto::PublicKey::from_bytes(&cp);
-    stream.write_all(server_kp.public().as_bytes()).await?;
+    stream
+        .write_all_flush(server_kp.public().as_bytes())
+        .await?;
     let transcript_hash = handshake_transcript_hash(&[&cp, server_kp.public().as_bytes()]);
     Ok((client_pub, transcript_hash))
 }

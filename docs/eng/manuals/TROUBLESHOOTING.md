@@ -2596,3 +2596,7 @@ retry. `post_up` alone does not prove that the listeners are bound.
 This budget covers setup only. Cancellation may still await admitted worker
 work or cleanup beyond 120 seconds; do not start a second generation with the
 same TUN/network rules in parallel. [Validation](../reports/AUDIT-Q25-SERVER-SETUP-BUDGET.md).
+
+<!-- normative-sync: manual-ws-write-v1 -->
+
+With fronting=websocket,the shared core flushes each protocol record,including handshake/ACK/heartbeat. Under backpressure,unsent bytes remain in the bounded writer and survive cancellation of a later operation. A fault after partial emission terminates that stream;do not resume it with the old cipher state—establish a new connection. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

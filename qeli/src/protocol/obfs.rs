@@ -1455,26 +1455,23 @@ pub struct ObfsStream<S> {
 /// `reframer` holds cross-read parsing state seeded with any bytes buffered
 /// during the handshake.
 struct WsState {
-    masked: bool,
     reframer: WsReframer,
-    /// Outbound framed bytes not yet fully written to the socket.
-    out_buf: Vec<u8>,
-    /// Write cursor into `out_buf`.
-    out_off: usize,
-    /// Plaintext byte count to report once `out_buf` is fully flushed.
-    pending_plain: usize,
-    /// Scratch buffer for socket reads before reframing.
+    write: WsWriteState,
     read_scratch: Vec<u8>,
 }
 
 impl WsState {
     fn new(masked: bool, reframer: WsReframer) -> Self {
+        let control_out = reframer.control_out.clone();
         Self {
-            masked,
             reframer,
-            out_buf: Vec::new(),
-            out_off: 0,
-            pending_plain: 0,
+            write: WsWriteState {
+                masked,
+                out_buf: Vec::new(),
+                out_off: 0,
+                error: None,
+                control_out,
+            },
             read_scratch: vec![0u8; WS_FRAME_MAX + 32],
         }
     }
@@ -1662,24 +1659,13 @@ impl ObfsStream<TcpStream> {
         // Partition the single WS state into read-side (reframer) and write-side
         // (mask + outbound buffer). Present only on the ws-fronting path.
         let (ws_read, ws_write) = match self.ws {
-            Some(st) => {
-                // Clone the handle BEFORE the reframer moves into the read half, so both
-                // sides keep pointing at the same queue. (E3)
-                let control_q = st.reframer.control_out.clone();
-                (
-                    Some(WsReadState {
-                        reframer: st.reframer,
-                        read_scratch: st.read_scratch,
-                    }),
-                    Some(WsWriteState {
-                        masked: st.masked,
-                        out_buf: st.out_buf,
-                        out_off: st.out_off,
-                        pending_plain: st.pending_plain,
-                        control_out: control_q,
-                    }),
-                )
-            }
+            Some(st) => (
+                Some(WsReadState {
+                    reframer: st.reframer,
+                    read_scratch: st.read_scratch,
+                }),
+                Some(st.write),
+            ),
             None => (None, None),
         };
         (
@@ -1801,7 +1787,7 @@ struct WsWriteState {
     masked: bool,
     out_buf: Vec<u8>,
     out_off: usize,
-    pending_plain: usize,
+    error: Option<(io::ErrorKind, String)>,
     /// Shared with the read half — see `WsReframer::control_out`.
     control_out: ControlQueue,
 }
@@ -1817,6 +1803,9 @@ fn ws_read<R: AsyncRead + Unpin>(
     cx: &mut Context<'_>,
     buf: &mut ReadBuf<'_>,
 ) -> Poll<io::Result<()>> {
+    if buf.remaining() == 0 {
+        return Poll::Ready(Ok(()));
+    }
     loop {
         ws.reframer.drain_frames()?;
         if ws.reframer.available() > 0 && buf.remaining() > 0 {
@@ -1852,10 +1841,52 @@ fn ws_read<R: AsyncRead + Unpin>(
     }
 }
 
-/// WS-framed write (F3): ChaCha20-encrypt `buf`, wrap into binary frames, and
-/// stream them to the socket. Only accepts new plaintext when the previous
-/// frame batch has been fully flushed, so the keystream advances exactly once
-/// per accepted plaintext (no rewind needed).
+/// Drain only previously accepted bytes. A Pending result never accepts new plaintext.
+fn ws_drain<W: AsyncWrite + Unpin>(
+    inner: &mut W,
+    ws: &mut WsWriteState,
+    cx: &mut Context<'_>,
+) -> Poll<io::Result<()>> {
+    if let Some((kind, message)) = &ws.error {
+        return Poll::Ready(Err(io::Error::new(*kind, message.clone())));
+    }
+    while ws.out_off < ws.out_buf.len() {
+        match Pin::new(&mut *inner).poll_write(cx, &ws.out_buf[ws.out_off..]) {
+            Poll::Ready(Ok(0)) => {
+                ws.error = Some((
+                    io::ErrorKind::WriteZero,
+                    "obfs ws: socket write returned zero".into(),
+                ));
+                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+            }
+            Poll::Ready(Ok(n)) => ws.out_off += n,
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(e)) => {
+                ws.error = Some((e.kind(), e.to_string()));
+                return Poll::Ready(Err(e));
+            }
+        }
+    }
+    ws.out_buf.clear();
+    ws.out_off = 0;
+    Poll::Ready(Ok(()))
+}
+
+fn ws_queue_controls(ws: &mut WsWriteState) {
+    let owed = ws
+        .control_out
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default();
+    for (op, payload) in owed {
+        ws.out_buf
+            .extend_from_slice(&ws_encode_control(op, &payload, ws.masked));
+    }
+}
+
+/// Own at most one data frame. Report accepted plaintext immediately, including
+/// under socket backpressure; callers may cancel a later Pending operation and
+/// retry with a different slice. Flush/shutdown finish sending the owned bytes.
 fn ws_write<W: AsyncWrite + Unpin>(
     inner: &mut W,
     cipher: &mut ChaCha20,
@@ -1863,87 +1894,51 @@ fn ws_write<W: AsyncWrite + Unpin>(
     cx: &mut Context<'_>,
     buf: &[u8],
 ) -> Poll<io::Result<usize>> {
-    // If nothing is buffered from a previous call, cipher+frame the new plaintext
-    // (commit the keystream advance exactly once). If a batch is still buffered, we
-    // drain it and ignore `buf` this call (the caller retries with it next poll).
-    // Owed control frames go out FIRST, ahead of any tunnel data. They are queued by the
-    // read half (which cannot write) when the peer sends a Ping or a Close; emitting them
-    // here is what makes this endpoint answer like a real WebSocket instead of ignoring
-    // control frames outright. They carry no ChaCha20 keystream — a control frame is
-    // protocol scaffolding, not tunnel payload, so mixing it into the cipher would
-    // desynchronise the peer's stream. (Audit 2026-07-27, E3.)
-    if ws.out_off >= ws.out_buf.len() {
-        // ONE batch: owed control frames first, then this call's plaintext behind them.
-        //
-        // These used to be two batches. Queuing the control frames set `pending_plain = 0`
-        // and left `out_buf` non-empty, so the plaintext branch below was skipped and the
-        // function returned `Ok(0)` for a NON-EMPTY `buf`. The only caller is
-        // `AsyncWriteExt::write_all`, which by contract turns `Ok(0)` on a non-empty buffer
-        // into `ErrorKind::WriteZero` — it does not retry. Every writer loop treats that as
-        // fatal (`if write_all(..).await.is_err() { break }`), so ANY WebSocket Ping reaching
-        // the stream killed the tunnel on the next write. The comment claiming "the caller
-        // retries with its data on the next poll" described a contract `write_all` does not
-        // have.
-        //
-        // Two ways to hit it: an on-path attacker splices 2 bytes (`89 00`) into the TCP
-        // stream — control frames are outside the ChaCha20 keystream, so the injection is
-        // transparent to the cipher and the session dies looking like a clean close; or a
-        // perfectly honest WebSocket-aware proxy sends a keepalive Ping, which is exactly
-        // the middlebox `fronting=websocket` exists to survive. (Audit 2026-08-04, M-07.)
-        let owed: Vec<(u8, Vec<u8>)> = ws
-            .control_out
-            .lock()
-            .map(|mut q| std::mem::take(&mut *q))
-            .unwrap_or_default();
-        let mut frames = Vec::new();
-        for (op, payload) in owed {
-            frames.extend_from_slice(&ws_encode_control(op, &payload, ws.masked));
-        }
-        if buf.is_empty() {
-            // Nothing to commit. Flush any owed control frames on their own; an empty write
-            // with nothing owed stays a no-op.
-            if frames.is_empty() {
-                return Poll::Ready(Ok(0));
-            }
-            ws.out_buf = frames;
-            ws.out_off = 0;
-            ws.pending_plain = 0;
-        } else {
-            let mut cipher_bytes = buf.to_vec();
-            // Guard keystream exhaustion — clean io::Error → reconnect, not a panic=abort
-            // crash (see the ws_read note). The raw path guards the same way via
-            // write_xor's try_apply_keystream.
-            cipher
-                .try_apply_keystream(&mut cipher_bytes)
-                .map_err(seek_err)?;
-            frames.extend_from_slice(&ws_encode_frames(&cipher_bytes, ws.masked));
-            ws.out_buf = frames;
-            ws.out_off = 0;
-            ws.pending_plain = buf.len();
-        }
+    if buf.is_empty() {
+        return Poll::Ready(Ok(0));
     }
-
-    // Drain the framed buffer, LOOPING over partial writes. Critical: an inner
-    // `Ready(Ok(n))` does not arm a write-readiness waker, so returning `Pending`
-    // after a partial write would park the writer forever and stall the tunnel
-    // (only `Pending` from the inner arms a waker). Keep polling until the buffer
-    // empties, the inner is genuinely `Pending`, or it errors — mirroring the raw
-    // `write_xor` / `flush_out` paths.
-    while ws.out_off < ws.out_buf.len() {
-        match Pin::new(&mut *inner).poll_write(cx, &ws.out_buf[ws.out_off..]) {
-            Poll::Ready(Ok(0)) => return Poll::Ready(Err(io::ErrorKind::WriteZero.into())),
-            Poll::Ready(Ok(n)) => ws.out_off += n,
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-        }
+    ready!(ws_drain(inner, ws, cx))?;
+    let accepted = buf.len().min(WS_FRAME_MAX);
+    let mut cipher_bytes = buf[..accepted].to_vec();
+    if let Err(e) = cipher.try_apply_keystream(&mut cipher_bytes) {
+        let e = seek_err(e);
+        ws.error = Some((e.kind(), e.to_string()));
+        return Poll::Ready(Err(e));
     }
+    ws_queue_controls(ws);
+    ws.out_buf
+        .extend_from_slice(&ws_encode_frames(&cipher_bytes, ws.masked));
+    match ws_drain(inner, ws, cx) {
+        Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+        // The adapter now owns all `accepted` bytes, even if the socket parks.
+        Poll::Ready(Ok(())) | Poll::Pending => Poll::Ready(Ok(accepted)),
+    }
+}
 
-    // Fully flushed — report the plaintext bytes committed for this batch.
-    ws.out_buf.clear();
-    ws.out_off = 0;
-    let done = ws.pending_plain;
-    ws.pending_plain = 0;
-    Poll::Ready(Ok(done))
+fn ws_flush<W: AsyncWrite + Unpin>(
+    inner: &mut W,
+    ws: &mut WsWriteState,
+    cx: &mut Context<'_>,
+) -> Poll<io::Result<()>> {
+    ready!(ws_drain(inner, ws, cx))?;
+    ws_queue_controls(ws);
+    ready!(ws_drain(inner, ws, cx))?;
+    match Pin::new(inner).poll_flush(cx) {
+        Poll::Ready(Err(e)) => {
+            ws.error = Some((e.kind(), e.to_string()));
+            Poll::Ready(Err(e))
+        }
+        other => other,
+    }
+}
+
+fn ws_shutdown<W: AsyncWrite + Unpin>(
+    inner: &mut W,
+    ws: &mut WsWriteState,
+    cx: &mut Context<'_>,
+) -> Poll<io::Result<()>> {
+    ready!(ws_flush(inner, ws, cx))?;
+    Pin::new(inner).poll_shutdown(cx)
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for ObfsStream<S> {
@@ -1977,29 +1972,29 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ObfsStream<S> {
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         match &mut this.ws {
-            Some(st) => {
-                let mut ws = WsWriteState {
-                    masked: st.masked,
-                    out_buf: std::mem::take(&mut st.out_buf),
-                    out_off: st.out_off,
-                    pending_plain: st.pending_plain,
-                    // Unsplit stream: the reframer this half owns IS the read side. (E3)
-                    control_out: st.reframer.control_out.clone(),
-                };
-                let r = ws_write(&mut this.inner, &mut this.write_cipher, &mut ws, cx, buf);
-                st.out_buf = ws.out_buf;
-                st.out_off = ws.out_off;
-                st.pending_plain = ws.pending_plain;
-                r
-            }
+            Some(st) => ws_write(
+                &mut this.inner,
+                &mut this.write_cipher,
+                &mut st.write,
+                cx,
+                buf,
+            ),
             None => write_xor(&mut this.inner, &mut this.write_cipher, cx, buf),
         }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+        let this = self.get_mut();
+        match &mut this.ws {
+            Some(st) => ws_flush(&mut this.inner, &mut st.write, cx),
+            None => Pin::new(&mut this.inner).poll_flush(cx),
+        }
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+        let this = self.get_mut();
+        match &mut this.ws {
+            Some(st) => ws_shutdown(&mut this.inner, &mut st.write, cx),
+            None => Pin::new(&mut this.inner).poll_shutdown(cx),
+        }
     }
 }
 
@@ -2044,16 +2039,239 @@ impl AsyncWrite for ObfsWriteHalf {
         }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+        let this = self.get_mut();
+        match &mut this.ws {
+            Some(st) => ws_flush(&mut this.inner, st, cx),
+            None => Pin::new(&mut this.inner).poll_flush(cx),
+        }
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+        let this = self.get_mut();
+        match &mut this.ws {
+            Some(st) => ws_shutdown(&mut this.inner, st, cx),
+            None => Pin::new(&mut this.inner).poll_shutdown(cx),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Deterministic backpressure: a short prefix may reach the socket before it parks.
+    #[derive(Default)]
+    struct Q12Socket {
+        wire: Vec<u8>,
+        allowance: usize,
+        shutdown: bool,
+        failure: Option<io::ErrorKind>,
+    }
+    impl AsyncRead for Q12Socket {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            _: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            Poll::Pending
+        }
+    }
+    impl AsyncWrite for Q12Socket {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let s = self.get_mut();
+            if let Some(kind) = s.failure {
+                return Poll::Ready(Err(kind.into()));
+            }
+            if s.allowance == 0 {
+                return Poll::Pending;
+            }
+            let n = bytes.len().min(s.allowance);
+            s.wire.extend_from_slice(&bytes[..n]);
+            s.allowance -= n;
+            Poll::Ready(Ok(n))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.get_mut().shutdown = true;
+            Poll::Ready(Ok(()))
+        }
+    }
+    fn q12_stream(allowance: usize) -> ObfsStream<Q12Socket> {
+        ObfsStream {
+            inner: Q12Socket {
+                allowance,
+                ..Q12Socket::default()
+            },
+            read_cipher: cipher_from(&[7; 32], &[9; NONCE_LEN]),
+            write_cipher: cipher_from(&[7; 32], &[9; NONCE_LEN]),
+            ws: Some(WsState::new(false, WsReframer::default())),
+        }
+    }
+    fn q12_context() -> std::task::Waker {
+        std::task::Waker::noop().clone()
+    }
+    fn q12_plaintext(wire: &[u8]) -> Vec<u8> {
+        let mut rf = WsReframer::default();
+        rf.feed(wire);
+        rf.drain_frames().unwrap();
+        let mut plain = vec![0; rf.available()];
+        rf.read_pending(&mut plain);
+        cipher_from(&[7; 32], &[9; NONCE_LEN])
+            .try_apply_keystream(&mut plain)
+            .unwrap();
+        plain
+    }
+    #[test]
+    fn q12_ws_backpressure_accepts_once_and_preserves_changed_buffer() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(2);
+        assert!(matches!(
+            Pin::new(&mut s).poll_write(&mut cx, b"first-buffer"),
+            Poll::Ready(Ok(12))
+        ));
+        // A cancelled Pending write has accepted none of this second buffer.
+        assert!(Pin::new(&mut s)
+            .poll_write(&mut cx, b"cancelled")
+            .is_pending());
+        s.inner.allowance = usize::MAX;
+        assert!(matches!(
+            Pin::new(&mut s).poll_write(&mut cx, b"B"),
+            Poll::Ready(Ok(1))
+        ));
+        assert!(matches!(
+            Pin::new(&mut s).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(q12_plaintext(&s.inner.wire), b"first-bufferB");
+    }
+    #[test]
+    fn q12_ws_write_memory_is_bounded() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(0);
+        assert!(matches!(
+            Pin::new(&mut s).poll_write(&mut cx, &vec![42; WS_FRAME_MAX * 4]),
+            Poll::Ready(Ok(WS_FRAME_MAX))
+        ));
+        assert!(s.ws.as_ref().unwrap().write.out_buf.len() <= WS_FRAME_MAX + 14);
+    }
+    #[test]
+    fn q12_ws_flush_sends_owed_pong_without_application_write() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(2);
+        s.ws.as_mut()
+            .unwrap()
+            .reframer
+            .control_out
+            .lock()
+            .unwrap()
+            .push((0xA, b"ping".to_vec()));
+        assert!(Pin::new(&mut s).poll_flush(&mut cx).is_pending());
+        s.inner.allowance = usize::MAX;
+        assert!(matches!(
+            Pin::new(&mut s).poll_flush(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(s.inner.wire, ws_encode_control(0xA, b"ping", false));
+    }
+    #[test]
+    fn q12_ws_shutdown_sends_owed_control_before_socket_shutdown() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(0);
+        s.ws.as_mut()
+            .unwrap()
+            .reframer
+            .control_out
+            .lock()
+            .unwrap()
+            .push((8, Vec::new()));
+        assert!(Pin::new(&mut s).poll_shutdown(&mut cx).is_pending());
+        assert!(!s.inner.shutdown);
+        s.inner.allowance = usize::MAX;
+        assert!(matches!(
+            Pin::new(&mut s).poll_shutdown(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(s.inner.shutdown);
+        assert_eq!(s.inner.wire, ws_encode_control(8, b"", false));
+    }
+    #[test]
+    fn q12_ws_empty_read_never_waits_for_network() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(0);
+        let mut rb = ReadBuf::new(&mut []);
+        assert!(matches!(
+            Pin::new(&mut s).poll_read(&mut cx, &mut rb),
+            Poll::Ready(Ok(()))
+        ));
+    }
+
+    #[test]
+    fn q12_ws_partial_socket_failure_is_terminal() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(2);
+        assert!(matches!(
+            Pin::new(&mut s).poll_write(&mut cx, b"accepted"),
+            Poll::Ready(Ok(8))
+        ));
+        s.inner.failure = Some(io::ErrorKind::BrokenPipe);
+        assert!(
+            matches!(Pin::new(&mut s).poll_flush(&mut cx), Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::BrokenPipe)
+        );
+        let before = s.inner.wire.clone();
+        s.inner.failure = None;
+        s.inner.allowance = usize::MAX;
+        assert!(
+            matches!(Pin::new(&mut s).poll_write(&mut cx, b"later"), Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::BrokenPipe)
+        );
+        assert!(
+            matches!(Pin::new(&mut s).poll_shutdown(&mut cx), Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::BrokenPipe)
+        );
+        assert_eq!(s.inner.wire, before);
+        assert!(!s.inner.shutdown);
+    }
+    #[tokio::test]
+    async fn q12_ws_record_roundtrip_under_backpressure() {
+        use crate::protocol::stream_io::WriteAllFlush;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let (a, b) = tokio::io::duplex(7);
+            let key = derive_obfs_key("q12-backpressure");
+            let payload: Vec<u8> = (0..WS_FRAME_MAX * 2 + 777)
+                .map(|i| (i % 251) as u8)
+                .collect();
+            let expected = payload.clone();
+            let server = tokio::spawn(async move {
+                let mut s = ObfsStream::accept(b, &key, true, AwgParams::default())
+                    .await
+                    .unwrap();
+                let mut got = vec![0; expected.len()];
+                s.read_exact(&mut got).await.unwrap();
+                assert_eq!(got, expected);
+                s.write_all_flush(b"reply").await.unwrap();
+                s.shutdown().await.unwrap();
+            });
+            let mut client = ObfsStream::connect(a, &key, true, AwgParams::default())
+                .await
+                .unwrap();
+            client.write_all_flush(&payload).await.unwrap();
+            let mut reply = [0; 5];
+            client.read_exact(&mut reply).await.unwrap();
+            assert_eq!(&reply, b"reply");
+            server.await.unwrap();
+        })
+        .await
+        .expect("both directions must progress on a seven-byte socket buffer");
+    }
 
     #[test]
     fn derive_key_is_deterministic_and_psk_sensitive() {

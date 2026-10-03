@@ -718,3 +718,7 @@ pass.
    which side gets the core, and who owns its lifetime.
 3. **Updating the core independently of the app** — tempting for fast protocol fixes, but
    constrained by App Store and Play rules on iOS and Android.
+
+<!-- normative-sync: core-ws-write-v1 -->
+
+The shared WS writer accepts at most16384 data bytes per poll,reports owned bytes once,and permits cancelling Pending with a changed input slice. Flush/shutdown drain owned frames and bounded control replies;outbound write/flush faults remain terminal. Daemon/native-core handshake,ACK and data/cover record boundaries use one write-all-and-flush helper before waiting for a response or recording delivery. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

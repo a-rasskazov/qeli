@@ -2605,3 +2605,7 @@ TUN/NAT/NDP, `post_up`, DNS и bind каждого `listen`. Ошибка `liste
 Срок относится только к установке. Отмена может ждать уже начатый worker
 или очистку дольше 120 секунд; не запускайте параллельно второе поколение с
 тем же TUN/сетевыми правилами. [Проверка](../reports/AUDIT-Q25-SERVER-SETUP-BUDGET.md).
+
+<!-- normative-sync: manual-ws-write-v1 -->
+
+При fronting=websocket общий core завершает отправку каждого protocol record через flush,включая handshake/ACK/heartbeat. При backpressure непереданные байты остаются в bounded writer и не теряются при отмене следующей операции. Ошибка после частичной отправки закрывает этот поток; восстанавливать его с прежним cipher state нельзя — требуется новое соединение. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

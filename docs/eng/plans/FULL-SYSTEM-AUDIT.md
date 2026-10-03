@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v25 -->
+<!-- normative-sync: full-system-audit-v26 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -151,7 +151,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | DONE |
-| 12 | Transports and wire camouflage | H02, H07–H08 | TODO |
+| 12 | Transports and wire camouflage | H02, H07–H08 | IN_PROGRESS |
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | TODO |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | IN_PROGRESS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | IN_PROGRESS |
@@ -465,6 +465,8 @@ was cross-compiled only. Other section scenarios and live Linux E2E remain open.
 **3 October, Q11 completion:** [REALITY/TLS/H2](../reports/AUDIT-Q11-REALITY-TLS-H2.md): five common TLS fixes,2317 Linux units,73 REALITY-TLS/H2 checks,3 PCAP/6 wire-probe results,two bounded ASan campaigns,fresh matrix/soak/four native A/B PASS. Overall:11/37 DONE/PASS (29.7%). NextQ12.
 
 ### 12. Transports and wire camouflage
+
+**4 October,WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): four shared writer/read fixes,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,fresh matrix/soak/native A/B PASS. HTTP/inbound frame/fuzz remain;fullQ12 IN_PROGRESS,overall11/37 (29.7%).
 
 **Source:** `qeli/src/protocol/tls.rs`, `qeli/src/protocol/obfs.rs`, `qeli/src/protocol/quic.rs`, `qeli/src/transport`.
 

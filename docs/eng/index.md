@@ -367,3 +367,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q10: PacketCodec, replay and CONTROL_V2](reports/AUDIT-Q10-CODEC-CONTROL.md)
 
 - [Q11: REALITY, TLS 1.3 and HTTP/2](reports/AUDIT-Q11-REALITY-TLS-H2.md)
+- [Q12: transports and wire camouflage,WS write batch](reports/AUDIT-Q12-TRANSPORTS.md)

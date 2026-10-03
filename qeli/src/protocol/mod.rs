@@ -13,6 +13,7 @@ pub mod realtls;
 pub mod recordizer;
 pub mod roaming;
 pub mod shaper;
+pub(crate) mod stream_io;
 pub mod tls;
 pub mod udp_frag;
 

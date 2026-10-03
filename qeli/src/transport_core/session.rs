@@ -13,9 +13,10 @@ use crate::crypto::{
     derive_session_material, derive_session_material_bound, derive_session_material_hybrid,
     derive_session_material_hybrid_bound,
 };
+use crate::protocol::stream_io::WriteAllFlush;
 use crate::protocol::{read_record, read_tls_record, FakeTlsHandshake, Framing, PacketCodec};
 use std::future::Future;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
 #[derive(Debug)]
 pub(crate) struct AuthOk {
@@ -358,7 +359,9 @@ where
     let client_kp = Keypair::generate();
 
     if matches!(config.obfuscation.mode.as_str(), "plain" | "reality-tls") {
-        stream.write_all(client_kp.public().as_bytes()).await?;
+        stream
+            .write_all_flush(client_kp.public().as_bytes())
+            .await?;
         let mut server_public = [0u8; 32];
         stream
             .read_exact(&mut server_public)
@@ -419,7 +422,7 @@ where
             platform_capabilities,
         )?;
         let auth_packet = client_tx.encrypt_packet(&auth_plaintext, &[])?;
-        stream.write_all(&auth_packet).await?;
+        stream.write_all_flush(&auth_packet).await?;
 
         let auth_response_record = read_record(stream, Framing::Raw).await.map_err(|error| {
             anyhow::anyhow!("failed to read auth response (raw inner): {error}")
@@ -471,7 +474,7 @@ where
         0,
         reality_session_id.as_ref(),
     );
-    stream.write_all(&client_hello).await?;
+    stream.write_all_flush(&client_hello).await?;
     let server_hello = read_tls_record(stream)
         .await
         .map_err(|error| anyhow::anyhow!("failed to read ServerHello: {error}"))?;
@@ -558,7 +561,7 @@ where
         platform_capabilities,
     )?;
     let auth_packet = client_tx.encrypt_packet(&auth_plaintext, &[])?;
-    stream.write_all(&auth_packet).await?;
+    stream.write_all_flush(&auth_packet).await?;
     let auth_response_record = read_tls_record(stream)
         .await
         .map_err(|error| anyhow::anyhow!("failed to read auth response: {error}"))?;
@@ -744,7 +747,7 @@ mod static_binding_tests {
                 let mut public = [0u8; 32];
                 peer.read_exact(&mut public).await.unwrap();
                 let kp = Keypair::generate();
-                peer.write_all(kp.public().as_bytes()).await.unwrap();
+                peer.write_all_flush(kp.public().as_bytes()).await.unwrap();
                 let shared = kp
                     .derive_shared_checked(&crate::crypto::PublicKey::from_bytes(&public))
                     .unwrap();
@@ -763,7 +766,7 @@ mod static_binding_tests {
                 let packet = PacketCodec::new_raw(tx)
                     .encrypt_packet(&proof, &[])
                     .unwrap();
-                peer.write_all(&packet).await.unwrap();
+                peer.write_all_flush(&packet).await.unwrap();
                 peer
             });
             let mut config = crate::config::client::ClientConfig::default();

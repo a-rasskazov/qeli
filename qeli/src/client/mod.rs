@@ -530,10 +530,11 @@ use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 // `portable_atomic::AtomicU64` so the data-plane byte counters compile on 32-bit
 // mipsel routers (no native 64-bit atomics); native instruction on aarch64/x86_64.
+use crate::protocol::stream_io::WriteAllFlush;
 use portable_atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::UdpSocket;
 #[cfg(target_os = "linux")]
 use tokio::net::{TcpSocket, TcpStream};
@@ -4894,7 +4895,7 @@ async fn write_client_wire_record<W: AsyncWrite + Unpin>(
             } else {
                 false
             };
-            if cover_ready && write_half.write_all(cover_record).await.is_err() {
+            if cover_ready && write_half.write_all_flush(cover_record).await.is_err() {
                 return false;
             }
             let step = Duration::from_millis(rand::rng().random_range(4..=18));
@@ -4905,7 +4906,7 @@ async fn write_client_wire_record<W: AsyncWrite + Unpin>(
     } else if !delay.is_zero() {
         tokio::time::sleep(delay).await;
     }
-    write_half.write_all(wire_record).await.is_ok()
+    write_half.write_all_flush(wire_record).await.is_ok()
 }
 
 /// Deliver one authenticated plaintext record. With PACKET_MUX_V1 it may yield
@@ -5621,7 +5622,7 @@ where
                             );
                             tx.encrypt_packet_into(&[], &padding, &mut cover_record).is_ok()
                         };
-                        if hb_ready && write_half.write_all(&cover_record).await.is_err() {
+                        if hb_ready && write_half.write_all_flush(&cover_record).await.is_err() {
                             break;
                         }
                         last_tx_ms = base.elapsed().as_millis() as u64;
@@ -5648,7 +5649,7 @@ where
                                     tx.encrypt_packet_into(&[], &padding, &mut cover_record).is_ok()
                                 };
                                 if cover_ready {
-                                    if write_half.write_all(&cover_record).await.is_err() { break; }
+                                    if write_half.write_all_flush(&cover_record).await.is_err() { break; }
                                     last_tx_ms = base.elapsed().as_millis() as u64;
                                 }
                             }
@@ -7069,7 +7070,7 @@ async fn finish_tcp_secondary_handshake<S: AsyncRead + AsyncWrite + Unpin>(
     let commit = pending
         .tx
         .encrypt_packet(crate::protocol::roaming::TCP_RESUME_COMMIT, &[])?;
-    stream.write_all(&commit).await?;
+    stream.write_all_flush(&commit).await?;
     let ack_record = read_record(stream, pending.framing)
         .await
         .map_err(|error| anyhow::anyhow!("TCP resume commit acknowledgement: {error}"))?;
@@ -7101,7 +7102,9 @@ async fn tcp_secondary_handshake<S: AsyncRead + AsyncWrite + Unpin>(
     // the JOIN token instead of credentials, mirroring the corresponding primary
     // handshake branch.
     if matches!(config.obfuscation.mode.as_str(), "plain" | "reality-tls") {
-        stream.write_all(client_kp.public().as_bytes()).await?;
+        stream
+            .write_all_flush(client_kp.public().as_bytes())
+            .await?;
         let mut sp = [0u8; 32];
         stream
             .read_exact(&mut sp)
@@ -7132,7 +7135,7 @@ async fn tcp_secondary_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         identity_verifier(server_static_pub_bytes).await?;
         let join = attach.first_message(transcript_hash);
         let join_packet = client_tx.encrypt_packet(&join, &[])?;
-        stream.write_all(&join_packet).await?;
+        stream.write_all_flush(&join_packet).await?;
         let ack_record = read_record(stream, Framing::Raw)
             .await
             .map_err(|e| anyhow::anyhow!("JOIN(plain): ack: {}", e))?;
@@ -7183,7 +7186,7 @@ async fn tcp_secondary_handshake<S: AsyncRead + AsyncWrite + Unpin>(
         0,
         reality_sid.as_ref(),
     );
-    stream.write_all(&client_hello).await?;
+    stream.write_all_flush(&client_hello).await?;
     let server_hello_record = read_tls_record(stream)
         .await
         .map_err(|e| anyhow::anyhow!("JOIN: ServerHello: {}", e))?;
@@ -7243,7 +7246,7 @@ async fn tcp_secondary_handshake<S: AsyncRead + AsyncWrite + Unpin>(
     // Present an authenticated resume proof, or the legacy token for an old session.
     let join = attach.first_message(transcript_hash);
     let join_packet = client_tx.encrypt_packet(&join, &[])?;
-    stream.write_all(&join_packet).await?;
+    stream.write_all_flush(&join_packet).await?;
 
     let ack_record = read_tls_record(stream)
         .await
@@ -13521,7 +13524,7 @@ mod tcp_task_shutdown_tests {
             let mut encoder = PacketCodec::new_raw([1; 32]);
             // A full scheduling quantum of queued records forces Stage A/B interleaving.
             for _ in 0..256 {
-                peer.write_all(&encoder.encrypt_packet(&[], &[]).unwrap())
+                peer.write_all_flush(&encoder.encrypt_packet(&[], &[]).unwrap())
                     .await
                     .unwrap();
             }
@@ -13529,7 +13532,7 @@ mod tcp_task_shutdown_tests {
                 .unwrap()
                 .pop()
                 .unwrap();
-            peer.write_all(&encoder.encrypt_packet(&frame, &[]).unwrap())
+            peer.write_all_flush(&encoder.encrypt_packet(&frame, &[]).unwrap())
                 .await
                 .unwrap();
             peer.shutdown().await.unwrap();

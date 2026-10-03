@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v25 -->
+<!-- normative-sync: full-system-audit-v26 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -156,7 +156,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | DONE |
-| 12 | Транспорты и wire-маскировка | H02, H07–H08 | TODO |
+| 12 | Транспорты и wire-маскировка | H02, H07–H08 | IN_PROGRESS |
 | 13 | Recordizer, padding и shaping | H02, H07–H08 | TODO |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | IN_PROGRESS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | IN_PROGRESS |
@@ -470,6 +470,8 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 **3 октября, завершение Q11:** [REALITY/TLS/H2](../reports/AUDIT-Q11-REALITY-TLS-H2.md): пять исправлений общего TLS,2317 Linux units,73 REALITY-TLS/H2 checks,3 PCAP/6 wire-probe результатов,два bounded ASan fuzz,свежие matrix/soak/четыре native A/B PASS. Общий план:11/37 DONE/PASS (29,7%). Следующий раздел — Q12.
 
 ### 12. Транспорты и wire-маскировка
+
+**4 октября, WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): четыре исправления общего writer/read,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,свежие matrix/soak/native A/B PASS. HTTP/inbound frame/fuzz ещё впереди; весь Q12 IN_PROGRESS,общий план11/37 (29,7%).
 
 **Код:** `qeli/src/protocol/tls.rs`, `qeli/src/protocol/obfs.rs`, `qeli/src/protocol/quic.rs`, `qeli/src/transport`.
 

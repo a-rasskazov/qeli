@@ -715,3 +715,7 @@ CLI/cross-language KAT. UI reachability теперь вызывает Rust ABI 1
    ядро и кто владеет его жизненным циклом.
 3. **Обновление ядра отдельно от приложения** — заманчиво для быстрых фиксов протокола,
    но на iOS и в Play это ограничено правилами магазинов.
+
+<!-- normative-sync: core-ws-write-v1 -->
+
+Общий WS writer принимает максимум 16384 байта данных за poll,учитывает owned bytes один раз и допускает отмену Pending с заменой входного буфера. Flush/shutdown отправляют owned frames и bounded control replies; outbound write/flush fault остаётся terminal. Handshake,ACK и data/cover record границы daemon/native core используют один write-all-and-flush helper перед ожиданием ответа или фиксацией доставки. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
