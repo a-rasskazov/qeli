@@ -51,9 +51,11 @@ mod tests {
         assert!(CONFIG_PAGE.contains("roamingMaxMiB(cfg.profiles[activeTab])"));
         assert!(CONFIG_PAGE.contains("profile.roaming.max_orphan_bytes = mib * 1048576"));
         // Older profiles remain upgrade-compatible; new profiles use server defaults.
-        assert!(crate::config::server::ProfileConfig::new_profile()
-            .roaming
-            .enabled);
+        assert!(
+            crate::config::server::ProfileConfig::new_profile()
+                .roaming
+                .enabled
+        );
         assert!(CONFIG_PAGE.contains("roaming: { enabled: false, grace_secs: 30, max_orphaned: 256, max_orphan_bytes: 67108864 }"));
         assert!(CONFIG_PAGE.contains("New profiles enable it by default"));
     }
