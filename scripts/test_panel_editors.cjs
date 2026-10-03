@@ -187,6 +187,52 @@ async function main() {
     finish({ ok: true, config: { telegram_token_set: true } }); await save;
     assert.equal(model.cfg.telegram_token, 'later-fixture');
   });
+  await check('lockout policy cannot write before load, after failure, or during another save', async () => {
+    let finish, writes = 0;
+    const { model, context } = component('blocked.html', 'blockedPage', {
+      apiFetch: async (url, opts) => {
+        if (opts) { writes++; return { ok: true, revision: 'r2' }; }
+        return new Promise(resolve => { finish = resolve; });
+      },
+    });
+    await model.savePolicy(); assert.equal(writes, 0);
+    const loading = model.loadPolicy(); await model.savePolicy(); assert.equal(writes, 0);
+    finish({ ok: false, error: 'fixture read failed' }); await loading;
+    await model.savePolicy(); assert.equal(writes, 0); assert(!model.policyLoaded);
+    assert.match(model.policyMsg, /fixture read failed/);
+    const retry = model.loadPolicy();
+    finish({ ok: true, revision: 'r1', settings: { vpn: { max_attempts: 17 }, panel: { enabled: false } } });
+    await retry; assert(model.policyLoaded); assert.equal(model.policy.vpn.max_attempts, 17);
+    context.apiFetch = async () => { writes++; return new Promise(resolve => { finish = resolve; }); };
+    const save = model.savePolicy(); await model.savePolicy(); assert.equal(writes, 1);
+    finish({ ok: true, revision: 'r2', panel_applied: true }); await save;
+    assert.equal(model.policyRevision, 'r2'); assert(!model.savingPolicy);
+  });
+  await check('lockout settings without a revision remain read-only', async () => {
+    let writes = 0;
+    const { model } = component('blocked.html', 'blockedPage', {
+      apiFetch: async (url, opts) => {
+        if (opts) writes++;
+        return { ok: true, settings: { vpn: { max_attempts: 7 } } };
+      },
+    });
+    await model.loadPolicy(); await model.savePolicy(); assert(!model.policyLoaded); assert.equal(writes, 0);
+  });
+  await check('unavailable canonical defaults never create a fallback profile and recover on reload', async () => {
+    let defaults = { ok: false, error: 'fixture defaults failed' };
+    const { model, context } = component('config.html', 'configPage', {
+      apiFetch: async url => url.endsWith('/defaults') ? defaults : { ok: true, revision: 'r1', config: { profiles: [] } },
+      fetch: async () => ({ json: async () => defaults }),
+    });
+    model.loadIdentity = () => {};
+    await model.load(); assert(model.loaded); model.addProfile();
+    assert.equal(model.cfg.profiles.length, 0); assert(!model.dirty); assert(model.defaultsError);
+    defaults = { ok: true, profile: { bind: {}, tun: { ip_mode: 'ipv4' }, pool: {}, dns: {}, extension: { retained: true } } };
+    await model.load(); model.addProfile(); assert.equal(model.cfg.profiles.length, 1);
+    assert(model.cfg.profiles[0].extension.retained); assert(!model.defaultsError);
+    defaults = { ok: false, error: 'second read failed' }; await model.load();
+    assert.equal(model.defaultProfile, null); model.addProfile(); assert.equal(model.cfg.profiles.length, 0);
+  });
   console.log(`Panel editor regressions: ${passed} passed`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

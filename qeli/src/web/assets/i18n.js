@@ -312,6 +312,8 @@
       // surfaced by the coverage check, so fixed here rather than left as known-English
       // text. The trailing space is part of the key: the reason is appended to it.
       'Failed to load config: ': 'Не удалось загрузить конфиг: ',
+      'New profile defaults were not loaded. Reload before adding a profile.':
+        'Шаблон нового профиля не загружен. Обновите конфигурацию перед добавлением профиля.',
       'Failed to load users: ': 'Не удалось загрузить пользователей: ',
       'Network error: ': 'Сетевая ошибка: ',
       'Restart failed: ': 'Не удалось перезапустить: ',

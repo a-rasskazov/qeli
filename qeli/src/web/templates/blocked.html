@@ -11,7 +11,7 @@
     </div>
     <p class="text-xs text-slate-500 mb-4">Policies are saved to INI and applied live when reload succeeds; applying changed thresholds resets that surface's failure counters. Turn a switch off to disable rate-limiting for that surface entirely.</p>
 
-    <div class="grid grid-cols-2 gap-4">
+    <fieldset :disabled="!policyLoaded || policyLoading || savingPolicy" class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <!-- VPN authentication policy -->
       <div class="rounded-lg border border-[#21314e] p-3.5">
         <label class="flex items-center gap-2.5 cursor-pointer mb-3">
@@ -55,13 +55,14 @@
           </div>
         </div>
       </div>
-    </div>
+    </fieldset>
 
     <div class="flex items-center gap-2 mt-4">
-      <button class="btn btn-primary btn-sm" @click="savePolicy()" :disabled="savingPolicy">
+      <button class="btn btn-primary btn-sm" @click="savePolicy()" :disabled="!policyLoaded || policyLoading || savingPolicy">
         <div x-show="savingPolicy" class="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
         Save policy
       </button>
+      <button class="btn btn-ghost btn-sm" @click="loadPolicy()" x-show="!policyLoaded" :disabled="policyLoading || savingPolicy">Reload</button>
       <span x-show="policyMsg" class="text-xs" :class="policyOk ? 'text-green-400' : 'text-red-400'" x-text="policyMsg"></span>
     </div>
   </div>
@@ -163,6 +164,8 @@ function blockedPage() {
     saving: null,
     policy: { vpn: defPolicy(), panel: defPolicy() },
     policyRevision: '',
+    policyLoaded: false,
+    policyLoading: false,
     savingPolicy: false,
     policyMsg: '',
     policyOk: false,
@@ -211,10 +214,16 @@ function blockedPage() {
     },
 
     async loadPolicy() {
+      if (this.policyLoading || this.savingPolicy) return;
+      this.policyLoading = true;
+      this.policyLoaded = false;
+      this.policyRevision = '';
+      this.policyMsg = '';
       try {
         const d = await apiFetch('api/blocked/settings');
-        if (d.ok && d.settings) {
-          this.policyRevision = d.revision || '';
+        if (d.ok && d.settings && d.revision) {
+          this.policyRevision = d.revision;
+          this.policyLoaded = true;
           this.policy = {
             vpn: Object.assign(defPolicy(), d.settings.vpn || {}),
             panel: Object.assign(defPolicy(), d.settings.panel || {}),
@@ -226,9 +235,11 @@ function blockedPage() {
           this.policyMsg = d.error || this.t('Request failed');
         }
       } catch (e) { this.policyOk = false; this.policyMsg = this.t('Request failed'); }
+      finally { this.policyLoading = false; }
     },
 
     async savePolicy() {
+      if (!this.policyLoaded || this.policyLoading || this.savingPolicy || !this.policyRevision) return;
       this.savingPolicy = true; this.policyMsg = '';
       try {
         const r = await apiFetch('api/blocked/settings', {

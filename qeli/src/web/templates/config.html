@@ -31,6 +31,7 @@
   </div>
 
   <div x-show="loadError" x-cloak class="card p-4 mb-5 text-red-300" role="alert" x-text="loadError"></div>
+  <div x-show="loaded && defaultsError" x-cloak class="card p-4 mb-5 text-red-300" role="alert" x-text="defaultsError"></div>
 
   <!-- Restart hint -->
   <div class="flex items-start gap-3 p-4 rounded-xl mb-5 text-sm" style="background:linear-gradient(180deg,rgba(74,158,255,.06),transparent),var(--bg-2);border:1px solid rgba(74,158,255,.22)">
@@ -48,7 +49,7 @@
           <span class="config-profile-nav-title">Profiles</span>
           <span class="config-profile-nav-count" x-text="(cfg.profiles || []).length"></span>
         </div>
-        <button type="button" class="config-profile-add" @click="addProfile()" title="Add profile">
+        <button type="button" class="config-profile-add" @click="addProfile()" :disabled="!defaultProfile || loading || saving || restarting" title="Add profile">
           <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>
           <span>Add profile</span>
         </button>
@@ -1721,6 +1722,7 @@ function configPage() {
   return {
     cfg: { profiles: [], auth: { brute_force: {} }, logging: {}, web: { brute_force: {} } },
     defaultProfile: null,   // canonical new-profile template from /api/config/defaults
+    defaultsError: '',
     loaded: false,
     loadError: '',
     loading: false,
@@ -1822,12 +1824,15 @@ function configPage() {
       this.loading = true;
       this.loaded = false;
       this.loadError = '';
+      this.defaultProfile = null;
+      this.defaultsError = '';
       try {
         const [d, def] = await Promise.all([
           apiFetch('api/config'),
-          fetch('api/config/defaults').then(r => r.json()).catch(() => null),
+          apiFetch('api/config/defaults'),
         ]);
-        if (def && def.ok) this.defaultProfile = def.profile;
+        if (def && def.ok && def.profile && typeof def.profile === 'object' && !Array.isArray(def.profile)) this.defaultProfile = def.profile;
+        else this.defaultsError = qeliT('New profile defaults were not loaded. Reload before adding a profile.');
         if (d.ok) {
           this.cfg = d.config;
           this.loaded = true;
@@ -2352,15 +2357,14 @@ function configPage() {
     // Build a new profile from the server's canonical defaults (single source of
     // truth — no schema duplicated in JS), then give it a unique name/iface/subnet.
     addProfile() {
+      if (!this.loaded || this.loading || this.saving || this.restarting || !this.defaultProfile) return;
       const slot = this.requireFreshProfileSlot();
       if (!slot) return;
       const profiles = this.cfg.profiles || [];
       let suffix = profiles.length + 1;
       let name = `profile-${suffix}`;
       while (profiles.some(p => p.name === name)) name = `profile-${++suffix}`;
-      const base = this.defaultProfile
-        ? JSON.parse(JSON.stringify(this.defaultProfile))
-        : { name: '', bind: {}, roaming: { enabled: true, grace_secs: 30, max_orphaned: 256, max_orphan_bytes: 67108864 }, tun: { ip_mode: 'ipv4' }, pool: { ipv6: { exclude: [], static_reservations: {} } }, routing: { nat: {}, ipv6: { mode: 'off', interface: '' } }, dns: {}, dhcp: {}, obfuscation: { tls: { reality_proxy: {} }, padding: {}, fragmentation: {}, heartbeat: {}, traffic_normalization: {}, recordizer: { policy: 'prefer', batch: { delay_min_ms: 2, delay_max_ms: 8, max_packets: 16, max_queue_bytes: 262144 }, record: { max_payload_bytes: 0, small_min_ratio: 0.25, small_max_ratio: 0.875, full_probability: 0.72 }, fragment: { enabled: true, reassembly_timeout_ms: 3000, max_inflight_packets: 64, max_reassembly_bytes: 4194304, max_fragments_per_packet: 64 } }, anti_fingerprinting: {}, quic: {}, multipath: {} }, performance: { tcp: {}, tun: {}, connection: {} } };
+      const base = JSON.parse(JSON.stringify(this.defaultProfile));
       base.name = name;
       base.enabled = true;
       base.bind.address = '0.0.0.0';
