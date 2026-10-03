@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Q05 HTTP transactions and faults on an exact release in private NET/mount/PID namespaces.
+"""Q05/Q06 HTTP transactions, user policy and faults on an exact release in private NET/mount/PID namespaces.
 The full-restart fault case binds a private rejecting systemctl shim; no host service calls.
 """
-import argparse,ssl,base64,concurrent.futures,hashlib,hmac,http.client,json,os,re,signal,subprocess,threading,time
+import argparse,ssl,base64,concurrent.futures,hashlib,hmac,http.client,json,os,re,signal,socket,subprocess,threading,time
 from pathlib import Path
 
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -46,7 +46,7 @@ def main():
   stream=(root/'server.log').open('a');command=[str(binary),'server','-c',str(cfg)]
   if a.scenario=='nonroot':command=['setpriv','--reuid=65534','--regid=65534','--clear-groups','--inh-caps=+net_admin,+net_raw','--ambient-caps=+net_admin,+net_raw']+command
   sup=subprocess.Popen(command,env=env,stdout=stream,stderr=subprocess.STDOUT)
-  wait(lambda:req('/login')[0] in (200,303,403),'panel not ready');wait(lambda:':24843' in run(['ss','-lnt']) and Path('/etc/qeli/identity/fixture.key').exists(),'private worker not ready')
+  wait(lambda:req('/login')[0] in (200,303,403),'panel not ready');wait(lambda:':24843' in run(['ss','-lntu']) and Path('/etc/qeli/identity/fixture.key').exists(),'private worker not ready')
  def stop():
   if sup and sup.poll() is None:sup.send_signal(signal.SIGTERM);assert sup.wait(timeout=25)==0
   if stream:stream.close()
@@ -148,6 +148,127 @@ obf.mode = fake-tls
    for p in reversed(mounted):run(['umount',str(p)])
    stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
   print('PASS Q05 '+str(len(checks))+' checks',flush=True)
+ elif a.scenario=='users':
+  users_path=Path('/etc/qeli/users.conf')
+  def api(path,method='GET',body=None):
+   response=req(path,method,body,headers=basic());check(method+' '+path+' HTTP response',response[0]==200,response[0]);return response[1]
+  def user(name):return api('/api/users/'+name)['user']
+  def denied(label,path,method,body):
+   old=users_path.read_bytes();response=req(path,method,json.dumps(body),headers=basic());value=response[1]
+   # Collect every regression on the old binary before failing the batch.
+   ok=(response[0] in (400,415,422) or (response[0]==200 and value.get('ok') is False)) and users_path.read_bytes()==old
+   checks.append(dict(name=label+' refuses and preserves exact users INI',status='PASS' if ok else 'FAIL',detail=dict(ok=value.get('ok'),error=value.get('error'))));save();print(('PASS ' if ok else 'FAIL ')+label,flush=True)
+  try:
+   start();hashed=api('/api/hash-password','POST',{'password':'fixture-client-password'})['hash']
+   stop();cfg.write_text(cfg.read_text()+'\n[group:inline-limit]\nmax_sessions = 2\nbandwidth_limit_mbps = 5\n[user:inline-user]\npassword_hash = '+hashed+'\nenabled = true\ngroup = inline-limit\n');cfg.chmod(0o600);start()
+   created=api('/api/users','POST',{'username':'limited','password_hash':hashed,'enabled':False,'max_sessions':2,'bandwidth':{'limit_mbps':5,'burst_mbps':7},'allowed_networks':['10.0.0.0/8'],'routes':[{'cidr':'172.16.0.0/16','gateway':'10.77.0.1'}]});check('create complete limited user',created.get('ok') is True,created)
+   original=users_path.read_bytes();stored=user('limited');check('API hides both password representations','password_hash' not in stored and 'password_enc' not in stored);check('INI stores exact limits',stored['enabled'] is False and stored['max_sessions']==2 and stored['bandwidth']==dict(limit_mbps=5,burst_mbps=7));check('users INI private permissions',users_path.stat().st_mode&0o777==0o600)
+   for key,values in [('enabled',['false',0,None,[]]),('bandwidth',[5,'5',[],None]),('password',[5,False,[],None]),('password_hash',[5,False,[],None])]:
+    for i,value in enumerate(values):denied('update wrong '+key+' '+str(i),'/api/users/limited','PUT',{key:value})
+   for i,value in enumerate([5,False,[],{},['10.77.0.1']]):denied('route gateway wrong type '+str(i),'/api/users/limited','PUT',{'routes':[{'cidr':'172.16.0.0/16','gateway':value}]})
+   for i,value in enumerate([None,[],False,2,'invalid']):
+    denied('update non-object '+str(i),'/api/users/limited','PUT',value)
+    denied('bandwidth non-object '+str(i),'/api/users/limited/bandwidth','POST',value)
+    denied('group non-object '+str(i),'/api/groups/inline-limit','PUT',value)
+    denied('usage non-object '+str(i),'/api/usage/limited/limit','POST',value)
+    denied('live bandwidth non-object '+str(i),'/api/clients/limited/bandwidth','POST',value)
+   for i,value in enumerate([None,[],False,5]):denied('live bandwidth profile wrong type '+str(i),'/api/clients/limited/bandwidth','POST',{'mbps':5,'profile':value})
+   for i,value in enumerate(['false',0,None,[]]):denied('create wrong enabled '+str(i),'/api/users','POST',{'username':'bad-enabled-'+str(i),'password_hash':hashed,'enabled':value})
+   for i,value in enumerate([5,'5',[],None]):denied('create wrong bandwidth '+str(i),'/api/users','POST',{'username':'bad-bandwidth-'+str(i),'password_hash':hashed,'bandwidth':value})
+   # Restore the limited entry after baseline probes that intentionally expose bad writes.
+   users_path.write_bytes(original);users_path.chmod(0o600)
+   for key in ('allowed_networks','profiles','client_subnets'):
+    denied('mixed access array '+key,'/api/users/limited','PUT',{key:['10.0.0.0/8',False]})
+   denied('missing group reference','/api/users/limited','PUT',{'group':'absent'})
+   denied('overflow sessions','/api/users/limited','PUT',{'max_sessions':4294967296})
+   denied('wrong route family','/api/users/limited','PUT',{'routes':[{'cidr':'172.16.0.0/16','gateway':'fd71::1'}]})
+   check('inline user visible',user('inline-user')['enabled'] is True)
+   check('disable inline creates authoritative file override',api('/api/users/inline-user/disable','POST',{}).get('ok') is True and user('inline-user')['enabled'] is False)
+   denied('delete override must not resurrect inline access','/api/users/inline-user','DELETE',None)
+   check('set group override',api('/api/groups/inline-limit','PUT',{'max_sessions':1,'bandwidth_limit_mbps':1}).get('ok') is True)
+   denied('delete override must not weaken inline group','/api/groups/inline-limit','DELETE',None)
+   # Identity failure must precede a legacy password reset, for both APIs.
+   key=Path('/etc/qeli/identity/fixture.key');identity=key.read_bytes();old=users_path.read_bytes();key.unlink();key.mkdir(mode=0o700)
+   try:
+    result=api('/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'limited','allow_reset':'true'});check('identity failure cannot reset legacy credentials',result.get('ok') is False and users_path.read_bytes()==old,result)
+   finally:key.rmdir();key.write_bytes(identity);key.chmod(0o600)
+   for badhost in ['https://vpn.fixture.invalid','[invalid]','vpn.fixture.invalid:0']:
+    denied('share invalid endpoint '+badhost,'/api/share','POST',{'profile':'fixture','host':badhost,'user':'limited','allow_reset':'true'})
+   r=api('/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'limited'});check('hash-only user requires explicit reset',r.get('ok') is False and r.get('needs_reset') is True and users_path.read_bytes()==old)
+   r=api('/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'limited','allow_reset':'true'});check('explicit reset issues URI and QR',r.get('ok') is True and r.get('reset') is True and r.get('uri','').startswith('qeli://') and r.get('qr_svg','').startswith('<svg') and bool(r.get('new_password')))
+   reset=users_path.read_bytes();r=api('/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'limited'});check('reissue preserves credentials',r.get('ok') is True and r.get('reset') is False and r.get('new_password') is None and users_path.read_bytes()==reset)
+   check('enable limited user',api('/api/users/limited/enable','POST',{}).get('ok') is True)
+   check('save static address',api('/api/users/limited','PUT',{'static_ip':'10.77.0.50'}).get('ok') is True and user('limited')['static_ip']=='10.77.0.50')
+   denied('static collision','/api/users','POST',{'username':'collision','password_hash':hashed,'static_ip':'10.77.0.50'})
+   denied('static outside pool','/api/users/limited','PUT',{'static_ip':'10.78.0.50'})
+   denied('static server address','/api/users/limited','PUT',{'static_ip':'10.77.0.1'})
+   check('clear nullable static and group',api('/api/users/limited','PUT',{'static_ip':None,'group':None}).get('ok') is True and user('limited')['static_ip'] is None)
+   expiry=2000000000;check('persist quota and expiry',api('/api/usage/limited/limit','POST',{'data_limit_gb':5,'expire_at':expiry}).get('ok') is True and user('limited')['data_limit_gb']==5 and user('limited')['expire_at']==expiry)
+   check('password edit preserves quota and expiry',api('/api/users/limited','PUT',{'password':'changed-fixture-password'}).get('ok') is True and user('limited')['data_limit_gb']==5 and user('limited')['expire_at']==expiry)
+   check('bandwidth endpoint saves',api('/api/users/limited/bandwidth','POST',{'limit_mbps':2,'burst_mbps':9}).get('ok') is True)
+   bw=user('limited')['bandwidth'];checks.append(dict(name='bandwidth setter preserves explicit burst',status='PASS' if bw==dict(limit_mbps=2,burst_mbps=9) else 'FAIL',detail=bw));save()
+   check('bandwidth edit saves',api('/api/users/limited','PUT',{'bandwidth':{'limit_mbps':5,'burst_mbps':7}}).get('ok') is True)
+   bw=user('limited')['bandwidth'];checks.append(dict(name='bandwidth edit preserves explicit burst',status='PASS' if bw==dict(limit_mbps=5,burst_mbps=7) else 'FAIL',detail=bw));save()
+   complete=all(c['status']=='PASS' for c in checks)
+  finally:
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  assert complete,'Q06 regression failures recorded in result.json'
+  print('PASS Q06 users '+str(len(checks))+' checks',flush=True)
+ elif a.scenario=='users-live':
+  clients=[];streams=[];ns='q06-client'
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());assert r[0]==200,(method,path,r[0]);return r[1]
+  def loaded(name):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(2);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps({'cmd':'show-routes','username':name})+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536)).get('ok') is True
+  def present(name):return any(x.get('username')==name for x in api('/api/clients').get('clients',[]))
+  def client_stop():
+   for p in clients:
+    if p.poll() is None:
+     p.terminate()
+     try:p.wait(timeout=25)
+     except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5)
+   clients.clear()
+   for f in streams:f.close()
+   streams.clear()
+  try:
+   for cmd in (['ip','netns','add',ns],['ip','link','add','q06-srv','type','veth','peer','name','q06-cli'],['ip','link','set','q06-cli','netns',ns],['ip','addr','add','198.18.0.1/30','dev','q06-srv'],['ip','link','set','q06-srv','up'],['ip','netns','exec',ns,'ip','link','set','lo','up'],['ip','netns','exec',ns,'ip','addr','add','198.18.0.2/30','dev','q06-cli'],['ip','netns','exec',ns,'ip','link','set','q06-cli','up'],['ip','netns','exec',ns,'ip','route','add','default','via','198.18.0.1']):run(cmd)
+   run(['iptables','-A','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP'])
+   original=cfg.read_text().replace('[auth]','[auth]\nrequire_client_key_proof = false\nbind_static_to_session = false').replace('bind.address = 127.0.0.1','bind.address = 198.18.0.1')
+   usage=Path('/etc/qeli/usage.json');usage.write_text(json.dumps({'live-'+t+'-quota':dict(used_down=1000000000,used_up=0,used_bytes=1000000000,last_seen=1,sessions=0) for t in ('tcp','udp')}));usage.chmod(0o600)
+   for transport in ('tcp','udp'):
+    cfg.write_text(original.replace('bind.transport = tcp','bind.transport = '+transport));cfg.chmod(0o600);start()
+    for action in ('disable','update-disabled','delete','profile-denied','expiry','quota'):
+     name='live-'+transport+'-'+action;body={'username':name,'password':'fixture-client-password','max_sessions':1}
+     if action=='disable':
+      group='live-limit-'+transport;check('create live group '+transport,api('/api/groups/'+group,'PUT',{'max_sessions':1,'bandwidth_limit_mbps':2}).get('ok') is True);body.update(group=group,max_sessions=0,static_ip='10.77.0.'+('50' if transport=='tcp' else '60'))
+     value=api('/api/users','POST',body);check('create '+name,value.get('ok') is True,value)
+     # The API confirms persistence/queued reload; wait for worker auth visibility.
+     wait(lambda:loaded(name),'worker users reload did not complete: '+name)
+     config=root/(name+'.conf');config.write_text('[qeli]\nserver = 198.18.0.1:24843\nproto = '+transport+'\nuser = '+name+'\npass = fixture-client-password\nmode = fake-tls\nbind_static = false\nquic = false\ndev = q06cli\ngateway = false\ndns = off\nkill_switch = false\ntimeout = 8\n[logging]\nlevel = info\n');config.chmod(0o600)
+     client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(name+'-known-hosts')),QELI_DEVICE_ID_FILE=str(root/(name+'-device-id')));log=(root/(name+'.log')).open('w');streams.append(log);proc=subprocess.Popen(['ip','netns','exec',ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT);clients.append(proc)
+     wait(lambda:present(name),'client not authenticated: '+name);wait(lambda:'dev q06cli' in run(['ip','netns','exec',ns,'ip','route','get','10.77.0.1']),'client tunnel route missing: '+name);run(['ip','netns','exec',ns,'ping','-c','1','-W','2','10.77.0.1']);check(name+' has actual tunnel traffic',True)
+     if action=='disable':
+      row=next(x for x in api('/api/clients')['clients'] if x['username']==name);check(name+' gets fixed IP and group bandwidth',row['ip']==body['static_ip'] and row['bandwidth_limit_mbps']==2,row)
+      check(name+' group bandwidth update saved',api('/api/groups/'+group,'PUT',{'max_sessions':1,'bandwidth_limit_mbps':3}).get('ok') is True)
+      wait(lambda:any(x['username']==name and x['bandwidth_limit_mbps']==3 for x in api('/api/clients')['clients']),'group bandwidth not live');run(['ip','netns','exec',ns,'ping','-c','1','-W','2','10.77.0.1']);check(name+' remains usable after group bandwidth update',True)
+      value=api('/api/users/'+name+'/disable','POST',{})
+     elif action=='update-disabled':value=api('/api/users/'+name,'PUT',{'enabled':False})
+     elif action=='delete':value=api('/api/users/'+name,'DELETE')
+     elif action=='profile-denied':value=api('/api/users/'+name,'PUT',{'profiles':['other-profile']})
+     elif action=='expiry':value=api('/api/usage/'+name+'/limit','POST',{'data_limit_gb':0,'expire_at':1})
+     else:value=api('/api/usage/'+name+'/limit','POST',{'data_limit_gb':1,'expire_at':None})
+     check(name+' mutation accepted',value.get('ok') is True,value)
+     end=time.monotonic()+(15 if action in ('expiry','quota') else 3)
+     while time.monotonic()<end and present(name):time.sleep(.1)
+     still=present(name);probe=subprocess.run(['ip','netns','exec',ns,'ping','-c','1','-W','1','10.77.0.1'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=5)
+     ok=not still and probe.returncode!=0;checks.append(dict(name=name+' revokes open session and tunnel packets',status='PASS' if ok else 'FAIL',detail=dict(session_present=still,traffic_passes=probe.returncode==0)));save();print(('PASS ' if ok else 'FAIL ')+name+' live revoke',flush=True);client_stop()
+    stop()
+   complete=all(x['status']=='PASS' for x in checks)
+  finally:
+   client_stop();stop();run(['iptables','-D','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP']);subprocess.run(['ip','link','del','q06-srv'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT);run(['ip','netns','del',ns]);save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');after=network();(root/'network.json').write_text(json.dumps(dict(before=before,after=after),indent=2));check('private namespace network restored',after==before,[key for key in before if before[key]!=after[key]]);save(True)
+  assert complete,'live revoke regression recorded'
  elif a.scenario=='runtime':
   def api(path,method='GET',body=None):
    r=req(path,method,body,headers=basic(pw=password));check(method+' '+path+' HTTP response',r[0]==200,r[0]);return r[1]

@@ -418,6 +418,12 @@ pub async fn set_bandwidth(
     Path(username): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<Value>, AuthError> {
+    if let Err(error) = super::require_json_object(&body) {
+        return Ok(Json(super::err_json(error)));
+    }
+    if body.get("profile").is_some_and(|value| !value.is_string()) {
+        return Ok(Json(super::err_json("profile must be a string")));
+    }
     // Reject an invalid/oversized number rather than coercing to 0 (= unlimited); the
     // worker's control `Request.mbps` is a u32, so an out-of-range value would also be
     // dropped there as "invalid JSON" while the panel reported success.

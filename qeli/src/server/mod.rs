@@ -4014,6 +4014,9 @@ async fn usage_sweep(state: Arc<ServerState>, mut shutdown: tokio::sync::watch::
     while crate::profile_tasks::worker_tick(&mut tick, &mut shutdown).await {
         state.usage.collect();
 
+        // Admission can finish after a reload's immediate revoke scan. The sweep
+        // closes that race by checking current authorization as well as usage/expiry.
+        let mut authorized_profiles = HashMap::new();
         // Per-user caps snapshot from the (hot-reloadable) users DB.
         let (limit_gb, expire): (HashMap<String, u64>, HashMap<String, Option<i64>>) = {
             let db = state.users_db.read().await;
@@ -4022,6 +4025,9 @@ async fn usage_sweep(state: Arc<ServerState>, mut shutdown: tokio::sync::watch::
             for u in &db.users {
                 l.insert(u.username.clone(), u.data_limit_gb);
                 e.insert(u.username.clone(), u.expire_at);
+                if u.enabled {
+                    authorized_profiles.insert(u.username.clone(), u.profiles.clone());
+                }
             }
             (l, e)
         };
@@ -4043,6 +4049,10 @@ async fn usage_sweep(state: Arc<ServerState>, mut shutdown: tokio::sync::watch::
                     // All tracked sessions were folded before checking download-only caps.
                     live.insert(s.session_id);
 
+                    let access_revoked =
+                        !authorized_profiles.get(&s.username).is_some_and(|allowed| {
+                            allowed.is_empty() || allowed.iter().any(|name| name == pname)
+                        });
                     let gb = limit_gb.get(&s.username).copied().unwrap_or(0);
                     let over = gb > 0
                         && state.usage.used_down(&s.username) >= gb.saturating_mul(1_000_000_000);
@@ -4112,7 +4122,7 @@ async fn usage_sweep(state: Arc<ServerState>, mut shutdown: tokio::sync::watch::
                             }
                         }
                     }
-                    if over || expired {
+                    if over || expired || access_revoked {
                         // Notify (Tier-3) — throttled to once/hour per user so a
                         // client that keeps reconnecting over quota can't spam.
                         let key = format!("quota:{}", s.username);
@@ -4122,8 +4132,10 @@ async fn usage_sweep(state: Arc<ServerState>, mut shutdown: tokio::sync::watch::
                             pname,
                             if over {
                                 "over data quota"
-                            } else {
+                            } else if expired {
                                 "subscription expired"
+                            } else {
+                                "access revoked"
                             }
                         );
                         notify::fire_throttled(&key, 3600, notify::Event::QuotaBreach, &detail);
@@ -4641,6 +4653,10 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
     *state.users_db.write().await = db;
     *state.dummy_password_hashes.write().await = dummy_password_hashes;
     log::info!("SIGHUP: reloaded users database ({} users)", count);
+    let revoked = control::apply_user_policy_to_sessions(state).await;
+    if revoked > 0 {
+        log::info!("SIGHUP: revoked {revoked} session(s) whose user/profile access was removed");
+    }
 
     // 2. Rebuild the brute-force tracker ONLY when the thresholds actually change.
     //    Rebuilding wipes every in-flight IP lockout, and the panel SIGHUPs the

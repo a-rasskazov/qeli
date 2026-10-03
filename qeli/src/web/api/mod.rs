@@ -27,6 +27,16 @@ use std::sync::Arc;
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
+/// Mutation endpoints must distinguish a missing field from a malformed body.
+/// Indexing a scalar/array as an object otherwise silently selects default limits.
+pub(super) fn require_json_object(body: &Value) -> Result<(), String> {
+    if body.is_object() {
+        Ok(())
+    } else {
+        Err("request body must be a JSON object".to_string())
+    }
+}
+
 pub fn routes() -> Router<Arc<ServerState>> {
     // Path params use axum-0.8 brace syntax (`{name}`, `{*rest}`).
     Router::new()

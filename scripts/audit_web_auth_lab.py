@@ -26,15 +26,16 @@ def inventory_routes(root):
  return rows
 
 root=Path(__file__).resolve().parent.parent
-ap=argparse.ArgumentParser(description='Q04/Q05 real HTTP audit in private Linux NET/mount/PID namespaces.')
+ap=argparse.ArgumentParser(description='Q04/Q05/Q06 real HTTP audit in private Linux NET/mount/PID namespaces.')
 ap.add_argument('--host',default='10.66.116.11');ap.add_argument('--qeli',required=True);ap.add_argument('--sha256',required=True);ap.add_argument('--output',required=True,type=Path)
 ap.add_argument('--fixture',type=Path,default=root/'scripts/audit_web_auth_boundary.py')
-ap.add_argument('--audit',choices=('q04','q05'),default='q04')
-ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot'))
+ap.add_argument('--audit',choices=('q04','q05','q06'),default='q04')
+ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live'))
 a=ap.parse_args()
 if not a.fixture.is_file():ap.error('fixture file not found')
-if a.audit=='q04' and a.scenario is not None:ap.error('scenario is only supported for q05')
-if a.audit=='q05' and a.scenario is None:ap.error('q05 requires an explicit scenario')
+if a.audit=='q04' and a.scenario is not None:ap.error('q04 does not support scenarios')
+if a.audit=='q05' and a.scenario not in ('basic','runtime','faults','crash','nonroot'):ap.error('q05 requires its explicit scenario')
+if a.audit=='q06' and a.scenario not in ('users','users-live'):ap.error('q06 requires a users or users-live scenario')
 if not re.fullmatch('/[A-Za-z0-9_./-]+',a.qeli) or '..' in a.qeli.split('/'):ap.error('absolute safe binary path required')
 if not re.fullmatch('[a-f0-9]{64}',a.sha256):ap.error('full SHA256 required')
 if not os.environ.get('QELI_LAB_PASS'):ap.error('QELI_LAB_PASS required')

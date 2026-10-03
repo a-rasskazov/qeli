@@ -257,6 +257,39 @@ async fn kick_user_on_profile(profile: &Arc<ProfileRuntime>, username: &str) -> 
     kicked.len()
 }
 
+/// Apply bandwidth and user removal/disablement/profile restrictions to open sessions.
+/// The existing kick path owns admission, iroutes, ingress revocation and pool release.
+pub(super) async fn apply_user_policy_to_sessions(state: &Arc<ServerState>) -> usize {
+    let profiles: Vec<_> = state.profiles.read().await.values().cloned().collect();
+    let mut count = 0;
+    for profile in profiles {
+        let denied: std::collections::HashSet<String> = {
+            let users = state.users_db.read().await;
+            let sessions = profile.sessions.read().await;
+            let mut denied = std::collections::HashSet::new();
+            for session in sessions.by_ip.values() {
+                match users
+                    .find_user(&session.username)
+                    .filter(|user| user.allowed_on_profile(&profile.name))
+                {
+                    Some(user) => session.bandwidth_limit_mbps.store(
+                        user.effective_bandwidth_limit(&users.groups),
+                        std::sync::atomic::Ordering::Relaxed,
+                    ),
+                    None => {
+                        denied.insert(session.username.clone());
+                    }
+                }
+            }
+            denied
+        };
+        for username in denied {
+            count += kick_user_on_profile(&profile, &username).await;
+        }
+    }
+    count
+}
+
 /// Snapshot worker-lifetime roaming outcomes without exposing session locators, CIDs or proofs.
 async fn roaming_status(state: &Arc<ServerState>) -> serde_json::Value {
     let profiles = state.profiles.read().await;
