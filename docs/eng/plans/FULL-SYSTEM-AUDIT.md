@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v5 -->
+<!-- normative-sync: full-system-audit-v6 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -141,8 +141,8 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | ID | Module | Historical checks | New pass |
 |---|---|---|---|
 | 01 | Server INI and schema | H01, H04, H08–H10 | PASS |
-| 02 | Client parsers and qeli:// | H04, H06, H08–H10 | IN_PROGRESS |
-| 03 | Panel UI and state | H02, H09–H11 | TODO |
+| 02 | Client parsers and qeli:// | H04, H06, H08–H10 | PASS |
+| 03 | Panel UI and state | H02, H09–H11 | IN_PROGRESS |
 | 04 | Web auth and API protection | H01–H03, H08–H09 | TODO |
 | 05 | Config transactions and restart | H08–H10 | IN_PROGRESS |
 | 06 | Users, groups and provisioning | H01, H04, H09–H10 | TODO |
@@ -221,20 +221,20 @@ Verify the current 81-key Rust/C#/Kotlin/Swift contract; INI ↔ forms ↔ URI, 
 
 **Existing harness/fixtures:** `scripts/test_native_config_keys.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code: INI/editor/URI callers, projections, C ABI/JNI; 3 October.
+- [x] Positive, boundary and negative scenarios: 81 keys / 84 fields, shared URI/INI corpus, prior regressions and fresh DLL audit.
+- [x] Failures and concurrency: bounds, preserved errors, 1000 drafts, 128 parallel scenarios; D08 storage coordination.
+- [x] Available integration: packaged C ABI, D08 C#/JVM/Android emulator, D15 native A/B; Apple/physical SKIP by user decision.
+- [x] Q02-F001–F019, D08/D15 and unchanged-input verification; evidence retains original scope.
 
-**Status: IN_PROGRESS.**
+**Status: PASS within the agreed scope; Apple/physical SKIP.**
 
 **URI pass, 2026-09-22:** [Q02 report](../reports/AUDIT-Q02-CLIENT-PARSERS.md).
 Fixed Q02-F001–F006: ambiguous query parameters, scalar/UTF-8/default behavior and skipped
 JVM corpus reruns. 651 Rust tests, 438 C# checks and 137 JVM tests passed.
 Shared corpus: 21 valid + 29 reject; the 81-key-name contract is preserved.
 
-**Current state, 3 October:** targeted INI/editor review continues. D08 already exercised available models/stores and the Android emulator; D15 refreshed release native A/B and provenance. Apple and unavailable physical environments were excluded by the user, not given runtime PASS. [Reconciliation](../../../release/certification/evidence/q02-reconciliation-20261003.json): 81 keys, 84 editor fields, 164 adapter + 288 Rust hashes match; six static tests and projection generation passed. Existing runtime results are not claimed as new executions.
+**Current state, 3 October:** targeted INI/editor review is complete with no new confirmed defects. D08 already exercised available models/stores and the Android emulator; D15 refreshed release native A/B and provenance. Apple and unavailable physical environments were excluded by the user, not given runtime PASS. [Reconciliation](../../../release/certification/evidence/q02-reconciliation-20261003.json): 81 keys, 84 editor fields, 164 adapter + 288 Rust hashes match; six static tests and projection generation passed. Existing runtime results are not claimed as new executions.
 **User's architecture proposal:** [shared configuration module](CLIENT-CONFIG-CORE.md)
 inside the existing Rust core is implemented in source (ABI 1.16). Local parsers are removed; generated projections/defaults and shared routing/reconnect/version/route-file policies are active. Release A/B is covered by D15; Apple runtime was excluded by the user.
 
@@ -254,6 +254,14 @@ monotonic established-session timing, finite-limit and offline-recovery fixes, a
 Linux backoff. Rust/C ABI/JNI regressions and Linux cross-Clippy passed. This does not close
 real-device/network-change, Apple runtime or release-library gates.
 
+**3 October completion:** fresh packaged DLL audit (`653522e6…`), eight groups:
+84 explicit field values in runtime text, 21 valid + 29 reject URIs, 15 INI boundaries,
+1000 seeded drafts, unrelated edits preserving errors, bounds and 128 parallel
+isolation/redaction scenarios. D08 C#/JVM/Android results are reused only after matching
+164 adapter + 288 Rust hashes, not claimed as new platform runs. [Result](../reports/AUDIT-Q02-CLIENT-PARSERS.md#section-completion--3-october-2026).
+PASS covers the configuration contract; OS-parameter effects and actual networking
+belong to their platform sections. Apple build/runtime is not claimed.
+
 ### 03. Panel UI and state
 
 **Source:** `qeli/src/web/templates`, `qeli/src/web/assets`, `qeli/src/web/pages`.
@@ -268,7 +276,12 @@ Loading/error/retry, dirty state, delayed replies, concurrent edits, Form/INI, d
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
+
+**Started on 3 October:** static checks of 11 templates / 1153 RU strings and 25
+actual JS-component groups passed. [Evidence](../../../release/certification/evidence/q03-initial-20261003.json).
+Node does not replace a real browser. All-page review and browser RU/EN,
+keyboard/mobile, loading/error/retry checks remain; no overall PASS.
 
 ### 04. Web auth and API protection
 

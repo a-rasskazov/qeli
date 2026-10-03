@@ -161,3 +161,34 @@ Configuration documents remain INI; the service DTO is not a profile format.
 - Release native A/B rebuilds, provenance and installable-package validation.
 
 Overall Q02 PASS is not claimed. The local host DLL does not replace release libraries.
+
+## Section completion — 3 October 2026
+
+**Q02: PASS within the agreed scope.** Reviewed INI/editor/URI entry points, panel
+import before persist, native runtime, generated projections and C ABI/JNI. No
+separate local INI/URI parser or silent fallback when the native core is absent was
+found. Editable drafts may retain errors; runtime/validate/share require strict
+admission. URIs carry connection essentials, not file-only or OS policy.
+Syntactically valid numeric link MTU outside the working range retains the existing
+auto fallback; malformed syntax/overflow rejects. Invalid pins never silently become TOFU.
+
+Fresh packaged Windows DLL SHA `653522e6bade8fce705a12ec1566c4c119d49b27d55cb7ba088c018b2bd1dd92`:
+eight groups PASS — 84 explicit field values in runtime text; 21 valid + 29 reject
+URIs with expected-field and round-trip assertions; 15 independent INI boundaries;
+1000 seeded drafts preserving values/raw and admission; unrelated edits; document/ABI
+bounds; 128 parallel isolation/redaction scenarios with 16 workers.
+These are 5630 service calls, not 5630 independent tests. No session/network was created.
+
+[Machine reconciliation](../../../release/certification/evidence/q02-reconciliation-20261003.json)
+records DLL, fixture, review-input and local-driver hashes. `cargo` is absent from the
+current Windows PATH; the attempted targeted Rust command did not run any tests.
+The fresh result exercises the real C ABI, not Rust compilation.
+D08 results are retained: 511 C# checks, 167 JVM (zero skips), 12 Android instrumentation.
+All 164 adapter and 288 Rust hashes match; D15 covers native A/B/provenance.
+These platform results are reused, not claimed as new executions.
+
+The historical next-steps list above is reconciled. Apple build/runtime and unavailable
+physical environments were skipped at the user's explicit request, not given PASS.
+Individual network/OS effects, actual QR/UI and network lifecycle belong to panel/client
+sections; bounded mutations do not close the full fuzz/DoS section 35.
+No new confirmed defects or removable dead runtime parsers were found.

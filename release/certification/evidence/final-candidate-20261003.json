@@ -1292,20 +1292,20 @@
     "physical_advisories": "21 original statuses retained, not PASS"
   },
   "certification_binding": {
-    "source_digest": "e5afcec9f8c674d021db76dfc204f7a3ec8dfb3b5186b588560223281ad49b0a",
+    "source_digest": "c995f3e503eb60243944ebf293208974281ae971b46c6aa6b43f8bcec6538692",
     "documentation_commit": "85afe70f88caf4cc2e4f797585d58e13d7441023",
     "qeli_tree": "f145eb20b133a1b6e36cd226583ab3ce94960270",
     "automated_cases_passed": 20,
     "physical_statuses_preserved": 21,
     "validation_errors": [],
     "docs_only_reconciliation": {
-      "prospective_index_tree": "f0d3e85e7e1c08628308dc6c205007f06d5645ba",
-      "purpose": "Section 01 review closure and section 02 applicable-test reconciliation; runtime inputs and artifacts unchanged",
+      "prospective_index_tree": "f849295ddc3cc9f3d9b6fa6d77e1bd940b3d894a",
+      "purpose": "Section 02 closure and section 03 initial static/JS evidence; runtime inputs and artifacts unchanged",
       "evidence": [
-        "release/certification/evidence/q01-reconciliation-20261003.json",
-        "release/certification/evidence/q02-reconciliation-20261003.json"
+        "release/certification/evidence/q02-reconciliation-20261003.json",
+        "release/certification/evidence/q03-initial-20261003.json"
       ],
-      "previous_source_digest": "361804bb9b3dc924ef1e55032dd00ebd6033993f2b3faa4896fabea5c5b645e0"
+      "previous_source_digest": "e5afcec9f8c674d021db76dfc204f7a3ec8dfb3b5186b588560223281ad49b0a"
     }
   }
 }
