@@ -163,3 +163,5 @@ explicitly reused, not executed again. Fresh Linux build/checks are recorded in
 [evidence](../../../release/certification/evidence/q03-remaining-20261003.json).
 Q03 remains IN_PROGRESS: notifications/quickstart/login and additional config
 keyboard/secret/revision scenarios still need completion.
+
+Q03-F005/F006/F007 fresh release SHA `dadbee830fb8e48279dbd83173dbc8db34b7e5bd4cc77df447a9c53885dc9b21`: 18 isolated cases / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks and bounded shutdown/recovery PASS. Eight pre-fix UI reproductions are preserved separately. Four additional Edge scenarios passed against merged WIP; live-users changes remain uncommitted. Complete snapshots, .11 service PID/start time and its working binary were preserved. Certification 20/20 is refreshed for this artifact; physical rows and older benchmark records are not requalified.

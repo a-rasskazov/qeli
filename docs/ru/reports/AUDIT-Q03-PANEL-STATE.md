@@ -175,3 +175,5 @@ Rust/manifests/native recipes неизменны: прежние 2257 unit и na
 [evidence](../../../release/certification/evidence/q03-remaining-20261003.json).
 Q03 остаётся IN_PROGRESS: notifications/quickstart/login и дополнительные
 keyboard/secret/revision сценарии config ещё требуют завершения.
+
+Для Q03-F005/F006/F007 свежий release SHA `dadbee830fb8e48279dbd83173dbc8db34b7e5bd4cc77df447a9c53885dc9b21`: 18 изолированных кейсов / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks и bounded shutdown/recovery PASS. Восемь воспроизведений исходного UI сохранены отдельно. Дополнительно четыре Edge-сценария merged WIP PASS; live users остаётся незакоммиченным. Полные snapshots, PID/start time службы .11 и рабочий бинарник сохранены. Сертификат 20/20 обновлён для этого артефакта; physical-строки и прежние benchmark records не переобъявлены.
