@@ -2600,3 +2600,7 @@ same TUN/network rules in parallel. [Validation](../reports/AUDIT-Q25-SERVER-SET
 <!-- normative-sync: manual-ws-write-v1 -->
 
 With fronting=websocket,the shared core flushes each protocol record,including handshake/ACK/heartbeat. Under backpressure,unsent bytes remain in the bounded writer and survive cancellation of a later operation. A fault after partial emission terminates that stream;do not resume it with the old cipher state—establish a new connection. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: manual-ws-read-v1 -->
+
+If WebSocket Upgrade fails,check that the intermediate HTTP endpoint preserves GET/HTTP/1.1,Host,Sec-WebSocket-Version13 and does not duplicate key/accept. Body,Transfer-Encoding,unoffered extensions/subprotocols and heads exceeding4096 bytes are unsupported. UnexpectedEof may indicate an unfinished frame or fragmented message. A later-frame failure follows already received payloads and requires a new connection. Configuration settings are unchanged;format remains INI. [Q12 report](../reports/AUDIT-Q12-TRANSPORTS.md).

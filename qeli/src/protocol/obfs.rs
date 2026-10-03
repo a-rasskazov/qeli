@@ -309,31 +309,23 @@ pub mod ws {
     /// Accepting only the status line allowed an HTTP endpoint (or active interceptor) to
     /// return an arbitrary 101 and move the client into the binary tunnel handshake.
     pub(super) fn validate_response(head: &[u8], expected_accept: &str) -> bool {
-        let text = String::from_utf8_lossy(head);
-        let mut status = text.split("\r\n").next().unwrap_or("").split_whitespace();
-        if status.next() != Some("HTTP/1.1") || status.next() != Some("101") {
+        let Some(head) = HttpHead::parse(head) else {
+            return false;
+        };
+        let Ok(status) = std::str::from_utf8(head.start) else {
+            return false;
+        };
+        if !status.starts_with("HTTP/1.1 101 ")
+            || !head.bodyless()
+            || head.has("sec-websocket-extensions")
+            || head.has("sec-websocket-protocol")
+        {
             return false;
         }
-        let upgrade_ok = header_value(head, "upgrade")
-            .map(|v| v.trim().eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
-        let connection_ok = header_value(head, "connection")
-            .map(|v| {
-                v.split(',')
-                    .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
-            })
-            .unwrap_or(false);
-        let accept_ok = header_value(head, "sec-websocket-accept")
-            .map(|value| {
-                value
-                    .trim()
-                    .as_bytes()
-                    .ct_eq(expected_accept.as_bytes())
-                    .unwrap_u8()
-                    == 1
-            })
-            .unwrap_or(false);
-        upgrade_ok && connection_ok && accept_ok
+        head.upgrade()
+            && head
+                .single("sec-websocket-accept")
+                .is_some_and(|v| v.as_bytes().ct_eq(expected_accept.as_bytes()).unwrap_u8() == 1)
     }
 
     /// Build the `101 Switching Protocols` response for a received request head, or
@@ -351,38 +343,26 @@ pub mod ws {
     /// base64. Anything else must get an ordinary error, not an upgrade.
     /// (Audit 2026-07-27, E1.)
     pub fn build_response(req_head: &[u8], key: &[u8; 32]) -> Option<Vec<u8>> {
-        let text = String::from_utf8_lossy(req_head);
-        let request_line = text.split("\r\n").next().unwrap_or("");
-        if !request_line.starts_with("GET ") {
+        let head = HttpHead::parse(req_head)?;
+        let request_line = std::str::from_utf8(head.start).ok()?;
+        let mut parts = request_line.split(' ');
+        if parts.next()? != "GET" {
             return None;
         }
-        // The request-target must be OUR endpoint. Until this check existed the target was
-        // never looked at, so a correct Upgrade to any random path came back `101` — which
-        // a server claiming to be nginx would never do for a location nobody configured.
-        // Constant-time compare: the path is PSK-derived material, so do not leak a prefix
-        // match through timing. (Audit 2026-08-04, M-06.)
-        let target = request_line
-            .strip_prefix("GET ")
-            .and_then(|r| r.split_whitespace().next())
-            .unwrap_or("");
+        let target = parts.next()?;
+        if parts.next()? != "HTTP/1.1" || parts.next().is_some() {
+            return None;
+        }
         let expected = derive_path(key);
-        if target.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
+        if target.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
+            || !head.upgrade()
+            || !head.bodyless()
+            || head.single("host").is_none_or(str::is_empty)
+            || head.single("sec-websocket-version") != Some("13")
+        {
             return None;
         }
-        let upgrade_ok = header_value(req_head, "upgrade")
-            .map(|v| v.trim().eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
-        // `Connection` may be a comma-separated list (`keep-alive, Upgrade`).
-        let connection_ok = header_value(req_head, "connection")
-            .map(|v| {
-                v.split(',')
-                    .any(|t| t.trim().eq_ignore_ascii_case("upgrade"))
-            })
-            .unwrap_or(false);
-        if !upgrade_ok || !connection_ok {
-            return None;
-        }
-        let ws_key = header_value(req_head, "sec-websocket-key")?;
+        let ws_key = head.single("sec-websocket-key")?;
         // RFC 6455: the key is exactly 16 random bytes, base64-encoded.
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(ws_key.trim())
@@ -470,17 +450,79 @@ pub mod ws {
         .into_bytes()
     }
 
-    /// Case-insensitive lookup of a header value in a raw HTTP head.
-    fn header_value(head: &[u8], name_lower: &str) -> Option<String> {
-        let text = String::from_utf8_lossy(head);
-        for line in text.split("\r\n") {
-            if let Some((k, v)) = line.split_once(':') {
-                if k.trim().eq_ignore_ascii_case(name_lower) {
-                    return Some(v.trim().to_string());
-                }
+    /// One bounded HTTP/1.1 head, parsed as bytes so opaque unused field values
+    /// may contain obs-text. Critical fields must be ASCII and unambiguous.
+    struct HttpHead<'a> {
+        start: &'a [u8],
+        fields: Vec<(&'a [u8], &'a [u8])>,
+    }
+    impl<'a> HttpHead<'a> {
+        fn parse(bytes: &'a [u8]) -> Option<Self> {
+            if bytes.len() > MAX_HEAD || !bytes.ends_with(b"\r\n\r\n") {
+                return None;
             }
+            let mut lines = bytes[..bytes.len() - 2].split_inclusive(|&b| b == b'\n');
+            let start = lines.next()?.strip_suffix(b"\r\n")?;
+            if start.is_empty() || start.iter().any(|&b| !(b' '..=b'~').contains(&b)) {
+                return None;
+            }
+            let mut fields = Vec::new();
+            for line in lines {
+                let line = line.strip_suffix(b"\r\n")?;
+                let colon = line.iter().position(|&b| b == b':')?;
+                let name = &line[..colon];
+                if name.is_empty()
+                    || !name
+                        .iter()
+                        .all(|&b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+                {
+                    return None;
+                }
+                let value = &line[colon + 1..];
+                if value.iter().any(|&b| (b < b' ' && b != b'\t') || b == 0x7f) {
+                    return None;
+                }
+                let value = value.trim_ascii();
+                fields.push((name, value));
+            }
+            Some(Self { start, fields })
         }
-        None
+        fn has(&self, name: &str) -> bool {
+            self.fields
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(name.as_bytes()))
+        }
+        fn single(&self, name: &str) -> Option<&'a str> {
+            let mut matches = self
+                .fields
+                .iter()
+                .filter(|(k, _)| k.eq_ignore_ascii_case(name.as_bytes()));
+            let (_, value) = matches.next()?;
+            if matches.next().is_some() || !value.is_ascii() {
+                return None;
+            }
+            std::str::from_utf8(value).ok()
+        }
+        fn upgrade(&self) -> bool {
+            self.single("upgrade")
+                .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+                && self
+                    .fields
+                    .iter()
+                    .filter(|(k, _)| k.eq_ignore_ascii_case(b"connection"))
+                    .any(|(_, v)| {
+                        v.is_ascii()
+                            && v.split(|&b| b == b',')
+                                .any(|token| token.trim_ascii().eq_ignore_ascii_case(b"upgrade"))
+                    })
+        }
+        fn bodyless(&self) -> bool {
+            !self.has("transfer-encoding")
+                && (!self.has("content-length")
+                    || self
+                        .single("content-length")
+                        .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b == b'0')))
+        }
     }
 
     /// Read an HTTP head (up to and including `\r\n\r\n`) from `inner`, bounded to
@@ -492,11 +534,11 @@ pub mod ws {
         loop {
             inner.read_exact(&mut byte).await?;
             buf.push(byte[0]);
-            if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
-                return Ok(buf);
-            }
             if buf.len() > MAX_HEAD {
                 return Err(io::Error::other("obfs ws: handshake head too large"));
+            }
+            if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
+                return Ok(buf);
             }
         }
     }
@@ -602,6 +644,8 @@ struct WsReframer {
     expected_masked: Option<bool>,
     /// Whether a fragmented binary message is awaiting continuation frames.
     fragment_open: bool,
+    /// Terminal parser/transport failure, reported after earlier payload drains.
+    error: Option<(io::ErrorKind, String)>,
     /// Raw wire bytes read but not yet parsed into completed frames.
     buf: Vec<u8>,
     /// Delivered (binary) payload bytes ready to hand to the caller.
@@ -686,6 +730,12 @@ impl WsReframer {
             }
             let l = u16::from_be_bytes([self.buf[off], self.buf[off + 1]]) as usize;
             off += 2;
+            if l < 126 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "obfs ws: nonminimal payload length",
+                ));
+            }
             l
         } else if len7 == 127 {
             if self.buf.len() < off + 8 {
@@ -702,6 +752,12 @@ impl WsReframer {
             // header travels in the clear over ChaCha20, so an on-path party can craft it.
             // (Audit 2026-07-27, F4.)
             let declared = u64::from_be_bytes(a);
+            if declared < 65536 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "obfs ws: nonminimal payload length",
+                ));
+            }
             if declared > WS_FRAME_MAX as u64 {
                 return Err(io::Error::other("obfs ws: frame payload exceeds cap"));
             }
@@ -792,13 +848,31 @@ impl WsReframer {
 
     /// Parse as many complete frames as are fully buffered.
     fn drain_frames(&mut self) -> io::Result<()> {
-        while !matches!(self.parse_one_frame()?, FrameParse::NeedMore) {}
+        if self.error.is_none() {
+            loop {
+                match self.parse_one_frame() {
+                    Ok(FrameParse::NeedMore) => break,
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.error = Some((e.kind(), e.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+        // A malformed later frame cannot erase earlier complete payloads. The
+        // inner PacketCodec still authenticates each delivered tunnel packet.
+        if self.available() == 0 {
+            if let Some((kind, message)) = &self.error {
+                return Err(io::Error::new(*kind, message.clone()));
+            }
+        }
         Ok(())
     }
 
     /// True when EOF would truncate a header, mask key or payload already started on wire.
     fn has_incomplete_frame(&self) -> bool {
-        !self.buf.is_empty()
+        !self.buf.is_empty() || self.fragment_open
     }
 
     /// Number of delivered payload bytes available to read.
@@ -1824,14 +1898,19 @@ fn ws_read<R: AsyncRead + Unpin>(
         }
         // Need more wire bytes.
         let mut rb = ReadBuf::new(&mut ws.read_scratch);
-        ready!(Pin::new(&mut *inner).poll_read(cx, &mut rb))?;
+        if let Err(e) = ready!(Pin::new(&mut *inner).poll_read(cx, &mut rb)) {
+            ws.reframer.error = Some((e.kind(), e.to_string()));
+            return Poll::Ready(Err(e));
+        }
         let filled = rb.filled().len();
         if filled == 0 {
             if ws.reframer.has_incomplete_frame() {
-                return Poll::Ready(Err(io::Error::new(
+                let e = io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "obfs ws: EOF in the middle of a frame",
-                )));
+                    "obfs ws: EOF in the middle of a frame or fragmented message",
+                );
+                ws.reframer.error = Some((e.kind(), e.to_string()));
+                return Poll::Ready(Err(e));
             }
             // Clean EOF at a frame boundary.
             return Poll::Ready(Ok(()));
@@ -2057,6 +2136,225 @@ impl AsyncWrite for ObfsWriteHalf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn q12r_request() -> (Vec<u8>, [u8; 32]) {
+        let key = [0x5a; 32];
+        (ws::build_request(Some("example.com"), &key), key)
+    }
+    fn q12r_response() -> (Vec<u8>, String) {
+        let (request, key) = q12r_request();
+        let response = ws::build_response(&request, &key).unwrap();
+        let accept = String::from_utf8(response.clone())
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("Sec-WebSocket-Accept: "))
+            .unwrap()
+            .to_owned();
+        (response, accept)
+    }
+    fn q12r_insert(head: &[u8], field: &str) -> Vec<u8> {
+        let mut out = head[..head.len() - 2].to_vec();
+        out.extend_from_slice(field.as_bytes());
+        out.extend_from_slice(b"\r\n");
+        out
+    }
+    #[test]
+    fn q12r_request_critical_fields() {
+        let (request, key) = q12r_request();
+        let text = String::from_utf8(request).unwrap();
+        for bad in [
+            text.replace("Host: example.com\r\n", ""),
+            text.replace("Sec-WebSocket-Version: 13\r\n", ""),
+            text.replace("Sec-WebSocket-Version: 13", "Sec-WebSocket-Version: 12"),
+            String::from_utf8(q12r_insert(text.as_bytes(), "Host: other\r\n")).unwrap(),
+            String::from_utf8(q12r_insert(
+                text.as_bytes(),
+                "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n",
+            ))
+            .unwrap(),
+        ] {
+            assert!(
+                ws::build_response(bad.as_bytes(), &key).is_none(),
+                "accepted {bad:?}"
+            );
+        }
+    }
+    #[test]
+    fn q12r_request_grammar_and_body() {
+        let (request, key) = q12r_request();
+        let text = String::from_utf8(request).unwrap();
+        for bad in [
+            text.replace("HTTP/1.1", "HTTP/1.0"),
+            text.replace("HTTP/1.1", "HTTP/1.1 extra"),
+            text.replace("Upgrade:", "Upgrade :"),
+            text.replace("Host:", " Host:"),
+            text.replace("example.com", "example\0.com"),
+            String::from_utf8(q12r_insert(text.as_bytes(), "Content-Length: 1\r\n")).unwrap(),
+            String::from_utf8(q12r_insert(
+                text.as_bytes(),
+                "Transfer-Encoding: chunked\r\n",
+            ))
+            .unwrap(),
+            text[..text.len() - 2].to_owned(),
+        ] {
+            assert!(
+                ws::build_response(bad.as_bytes(), &key).is_none(),
+                "accepted {bad:?}"
+            );
+        }
+    }
+    #[test]
+    fn q12r_response_critical_fields() {
+        let (response, accept) = q12r_response();
+        for field in [
+            format!("Sec-WebSocket-Accept: {accept}\r\n"),
+            "Upgrade: other\r\n".into(),
+            "Sec-WebSocket-Extensions: permessage-deflate\r\n".into(),
+            "Sec-WebSocket-Protocol: unexpected\r\n".into(),
+            "Content-Length: 1\r\n".into(),
+            "Transfer-Encoding: chunked\r\n".into(),
+        ] {
+            assert!(
+                !ws::validate_response(&q12r_insert(&response, &field), &accept),
+                "accepted {field:?}"
+            );
+        }
+    }
+    #[test]
+    fn q12r_response_grammar() {
+        let (response, accept) = q12r_response();
+        let text = String::from_utf8(response).unwrap();
+        for bad in [
+            text.replace("HTTP/1.1 101", "HTTP/1.1\t101"),
+            text.replace("Upgrade:", "Upgrade :"),
+            text.replace("Switching", "Switch\0ing"),
+            text[..text.len() - 2].to_owned(),
+        ] {
+            assert!(
+                !ws::validate_response(bad.as_bytes(), &accept),
+                "accepted {bad:?}"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn q12r_head_cap_includes_terminator() {
+        for length in [4096usize, 4097] {
+            let mut wire = vec![b'x'; length - 4];
+            wire.extend_from_slice(b"\r\n\r\n");
+            let result = ws::read_head(&mut wire.as_slice()).await;
+            assert_eq!(result.is_ok(), length == 4096, "head length {length}");
+        }
+    }
+    #[test]
+    fn q12r_rejects_nonminimal_u16_length() {
+        let mut r = WsReframer::default();
+        r.feed(&[0x82, 126, 0, 1, 7]);
+        assert!(r.drain_frames().is_err());
+    }
+    #[test]
+    fn q12r_rejects_nonminimal_u64_length() {
+        let mut r = WsReframer::default();
+        r.feed(&[0x82, 127, 0, 0, 0, 0, 0, 0, 0, 1, 7]);
+        assert!(r.drain_frames().is_err());
+    }
+    #[test]
+    fn q12r_preserves_payload_before_sticky_frame_error() {
+        let mut r = WsReframer::default();
+        r.feed(&[0x82, 3, 1, 2, 3, 0xf2, 0]);
+        r.drain_frames()
+            .expect("earlier completed payload must be delivered first");
+        let mut got = [0; 2];
+        assert_eq!(r.read_pending(&mut got), 2);
+        assert_eq!(got, [1, 2]);
+        r.drain_frames().unwrap();
+        let mut tail = [0];
+        r.read_pending(&mut tail);
+        assert_eq!(tail, [3]);
+        assert_eq!(
+            r.drain_frames().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        r.buf.clear();
+        r.feed(&[0x82, 1, 4]);
+        assert_eq!(
+            r.drain_frames().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(r.available(), 0);
+    }
+    #[tokio::test]
+    async fn q12r_fragment_boundary_eof_is_error() {
+        let mut inner = &[0x02, 1, 7][..];
+        let mut state = WsReadState {
+            reframer: WsReframer::default(),
+            read_scratch: vec![0; 128],
+        };
+        let mut cipher = cipher_from(&[7; 32], &[9; NONCE_LEN]);
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut dst = [0; 8];
+        let mut out = ReadBuf::new(&mut dst);
+        assert!(matches!(
+            ws_read(&mut inner, &mut cipher, &mut state, &mut cx, &mut out),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(out.filled().len(), 1);
+        for _ in 0..2 {
+            let mut out = ReadBuf::new(&mut dst);
+            assert!(
+                matches!(ws_read(&mut inner, &mut cipher, &mut state, &mut cx, &mut out), Poll::Ready(Err(e)) if e.kind()==io::ErrorKind::UnexpectedEof)
+            );
+        }
+    }
+
+    #[test]
+    fn q12r_valid_http_lists_obs_text_and_zero_body() {
+        let (request, key) = q12r_request();
+        let text = String::from_utf8(request).unwrap().replace(
+            "Connection: Upgrade",
+            "connection: keep-alive\r\nConnection: UpGrAdE",
+        );
+        let request = q12r_insert(text.as_bytes(), "Content-Length: 000\r\n");
+        let mut request = request[..request.len() - 2].to_vec();
+        request.extend_from_slice(b"X-Opaque: \xff\r\n\r\n");
+        let response = ws::build_response(&request, &key).unwrap();
+        let (_, accept) = q12r_response();
+        // A new random client key has a new accept token; extract this response's token.
+        let actual = String::from_utf8(response.clone())
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("Sec-WebSocket-Accept: "))
+            .unwrap()
+            .to_owned();
+        assert!(ws::validate_response(&response, &actual));
+        assert!(!ws::validate_response(&response, &format!("{accept}wrong")));
+        assert!(ws::validate_response(
+            &q12r_insert(&response, "Content-Length: 0\r\n"),
+            &actual
+        ));
+        assert!(ws::build_response(
+            &q12r_insert(&request, "Sec-WebSocket-Version: 13\r\n"),
+            &key
+        )
+        .is_none());
+        assert!(
+            ws::build_response(&q12r_insert(&request, "Bad-Name:\r\n\nX-Test: x\r\n"), &key)
+                .is_none()
+        );
+    }
+    #[test]
+    fn q12r_valid_fragmented_message_with_ping() {
+        let mut r = WsReframer::default();
+        for byte in [0x02, 1, 7, 0x89, 1, 9, 0x80, 1, 8] {
+            r.feed(&[byte]);
+            r.drain_frames().unwrap();
+        }
+        assert!(!r.has_incomplete_frame());
+        let mut got = [0; 2];
+        assert_eq!(r.read_pending(&mut got), 2);
+        assert_eq!(got, [7, 8]);
+        assert_eq!(*r.control_out.lock().unwrap(), vec![(0xA, vec![9])]);
+    }
 
     // Deterministic backpressure: a short prefix may reach the socket before it parks.
     #[derive(Default)]

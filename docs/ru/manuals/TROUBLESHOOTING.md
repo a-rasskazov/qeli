@@ -2609,3 +2609,7 @@ TUN/NAT/NDP, `post_up`, DNS и bind каждого `listen`. Ошибка `liste
 <!-- normative-sync: manual-ws-write-v1 -->
 
 При fronting=websocket общий core завершает отправку каждого protocol record через flush,включая handshake/ACK/heartbeat. При backpressure непереданные байты остаются в bounded writer и не теряются при отмене следующей операции. Ошибка после частичной отправки закрывает этот поток; восстанавливать его с прежним cipher state нельзя — требуется новое соединение. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: manual-ws-read-v1 -->
+
+При отказе WebSocket Upgrade проверьте,что промежуточный HTTP endpoint передаёт GET/HTTP/1.1,Host,Sec-WebSocket-Version13 и не дублирует ключ/accept. Body,Transfer-Encoding,незапрошенные extensions/subprotocol и head свыше4096 байт не поддерживаются. UnexpectedEof может означать незавершённый кадр или fragmented message. Ошибка следующего кадра возвращается после уже полученных данных и требует нового соединения. Настройки конфигурации не изменились;формат INI. [Отчёт Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

@@ -719,3 +719,7 @@ CLI/cross-language KAT. UI reachability теперь вызывает Rust ABI 1
 <!-- normative-sync: core-ws-write-v1 -->
 
 Общий WS writer принимает максимум 16384 байта данных за poll,учитывает owned bytes один раз и допускает отмену Pending с заменой входного буфера. Flush/shutdown отправляют owned frames и bounded control replies; outbound write/flush fault остаётся terminal. Handshake,ACK и data/cover record границы daemon/native core используют один write-all-and-flush helper перед ожиданием ответа или фиксацией доставки. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: core-ws-read-v1 -->
+
+HTTP Upgrade использует общий bounded parser: head до 4096 байт включая CRLFCRLF,GET/HTTP/1.1,Host,версия13,однозначные ключ/accept;body запрещён кроме Content-Length0. Клиент не принимает незапрошенные extensions/subprotocol. Inbound WS lengths минимальны при payload cap16384;незавершённая фрагментация при EOF — UnexpectedEof. Уже готовые данные выдаются до сохранённой ошибки следующего кадра;дальнейший разбор не возобновляется. Inner AEAD обязателен. [Проверки Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
