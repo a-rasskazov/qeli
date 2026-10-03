@@ -90,6 +90,7 @@ impl Control {
                             base.add(offset + header_len).cast::<libc::in6_pktinfo>(),
                         )
                     };
+                    #[allow(clippy::useless_conversion)] // Android: i32 -> u32; Linux: u32 -> u32.
                     let interface = info
                         .ipi6_ifindex
                         .try_into()
@@ -121,6 +122,7 @@ impl Control {
     ) -> io::Result<()> {
         // Android libc uses a signed ipi6_ifindex; Linux uses an unsigned field.
         // Reject an unrepresentable scope instead of wrapping it onto another interface.
+        #[allow(clippy::useless_conversion)] // Android: u32 -> i32; Linux: u32 -> u32.
         let interface = source
             .scope
             .try_into()
