@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v23 -->
+<!-- normative-sync: full-system-audit-v24 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -149,7 +149,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 07 | Backup, restore and history | H03–H04, H08, H10 | PASS |
 | 08 | Cryptography, identity and keys | H01, H04, H08 | DONE |
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | DONE |
-| 10 | PacketCodec, replay and control framing | H01, H04, H08 | TODO |
+| 10 | PacketCodec, replay and control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | IN_PROGRESS |
 | 12 | Transports and wire camouflage | H02, H07–H08 | TODO |
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | TODO |
@@ -430,13 +430,15 @@ Lengths 0/min/max/overflow, AEAD tags, sequences around 2^63/2^64, replay window
 
 **Existing harness/fixtures:** `conformance/packet-decode.json`, `conformance/replay-window.json`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: DONE.**
+
+**3 October,Q10 completed:** [PacketCodec/replay/CONTROL_V2](../reports/AUDIT-Q10-CODEC-CONTROL.md): Q10-F001–F003,2307 units,two bounded ASan fuzz campaigns,fresh matrix/terminal/soak/native qualification PASS. Overall plan:10/37 DONE/PASS (27.0%). Next section:Q11.
 
 ### 11. REALITY, TLS 1.3 and HTTP/2
 

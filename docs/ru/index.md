@@ -363,3 +363,5 @@
 - [Q09: TCP-аутентификация и ClientHello](reports/AUDIT-Q09-TCP-PARSER.md)
 - [Q09: UDP handshake и admission](reports/AUDIT-Q09-UDP-CONTRACTS.md)
 - [Q09: итоговый аудит и сохранение KICK](reports/AUDIT-Q09-FINAL.md)
+
+- [Q10: PacketCodec, replay и CONTROL_V2](reports/AUDIT-Q10-CODEC-CONTROL.md)

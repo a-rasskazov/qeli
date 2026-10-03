@@ -94,6 +94,13 @@ path = "fuzz_targets/ip_packet.rs"
 test = false
 doc = false
 bench = false
+[[bin]]
+name = "control_v2"
+path = "fuzz_targets/control_v2.rs"
+test = false
+doc = false
+bench = false
+
 # cargo-fuzz needs some debuginfo in release for useful crash backtraces.
 [profile.release]
 debug = 1

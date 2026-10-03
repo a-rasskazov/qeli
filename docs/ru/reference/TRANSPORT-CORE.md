@@ -92,6 +92,10 @@ Authenticated `KICK` сохраняет `reconnect_allowed` при одновр�
 доставку непрочитанных/потерянных bytes или показ события неисправным UI. Обычный EOF
 без KICK сохраняет штатную reconnect policy. [Проверки](../reports/AUDIT-Q09-FINAL.md).
 
+<!-- normative-sync: core-management-receipts-v1 -->
+
+ACK management-сообщения требует полного корректного payload. Повтор фрагмента до завершения сборки, неверный KICK и конфликт содержимого под прежним ID не подтверждаются. Точный повтор принятого сообщения подтверждается снова; повтор отправляется в новом authenticated PacketCodec record, поскольку повтор ciphertext отсекает replay window. [Проверки Q10](../reports/AUDIT-Q10-CODEC-CONTROL.md).
+
 ## 1. Вердикт: чем это оправдано, а чем — нет
 
 **Оправдано расхождением реализаций. Не оправдано скоростью.**

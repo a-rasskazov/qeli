@@ -91,6 +91,10 @@ record queue before stream-loss notification. This cannot guarantee unread/lost 
 delivery or event presentation by a failing UI. Ordinary EOF without KICK keeps normal
 reconnect policy. [Validation](../reports/AUDIT-Q09-FINAL.md).
 
+<!-- normative-sync: core-management-receipts-v1 -->
+
+A management ACK requires a complete valid payload. Repeating an unfinished fragment, malformed KICK or conflicting contents under an old ID receives no receipt. An exact repeat of an accepted message is ACKed again; it must use a newly authenticated PacketCodec record, because the replay window rejects repeated ciphertext. [Q10 validation](../reports/AUDIT-Q10-CODEC-CONTROL.md).
+
 ## 1. The verdict: what justifies this, and what does not
 
 **Justified by implementation divergence. Not justified by speed.**

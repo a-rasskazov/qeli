@@ -2699,7 +2699,7 @@ fn consume_authenticated_management(
         requested_ack = (frame.flags & crate::protocol::control_v2::FLAG_ACK_REQUIRED != 0)
             .then_some(frame.message_id);
         crate::util::lock_or_recover(reassembler, "client::management_reassembler")
-            .push(std::time::Instant::now(), frame)
+            .push_management(std::time::Instant::now(), frame)
     });
     let mut ack_message_id = None;
     match outcome {
@@ -3413,6 +3413,87 @@ mod management_event_tests {
     }
 
     #[test]
+    fn partial_kick_retransmission_is_not_a_message_receipt() {
+        let reassembler = std::sync::Mutex::new(Reassembler::new());
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        let kick = ManagementEvent::Kick(Kick {
+            reason: KickReason::Administrative,
+            message: "Session stopped".to_string(),
+            reconnect_allowed: false,
+        });
+        let wire = crate::protocol::control_v2::management_frames(&kick, 31)
+            .unwrap()
+            .remove(0);
+        let frame = crate::protocol::control_v2::decode(&wire).unwrap();
+        let cut = frame.payload.len() / 2;
+        let first = Frame {
+            part_count: 2,
+            payload: &frame.payload[..cut],
+            ..frame
+        }
+        .encode()
+        .unwrap();
+        let last = Frame {
+            part_index: 1,
+            part_count: 2,
+            payload: &frame.payload[cut..],
+            ..frame
+        }
+        .encode()
+        .unwrap();
+        for _ in 0..2 {
+            let result =
+                consume_authenticated_management(&first, true, &reassembler, &sender, None);
+            assert_eq!(result.ack_message_id, None);
+            assert!(receiver.borrow().is_none());
+        }
+        assert_eq!(
+            consume_authenticated_management(&last, true, &reassembler, &sender, None)
+                .ack_message_id,
+            Some(31)
+        );
+        assert_eq!(receiver.borrow().as_ref(), Some(&kick));
+        assert_eq!(
+            consume_authenticated_management(&first, true, &reassembler, &sender, None)
+                .ack_message_id,
+            Some(31)
+        );
+    }
+
+    #[test]
+    fn completed_notice_id_does_not_ack_a_conflicting_kick() {
+        let reassembler = std::sync::Mutex::new(Reassembler::new());
+        let (sender, receiver) = tokio::sync::watch::channel(None);
+        let notice = ManagementEvent::Notice(Notice {
+            kind: NoticeKind::Administrative,
+            severity: NoticeSeverity::Info,
+            message: "Maintenance".to_string(),
+            value: None,
+            deadline_unix: None,
+        });
+        let wire = crate::protocol::control_v2::management_frames(&notice, 32)
+            .unwrap()
+            .remove(0);
+        consume_authenticated_management(&wire, true, &reassembler, &sender, None);
+        let bad = Frame {
+            message_type: TYPE_KICK,
+            flags: FLAG_ACK_REQUIRED,
+            message_id: 32,
+            part_index: 0,
+            part_count: 1,
+            payload: b"{}",
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(
+            consume_authenticated_management(&bad, true, &reassembler, &sender, None)
+                .ack_message_id,
+            None
+        );
+        assert_eq!(receiver.borrow().as_ref(), Some(&notice));
+    }
+
+    #[test]
     fn valid_kick_queues_exact_ack_but_invalid_payload_is_never_acknowledged() {
         let reassembler = std::sync::Mutex::new(Reassembler::new());
         let (sender, receiver) = tokio::sync::watch::channel(None);
@@ -3456,16 +3537,18 @@ mod management_event_tests {
         }
         .encode()
         .unwrap();
-        let malformed_result = consume_authenticated_management(
-            &malformed,
-            true,
-            &reassembler,
-            &sender,
-            Some(&terminal_sender),
-        );
-        assert!(malformed_result.consumed);
-        assert_eq!(malformed_result.ack_message_id, None);
-        assert!(terminal_receiver.try_recv().is_err());
+        for _ in 0..2 {
+            let malformed_result = consume_authenticated_management(
+                &malformed,
+                true,
+                &reassembler,
+                &sender,
+                Some(&terminal_sender),
+            );
+            assert!(malformed_result.consumed);
+            assert_eq!(malformed_result.ack_message_id, None);
+            assert!(terminal_receiver.try_recv().is_err());
+        }
     }
 }
 

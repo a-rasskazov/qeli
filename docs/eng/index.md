@@ -363,3 +363,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q09: TCP authentication and ClientHello](reports/AUDIT-Q09-TCP-PARSER.md)
 - [Q09: UDP handshake and admission](reports/AUDIT-Q09-UDP-CONTRACTS.md)
 - [Q09: final audit and KICK retention](reports/AUDIT-Q09-FINAL.md)
+
+- [Q10: PacketCodec, replay and CONTROL_V2](reports/AUDIT-Q10-CODEC-CONTROL.md)

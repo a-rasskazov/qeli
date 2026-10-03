@@ -1040,6 +1040,10 @@ history of every retry. User hook scripts may still change firewall state indepe
 
 ---
 
+<!-- normative-sync: manual-management-receipts-v1 -->
+
+A management ACK requires a complete valid payload. Repeating an unfinished fragment, malformed KICK or conflicting contents under an old ID receives no receipt. An exact repeat of an accepted message is ACKed again; it must use a newly authenticated PacketCodec record, because the replay window rejects repeated ciphertext. [Q10 validation](../reports/AUDIT-Q10-CODEC-CONTROL.md).
+
 ### 6.22 TCP: shutdown waits for background work
 
 Normal shutdown closes TCP-task admission and joins readers/writers, the decrypt pipeline
