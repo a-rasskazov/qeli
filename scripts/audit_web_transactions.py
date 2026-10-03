@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -172,6 +172,154 @@ obf.mode = fake-tls
    stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
   print(('PASS' if complete else 'FAIL')+' Q07 '+str(len(checks))+' checks',flush=True)
   if not complete:raise SystemExit(1)
+
+ elif a.scenario=='archive-policy':
+  import io,tarfile,fcntl
+  def archive(items):
+   out=io.BytesIO()
+   with tarfile.open(fileobj=out,mode='w:gz') as tar:
+    for name,data in items.items():
+     data=data.encode() if isinstance(data,str) else data;t=tarfile.TarInfo(name);t.size=len(data);t.mode=0o600;tar.addfile(t,io.BytesIO(data))
+   return out.getvalue()
+  def contents():return {'qeli/server.conf':cfg.read_bytes(),'qeli/users.conf':Path('/etc/qeli/users.conf').read_bytes(),'qeli/identity/fixture.key':Path('/etc/qeli/identity/fixture.key').read_bytes()}
+  def probe(label,items,path='/api/restore',protected=None):
+   previous=cfg.read_bytes();saved=protected.read_bytes() if protected else None;r=req(path,'POST',archive(items),headers=basic());ok=r[0] in (400,409,422) and r[1].get('ok') is not True and cfg.read_bytes()==previous and (not protected or protected.read_bytes()==saved)
+   checks.append(dict(name=label,status='PASS' if ok else 'FAIL',detail={'http_status':r[0],'response':r[1]}));save();print(('PASS ' if ok else 'FAIL ')+label,flush=True)
+   for name in items:
+    if name not in good and not name.startswith('qeli/.pre-restore-'):Path('/etc').joinpath(name).unlink(missing_ok=True)
+   if protected and saved is not None:protected.write_bytes(saved)
+  try:
+   start();good=contents()
+   for value in ['tru','2','', 'undefined']:probe('invalid exact query '+repr(value),good,'/api/restore?exact='+value)
+   for suffix in ['ini','conf']:
+    probe('new client command '+suffix,{**good,'qeli/client.'+suffix:'[qeli]\nserver=h:443\nuser=a\npassword_command=/bin/false\n'})
+   saved=Path('/etc/qeli/.pre-restore-1700000000-1-1.tgz');saved.write_bytes(archive(good));probe('archive cannot overwrite rollback snapshot',{**good,'qeli/'+saved.name:b'corrupt'},protected=saved)
+   history=Path('/etc/qeli/.config-history');history.mkdir(exist_ok=True);snapshot=history/'1700000000-aabbccddeeff.conf';snapshot.write_bytes(cfg.read_bytes());probe('archive cannot replace history snapshot',{**good,'qeli/.config-history/'+snapshot.name:cfg.read_bytes()+b'\n# overwritten\n'},protected=snapshot)
+   # An otherwise invalid archive must not rotate the previous rollback set.
+   for p in Path('/etc/qeli').glob('.pre-restore-*.tgz'):p.unlink()
+   for i in range(5):p=Path('/etc/qeli/.pre-restore-'+str(1700000000+i)+'-1-1.tgz');p.write_bytes(archive(good));os.utime(p,(1700000000+i,1700000000+i))
+   previous={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/etc/qeli').glob('.pre-restore-*.tgz')};bad=dict(good);bad['qeli/server.conf']=b'invalid';r=req('/api/restore','POST',archive(bad),headers=basic());after={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/etc/qeli').glob('.pre-restore-*.tgz')};ok=r[0]==400 and previous==after;checks.append(dict(name='invalid content preserves all previous rollback snapshots',status='PASS' if ok else 'FAIL',detail={'before':list(previous),'after':list(after)}));save();print(('PASS ' if ok else 'FAIL ')+'invalid retention',flush=True)
+   # Legacy lexicographic timestamp/PID/sequence ordering can remove a newer file.
+   for p in Path('/etc/qeli').glob('.pre-restore-*.tgz'):p.unlink()
+   future=int(time.time())+100
+   seeded=[]
+   for seq in range(7,13):p=Path(f'/etc/qeli/.pre-restore-{future}-1-{seq}.tgz');p.write_bytes(archive(good));os.utime(p,(1700000000+seq,1700000000+seq));seeded.append(p)
+   r=req('/api/restore','POST',archive(good),headers=basic());remaining=list(Path('/etc/qeli').glob('.pre-restore-*.tgz'));ok=r[0]==200 and seeded[-1].exists() and not seeded[0].exists() and len(remaining)==5;checks.append(dict(name='rotation keeps chronologically newest snapshot across sequence digits',status='PASS' if ok else 'FAIL',detail={'remaining':[p.name for p in remaining]}));save();print(('PASS ' if ok else 'FAIL ')+'rotation chronology',flush=True)
+   for label,target in [('users',Path('/etc/qeli/users.conf')),('identity',Path('/etc/qeli/identity/fixture.key'))]:
+    fd=os.open(str(target)+'.lock',os.O_CREAT|os.O_RDWR,0o600);fcntl.flock(fd,fcntl.LOCK_EX)
+    try:
+     t=time.monotonic();r=req('/api/restore','POST',archive(good),headers=basic());ok=r[0] in (409,500) and r[1].get('ok') is False and time.monotonic()-t<8;checks.append(dict(name='restore respects external '+label+' writer lock',status='PASS' if ok else 'FAIL',detail={'http_status':r[0],'response':r[1]}));save();print(('PASS ' if ok else 'FAIL ')+'external '+label+' lock',flush=True)
+    finally:fcntl.flock(fd,fcntl.LOCK_UN);os.close(fd)
+   r=req('/api/restore','POST',archive(good),headers=basic());check('restore recovers after refusal cases',r[0]==200 and r[1].get('ok') is True,r[1]);complete=all(c['status']=='PASS' for c in checks)
+  finally:
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  print(('PASS' if complete else 'FAIL')+' Q07 policy '+str(len(checks))+' checks',flush=True)
+  if not complete:raise SystemExit(1)
+ elif a.scenario=='archive-faults':
+  import io,tarfile,fcntl
+  def archive(items):
+   out=io.BytesIO()
+   with tarfile.open(fileobj=out,mode='w:gz') as tar:
+    for name,data in items.items():
+     t=tarfile.TarInfo('qeli/'+name);t.size=len(data);t.mode=0o600;tar.addfile(t,io.BytesIO(data))
+   return out.getvalue()
+  def record(name,ok,detail=None):
+   # Continue independent baseline probes; the final result still fails closed.
+   checks.append(dict(name=name,status='PASS' if ok else 'FAIL',detail=detail));save();print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+  def current():return {n:Path('/etc/qeli',n).read_bytes() for n in ['server.conf','users.conf','identity/fixture.key']}
+  def unpack(path):
+   with tarfile.open(path,mode='r:gz') as tar:return {m.name:tar.extractfile(m).read() for m in tar if m.isfile()}
+  shim_c=r"""
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+static char last[128]; static int count;
+static int action(char *mode) {
+ char b[128]={0};int fd=open("/tmp/q07-action",O_RDONLY);if(fd<0)return 0;
+ ssize_t n=read(fd,b,127);close(fd);if(n<=0)return 0;
+ int pid=0;if(sscanf(b,"%d %63s",&pid,mode)!=2 || pid!=getpid())return 0;
+ if(strcmp(last,b)){strcpy(last,b);count=0;}return 1;
+}
+static void mark(const char *mode) {
+ int fd=open("/tmp/q07-event",O_CREAT|O_TRUNC|O_WRONLY,0600);
+ if(fd>=0){ssize_t n=write(fd,mode,strlen(mode));(void)n;close(fd);}
+}
+static void gate(const char *mode) {mark(mode);while(access("/tmp/q07-action",F_OK)==0)usleep(10000);}
+int rename(const char *old,const char *next) {
+ static int(*real)(const char*,const char*);if(!real)real=dlsym(RTLD_NEXT,"rename");
+ char mode[64];int target=strstr(old,"/.restore-staging-") && !strncmp(next,"/etc/qeli/",10) && !strstr(next,"/.restore-staging-");
+ if(!target || !action(mode))return real(old,next);
+ count++;
+ if(count==2 && !strncmp(mode,"fail-",5)){mark(mode);errno=!strcmp(mode,"fail-space")?ENOSPC:!strcmp(mode,"fail-permission")?EACCES:EIO;return -1;}
+ if(count==1 && !strcmp(mode,"crash-before"))gate(mode);
+ int rc=real(old,next);
+ if(rc==0 && count==1 && !strcmp(mode,"crash-after"))gate(mode);
+ return rc;
+}
+int unlink(const char *path) {
+ static int(*real)(const char*);if(!real)real=dlsym(RTLD_NEXT,"unlink");char mode[64];
+ if(!strcmp(path,"/etc/qeli/prune-fault.txt") && action(mode) && !strcmp(mode,"prune")){mark(mode);errno=EACCES;return -1;}return real(path);
+}
+"""
+  shim=Path('/tmp/q07-fault.so');c=Path('/tmp/q07-fault.c');c.write_text(shim_c);run(['gcc','-shared','-fPIC','-O2','-Wall','-Wextra','-Werror','-o',str(shim),str(c),'-ldl']);env['LD_PRELOAD']=str(shim)
+  action=Path('/tmp/q07-action');event=Path('/tmp/q07-event');nonce=0
+  def arm(mode):
+   nonlocal nonce
+   nonce+=1;event.unlink(missing_ok=True);action.write_text(f'{sup.pid} {mode} {nonce}')
+  def recover(bak,previous,label):
+   check(label+' snapshot contains exact previous dependency bytes',all(unpack(bak).get('qeli/'+n)==v for n,v in previous.items()))
+   check(label+' snapshot private mode',bak.stat().st_mode&0o777==0o600)
+   run(['tar','-xzf',str(bak),'-C','/etc']);check(label+' manual snapshot recovery restores bytes',current()==previous)
+  def candidate(previous):return {**previous,'server.conf':previous['server.conf']+b'\n# Q07 new candidate\n','users.conf':previous['users.conf']+b'\n# Q07 new users\n','identity/fixture.key':hashlib.sha256(b'Q07 new identity').digest()}
+  def worker():
+   m=re.search(r'127\.0\.0\.1:24843\s+.*pid=(\d+)',run(['ss','-lntp']));return int(m[1]) if m else None
+  try:
+   start();check('fault shim is loaded only in owned private supervisor',str(shim) in Path('/proc/'+str(sup.pid)+'/maps').read_text())
+   for mode in ['fail-io','fail-space','fail-permission']:
+    previous=current();arm(mode);r=req('/api/restore','POST',archive(candidate(previous)),headers=basic());action.unlink(missing_ok=True)
+    check(mode+' actual fault reached',event.exists() and event.read_text()==mode)
+    bak=Path(r[1]['rollback_snapshot']) if r[1].get('rollback_snapshot') else max(Path('/etc/qeli').glob('.pre-restore-*.tgz'),key=lambda p:p.stat().st_mtime_ns)
+    record(mode+' API refuses partial publication with recovery metadata',r[0]==500 and r[1].get('ok') is False and r[1].get('publication_started') is True and bak.is_file(),r[1])
+    changes=sum(current()[n]!=v for n,v in previous.items());check(mode+' one file changed before second rename failed',changes==1,changes);recover(bak,previous,mode)
+    check(mode+' healthy panel remains available without implicit restart',req('/api/status',headers=basic())[0]==200 and sup.poll() is None)
+   previous=current();stale=Path('/etc/qeli/prune-fault.txt');stale.write_bytes(b'preserved by rollback');arm('prune');r=req('/api/restore?exact=1','POST',archive(candidate(previous)),headers=basic());action.unlink(missing_ok=True)
+   check('exact prune fault actually reached',event.exists() and event.read_text()=='prune')
+   bak=Path(r[1]['rollback_snapshot']) if r[1].get('rollback_snapshot') else max(Path('/etc/qeli').glob('.pre-restore-*.tgz'),key=lambda p:p.stat().st_mtime_ns);record('exact prune failure is not reported as success',r[0]==500 and r[1].get('ok') is False and r[1].get('publication_started') is True and bak.is_file(),r[1]);recover(bak,previous,'prune');check('prune recovery contains stale file',stale.read_bytes()==b'preserved by rollback');stale.unlink()
+   # An absent directory containing a held sidecar must retain its inode/lock.
+   folder=Path('/etc/qeli/obsolete');folder.mkdir();(folder/'data.txt').write_bytes(b'obsolete');lock=folder/'data.txt.lock';fd=os.open(lock,os.O_CREAT|os.O_RDWR,0o600);inode=os.fstat(fd).st_ino;fcntl.flock(fd,fcntl.LOCK_EX)
+   try:
+    r=req('/api/restore?exact=1','POST',archive(current()),headers=basic());check('exact prunes ordinary contents of absent directory',r[0]==200 and r[1].get('ok') is True and not (folder/'data.txt').exists(),r[1]);record('exact preserves absent directory held lock inode',lock.exists() and lock.stat().st_ino==inode)
+    folder.mkdir(exist_ok=True);other=os.open(lock,os.O_CREAT|os.O_RDWR,0o600)
+    try:
+     held=False
+     try:fcntl.flock(other,fcntl.LOCK_EX|fcntl.LOCK_NB)
+     except BlockingIOError:held=True
+     record('external writer lock still excludes second writer after exact',held)
+    finally:os.close(other)
+   finally:fcntl.flock(fd,fcntl.LOCK_UN);os.close(fd);lock.unlink(missing_ok=True);folder.rmdir()
+   alias=current();alias['server.conf']=alias['server.conf'].replace(b'/etc/qeli/users.conf',b'/etc/qeli/./users.conf');t=time.monotonic();r=req('/api/restore','POST',archive(alias),headers=basic());check('equivalent dependency paths do not self-deadlock',r[0]==200 and r[1].get('ok') is True and time.monotonic()-t<5,r[1]);cfg.write_bytes(cfg.read_bytes().replace(b'/etc/qeli/./users.conf',b'/etc/qeli/users.conf'))
+   for mode in ['crash-before','crash-after']:
+    previous=current();oldsnaps=set(Path('/etc/qeli').glob('.pre-restore-*.tgz'));arm(mode)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+     pending=pool.submit(req,'/api/restore','POST',archive(candidate(previous)),basic());wait(lambda:event.exists() and event.read_text()==mode,'publication crash gate not reached')
+     new=set(Path('/etc/qeli').glob('.pre-restore-*.tgz'))-oldsnaps;check(mode+' rollback snapshot persisted before publication gate',len(new)==1);bak=new.pop();changes=sum(current()[n]!=v for n,v in previous.items());check(mode+' expected publication state before crash',changes==(0 if mode=='crash-before' else 1),changes)
+     wp=worker();check(mode+' worker belongs to owned supervisor',wp is not None and Path('/proc/'+str(wp)+'/status').read_text().split('PPid:')[1].split()[0]==str(sup.pid));os.kill(wp,signal.SIGKILL);sup.kill();sup.wait(timeout=10);stream.close();action.unlink(missing_ok=True)
+     disconnected=False
+     try:response=pending.result(timeout=10);disconnected=response[0]!=200 or response[1].get('ok') is not True
+     except (ConnectionError,OSError,http.client.HTTPException):disconnected=True
+     check(mode+' crash never returns false success',disconnected)
+    recover(bak,previous,mode);start();check(mode+' recovered fresh worker authenticates with original identity',current()==previous and login()[0]==200)
+   complete=all(x['status']=='PASS' for x in checks)
+  finally:
+   action.unlink(missing_ok=True);stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  print(('PASS' if complete else 'FAIL')+' Q07 publication '+str(len(checks))+' checks',flush=True)
+  if not complete:raise SystemExit(1)
+
  elif a.scenario=='basic':
   history=cfg.parent/'.config-history';mounted=[]
   def api(path,method='GET',body=None):

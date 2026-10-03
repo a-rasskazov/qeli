@@ -1,6 +1,6 @@
-# Q07: backup, restore и history — первый пакет
+# Q07: backup, restore и history — пакеты 1–2
 
-<!-- normative-sync: audit-q07-backup-restore-v1 -->
+<!-- normative-sync: audit-q07-backup-restore-v2 -->
 
 Дата: 3 октября 2026. **Пакет: PASS; полный Q07: IN_PROGRESS.**
 Конфигурации остаются INI; JSON используется для служебных ответов API/evidence.
@@ -46,13 +46,13 @@ Clippy и rustfmt PASS. Native и release qualification указаны в eviden
 
 ## Оставшийся Q07
 
-Полный Q07 пока не закрыт. Следующий пакет: отказы и crash во время multi-file
-publication/prune, доказательство ручного recovery из rollback snapshot, внешний
-users/identity writer, mixed inline/external users и panel-secret, retention и
-запрет подмены операционных snapshots, остальные INI trust boundaries и строгий
-разбор exact query. Старый history positive/fault набор проверен, но архивная
-публикация всех файлов не является атомарной транзакцией и автоматического rollback
-сейчас нет. Это отражено в прежнем [отчёте бюджета](AUDIT-Q05-ARCHIVE-BUDGET.md).
+Полный Q07 пока не закрыт. После второго пакета остаются fresh restore со
+смешанными inline/external users и проверка жизненного цикла panel-secret.
+Дополнительно нужно проверить отказы подготовки именно архивного restore
+(реальные ENOSPC/read-only и отмена HTTP), не подменяя их уже прошедшими
+Q05 history tests. Multi-file publication не является атомарной транзакцией;
+автоматического rollback нет. Power loss и несогласованные root writes не
+сертифицированы. [Отчёт бюджета](AUDIT-Q05-ARCHIVE-BUDGET.md).
 
 Рабочие службы и binaries не заменялись. Все полные .11 snapshots совпали.
 SDK .10 A/B прошёл; default/explicit legacy IPv4 firewall dumps отличаются,
@@ -65,3 +65,40 @@ SHA; завершённый lint cache удалён, исходники и test 
 [Свидетельства первого пакета](../../../release/certification/evidence/q07-backup-restore-20261003.json).
 
 Квалификация этого release: свежие 18/327 matrix, aggregate leak и 100 TCP + 100 QUIC / 33 soak checks PASS. Все четыре native cores прошли A/B и побайтно совпали с Q06; canonical/client copies и ABI/provenance согласованы.
+
+## Второй пакет: publication, recovery и локальное состояние
+
+Финальный release: `771d3a40b11867ce09b7fda0b212bec02a74b8d746e2f7c0b782974c216a13ef`.
+
+| ID | Проблема | Исправление |
+| --- | --- | --- |
+| Q07-F005, P2 | Неизвестное или пустое `exact` молча означало overlay. | Строгий разбор: HTTP 400 до начала restore. |
+| Q07-F006, P1 | Новые клиентские `.ini` обходили file-only проверку `password_command`, действовавшую только для `.conf`. | Оба расширения проходят общий trust checker; notify.ini — отдельный штатный парсер. |
+| Q07-F007, P1 | Архив мог заменить локальные rollback/history snapshots. | Операционные пути запрещены в staging на любом уровне. |
+| Q07-F008, P2 | Невалидный архив создавал новый snapshot и ротировал прежние до содержательной проверки. | Snapshot после vet/preflight/locks; ротация только после полного успеха. |
+| Q07-F009, P2 | Сортировка имени timestamp/PID/sequence удаляла более новый snapshot при переходе 9→10. | Сортировка mtime с path tie-break; текущий snapshot никогда не удаляется. |
+| Q07-F010, P1 | Restore игнорировал внешний FileLock users/identity. | Детерминированные locks управляемых зависимостей старого и нового config; canonical aliases дедуплицируются. |
+| Q07-F011, P1 | Exact удалял held `.lock` вместе с целиком отсутствующим каталогом, позволяя второму writer захватить другой inode. | Рекурсивная очистка обычных файлов сохраняет вложенные sidecars и их каталоги. |
+| Q07-F012, P2 | После частичного rename отказ не указывал recovery snapshot и состояние публикации. | HTTP 500 / ok=false, publication_started=true, rollback_snapshot и инструкция восстановления до рестарта. |
+| Q07-F013, P2 | Exact cleanup errors возвращали успех с предупреждением, хотя rollback был неполным. | Неуспех с теми же recovery metadata; snapshot сохраняется. |
+
+На предыдущем точном release: policy **11 FAIL из 14**, publication **6 FAIL из 49**.
+Шесть publication failures: три отсутствующих recovery metadata для EIO/ENOSPC/EACCES,
+ложный успех prune и два доказательства уничтоженного inode/разделённого flock.
+Baseline продолжает независимые probes, но итог FAIL; успешный ручной recovery
+старого release не ошибочно объявляется новым исправлением.
+
+Новый release: **14 policy + 49 publication + 38 archive + 75 history = 176 checks PASS**.
+EIO/ENOSPC/EACCES второго rename и EACCES prune внедрены process-scoped LD_PRELOAD
+только в собственный supervisor внутри проверенных private namespaces; это не
+реальное заполнение диска и не замена host syscall/library. Ручной tar recovery
+возвращает точные bytes config/users/identity. SIGKILL до/после первого rename
+не возвращает ложный HTTP success; свежий worker после recovery аутентифицирует
+администратора с прежним identity. Два PIDs проверяются как принадлежащие fixture.
+
+49-check fixture также проверяет отсутствие self-deadlock при canonical aliases,
+живой flock после exact и доступность status при отказах. Ошибки снимка/prepare
+не трактуются как начало публикации. Power loss и полная атомарность дерева не
+заявляются. [Свидетельства второго пакета](../../../release/certification/evidence/q07-publication-20261003.json).
+
+Квалификация второго пакета: 2265 units / 60 ignored, full/minimal Clippy и rustfmt PASS; свежие 18/327 matrix, aggregate leak и 100 TCP + 100 QUIC / 33 soak PASS. Все четыре native cores прошли A/B и совпали с первым Q07 побайтно; ABI, copies и provenance PASS. .11 snapshots совпали; историческое ограничение .10 legacy IPv4 dumps сохранено, хотя текущая пара совпала.

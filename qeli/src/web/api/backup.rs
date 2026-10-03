@@ -417,12 +417,14 @@ where
 {
     use serde::Deserialize as _;
     let s = Option::<String>::deserialize(d)?;
-    Ok(s.map(|v| {
-        matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    }))
+    s.map(|v| match v.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(serde::de::Error::custom(
+            "exact must be true/false, 1/0, yes/no or on/off",
+        )),
+    })
+    .transpose()
 }
 
 /// Sentinel for "a restore is already running" so the handler can answer 409 without
@@ -449,7 +451,10 @@ const SERVER_FAULT_MARKERS: &[&str] = &[
 ];
 
 fn restore_error_status(msg: &str) -> StatusCode {
-    if msg == RESTORE_BUSY {
+    if msg == RESTORE_BUSY
+        || msg.starts_with("cannot lock runtime dependency for restore")
+        || msg.starts_with("cannot lock server config for restore")
+    {
         StatusCode::CONFLICT
     } else if SERVER_FAULT_MARKERS.iter().any(|m| msg.contains(m)) {
         StatusCode::INTERNAL_SERVER_ERROR
@@ -531,7 +536,13 @@ pub async fn restore_backup(
             );
             (StatusCode::OK, json!({ "ok": true, "message": msg }))
         }
-        Ok((_, Err(e))) => (restore_error_status(&e), json!({ "ok": false, "error": e })),
+        Ok((_, Err(e))) => (
+            restore_error_status(&e.error),
+            json!({
+                "ok": false, "error": e.error, "publication_started": e.publication_started,
+                "rollback_snapshot": e.rollback_snapshot
+            }),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             json!({ "ok": false, "error": format!("task error: {e}") }),
@@ -601,30 +612,127 @@ fn prune_absent(
         if archive_names.contains(&name) {
             continue; // present in the archive — keep (publish already overwrote it)
         }
-        let path = entry.path();
-        let is_dir = entry.metadata().map(|m| m.is_dir()).unwrap_or(false);
-        let r = if is_dir {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        };
-        match r {
-            Ok(()) => removed += 1,
-            Err(e) => errors.push(format!("{name}: {e}")),
-        }
+        prune_absent_entry(&entry.path(), &mut removed, &mut errors);
     }
     (removed, errors)
 }
 
+fn prune_absent_entry(path: &Path, removed: &mut usize, errors: &mut Vec<String>) {
+    let result = (|| -> std::io::Result<()> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        if metadata.is_dir() {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with('.') && !name.ends_with(".lock") {
+                    prune_absent_entry(&entry.path(), removed, errors);
+                }
+            }
+            match std::fs::remove_dir(path) {
+                Ok(()) => *removed += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                Err(error) => return Err(error),
+            }
+        } else {
+            std::fs::remove_file(path)?;
+            *removed += 1;
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        errors.push(format!("{}: {error}", path.display()));
+    }
+}
+
 #[path = "backup_listing.rs"]
 mod listing;
+
+#[derive(Debug)]
+struct RestoreFailure {
+    error: String,
+    publication_started: bool,
+    rollback_snapshot: Option<String>,
+}
+impl From<String> for RestoreFailure {
+    fn from(error: String) -> Self {
+        Self {
+            error,
+            publication_started: false,
+            rollback_snapshot: None,
+        }
+    }
+}
+impl From<&str> for RestoreFailure {
+    fn from(error: &str) -> Self {
+        error.to_owned().into()
+    }
+}
+
+fn lock_restore_dependencies(
+    root: &Path,
+    config_path: &str,
+    until: Instant,
+) -> Result<Vec<crate::util::FileLock>, String> {
+    let mut paths = std::collections::BTreeSet::new();
+    let relative = qeli_relative_path(config_path).ok_or("invalid active config path")?;
+    let staged = crate::server::read_config_text(root.join(relative)).map_err(|e| e.to_string())?;
+    let candidate = crate::config::parse_server_config(&staged).map_err(|e| e.to_string())?;
+    let current = crate::server::read_config_text(config_path)
+        .ok()
+        .and_then(|raw| crate::config::parse_server_config(&raw).ok());
+    for config in std::iter::once(&candidate).chain(current.as_ref()) {
+        paths.insert(config.auth.users_file.clone());
+        for profile in &config.profiles {
+            paths.insert(crate::server::profile_identity_path(profile));
+        }
+    }
+    let active = std::fs::canonicalize(config_path).unwrap_or_else(|_| config_path.into());
+    let mut guards = Vec::new();
+    let mut locked = std::collections::BTreeSet::new();
+    for path in paths {
+        // External dependencies are inspected, but restore cannot publish/prune them.
+        if qeli_relative_path(&path).is_none() {
+            continue;
+        }
+        let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.into());
+        if target == active || !locked.insert(target.clone()) {
+            continue;
+        } // already held by restore_blocking
+        if let Some(parent) = target.parent() {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .map_err(|error| {
+                    format!(
+                        "cannot lock runtime dependency for restore '{}': {error}",
+                        target.display()
+                    )
+                })?;
+        }
+        let wait = until
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_secs(5));
+        guards.push(
+            crate::util::FileLock::acquire_timeout(&target, wait).map_err(|error| {
+                format!(
+                    "cannot lock runtime dependency for restore '{}': {error}",
+                    target.display()
+                )
+            })?,
+        );
+    }
+    Ok(guards)
+}
 
 fn restore_blocking(
     data: &[u8],
     exact: bool,
     config_path: &str,
     until: Instant,
-) -> Result<String, String> {
+) -> Result<String, RestoreFailure> {
     archive_budget(until)?;
     if data.len() < 3 || data[0] != 0x1f || data[1] != 0x8b {
         return Err("not a gzip archive".into());
@@ -664,42 +772,9 @@ fn restore_blocking(
         Ok(count) => count,
         Err(error) => {
             cleanup();
-            return Err(error);
+            return Err(error.into());
         }
     };
-
-    // Snapshot the current state so a bad restore is reversible. If this fails there is
-    // no way back, so refuse the restore rather than proceed unprotected — the whole
-    // point of the snapshot is that the operator can undo a bad archive.
-    let bak = format!("/etc/qeli/.pre-restore-{uniq}.tgz");
-    let snapshot = {
-        let command = create_archive_command(Path::new("/etc"), false);
-        crate::system_command::Command::from(command).output_bounded(until, SNAPSHOT_LIMIT, None)
-    };
-    let snapshot = match snapshot {
-        Ok(output) if output.status.success() => output,
-        Ok(output) => {
-            cleanup();
-            return Err(format!(
-                "refusing to restore: could not take the pre-restore snapshot ({})",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Err(error) => {
-            cleanup();
-            return Err(format!(
-                "refusing to restore: could not run tar for the pre-restore snapshot ({error})"
-            ));
-        }
-    };
-    if let Err(error) = crate::util::write_atomic_private(&bak, &snapshot.stdout) {
-        cleanup();
-        return Err(format!(
-            "refusing to restore: could not take the pre-restore snapshot ({error})"
-        ));
-    }
-    drop(snapshot);
-    prune_pre_restore_snapshots(5);
 
     // Extract into a STAGING directory, never straight into /etc/qeli. The checks above
     // are structural (paths, links, bomb) and say nothing about CONTENT — and content is
@@ -726,7 +801,7 @@ fn restore_blocking(
     };
     if let Err(e) = mk_staging {
         cleanup();
-        return Err(format!("cannot create the staging directory: {e}"));
+        return Err(format!("cannot create the staging directory: {e}").into());
     }
     let stage_cleanup = || {
         let _ = std::fs::remove_dir_all(&staging);
@@ -744,21 +819,18 @@ fn restore_blocking(
         Ok(o) if o.status.success() => {}
         Ok(o) => {
             stage_cleanup();
-            return Err(format!(
-                "extract failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            ));
+            return Err(format!("extract failed: {}", String::from_utf8_lossy(&o.stderr)).into());
         }
         Err(e) => {
             stage_cleanup();
-            return Err(format!("tar extract execution failed: {e}"));
+            return Err(format!("tar extract execution failed: {e}").into());
         }
     }
 
     let staged_root = format!("{staging}/qeli");
     if let Err(e) = vet_staged_tree(&staged_root, config_path) {
         stage_cleanup();
-        return Err(e);
+        return Err(e.into());
     }
     let network_check = (|| -> Result<(), String> {
         let relative = qeli_relative_path(config_path).ok_or("invalid active config path")?;
@@ -772,13 +844,11 @@ fn restore_blocking(
     })();
     if let Err(error) = network_check {
         stage_cleanup();
-        return Err(error);
+        return Err(error.into());
     }
     if let Err(error) = normalize_staged_permissions(std::path::Path::new(&staged_root)) {
         stage_cleanup();
-        return Err(format!(
-            "cannot normalize restored config/key permissions: {error}"
-        ));
+        return Err(format!("cannot normalize restored config/key permissions: {error}").into());
     }
     if let Err(e) = vet_publish_shape(
         std::path::Path::new(&staged_root),
@@ -787,7 +857,7 @@ fn restore_blocking(
         0,
     ) {
         stage_cleanup();
-        return Err(e);
+        return Err(e.into());
     }
 
     // Snapshot the archive's TOP-LEVEL names BEFORE publishing: publish moves entries out
@@ -803,19 +873,69 @@ fn restore_blocking(
                 Ok(names) => names,
                 Err(error) => {
                     stage_cleanup();
-                    return Err(format!("staged tree unreadable: {error}"));
+                    return Err(format!("staged tree unreadable: {error}").into());
                 }
             }
         }
         Err(e) => {
             stage_cleanup();
-            return Err(format!("staged tree unreadable: {e}"));
+            return Err(format!("staged tree unreadable: {e}").into());
         }
     };
 
     if let Err(error) = archive_budget(until) {
         stage_cleanup();
-        return Err(error);
+        return Err(error.into());
+    }
+    let _dependency_guards =
+        match lock_restore_dependencies(Path::new(&staged_root), config_path, until) {
+            Ok(guards) => guards,
+            Err(error) => {
+                stage_cleanup();
+                return Err(error.into());
+            }
+        };
+    // Snapshot the current state so a bad restore is reversible. If this fails there is
+    // no way back, so refuse the restore rather than proceed unprotected — the whole
+    // point of the snapshot is that the operator can undo a bad archive.
+    let bak = format!("/etc/qeli/.pre-restore-{uniq}.tgz");
+    let snapshot = {
+        let command = create_archive_command(Path::new("/etc"), false);
+        crate::system_command::Command::from(command).output_bounded(until, SNAPSHOT_LIMIT, None)
+    };
+    let snapshot = match snapshot {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            cleanup();
+            stage_cleanup();
+            return Err(format!(
+                "refusing to restore: could not take the pre-restore snapshot ({})",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+            .into());
+        }
+        Err(error) => {
+            cleanup();
+            stage_cleanup();
+            return Err(format!(
+                "refusing to restore: could not run tar for the pre-restore snapshot ({error})"
+            )
+            .into());
+        }
+    };
+    if let Err(error) = crate::util::write_atomic_private(&bak, &snapshot.stdout) {
+        cleanup();
+        stage_cleanup();
+        return Err(format!(
+            "refusing to restore: could not take the pre-restore snapshot ({error})"
+        )
+        .into());
+    }
+    drop(snapshot);
+
+    if let Err(error) = archive_budget(until) {
+        stage_cleanup();
+        return Err(error.into());
     }
     // Publication is the commit boundary: do not abandon half a tree just because
     // the preparation deadline expires during filesystem renames.
@@ -824,7 +944,10 @@ fn restore_blocking(
     // restores the whole thing.
     if let Err(e) = publish_staged_tree(&staged_root, "/etc/qeli") {
         stage_cleanup();
-        return Err(format!("publishing the restored files failed: {e}"));
+        return Err(RestoreFailure {
+            error: format!("publishing the restored files failed: {e}; live files may be partially restored. Recover from {bak} before restarting"),
+            publication_started: true, rollback_snapshot: Some(bak),
+        });
     }
     // Exact mode: drop what the archive did not carry. Done AFTER publish, so a failure
     // during publish leaves the live directory intact rather than half-deleted. (Р1)
@@ -833,14 +956,15 @@ fn restore_blocking(
         let (removed, errors) = prune_absent(&archive_names, "/etc/qeli");
         pruned = format!(" Removed {removed} item(s) not present in the archive.");
         if !errors.is_empty() {
-            pruned.push_str(&format!(
-                " WARNING: {} item(s) could not be removed: {}.",
-                errors.len(),
-                errors.join("; ")
-            ));
+            stage_cleanup();
+            return Err(RestoreFailure {
+                error: format!("publishing the restored files failed: exact cleanup could not remove {} item(s): {}; recover from {bak} before restarting", errors.len(), errors.join("; ")),
+                publication_started: true, rollback_snapshot: Some(bak),
+            });
         }
     }
     stage_cleanup();
+    prune_pre_restore_snapshots(5, Path::new(&bak));
     // Spell out which semantics actually ran. Operators reasonably read "restore" as "put
     // it back exactly as it was", and the default does NOT do that — anything created
     // after the backup survives. (S-13)
@@ -1177,6 +1301,15 @@ fn vet_staged_dir(
         let entry = entry.map_err(|error| format!("cannot inspect staged entry: {error}"))?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
+        if name == ".config-history"
+            || name.starts_with(".pre-restore-")
+            || name.starts_with(".restore-upload-")
+            || name.starts_with(".restore-staging-")
+        {
+            return Err(format!(
+                "refused: archive contains local operational state '{name}'"
+            ));
+        }
         // Refuse to replace a file an existing hook executes — see hook_referenced_files.
         if hook_files.contains(&name) {
             return Err(format!(
@@ -1202,8 +1335,11 @@ fn vet_staged_dir(
                 ));
             }
         }
-        if !name.ends_with(".conf") {
+        if !name.ends_with(".conf") && !name.ends_with(".ini") {
             continue; // keys, usage.json, … carry no executable semantics
+        }
+        if name == "notify.ini" {
+            continue;
         }
         let text = match std::fs::read_to_string(&path) {
             Ok(t) => t,
@@ -1476,27 +1612,42 @@ fn publish_staged_tree(root: &str, dest: &str) -> std::io::Result<()> {
 
 /// Keep only the `keep` newest `.pre-restore-*.tgz` snapshots in /etc/qeli so
 /// repeated restores don't grow the config dir without bound. The timestamp is
-/// embedded in the name (unix seconds), so lexicographic sort == chronological.
-fn prune_pre_restore_snapshots(keep: usize) {
-    let mut snaps: Vec<std::path::PathBuf> = match std::fs::read_dir("/etc/qeli") {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with(".pre-restore-") && n.ends_with(".tgz"))
-                    .unwrap_or(false)
-            })
-            .collect(),
-        Err(_) => return,
+/// measured from file modification time. Sequence digits and PID are not chronology;
+/// never rotate the snapshot referenced by the current successful response.
+fn prune_pre_restore_snapshots(keep: usize, preserve: &Path) {
+    let scan = (|| -> std::io::Result<Vec<_>> {
+        let mut snaps = Vec::new();
+        for entry in std::fs::read_dir("/etc/qeli")? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(".pre-restore-") || !name.ends_with(".tgz") {
+                continue;
+            }
+            let metadata = entry.metadata()?;
+            if metadata.is_file() {
+                snaps.push((metadata.modified()?, entry.path()));
+            }
+        }
+        Ok(snaps)
+    })();
+    let Ok(mut snaps) = scan else {
+        return;
     };
     if snaps.len() <= keep {
         return;
     }
     snaps.sort();
-    let remove_n = snaps.len() - keep;
-    for p in snaps.into_iter().take(remove_n) {
-        let _ = std::fs::remove_file(p);
+    let mut remaining = snaps.len();
+    for (_, path) in snaps {
+        if remaining <= keep {
+            break;
+        }
+        if path != preserve && std::fs::remove_file(path).is_ok() {
+            remaining -= 1;
+        }
     }
 }
 
@@ -1799,7 +1950,10 @@ mod tests {
             Instant::now(),
         )
         .unwrap_err();
-        assert!(error.contains("timed out before publication"), "{error}");
+        assert!(
+            error.error.contains("timed out before publication"),
+            "{error:?}"
+        );
     }
 
     #[tokio::test]

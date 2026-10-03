@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v15 -->
+<!-- normative-sync: full-system-audit-v16 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -365,7 +365,9 @@ Fresh restore with custom paths, mixed user sources, identity and panel secret. 
 **Status: IN_PROGRESS.**
 
 
-**3 October, first batch:** HTTP reproduction found exact rejection with nested locks, missing identity/TLS validation and archive UID retention. Fixes and current qualification are recorded in the [Q07 report](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Overall Q07 remains open: crash/partial publication and recovery, filesystem faults, cross-process users/identity writers, mixed users/panel-secret, operational files/rotation and additional INI trust boundaries.
+**3 October, first batch:** HTTP reproduction found exact rejection with nested locks, missing identity/TLS validation and archive UID retention. Fixes and current qualification are recorded in the [Q07 report](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Overall Q07 remains open: crash/partial publication and recovery, filesystem faults, cross-process users/identity writers, mixed users/panel-secret, operational files/rotation and additional INI trust boundaries (historical list before batch two).
+
+**3 October, second batch:** Q07-F005–F013 cover strict exact, INI command trust, operational snapshots/rotation, old/new users/identity FileLocks, absent-directory lock inode, partial-publication metadata and failure instead of false exact success. 17 baseline checks FAIL; current 176 HTTP/system checks PASS. SIGKILL before/after first rename and manual tar recovery are verified. Mixed inline/external users, panel-secret and direct archive-restore prepare ENOSPC/read-only/HTTP cancellation remain. Overall Q07 is still IN_PROGRESS.
 
 ### 08. Cryptography, identity and keys
 

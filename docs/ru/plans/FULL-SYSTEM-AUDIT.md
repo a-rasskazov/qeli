@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v15 -->
+<!-- normative-sync: full-system-audit-v16 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -370,7 +370,9 @@ Fresh restore с custom paths, inline+external users, identity и panel-secret. 
 **Статус: IN_PROGRESS.**
 
 
-**3 октября, первый пакет:** HTTP-воспроизведение выявило отказ exact при вложенных lock-файлах, отсутствие проверки identity/TLS и сохранение чужого UID из tar. Исправления и текущая квалификация описаны в [отчёте Q07](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Полный Q07 остаётся открытым: crash/partial publication и recovery, файловые отказы, cross-process users/identity writers, mixed users и panel-secret, операционные файлы/rotation и дополнительные INI trust boundaries.
+**3 октября, первый пакет:** HTTP-воспроизведение выявило отказ exact при вложенных lock-файлах, отсутствие проверки identity/TLS и сохранение чужого UID из tar. Исправления и текущая квалификация описаны в [отчёте Q07](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Полный Q07 остаётся открытым: crash/partial publication и recovery, файловые отказы, cross-process users/identity writers, mixed users и panel-secret, операционные файлы/rotation и дополнительные INI trust boundaries (исторический список до второго пакета).
+
+**3 октября, второй пакет:** Q07-F005–F013: strict exact, INI command trust, operational snapshots/rotation, old/new users/identity FileLocks, absent-directory lock inode, partial-publication metadata и отказ вместо ложного exact success. 17 baseline checks FAIL; текущие 176 HTTP/system checks PASS. SIGKILL до/после первого rename и manual tar recovery проверены. Остаются mixed inline/external users, panel-secret и прямые prepare ENOSPC/read-only/HTTP cancellation для архивного restore. Общий Q07 ещё IN_PROGRESS.
 
 ### 08. Криптография, identity и ключи
 

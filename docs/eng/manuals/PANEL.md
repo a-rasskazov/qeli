@@ -360,6 +360,41 @@ finish under the lock; no hard filesystem I/O deadline is promised. Cancelling a
 does not cancel a running restore. A duplicate restore immediately receives HTTP 409,
 including while the first awaits the config lock. [Troubleshooting](TROUBLESHOOTING.md#659-backuprestore-timeout-archive-limit-and-incomplete-snapshot).
 
+
+### Failure during archive restoration
+
+Restore publishes files through individual atomic renames; the whole tree is not
+one atomic transaction. A rename or exact-cleanup failure returns HTTP 500 with
+`ok: false`, `publication_started: true`, and `rollback_snapshot` naming the private
+snapshot. Some files may already have changed. Inspect the tree and recover from
+that snapshot before restarting. A process crash disconnects HTTP; locate the
+latest created `/etc/qeli/.pre-restore-*.tgz`, inspect it and recover the old tree.
+
+`tar xzf <snapshot> -C /etc` restores snapshot members but does not remove new files
+introduced by a failed restore. For a complete recovery, compare the tree with
+the snapshot and remove only confirmed newly introduced files. Preserve the
+snapshot and active `.lock` files; coordinate recovery with other writers. Check
+config, users, identity and TLS before restarting. Automatic rollback and power-loss
+guarantees are not provided.
+
+The snapshot is created after staging validation and acquisition of FileLocks for
+the active config and managed users/identity paths from both old and new configs.
+Each additional lock waits up to 5 seconds within the shared preparation budget.
+A busy lock returns HTTP 409 before publication. Invalid archives do not rotate
+previous snapshots. Successful restores retain the five newest by mtime and always
+preserve the current recovery snapshot. Publication failures do not rotate snapshots.
+
+Uploaded archives cannot contain `.config-history`, `.pre-restore-*`,
+`.restore-upload-*` or `.restore-staging-*` at any level: these are local operational
+state. A full pre-restore snapshot is for manual recovery, not API upload. File-only
+command checks cover both `.ini` and legacy `.conf`; notify.ini uses its own parser.
+Exact retains nested `.lock` files even in a directory absent from the archive,
+while removing that directory's ordinary files.
+
+`exact` accepts `true/1/yes/on` and `false/0/no/off`, case-insensitively, trimming
+surrounding spaces. An absent parameter means overlay. Empty or unknown values
+return HTTP 400 before restore starts.
+
 ### Quick start page
 Its own sidebar page: a table of ten masking modes, each launchable with **Launch** —
 `reality-tls` (TCP 443, badged "flagship"), `reality` (8443), `fake-tls` (8444),
@@ -975,7 +1010,7 @@ applies new listener settings and retains sessions with healthy persistent keys.
 
 ### Users API and live access
 
-<!-- normative-sync: panel-user-mutations-v4 -->
+<!-- normative-sync: panel-user-mutations-v5 -->
 
 User/group/limit mutation bodies must be objects; wrong types cannot become Unlimited or a successful no-op. `enabled` is boolean, `bandwidth` an object, password/hash strings, route gateway string/null. Configurations are saved only as INI.
 

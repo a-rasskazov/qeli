@@ -1,6 +1,6 @@
-# Q07: backup, restore and history — first batch
+# Q07: backup, restore and history — batches 1–2
 
-<!-- normative-sync: audit-q07-backup-restore-v1 -->
+<!-- normative-sync: audit-q07-backup-restore-v2 -->
 
 Date: 3 October 2026. **Batch: PASS; overall Q07: IN_PROGRESS.**
 Configurations remain INI; JSON serves API responses and audit evidence.
@@ -46,13 +46,13 @@ in the evidence below. No performance benchmark or physical qualification claime
 
 ## Remaining Q07
 
-Q07 remains open. Next batch: multi-file publication/prune failures and crashes,
-manual recovery proof from rollback snapshot, external users/identity writers,
-mixed inline/external users and panel-secret, retention/protection of operational
-snapshots, other INI trust boundaries and strict exact-query parsing. Existing
-history positive/fault tests passed; archive publication is not a whole-tree
-atomic transaction and has no automatic rollback, as retained in the earlier
-[budget report](AUDIT-Q05-ARCHIVE-BUDGET.md).
+Q07 remains open. After the second batch, fresh restoration with mixed
+inline/external users and the panel-secret lifecycle remain to be tested.
+Archive-restore preparation faults (actual ENOSPC/read-only and HTTP cancellation)
+still need direct coverage; passing Q05 history tests do not substitute for them.
+Multi-file publication is not an atomic transaction and has no automatic rollback.
+Power loss and uncoordinated root writes are not certified.
+[Budget report](AUDIT-Q05-ARCHIVE-BUDGET.md).
 
 Shared services and deployed binaries were not replaced. Full .11 snapshots match.
 Desktop .10 SDK A/B passes; default/explicit legacy IPv4 dumps differ, while nft,
@@ -65,3 +65,40 @@ removed with sources/test logs retained.
 [First batch evidence](../../../release/certification/evidence/q07-backup-restore-20261003.json).
 
 Release qualification: fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC / 33 soak checks PASS. All four native cores passed A/B and match Q06 byte-for-byte; canonical/client copies, ABI and provenance agree.
+
+## Second batch: publication, recovery and local state
+
+Final release: `771d3a40b11867ce09b7fda0b212bec02a74b8d746e2f7c0b782974c216a13ef`.
+
+| ID | Problem | Fix |
+| --- | --- | --- |
+| Q07-F005, P2 | Unknown or empty `exact` silently selected overlay. | Strict parsing returns HTTP 400 before restore starts. |
+| Q07-F006, P1 | New client `.ini` bypassed the file-only password_command check applied only to `.conf`. | Both extensions use the common trust checker; notify.ini retains its dedicated parser. |
+| Q07-F007, P1 | Uploaded archives could overwrite local rollback/history snapshots. | Operational paths are rejected at every staging level. |
+| Q07-F008, P2 | Invalid content created a snapshot and rotated previous recovery files before validation. | Snapshot follows vet/preflight/locks; rotation follows complete success. |
+| Q07-F009, P2 | Timestamp/PID/sequence filename sorting removed newer snapshots across 9→10. | Sort by mtime with path tie-break; never delete the current snapshot. |
+| Q07-F010, P1 | Restore ignored external users/identity FileLocks. | Deterministic locks for old/new config dependencies within the managed root; deduplicate canonical aliases. |
+| Q07-F011, P1 | Exact removed a held nested lock with its absent directory, allowing a second writer to acquire another inode. | Recursive cleanup removes ordinary files while preserving sidecars and their directories. |
+| Q07-F012, P2 | Partial-rename failures omitted recovery snapshot and publication state. | HTTP 500 / ok=false, publication_started=true, rollback_snapshot and recovery-before-restart instruction. |
+| Q07-F013, P2 | Exact cleanup errors reported success with warnings despite incomplete rollback. | Failure with the same recovery metadata; retain the snapshot. |
+
+Previous exact release: policy **11 FAIL of 14**, publication **6 FAIL of 49**.
+The six publication failures cover missing recovery metadata for EIO/ENOSPC/EACCES,
+false prune success and two checks proving destroyed lock inode/split flock.
+Baseline continues independent probes but fails overall; successful manual recovery
+on the old release is not claimed as a new fix.
+
+New release: **14 policy + 49 publication + 38 archive + 75 history = 176 checks PASS**.
+Second-rename EIO/ENOSPC/EACCES and prune EACCES use process-scoped LD_PRELOAD
+only in the owned supervisor inside verified private namespaces. These are injected
+errors, not actual disk exhaustion or host syscall/library replacement. Manual tar
+recovery restores exact config/users/identity bytes. SIGKILL before/after the first
+rename never reports false HTTP success; a fresh recovered worker authenticates
+the administrator with the old identity. Both killed PIDs are verified as fixture-owned.
+
+The 49-check fixture also covers canonical-alias self-deadlock avoidance, continued
+flock exclusion after exact and responsive status following failures. Snapshot/prepare
+errors are not treated as publication start. Power loss and whole-tree atomicity are
+not claimed. [Second batch evidence](../../../release/certification/evidence/q07-publication-20261003.json).
+
+Second-batch qualification: 2265 units / 60 ignored, full/minimal Clippy and rustfmt PASS; fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC / 33 soak PASS. All four native cores passed A/B and match first Q07 byte-for-byte; ABI, copies and provenance PASS. .11 snapshots match; historical .10 legacy IPv4 dump limitations are retained although the current pair matches.
