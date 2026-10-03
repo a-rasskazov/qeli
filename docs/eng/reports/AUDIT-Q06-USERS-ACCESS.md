@@ -1,8 +1,9 @@
-# Q06: users and access revocation — first batch
+# Q06: users and access revocation — batches 1–2
 
 Date: 3 October 2026. **Batch status: PASS; overall Q06: IN_PROGRESS.**
 
 The fixes were tested on isolated Linux release `c15280a7f83f185c10014b08ccf1dddbaf6660ef987d6de2799e4e85bf1d2b21`.
+**Latest qualification is the second batch below: 199 Q06 checks.**
 Configurations remain INI. JSON is only the service body of HTTP/control APIs.
 
 ## Confirmed defects and fixes
@@ -42,7 +43,7 @@ worker control before initial authentication, keeping revoke tests separate from
 startup race and brute-force lockout. Historical fixture failures are retained separately
 from canonical results.
 
-## Boundaries and next batch
+## Boundaries after the first batch
 
 Q06 remains open: UsersDb filesystem/lock/crash and concurrent writers,
 current inline auth in worker control, live ACL/group restriction changes,
@@ -61,3 +62,33 @@ were unchanged. The origin is unattributed and no firewall restoration was perfo
 This deviation is not reported as unchanged-network PASS; desktop proves A/B artifacts only.
 
 [Final evidence](../../../release/certification/evidence/q06-users-access-20261003.json).
+
+## Second batch: INI storage and inline auth after SIGHUP
+
+**PASS; overall Q06 remains IN_PROGRESS.** New release `dda3c71f6c51e356d3a123f853f64073570ac17ac9c1a21b805f79141ef91e78`.
+
+**Q06-F006:** SIGHUP installed the new user database, but four persistent control
+commands merged users.conf with startup inline users/groups. The real baseline
+resurrected a removed inline account through enable-user and failed to disable
+an account introduced after reload. The fix retains the last accepted auth
+configuration and holds its read lease through the INI transaction and live user
+update. Reload replaces auth and users under the same lock order. enable-user,
+disable-user, set-limit and set-bandwidth are covered by a regression test.
+
+- New users-storage: 23 checks PASS. Eight concurrent creates lose no accounts;
+  disjoint edits of one account preserve both fields. Corrupt INI (unknown key,
+  invalid number, invalid UTF-8), read-only storage and rename refusal preserve
+  exact bytes; normal saving recovers afterwards.
+- API 119 and TCP/UDP live 57 reran successfully on this release: 199 Q06 checks.
+- 2264 Linux units, 60 ignored; full/minimal Clippy and rustfmt PASS. Fresh 18/327
+  release matrix and 100 TCP + 100 QUIC / 33 soak PASS.
+- Fresh native A/B and ABI/provenance PASS; library bytes unchanged. .11 retained network and service. Desktop raw host_restored=false: the first
+  default iptables-save dump differs from later ones, while explicit legacy/nft
+  dumps and all other inventory fields agree. Read-only repetitions reproduce
+  the inconsistent default dump; newly added rules are not established in this
+  run. The earlier .10 deviation remains unattributed.
+
+Storage coverage is still partial: ENOSPC/EACCES, lock timeout, crash/durability
+and errors after published writes remain. Live ACL/groups, multiple devices and
+legacy burst remain as well. These checks do not close Q06.
+[Second batch evidence](../../../release/certification/evidence/q06-users-storage-20261003.json).

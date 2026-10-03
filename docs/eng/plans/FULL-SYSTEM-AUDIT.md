@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v11 -->
+<!-- normative-sync: full-system-audit-v12 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -333,6 +333,8 @@ Inline + users_file, duplicate precedence, missing groups, invalid types versus 
 **Status: IN_PROGRESS.**
 
 **3 October, first batch:** five confirmed defects fixed in API, inline overrides, routes, live revoke and bandwidth writers. 119 API + 57 TCP/UDP checks PASS; fresh Linux units/lint and 293/75 HTTP regressions PASS. Q06 remains open for filesystem/concurrency and additional policies. [Report](../reports/AUDIT-Q06-USERS-ACCESS.md).
+
+**3 October, second batch:** Q06-F006 removes startup inline users/groups from control mutations after SIGHUP. 23 new storage/control checks, repeated 119 API + 57 live, 2264 Linux units and fresh release/native qualification PASS. Concurrency and read-only/rename/corrupt INI covered; crash/lock/final-fsync, ACL and devices remain open. [Report](../reports/AUDIT-Q06-USERS-ACCESS.md#second-batch-ini-storage-and-inline-auth-after-sighup).
 
 ### 07. Backup, restore and history
 

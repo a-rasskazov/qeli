@@ -973,3 +973,8 @@ User/group/limit mutation bodies must be objects; wrong types cannot become Unli
 A file entry overrides its namesake inline definition. Deleting this override is refused: it would restore inline access or previous group limits. Use Disable or remove the inline definition in server.conf.
 
 After successful Users reload in the worker, removed/disabled users and entries forbidding the current profile lose open TCP/UDP sessions. Effective bandwidth, including group inheritance, applies to live sessions. API success confirms persistence and queued reload; new authentication readiness may follow later. Periodic sweep rechecks rights, quota and expiry. `burst_mbps` remains a stored legacy field; separate burst enforcement is unconfirmed.
+
+After accepted SIGHUP, enable-user, disable-user, set-limit and set-bandwidth use
+current inline users/groups. Removed inline accounts cannot return from the startup
+snapshot; accounts added by reload can be managed without restarting the worker.
+Rejected reload preserves the previous accepted auth configuration.
