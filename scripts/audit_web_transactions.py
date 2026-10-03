@@ -1065,6 +1065,8 @@ int rename(const char *old,const char *next) {
       client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(key+'-known-hosts')),QELI_DEVICE_ID_FILE=str(device_file));log=(root/(key+'.log')).open('w');streams.append(log);proc=subprocess.Popen(['ip','netns','exec',device_ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT);clients.append(proc)
       wait(lambda:any(x['username']==name and x['peer'].startswith('198.18.'+str(i+1)+'.2:') for x in api('/api/clients')['clients']),'device admission')
       wait(lambda:subprocess.run(['ip','netns','exec',device_ns,'ip','link','show','q06d'+str(i)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'device tunnel setup')
+      # TUN creation precedes route adoption; admission is visible before client setup finishes.
+      wait(lambda:'TUN writer started' in (root/(key+'.log')).read_text(),'device network adoption')
       if action=='fixed-ip':check(key+' owns its fixed IPv4',any(x['username']==name and x['ip']=='10.77.0.42' for x in api('/api/clients')['clients']))
       run(['ip','netns','exec',device_ns,'ping','-I','q06d'+str(i),'-c','1','-W','2','10.77.0.1'])
      # Keep both processes alive: a plain EOF can trigger the old client's reconnect loop.

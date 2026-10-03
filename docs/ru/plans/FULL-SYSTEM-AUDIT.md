@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v21 -->
+<!-- normative-sync: full-system-audit-v22 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -422,6 +422,8 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 **3 октября, UDP AUTH/PMTU:** [Q09-F001/F002](../reports/AUDIT-Q09-UDP-AUTH.md) исправлены и проверены: handshake reservation/cancel/deadline, PMTU только после AuthOK без revoked. 2283 units, 16 old/new UDP/QUIC + 35 admission checks, fresh matrix/soak/native PASS; общий Q09 остаётся IN_PROGRESS.
 
 **3 октября, TCP/parser:** [Q09-F003–F005](../reports/AUDIT-Q09-TCP-PARSER.md): исходный AUTH-дедлайн, откат AUTH OK, строгий полный ClientHello и JOIN. 2290 units, 8 TCP checks с реальным baseline/fixed и насыщением 256 слотов, bounded ASan/libFuzzer, fresh matrix/soak/native PASS. Остались UDP anti-amplification/replay/reorder и негативные auth/capabilities контракты; общий Q09 IN_PROGRESS.
+
+**3 октября, UDP contracts:** [Q09-F006–F009](../reports/AUDIT-Q09-UDP-CONTRACTS.md): publication/revocation, direction/bounds, reaper revalidation и admission/AuthOK deadline+rollback. 2294 units, 74 live UDP/QUIC +16 PMTU +35 admission, fresh matrix/soak/native PASS. Исходные failures и ограничения лабы сохранены. Остаток: final review, forged client-proof/capabilities/contention и уточнение первого TCP terminal-loss; Q09 IN_PROGRESS.
 
 ### 10. PacketCodec, replay и control framing
 

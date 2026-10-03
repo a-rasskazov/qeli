@@ -3295,7 +3295,7 @@ NS/CNAME/PTR/DNAME, MX, IN SRV, SOA и TXT. Неизвестные формат�
 | `perf.udp.send_buffer_size` | `0` | `SO_SNDBUF` UDP-слушателя. `0` = не трогать; максимум 64 МиБ на сокет. Переполнение отправки даёт backpressure, а не потерю, поэтому автоматического роста send buffer нет |
 | `perf.tun.read_buffer_size` | `65535` | размер буфера чтения TUN, **на каждую очередь**. Должен быть не меньше `tun.mtu` (для TAP — плюс 14 байт Ethernet-заголовка) и не больше 1 МиБ; выход за границы **отвергается при загрузке**. `0` не «авто», а мгновенный EOF на чтении, то есть остановка data plane |
 | `perf.connection.max_clients` | `128` | всего сессий на профиль (все юзеры; см. раздел «Лимиты подключений») |
-| `perf.connection.handshake_timeout_secs` | `10` | 10 секунд: TCP — обмен ключами, proof, первый AUTH/JOIN, проверка AUTH и отправка AUTH OK по одному дедлайну внутреннего handshake; UDP — проверка AUTH от создания handshake. Откат ресурсов может завершиться позже дедлайна |
+| `perf.connection.handshake_timeout_secs` | `10` | 10 секунд: TCP — обмен ключами, proof, первый AUTH/JOIN, проверка AUTH и отправка AUTH OK по одному дедлайну внутреннего handshake; UDP — проверка AUTH, ожидание admission и отправка AuthOK/ошибки согласования от создания handshake. Откат ресурсов может завершиться позже дедлайна |
 | `perf.connection.idle_timeout_secs` | `300` | idle-таймаут (`0` = не дропать по простою) |
 | `perf.connection.new_session_rate_max` | `10` | макс. новых сессий с одного source-IP за окно |
 | `perf.connection.new_session_rate_window_secs` | `60` | окно для `new_session_rate_max` (сек) |

@@ -1104,7 +1104,46 @@ impl Drop for UdpAuthLease {
     }
 }
 
+/// A server consumes only well-formed client-direction handshake fragments.
+/// Generic reassembly deliberately supports all message IDs for the clients too.
+fn is_client_hello_fragment(payload: &[u8]) -> bool {
+    use crate::protocol::udp_frag::{
+        is_fragment, FRAG_HDR_LEN, MAX_CHUNK_ACCEPT, MAX_FRAGS, MSG_CLIENT_HELLO,
+    };
+    is_fragment(payload)
+        && payload[3] == MSG_CLIENT_HELLO
+        && (1..=MAX_FRAGS).contains(&payload[5])
+        && payload[4] < payload[5]
+        && (1..=MAX_CHUNK_ACCEPT).contains(&(payload.len() - FRAG_HDR_LEN))
+}
+
+/// A cached authenticated response is publishable only after its initial send,
+/// including a verified negotiation error kept in AwaitingAuth for bounded retries.
+fn can_reemit_auth_response(initial_response_sent: bool, revoked: bool) -> bool {
+    initial_response_sent && !revoked
+}
+
 impl UdpSessionState {
+    fn expired(
+        &self,
+        auth_active: bool,
+        created_at: std::time::Instant,
+        last_activity: std::time::Instant,
+        now: std::time::Instant,
+        handshake_timeout: std::time::Duration,
+        reap_after: Option<std::time::Duration>,
+    ) -> bool {
+        if auth_active {
+            return false;
+        }
+        match self {
+            Self::AwaitingAuth => now.saturating_duration_since(created_at) > handshake_timeout,
+            Self::Authenticated { .. } => {
+                reap_after.is_some_and(|limit| now.saturating_duration_since(last_activity) > limit)
+            }
+        }
+    }
+
     fn evictable_half_open(&self, auth_active: bool) -> bool {
         matches!(self, Self::AwaitingAuth) && !auth_active
     }
@@ -2093,13 +2132,10 @@ pub(crate) async fn run_udp_server(
                 let expired: Vec<SocketAddr> = {
                     let sessions_guard = sessions.read().await;
                     sessions_guard.iter()
-                        .filter(|(_, c)| !c.auth_active.load(std::sync::atomic::Ordering::Acquire) && match &c.state {
-                            UdpSessionState::AwaitingAuth => {
-                                now.duration_since(c.created_at) > handshake_timeout
-                            }
-                            UdpSessionState::Authenticated { .. } => reap_after
-                                .is_some_and(|limit| now.duration_since(c.last_activity) > limit),
-                        })
+                        .filter(|(_, c)| c.state.expired(
+                            c.auth_active.load(std::sync::atomic::Ordering::Acquire),
+                            c.created_at, c.last_activity, now, handshake_timeout, reap_after,
+                        ))
                         .map(|(addr, _)| *addr)
                         .collect()
                 };
@@ -2113,6 +2149,15 @@ pub(crate) async fn run_udp_server(
                     {
                         let mut sessions_guard = sessions.write().await;
                         for addr in expired {
+                            // Collection happened under an earlier read lock. AUTH may have
+                            // reserved this entry, liveness advanced, or the address may now
+                            // belong to a fresh handshake. Revalidate under the removal lock.
+                            if sessions_guard.get(&addr).is_none_or(|c| !c.state.expired(
+                                c.auth_active.load(std::sync::atomic::Ordering::Acquire),
+                                c.created_at, c.last_activity, now, handshake_timeout, reap_after,
+                            )) {
+                                continue;
+                            }
                             if let Some(client) = sessions_guard.remove(&addr) {
                                 match client.state {
                                     UdpSessionState::Authenticated {
@@ -3340,6 +3385,34 @@ async fn handle_udp_datagram(
     {
         let mut sessions_guard = sessions.write().await;
         if let Some(client) = sessions_guard.get_mut(&addr) {
+            // Revoked? Forget the peer and drop the datagram, before spending any AEAD.
+            //
+            // `kick_all` raises this flag; the control plane calls it for an admin kick,
+            // for the quota sweep's cut-off, and when a reconnect supersedes an old
+            // session. Previously none of those reached ingress at all — they edit
+            // `profile.sessions.by_ip`, whereas this loop demultiplexes from the
+            // per-worker map — so a kicked client went on injecting packets into the TUN
+            // for the remaining 30-45 s of its reaper window, using a source address the
+            // pool had already released and might have reassigned.
+            // (Audit 2026-07-27, A2/A3.)
+            let revoked_now = client
+                .revoked
+                .as_ref()
+                .is_some_and(|r| r.load(std::sync::atomic::Ordering::Relaxed));
+            if revoked_now {
+                if !client
+                    .auth_active
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    sessions_guard.remove(&addr);
+                }
+                drop(sessions_guard);
+                log::debug!(
+                    "UDP {}: dropping datagram — session revoked (kick / quota / supersede)",
+                    addr
+                );
+                return;
+            }
             // Idempotent handshake re-emit BEFORE decrypt: a lost server->client
             // handshake datagram (ServerHello or AuthOK) leaves the client
             // retransmitting its request, which the normal path drops — a
@@ -3354,11 +3427,16 @@ async fn handle_udp_datagram(
             // the note on `amp_received` for what the two counters do and do not include.
             client.amp_received = client.amp_received.saturating_add(data.len() as u64);
 
-            let reemit_auth_response =
+            let matches_auth_request =
                 !client.auth_ok.is_empty() && payload == client.auth_request.as_slice();
+            if matches_auth_request && !can_reemit_auth_response(client.auth_ok_sent, revoked_now) {
+                return;
+            }
+            let reemit_auth_response = matches_auth_request;
             let reemit_hello = !reemit_auth_response
                 && matches!(client.state, UdpSessionState::AwaitingAuth)
-                && crate::protocol::udp_frag::is_fragment(payload);
+                && !client.server_hello.is_empty()
+                && is_client_hello_fragment(payload);
             if reemit_hello || reemit_auth_response {
                 // NOTE: `last_activity` is deliberately NOT touched here — see below.
                 let hello = client.server_hello.clone();
@@ -3450,39 +3528,15 @@ async fn handle_udp_datagram(
                 }
                 return;
             }
-            // Revoked? Forget the peer and drop the datagram, before spending any AEAD.
-            //
-            // `kick_all` raises this flag; the control plane calls it for an admin kick,
-            // for the quota sweep's cut-off, and when a reconnect supersedes an old
-            // session. Previously none of those reached ingress at all — they edit
-            // `profile.sessions.by_ip`, whereas this loop demultiplexes from the
-            // per-worker map — so a kicked client went on injecting packets into the TUN
-            // for the remaining 30-45 s of its reaper window, using a source address the
-            // pool had already released and might have reassigned.
-            // (Audit 2026-07-27, A2/A3.)
-            let revoked_now = client
-                .revoked
-                .as_ref()
-                .is_some_and(|r| r.load(std::sync::atomic::Ordering::Relaxed));
-            if revoked_now {
-                if !client
-                    .auth_active
-                    .load(std::sync::atomic::Ordering::Acquire)
-                {
-                    sessions_guard.remove(&addr);
-                }
-                drop(sessions_guard);
-                log::debug!(
-                    "UDP {}: dropping datagram — session revoked (kick / quota / supersede)",
-                    addr
-                );
-                return;
-            }
             let source_session_id = match &client.state {
                 UdpSessionState::Authenticated { session_id, .. } => Some(*session_id),
                 UdpSessionState::AwaitingAuth => None,
             };
             let is_awaiting_auth = source_session_id.is_none();
+            if !is_awaiting_auth && !client.auth_ok_sent {
+                // Credentials alone do not publish an admission still installing routes.
+                return;
+            }
             let reassembled_record;
             let payload = if crate::protocol::data_frag::is_data_fragment(payload) {
                 if is_awaiting_auth || !client.data_frag_enabled {
@@ -3804,6 +3858,10 @@ async fn handle_udp_datagram(
     // fix) — reassemble it; a legacy single-datagram ClientHello (no fragment magic)
     // is accepted as-is for backward compatibility. We reply in the same shape.
     let (ch, frag_mode): (Vec<u8>, bool) = if crate::protocol::udp_frag::is_fragment(payload) {
+        if !is_client_hello_fragment(payload) {
+            frag_pending.remove(&addr);
+            return;
+        }
         // Bound the reassembly map against a spoofed-source flood: evict the oldest
         // partial when full (same cap as half-open sessions). Only the full,
         // reassembled ClientHello triggers a response (anti-amplification preserved).
@@ -4102,8 +4160,19 @@ async fn handle_udp_auth(
                     return;
                 }
             };
-            for packet in &response_pkts {
-                let _ = socket.send_to(packet, addr).await;
+            let send_result = handler::handshake_until(deadline, async {
+                for packet in &response_pkts {
+                    socket.send_to(packet, addr).await?;
+                }
+                Ok(())
+            })
+            .await;
+            if send_result.is_err() {
+                sessions.write().await.remove(&addr);
+                return;
+            }
+            if let Some(client) = sessions.write().await.get_mut(&addr) {
+                client.auth_ok_sent = true;
             }
             log::warn!(
                 "UDP: client {addr} cannot use profile '{}': {error}",
@@ -4129,7 +4198,18 @@ async fn handle_udp_auth(
     let dkey = handler::device_key(&username, device_id);
     // Serialize the state-changing half of authentication with TCP and the other UDP
     // workers. The guard is released only after the session and kernel iroutes commit.
-    let admission_guard = profile.admission.lock().await;
+    let admission_guard = match handler::handshake_until(deadline, async {
+        Ok(profile.admission.lock().await)
+    })
+    .await
+    {
+        Ok(guard) => guard,
+        Err(error) => {
+            log::debug!("UDP admission deadline for {addr}: {error}");
+            sessions.write().await.remove(&addr);
+            return;
+        }
+    };
     // Addresses freed by an eviction, released ONLY under the same pool lock that allocates
     // ours. Releasing each one immediately — as this used to — put it on the pool's `freed`
     // stack and then dropped the lock, and `allocate` pops `freed` FIRST: a concurrent
@@ -4885,8 +4965,40 @@ async fn handle_udp_auth(
     if let Some(client) = sessions.write().await.get_mut(&addr) {
         client.amp_sent = client.amp_sent.saturating_add(sent_now);
     }
-    for pkt in &response_pkts {
-        let _ = socket.send_to(pkt, addr).await;
+    let send_result = handler::handshake_until(deadline, async {
+        for pkt in &response_pkts {
+            socket.send_to(pkt, addr).await?;
+        }
+        Ok(())
+    })
+    .await;
+    if let Err(error) = send_result {
+        let orphan_routes = {
+            let mut session_map = profile.sessions.write().await;
+            if session_map
+                .by_ip
+                .get(&client_ip)
+                .is_some_and(|current| current.session_id == writer_session.session_id)
+            {
+                session_map.remove(client_ip);
+                session_map.take_client_routes(client_ip)
+            } else {
+                Vec::new()
+            }
+        };
+        writer_session.kick_all();
+        for cidr in &orphan_routes {
+            let _ =
+                handler::program_client_subnet_route(false, cidr, &profile.config.tun.name).await;
+        }
+        profile
+            .pool
+            .lock()
+            .await
+            .release(&writer_session.device_key);
+        sessions.write().await.remove(&addr);
+        log::warn!("UDP AuthOK send failed for {addr}: {error}; admission rolled back");
+        return;
     }
     // The AuthOK is on the wire — the beacon and cover loops may write to this session now.
     // Set AFTER the sends, not before: the whole point is that nothing precedes it, and the
@@ -6493,5 +6605,89 @@ mod tests {
             !active.2.load(std::sync::atomic::Ordering::Acquire),
             "classifying current or stale ingress releases the expired socket snapshot"
         );
+    }
+}
+
+#[cfg(test)]
+mod handshake_contract_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn cached_auth_waits_for_initial_send_and_revocation_wins() {
+        assert!(!can_reemit_auth_response(false, false));
+        assert!(!can_reemit_auth_response(false, true));
+        assert!(!can_reemit_auth_response(true, true));
+        assert!(can_reemit_auth_response(true, false));
+    }
+
+    #[test]
+    fn client_direction_and_fragment_bounds_are_enforced() {
+        use crate::protocol::udp_frag::*;
+        let valid = fragment(MSG_CLIENT_HELLO, &[0x31; 1500]).unwrap();
+        for part in &valid {
+            assert!(is_client_hello_fragment(part));
+        }
+        for id in [MSG_SERVER_HELLO, MSG_AUTH_OK, MSG_JUNK, 0, 255] {
+            let mut part = valid[0].clone();
+            part[3] = id;
+            assert!(!is_client_hello_fragment(&part));
+        }
+        for (at, val) in [(4, 2), (5, 0), (5, 25)] {
+            let mut part = valid[0].clone();
+            part[at] = val;
+            assert!(!is_client_hello_fragment(&part));
+        }
+        assert!(!is_client_hello_fragment(&valid[0][..6]));
+        let mut oversized = valid[0].clone();
+        oversized.resize(1207, 0);
+        assert!(!is_client_hello_fragment(&oversized));
+        assert!(is_client_hello_fragment(
+            &fragment(MSG_CLIENT_HELLO, &[0x31; 1200]).unwrap()[0]
+        ));
+    }
+
+    #[test]
+    fn reaper_revalidation_preserves_new_auth_reservation() {
+        let active = Arc::new(AtomicBool::new(false));
+        let now = Instant::now();
+        let created = now - Duration::from_secs(20);
+        let state = UdpSessionState::AwaitingAuth;
+        let expired = || {
+            state.expired(
+                active.load(Ordering::Acquire),
+                created,
+                created,
+                now,
+                Duration::from_secs(10),
+                None,
+            )
+        };
+        assert!(expired()); // Read-lock snapshot may select this address.
+        let lease = UdpAuthLease::acquire(&active).unwrap();
+        assert!(!expired()); // Removal-lock recheck sees the intervening AUTH owner.
+        drop(lease);
+        assert!(expired());
+    }
+
+    #[test]
+    fn reaper_revalidation_preserves_replaced_or_refreshed_entry() {
+        let now = Instant::now();
+        let stale = now - Duration::from_secs(20);
+        let timeout = Duration::from_secs(10);
+        let pending = UdpSessionState::AwaitingAuth;
+        assert!(pending.expired(false, stale, stale, now, timeout, Some(timeout)));
+        assert!(!pending.expired(false, now, now, now, timeout, Some(timeout)));
+        assert!(!pending.expired(false, now - timeout, stale, now, timeout, Some(timeout)));
+        let state = UdpSessionState::Authenticated {
+            session_id: 1,
+            device_key: "fixture".into(),
+            client_ip: "10.79.0.2".parse().unwrap(),
+        };
+        assert!(!state.expired(false, stale, now, now, timeout, Some(timeout)));
+        assert!(!state.expired(true, stale, stale, now, timeout, Some(timeout)));
+        assert!(!state.expired(false, stale, stale, now, timeout, None));
+        assert!(state.expired(false, stale, stale, now, timeout, Some(timeout)));
     }
 }
