@@ -21,9 +21,9 @@
   },
   "recipe": "qeli-native-repro-v1",
   "schema": 1,
-  "source_commit": "93cb845d6f8d06705165d2981403f79ac31a747c",
-  "source_date_epoch": 1790979207,
-  "source_digest": "1bcee8e99b5a365e28821122b19fe190adce0277a6a6cba5fcb1a14c600f48d9",
+  "source_commit": "11cb2337d19bda9ddcf7a6eb0dd1acc93e75f0dc",
+  "source_date_epoch": 1790987436,
+  "source_digest": "4114e360940dd1dbffabcb70068a914445a1a7310af2606da692acd8cbbf8a8f",
   "source_dirty": false,
   "toolchain": {
     "android_ndk": "26.3.11579264",
@@ -34,6 +34,6 @@
     "rust_targets": "aarch64-linux-android,x86_64-linux-android",
     "rust_toolchain": "1.97.0",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
-    "source_checkout": "/var/tmp/qeli-d15-android-source-20261003"
+    "source_checkout": "/var/tmp/qeli-q03-android-source-20261003"
   }
 }

@@ -48,3 +48,13 @@ The first Linux build is not accepted: zero archive mtimes let Cargo reuse old
 include objects. The repeat invalidates source timestamps, verifies the new message
 inside the binary and requires a different SHA. Original evidence retained as
 `FAILED_STALE_EMBEDDED_ARTIFACT`. This fixes the test setup; running services are preserved.
+
+## Release checks for the fixes
+
+2257 Linux unit PASS (60 normally ignored). Fresh release SHA `865b7e8ed589fbaca51bd4479d4a1524ae743e1e04e7231cfe30e16295e6e2b8`: 18 namespace cases / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks and bounded shutdown/recovery passed. Host snapshots and the running .11 service were preserved. Desktop/Android native A/B refreshed with unchanged library hashes; this does not claim fresh platform UI/network tests.
+
+The first Android native attempt refused insufficient disk space. Only the private debug cache was removed after saving unit logs; service files and release cache remained. The retry passed. A fresh Linux unit run found two assertions requiring the old fallback; they were corrected and all units passed. Later formatting of one server-only cfg(test) assertion was verified with rustfmt 1.97.0: canonical output identical. Actual input hashes and original A/B/source identities are retained; format reconciliation is not a new runtime execution.
+
+[Certification](../../../release/certification/0.8.2.json) binds the new release; prior D15 candidate/benchmark records retain their original SHA. Overall Q03 remains IN_PROGRESS.
+
+Desktop publishing initially refused a source-identity change during A/B; the original FAILED is retained. Composite qualification rechecked actual A/B hashes/exports and the sole formatter-equivalent server-only diff; no additional compilation is claimed by that reconciliation. The original build driver fmt_reused_from label is too broad: 286 Rust files are unchanged and the two changed test files were checked separately, as recorded by fmt_qualification.

@@ -21,9 +21,9 @@
   },
   "recipe": "qeli-native-repro-v1",
   "schema": 1,
-  "source_commit": "93cb845d6f8d06705165d2981403f79ac31a747c",
-  "source_date_epoch": 1790979207,
-  "source_digest": "1bcee8e99b5a365e28821122b19fe190adce0277a6a6cba5fcb1a14c600f48d9",
+  "source_commit": "11cb2337d19bda9ddcf7a6eb0dd1acc93e75f0dc",
+  "source_date_epoch": 1790987150,
+  "source_digest": "4114e360940dd1dbffabcb70068a914445a1a7310af2606da692acd8cbbf8a8f",
   "source_dirty": false,
   "toolchain": {
     "build_jobs": "1",
@@ -35,7 +35,26 @@
     "rust_targets": "x86_64-pc-windows-gnu,x86_64-apple-darwin,aarch64-apple-darwin",
     "rust_toolchain": "1.97.0",
     "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
-    "source_checkout": "/var/tmp/qeli-d15-desktop-source-20261003",
+    "source_checkout": "/var/tmp/qeli-q03-desktop-source-20261003",
     "zig": "0.13.0"
+  },
+  "format_only_reconciliation": {
+    "original_source_digest": "679c48f457240a034d00b0007ed73fe2d1815bfa3ce2783fb935e8209505112d",
+    "original_source_commit": "fb92a0620e0842e9ed2dc1db6cd0a5bba25d3617",
+    "qualified_source_commit": "11cb2337d19bda9ddcf7a6eb0dd1acc93e75f0dc",
+    "proof": {
+      "kind": "rustfmt-only-reconciliation",
+      "path": "qeli/src/web/pages/config.rs",
+      "from_commit": "fb92a062",
+      "to_commit": "11cb2337",
+      "rustfmt_version": "1.97.0",
+      "formatted_output_identical": true,
+      "canonical_sha256": "ad2f7b27331e589f64c224ce9845d2216a23ab64d509244f319d0d1c2c3e4032",
+      "current_source_sha256": "34d3f6f5024da5b8816546e2cd4354819955c94d9254a128243b76e5456d77ac",
+      "current_file_fmt_check_passed": true,
+      "limit": "Only whitespace of a server-side cfg(test) assertion; fresh builds retain their actual input hashes"
+    },
+    "native_web_feature_gate": "qeli/src/lib.rs: cfg(all(target_os = linux, feature = server)); recipes disable defaults and enable transport-core-ffi",
+    "scope": "Original A/B commands, actual SOURCE_DATE_EPOCH and failed publishing attempt retained; only formatter-equivalent server-side cfg(test) whitespace changed. Native web sources are excluded. No new build or runtime execution claimed by reconciliation."
   }
 }

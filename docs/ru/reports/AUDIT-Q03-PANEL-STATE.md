@@ -51,3 +51,13 @@ A/B прошёл без переобъявления сборок библиот
 исходных входов, проверяет новое сообщение в бинарнике и отличающийся SHA.
 Первоначальный результат сохранён с `FAILED_STALE_EMBEDDED_ARTIFACT`.
 Это исправление тестового стенда; работающие службы не заменяются.
+
+## Release-проверка исправленного кода
+
+2257 Linux unit PASS (60 штатно ignored). Новый release SHA `865b7e8ed589fbaca51bd4479d4a1524ae743e1e04e7231cfe30e16295e6e2b8`: 18 namespace-кейсов / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks и bounded shutdown/recovery прошли. Host snapshots и рабочая служба .11 сохранены. Native desktop/Android A/B обновлены; SHA библиотек остались прежними, платформенные UI/network тесты этим не объявляются новыми.
+
+Первый native Android запуск отклонён по свободному диску. После сохранения unit-логов удалён только приватный debug-кэш; рабочие каталоги служб и release-кэш сохранены. Второй запуск прошёл. Повторный Linux unit проход обнаружил два assertions старого fallback; они обновлены, затем весь unit набор прошёл. Последующее форматирование одного server-only cfg(test) assert проверено `rustfmt 1.97.0`: канонический вывод идентичен. Реальные input hashes и первоначальные A/B/source identities сохранены в evidence; formatter-сверка не выдается за новый runtime.
+
+[Сертификат](../../../release/certification/0.8.2.json) привязан к новому release, предыдущие D15 candidate/benchmark records сохранены с их исходным SHA. Полный Q03 остаётся IN_PROGRESS.
+
+Desktop publisher сначала отказался из-за изменения source identity во время A/B. Сохранён исходный FAILED. Составная квалификация повторно проверила реальные A/B SHA/exports и единственный formatter-эквивалентный server-only diff; повтор компиляции при сверке не заявлен. Первоначальная подпись `fmt_reused_from` в build driver слишком широка: неизменны 286 Rust файлов, два изменённых test-файла проверены отдельно. Уточнение сохранено в `fmt_qualification`.
