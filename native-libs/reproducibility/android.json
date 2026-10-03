@@ -21,19 +21,17 @@
   },
   "recipe": "qeli-native-repro-v1",
   "schema": 1,
-  "source_commit": "11cb2337d19bda9ddcf7a6eb0dd1acc93e75f0dc",
-  "source_date_epoch": 1790987436,
-  "source_digest": "4114e360940dd1dbffabcb70068a914445a1a7310af2606da692acd8cbbf8a8f",
+  "source_commit": "327de78b002a3e41d325ffef563d34f32ab32def",
+  "source_date_epoch": 1791003043,
+  "source_digest": "48d74e40d037e53d957e89c8358772cc3740fed597a4b38f542253aff460e8f8",
   "source_dirty": false,
   "toolchain": {
     "android_ndk": "26.3.11579264",
-    "build_jobs": "1",
     "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
     "cargo_ndk": "cargo-ndk v4.1.2:",
     "cargo_ndk_version": "4.1.2",
     "rust_targets": "aarch64-linux-android,x86_64-linux-android",
     "rust_toolchain": "1.97.0",
-    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
-    "source_checkout": "/var/tmp/qeli-q03-android-source-20261003"
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
   }
 }

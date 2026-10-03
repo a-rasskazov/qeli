@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v8 -->
+<!-- normative-sync: full-system-audit-v9 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -143,7 +143,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 01 | Server INI and schema | H01, H04, H08–H10 | PASS |
 | 02 | Client parsers and qeli:// | H04, H06, H08–H10 | PASS |
 | 03 | Panel UI and state | H02, H09–H11 | PASS |
-| 04 | Web auth and API protection | H01–H03, H08–H09 | IN_PROGRESS |
+| 04 | Web auth and API protection | H01–H03, H08–H09 | PASS |
 | 05 | Config transactions and restart | H08–H10 | IN_PROGRESS |
 | 06 | Users, groups and provisioning | H01, H04, H09–H10 | TODO |
 | 07 | Backup, restore and history | H03–H04, H08, H10 | TODO |
@@ -289,14 +289,14 @@ Inventory routes/guards, Basic/cookie/TOTP, logout/expiry, CSRF, reverse proxies
 **Existing harness/fixtures:** `scripts/check_panel.py`.
 
 - [x] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: PASS.**
 
-**3 October:** reviewed 56 methods/55 guards; baseline release passed 289 HTTP checks with confirmed queued-lockout bypass, case-sensitive Basic and extra root redirect. Fixes and four new Rust regressions are committed; final qualification of the current artifact is still running. [Report](../reports/AUDIT-Q04-WEB-AUTH.md), [evidence](../../../release/certification/evidence/q04-web-auth-20261003.json).
+**3 October, completion:** all five Q04 criteria complete for authentication/API boundaries. 2261 Linux units, 116 actual JS groups, 293 real HTTP checks and pinned full/minimal Clippy PASS. Release matrix 18/327 and 100 TCP + 100 QUIC/33 soak PASS; HTTP/matrix reused only after byte-identical release SHA verification. Fresh desktop/Android native A/B and provenance PASS. Web TOTP absent; positive transactions/restore remain Q05/Q07. [Report](../reports/AUDIT-Q04-WEB-AUTH.md), [evidence](../../../release/certification/evidence/q04-web-auth-20261003.json).
 
 ### 05. Config transactions and restart
 

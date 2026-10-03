@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v8 -->
+<!-- normative-sync: full-system-audit-v9 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -148,7 +148,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 01 | Серверный INI и схема | H01, H04, H08–H10 | PASS |
 | 02 | Клиентские парсеры и qeli:// | H04, H06, H08–H10 | PASS |
 | 03 | Панель: UI и состояние | H02, H09–H11 | PASS |
-| 04 | Web auth и защита API | H01–H03, H08–H09 | IN_PROGRESS |
+| 04 | Web auth и защита API | H01–H03, H08–H09 | PASS |
 | 05 | Транзакции конфигурации и restart | H08–H10 | IN_PROGRESS |
 | 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | TODO |
 | 07 | Backup, restore и history | H03–H04, H08, H10 | TODO |
@@ -294,14 +294,14 @@ PASS относится к конфигурационному контракту
 **Имеющаяся обвязка/fixtures:** `scripts/check_panel.py`.
 
 - [x] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: PASS.**
 
-**3 октября:** review 56 методов/55 guards, исходный release — 289 HTTP checks; воспроизведены обход queued lockout, case-sensitive Basic и лишний root redirect. Исправления и четыре новые Rust-регрессии внесены; заключительная проверка текущего артефакта ещё выполняется. [Отчёт](../reports/AUDIT-Q04-WEB-AUTH.md), [evidence](../../../release/certification/evidence/q04-web-auth-20261003.json).
+**3 октября, завершение:** все пять критериев Q04 закрыты в области авторизации и границ API. 2261 Linux units, 116 JS-групп, 293 реальных HTTP checks, pinned full/minimal Clippy PASS. Release-матрица 18/327 и soak 100 TCP + 100 QUIC/33 PASS; HTTP/matrix повторно используются только по побайтному совпадению release SHA. Свежие desktop/Android native A/B и provenance PASS. Web TOTP отсутствует; положительные транзакции и restore остаются Q05/Q07. [Report](../reports/AUDIT-Q04-WEB-AUTH.md), [evidence](../../../release/certification/evidence/q04-web-auth-20261003.json).
 
 ### 05. Транзакции конфигурации и restart
 
