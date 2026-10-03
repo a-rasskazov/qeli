@@ -106,3 +106,5 @@ native A/B используются с явной привязкой, без з�
 Свежая сборка и release-проверки данного UI-прохода записываются отдельно в
 [evidence](../../../release/certification/evidence/q03-refresh-20261003.json).
 Dashboard, users, client и другие страницы/модальные сценарии остаются в Q03.
+
+Для Q03-F003/F004 свежий release SHA `0d61d60402fdce03ddeafff87499691abafe25fb740eaed62cb7b13f6ae1229b`: 18 изолированных кейсов / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks и bounded shutdown/recovery PASS. Пять воспроизведений старого кода (две ошибки и поздний ответ на каждой из трёх страниц) сохранены отдельно. Полные snapshots, PID/start time службы .11 и рабочий бинарник сохранены. Сертификат 20/20 обновлён для этого артефакта; physical-строки и прежние benchmark records не переобъявлены.

@@ -101,3 +101,5 @@ A/B are explicitly reused, without a new-execution claim. Fresh release build/ch
 for this UI pass are recorded separately in
 [evidence](../../../release/certification/evidence/q03-refresh-20261003.json).
 Dashboard, users, client and remaining page/modal scenarios still belong to Q03.
+
+Q03-F003/F004 fresh release SHA `0d61d60402fdce03ddeafff87499691abafe25fb740eaed62cb7b13f6ae1229b`: 18 isolated cases / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks and bounded shutdown/recovery PASS. Five pre-fix reproductions (two load errors and late responses on all three pages) are preserved separately. Complete snapshots, .11 service PID/start time and its working binary were preserved. Certification 20/20 is refreshed for this artifact; physical rows and older benchmark records are not requalified.
