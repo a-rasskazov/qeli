@@ -47,6 +47,8 @@ path = "src/packet_bench_main.rs"
 required-features = ["packet-bench"]
 
 [features]
+# Test-only parser entry points; excluded from all shipping build recipes.
+fuzzing = []
 default = ["server", "client"]
 # Server side pulls the only MIPS-incompatible deps (rustls/ring via rcgen) plus
 # the web stack. A client-only build (`--no-default-features --features client-bin`)

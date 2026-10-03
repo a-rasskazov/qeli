@@ -367,4 +367,4 @@
 - [Q10: PacketCodec, replay и CONTROL_V2](reports/AUDIT-Q10-CODEC-CONTROL.md)
 
 - [Q11: REALITY, TLS 1.3 и HTTP/2](reports/AUDIT-Q11-REALITY-TLS-H2.md)
-- [Q12: транспорты и wire-маскировка, WS write batch](reports/AUDIT-Q12-TRANSPORTS.md)
+- [Q12: транспорты и wire-маскировка — завершено](reports/AUDIT-Q12-TRANSPORTS.md)

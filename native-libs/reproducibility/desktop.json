@@ -2,28 +2,28 @@
   "artifacts": {
     "native-libs/macos-universal/libqeli.dylib": {
       "consumed": {
-        "qeli-mac/QeliMac/native/libqeli.dylib": "814cf7ef9698d293bf54afcc6db336346810c211d1df5500481f5e9a12d859df"
+        "qeli-mac/QeliMac/native/libqeli.dylib": "3b26d3bf690ace630c1a792eb244f4019fde6025093a8cb73cb3ee448a13c970"
       },
-      "final_sha256": "814cf7ef9698d293bf54afcc6db336346810c211d1df5500481f5e9a12d859df",
-      "pass_a_sha256": "814cf7ef9698d293bf54afcc6db336346810c211d1df5500481f5e9a12d859df",
-      "pass_b_sha256": "814cf7ef9698d293bf54afcc6db336346810c211d1df5500481f5e9a12d859df",
+      "final_sha256": "3b26d3bf690ace630c1a792eb244f4019fde6025093a8cb73cb3ee448a13c970",
+      "pass_a_sha256": "3b26d3bf690ace630c1a792eb244f4019fde6025093a8cb73cb3ee448a13c970",
+      "pass_b_sha256": "3b26d3bf690ace630c1a792eb244f4019fde6025093a8cb73cb3ee448a13c970",
       "reproducible": true
     },
     "native-libs/windows-x64/qeli.dll": {
       "consumed": {
-        "qeli-win/QeliWin/native/qeli.dll": "72068fd4a4bf8d5dc1e20cc26455293e7f1cc5e52de1c10f753d3da23dec8860"
+        "qeli-win/QeliWin/native/qeli.dll": "93f29e24c52d1fc33d87e2702aac60665a6af60dcaaf735970023d25f33c6710"
       },
-      "final_sha256": "72068fd4a4bf8d5dc1e20cc26455293e7f1cc5e52de1c10f753d3da23dec8860",
-      "pass_a_sha256": "72068fd4a4bf8d5dc1e20cc26455293e7f1cc5e52de1c10f753d3da23dec8860",
-      "pass_b_sha256": "72068fd4a4bf8d5dc1e20cc26455293e7f1cc5e52de1c10f753d3da23dec8860",
+      "final_sha256": "93f29e24c52d1fc33d87e2702aac60665a6af60dcaaf735970023d25f33c6710",
+      "pass_a_sha256": "93f29e24c52d1fc33d87e2702aac60665a6af60dcaaf735970023d25f33c6710",
+      "pass_b_sha256": "93f29e24c52d1fc33d87e2702aac60665a6af60dcaaf735970023d25f33c6710",
       "reproducible": true
     }
   },
   "recipe": "qeli-native-repro-v1",
   "schema": 1,
-  "source_commit": "19fed832b163ca02dc4cbcf00144da4ed9401c35",
-  "source_date_epoch": 1791063685,
-  "source_digest": "4b90f6230edf2990aed8202c38a4d84e71efc7ef016389bdaa934b219e4a0e6a",
+  "source_commit": "9d5ae5bb7f7d6ac3cbd4040372bdd6e96f30d429",
+  "source_date_epoch": 1791067741,
+  "source_digest": "4ce5f34d9add3ac43a40b43337e3d9155abe44f454a90d200012d21dc558d9bb",
   "source_dirty": false,
   "toolchain": {
     "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",

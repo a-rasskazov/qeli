@@ -2613,3 +2613,7 @@ TUN/NAT/NDP, `post_up`, DNS и bind каждого `listen`. Ошибка `liste
 <!-- normative-sync: manual-ws-read-v1 -->
 
 При отказе WebSocket Upgrade проверьте,что промежуточный HTTP endpoint передаёт GET/HTTP/1.1,Host,Sec-WebSocket-Version13 и не дублирует ключ/accept. Body,Transfer-Encoding,незапрошенные extensions/subprotocol и head свыше4096 байт не поддерживаются. UnexpectedEof может означать незавершённый кадр или fragmented message. Ошибка следующего кадра возвращается после уже полученных данных и требует нового соединения. Настройки конфигурации не изменились;формат INI. [Отчёт Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: manual-ws-control-v1 -->
+
+При front=websocket Ping обслуживается без отправки данных приложением. Корректный Close завершает соединение после echo; дополнительные данные после Close не принимаются. Ошибка Close payload означает неверную длину, status или UTF-8 причину. После terminal error нужен новый carrier. `reality` — имя Quick Start: INI использует fake-tls с REALITY proxy; mode=reality-tls обозначает настоящий TLS. AWG jc должен совпадать для TCP obfs; на UDP это junk datagrams. Конфиги остаются INI. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

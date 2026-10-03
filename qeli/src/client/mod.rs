@@ -5177,7 +5177,7 @@ fn spawn_stream<R, W>(
 ) -> ClientStreamSender
 where
     R: AsyncRead + Unpin + Send + 'static,
-    W: AsyncWrite + Unpin + Send + 'static,
+    W: crate::protocol::obfs::CarrierWriteControl + Unpin + Send + 'static,
 {
     let (out_tx, mut out_rx) = mpsc::channel::<ClientUplink>(4096);
     let (terminal_tx, mut terminal_rx) = mpsc::channel::<ClientTerminalControl>(4);
@@ -5466,6 +5466,10 @@ where
                     .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(86_400));
                 tokio::select! {
                     biased;
+
+                    control = std::future::poll_fn(|cx| crate::protocol::obfs::CarrierWriteControl::poll_control(&mut write_half,cx)) => {
+                        if control.is_err() {break;}
+                    }
 
                     terminal = terminal_rx.recv() => {
                         let Some(terminal) = terminal else { break };

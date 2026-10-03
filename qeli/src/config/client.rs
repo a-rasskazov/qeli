@@ -342,7 +342,8 @@ pub struct ClientDnsConfig {
 pub struct ClientObfuscationConfig {
     #[serde(default = "default_cipher")]
     pub cipher: String,
-    /// Wire mode: "fake-tls" (default) or "obfs". Must match the server.
+    /// Wire mode: fake-tls (default), obfs, plain or reality-tls. Must match the server.
+    /// plain and reality-tls require TCP; UDP supports fake-tls and obfs.
     #[serde(default = "default_wire_mode")]
     pub mode: String,
     /// Pre-shared key for "obfs" mode. Must match the server.
@@ -550,7 +551,7 @@ impl ClientConfig {
     /// pass   = p@ss
     /// key    = 0a33..23a           ; pinned server pubkey (REQUIRED unless bind_static=false)
     /// bind_static = true           ; H-1, on by default; false = unpinned/TOFU client
-    /// mode   = fake-tls            ; fake-tls | obfs
+    /// mode   = fake-tls            ; fake-tls | obfs | plain | reality-tls
     /// sni    = www.cloudflare.com  ; optional, fake-tls only
     /// obfs_key = shared-secret     ; optional, obfs only
     /// mtu    = 0                   ; optional; 0 = auto (use server-pushed MTU)
@@ -924,26 +925,6 @@ impl ClientConfig {
         cfg
     }
 
-    /// Render this config's `[qeli]` section back to INI text (the inverse of
-    /// [`from_ini`], emitting only the minimal keys).
-    /// Reject unknown values for the string-enum fields, the same way `validate_profiles`
-    /// does on the server.
-    ///
-    /// Every one of these is compared verbatim against ONE literal at its use site, so an
-    /// unrecognised value does not error — it silently selects the other branch:
-    ///
-    ///   * `proto` — anything but exactly `udp` connects over TCP, so `proto = UDP` or a typo
-    ///     quietly uses a different transport than the config says.
-    ///   * `mode` — falls through the obfs / reality-tls / plain branches to fake-tls, so
-    ///     `mode = realty-tls` runs fake-tls and the peer disagrees about the wire.
-    ///   * `front` — compared against `websocket`, so `front = webscoket` drops the WebSocket
-    ///     framing the profile was configured for.
-    ///   * `dns` — DNS setup early-returns unless the mode is exactly `tunnel`, so `dns = of`
-    ///     leaves the host resolver in place: in a full tunnel that is a DNS leak.
-    ///   * `device_type` / routing `mode` — same shape, quieter consequences.
-    ///
-    /// The server got this treatment in #23; the client parser was left accepting anything.
-    /// (Audit 2026-07-30, #7.)
     /// True when `dns` asks us NOT to touch the host resolver.
     ///
     /// Both `off` and `system` mean that; `tunnel` (the default) is the only mode that

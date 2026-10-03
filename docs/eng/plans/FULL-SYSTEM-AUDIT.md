@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v27 -->
+<!-- normative-sync: full-system-audit-v28 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -151,7 +151,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | DONE |
-| 12 | Transports and wire camouflage | H02, H07–H08 | IN_PROGRESS |
+| 12 | Transports and wire camouflage | H02, H07–H08 | PASS |
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | TODO |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | IN_PROGRESS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | IN_PROGRESS |
@@ -466,7 +466,9 @@ was cross-compiled only. Other section scenarios and live Linux E2E remain open.
 
 ### 12. Transports and wire camouflage
 
-**4 October,WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): four shared writer/read fixes,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,fresh matrix/soak/native A/B PASS. HTTP/inbound frame/fuzz remain;fullQ12 IN_PROGRESS,overall11/37 (29.7%).
+**4 October,Q12 DONE/PASS:** Close/controls and wire-matrix review complete;8 baseline FAIL,17 new tests,2352 Linux PASS,13 fresh wire cases,64 probes,two frame/QUIC ASan campaigns,fresh matrix/soak/four native A/B PASS. [Evidence and scope](../reports/AUDIT-Q12-TRANSPORTS.md). Overall **12/37 (32.4%)**;next Q13.
+
+**4 October,WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): four shared writer/read fixes,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,fresh matrix/soak/native A/B PASS. At that batch,HTTP/inbound frame/fuzz remained;Q12 was IN_PROGRESS,overall11/37 (29.7%).
 
 **Source:** `qeli/src/protocol/tls.rs`, `qeli/src/protocol/obfs.rs`, `qeli/src/protocol/quic.rs`, `qeli/src/transport`.
 
@@ -474,13 +476,13 @@ Derive supported runtime/Quick Start combinations: plain/fake-tls/reality/realit
 
 **Existing harness/fixtures:** `conformance/quic.json`, `qeli/fuzz/fuzz_targets/websocket_head.rs`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: DONE/PASS.**
 
 ### 13. Recordizer, padding and shaping
 
@@ -2079,4 +2081,4 @@ D05/D09: [Q25-F112/F113 — identity files](../reports/AUDIT-Q25-IDENTITY-FILES.
 
 D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): one joined thread owns trust-file I/O; stop and timeout retain admitted writes and late errors until terminal result. 9 portable regressions; 16 worker cases + 16 file cases + 6 teardown and 2 recoveries PASS. 1584 host + 71 config; 2157 Linux + 48 privileged + 8 lifecycle PASS. Overall deadlines and other startup I/O/Drop remain D05. **Debt: 4/15 DONE (26.7%), 9 IN_PROGRESS, 2 TODO.**
 
-**4 October, HTTP/WS read batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md):6 fixes,9 baseline FAIL,11 new tests,2335 Linux PASS,40 live probes+63 transport assertions,request-head ASan/libFuzzer,fresh matrix/soak/four native A/B PASS. Close/control lifecycle and remaining wire-matrix review remain. Q12 IN_PROGRESS;overall11/37 (29.7%).
+**4 October, HTTP/WS read batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md):6 fixes,9 baseline FAIL,11 new tests,2335 Linux PASS,40 live probes+63 transport assertions,request-head ASan/libFuzzer,fresh matrix/soak/four native A/B PASS. At the read batch,Close/control lifecycle and wire-matrix review remained open;Q12 was IN_PROGRESS,overall11/37 (29.7%).

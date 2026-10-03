@@ -585,7 +585,29 @@ fn ws_frame_header(len: usize, mask: Option<[u8; 4]>) -> Vec<u8> {
 /// Control frames owed to the peer, shared between the read half (which detects the
 /// Ping/Close) and the write half (which is the only side able to send). See
 /// `WsReframer::control_out`. (Audit 2026-07-27, E3.)
-type ControlQueue = std::sync::Arc<std::sync::Mutex<Vec<(u8, Vec<u8>)>>>;
+#[derive(Default)]
+struct WsControls {
+    replies: Vec<(u8, Vec<u8>)>,
+    closing: bool,
+    sent: bool,
+    failed: bool,
+    reader: Option<std::task::Waker>,
+    writer: Option<std::task::Waker>,
+}
+type ControlQueue = std::sync::Arc<std::sync::Mutex<WsControls>>;
+
+fn valid_ws_close(payload: &[u8]) -> bool {
+    if payload.is_empty() {
+        return true;
+    }
+    if payload.len() < 2 {
+        return false;
+    }
+    let code = u16::from_be_bytes([payload[0], payload[1]]);
+    // RFC6455 + IANA registered protocol codes; application/private ranges.
+    matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
+        && std::str::from_utf8(&payload[2..]).is_ok()
+}
 
 /// Encode ONE control frame (FIN set, opcode `op`, payload verbatim). Control frames
 /// are never fragmented and carry at most 125 bytes (RFC 6455 §5.5), so the extended
@@ -652,20 +674,12 @@ struct WsReframer {
     pending: Vec<u8>,
     /// Read cursor into `pending` (bytes before it were already returned).
     pending_off: usize,
-    /// Control frames owed to the peer as `(opcode, payload)`, emitted by the write path.
-    ///
-    /// RFC 6455 §5.5.2 requires a `Pong` in response to every `Ping`, and §5.5.1 requires
-    /// a `Close` to be answered with a `Close`. This reframer used to consume and discard
-    /// every non-binary opcode, so a WebSocket-aware middlebox or an active prober that
-    /// sent a Ping got silence — a plain giveaway from an endpoint whose whole purpose is
-    /// to pass for a WebSocket, and grounds for a proxy to tear the session down. The
-    /// reply is queued rather than sent inline because the parser runs on the READ path,
-    /// which holds no writer; the write path drains this before its own data, and the
-    /// tunnel writes continuously (heartbeat / cover traffic), so the delay is bounded.
-    /// (Audit 2026-07-27, E3.)
+    /// Bounded replies shared with the writer. A control event wakes the existing
+    /// writer; unsplit and pre-auth readers drive replies themselves. Close is
+    /// prioritized, and readers wait for its flush before reporting EOF.
     control_out: ControlQueue,
-    /// Set once a `Close` has been seen and answered, so it is answered only once.
-    close_echoed: bool,
+    /// Terminal peer Close; frames after it are never parsed or delivered.
+    close_received: bool,
 }
 
 impl WsReframer {
@@ -687,7 +701,7 @@ impl WsReframer {
     /// can distinguish "consumed a binary frame" (even a zero-length one) from
     /// "consumed a control frame" and from "need more bytes".
     fn parse_one_frame(&mut self) -> io::Result<FrameParse> {
-        if self.buf.len() < 2 {
+        if self.close_received || self.buf.len() < 2 {
             return Ok(FrameParse::NeedMore);
         }
         let b0 = self.buf[0];
@@ -813,30 +827,43 @@ impl WsReframer {
             }
         } else if opcode == 0x9 || opcode == 0x8 {
             // Ping -> Pong (echo the payload), Close -> Close (echo the status code).
-            // Both are answered exactly as RFC 6455 §5.5 requires; see `control_out`.
+            // The shared writer/handshake path emits these bounded responses.
             let payload: Vec<u8> = self.buf[off..off + payload_len]
                 .iter()
                 .enumerate()
                 .map(|(i, &b)| if masked { b ^ mask[i % 4] } else { b })
                 .collect();
-            if let Ok(mut q) = self.control_out.lock() {
-                // Cap the owed-reply queue. The PEER decides how many Pings to send and
-                // the queue only drains when WE write — and during `read_ws_nonce` the
-                // write half does not exist yet, so nothing drains it at all. Unbounded,
-                // that is a pre-auth memory-growth primitive with ~16x amplification: a
-                // 2-byte Ping (`89 00`; the parser does not require the MASK bit) buys a
-                // ~32-byte queue entry. A real endpoint under a Ping flood would not keep
-                // up either, so past the cap we simply stop owing replies.
-                // (Audit 2026-08-04, H-03.)
-                if q.len() >= MAX_CONTROL_OUT {
-                    // fall through: frame is still consumed below, just not answered
-                } else if opcode == 0x9 {
-                    q.push((0xA, payload));
-                } else if !self.close_echoed {
-                    self.close_echoed = true;
-                    q.push((0x8, payload));
-                }
+            if opcode == 0x8 && !valid_ws_close(&payload) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "obfs ws: invalid Close payload",
+                ));
             }
+            let wake = {
+                let mut q = self.control_out.lock().unwrap_or_else(|e| e.into_inner());
+                if opcode == 0x8 {
+                    self.close_received = true;
+                    self.fragment_open = false;
+                    q.closing = true;
+                    // Close cannot be dropped behind outstanding Pongs.
+                    q.replies.clear();
+                    q.replies.push((0x8, payload));
+                } else if !q.closing {
+                    if q.replies.len() < MAX_CONTROL_OUT {
+                        q.replies.push((0xA, payload));
+                    } else {
+                        *q.replies.last_mut().expect("nonempty capped queue") = (0xA, payload);
+                    }
+                }
+                q.writer.take()
+            };
+            if let Some(waker) = wake {
+                waker.wake();
+            }
+        }
+        if self.close_received {
+            self.buf.clear(); // Bytes after Close never become application data.
+            return Ok(FrameParse::Control);
         }
         self.buf.drain(..off + payload_len);
         Ok(if deliver {
@@ -909,6 +936,38 @@ impl WsReframer {
                 FrameParse::Control => continue, // skip, keep looking
                 FrameParse::NeedMore => return Ok(false),
             }
+        }
+    }
+}
+
+/// Dedicated parser harness; absent from shipping builds and ABI.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_websocket_frames(data: &[u8]) {
+    let Some((&flags, wire)) = data.split_first() else {
+        return;
+    };
+    let mut r = WsReframer::with_expected_mask(flags & 1 != 0);
+    let chunk = 1 + usize::from(flags >> 1);
+    for bytes in wire.chunks(chunk) {
+        r.feed(bytes);
+        if r.drain_frames().is_err() {
+            break;
+        }
+        let mut sink = [0; 512];
+        while r.available() > 0 {
+            r.read_pending(&mut sink);
+        }
+        assert!(
+            r.control_out
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .replies
+                .len()
+                <= MAX_CONTROL_OUT
+        );
+        if r.close_received {
+            break;
         }
     }
 }
@@ -1007,10 +1066,54 @@ async fn send_junk_ws<S: AsyncWrite + Unpin>(
 /// bytes read past the `jc`-th junk frame stay inside `reframer.buf` for the
 /// caller's subsequent nonce / data reads (TCP may coalesce the last junk frame
 /// with the following nonce/data frames — nothing is over-consumed).
-async fn recv_junk_ws<S: AsyncRead + Unpin>(
+/// Handshake reads have no independent writer yet. Bound and flush the same
+/// control queue while waiting for junk/nonce bytes, including a Close reply.
+async fn ws_handshake_controls<S: AsyncWrite + Unpin>(
+    inner: &mut S,
+    rf: &mut WsReframer,
+    masked: bool,
+) -> io::Result<()> {
+    let owed = {
+        let mut q = rf.control_out.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut q.replies)
+    };
+    if owed.is_empty() {
+        return Ok(());
+    }
+    let close = owed.iter().any(|(op, _)| *op == 8);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        for (op, payload) in owed {
+            inner
+                .write_all(&ws_encode_control(op, &payload, masked))
+                .await?;
+        }
+        inner.flush().await?;
+        if close {
+            inner.shutdown().await?;
+        }
+        Ok::<(), io::Error>(())
+    })
+    .await
+    .map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "obfs ws: handshake control timeout",
+        )
+    })??;
+    if close {
+        rf.control_out
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sent = true;
+    }
+    Ok(())
+}
+
+async fn recv_junk_ws<S: AsyncRead + AsyncWrite + Unpin>(
     inner: &mut S,
     jc: u32,
     reframer: &mut WsReframer,
+    masked: bool,
 ) -> io::Result<()> {
     // This runs BEFORE the nonce exchange / auth, and the server's accept path has no
     // outer timeout around the handshake — so bound what an unauthenticated peer can
@@ -1037,6 +1140,13 @@ async fn recv_junk_ws<S: AsyncRead + Unpin>(
         // Consume any whole junk frames already buffered before reading more.
         while discarded < jc && reframer.try_discard_one_binary_frame()? {
             discarded += 1;
+        }
+        tokio::select! {
+            _ = &mut deadline => return Err(io::Error::new(io::ErrorKind::TimedOut,"obfs ws junk: handshake timed out")),
+            result = ws_handshake_controls(inner,reframer,masked) => result?,
+        }
+        if reframer.close_received {
+            return Err(io::ErrorKind::UnexpectedEof.into());
         }
         if discarded >= jc {
             break;
@@ -1479,9 +1589,10 @@ fn seek_err(e: impl std::fmt::Debug) -> io::Error {
 /// the raw nonce as a single WS binary frame (NOT ChaCha20-encrypted — no
 /// keystream exists yet). Consumes only the nonce frame; any coalesced post-nonce
 /// wire bytes remain buffered in `reframer` for the data phase.
-async fn read_ws_nonce<S: AsyncRead + Unpin>(
+async fn read_ws_nonce<S: AsyncRead + AsyncWrite + Unpin>(
     inner: &mut S,
     reframer: &mut WsReframer,
+    masked: bool,
 ) -> io::Result<[u8; NONCE_LEN]> {
     // Bound what an unauthenticated peer can impose here, exactly as `recv_junk_ws` does.
     // The nonce is ONE 12-byte binary frame, but control frames are consumed without
@@ -1493,6 +1604,10 @@ async fn read_ws_nonce<S: AsyncRead + Unpin>(
     let mut buf = [0u8; 512];
     loop {
         reframer.drain_frames()?;
+        ws_handshake_controls(inner, reframer, masked).await?;
+        if reframer.close_received {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
         if reframer.available() >= NONCE_LEN {
             let mut nonce = [0u8; NONCE_LEN];
             let n = reframer.read_pending(&mut nonce);
@@ -1529,24 +1644,27 @@ pub struct ObfsStream<S> {
 /// `reframer` holds cross-read parsing state seeded with any bytes buffered
 /// during the handshake.
 struct WsState {
-    reframer: WsReframer,
+    read: WsReadState,
     write: WsWriteState,
-    read_scratch: Vec<u8>,
 }
 
 impl WsState {
     fn new(masked: bool, reframer: WsReframer) -> Self {
         let control_out = reframer.control_out.clone();
         Self {
-            reframer,
+            read: WsReadState {
+                reframer,
+                read_scratch: vec![0u8; WS_FRAME_MAX + 32],
+            },
             write: WsWriteState {
                 masked,
                 out_buf: Vec::new(),
                 out_off: 0,
                 error: None,
+                sending_close: false,
+                control_flushing: false,
                 control_out,
             },
-            read_scratch: vec![0u8; WS_FRAME_MAX + 32],
         }
     }
 }
@@ -1601,7 +1719,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ObfsStream<S> {
         if jc > 0 {
             if fronting {
                 send_junk_ws(&mut inner, jc, jmin, jmax, true).await?;
-                recv_junk_ws(&mut inner, jc, &mut reframer).await?;
+                recv_junk_ws(&mut inner, jc, &mut reframer, true).await?;
             } else {
                 send_junk_raw(&mut inner, jc, jmin, jmax).await?;
                 recv_junk_raw(&mut inner, jc).await?;
@@ -1614,7 +1732,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ObfsStream<S> {
             // Nonce carried as a WS binary frame (masked: client→server).
             inner.write_all(&ws_encode_frames(&local, true)).await?;
             inner.flush().await?;
-            read_ws_nonce(&mut inner, &mut reframer).await?
+            read_ws_nonce(&mut inner, &mut reframer, true).await?
         } else {
             inner.write_all(&local).await?;
             inner.flush().await?;
@@ -1694,7 +1812,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ObfsStream<S> {
         // F2: server is the receiver first — discard jc junk, then emit jc junk.
         if jc > 0 {
             if fronting {
-                recv_junk_ws(&mut inner, jc, &mut reframer).await?;
+                recv_junk_ws(&mut inner, jc, &mut reframer, false).await?;
                 send_junk_ws(&mut inner, jc, jmin, jmax, false).await?;
             } else {
                 recv_junk_raw(&mut inner, jc).await?;
@@ -1706,7 +1824,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ObfsStream<S> {
         let mut local = [0u8; NONCE_LEN];
         rand::Rng::fill_bytes(&mut rand::rng(), &mut local);
         if fronting {
-            peer = read_ws_nonce(&mut inner, &mut reframer).await?;
+            peer = read_ws_nonce(&mut inner, &mut reframer, false).await?;
             // Nonce carried as a WS binary frame (unmasked: server→client).
             inner.write_all(&ws_encode_frames(&local, false)).await?;
             inner.flush().await?;
@@ -1733,13 +1851,7 @@ impl ObfsStream<TcpStream> {
         // Partition the single WS state into read-side (reframer) and write-side
         // (mask + outbound buffer). Present only on the ws-fronting path.
         let (ws_read, ws_write) = match self.ws {
-            Some(st) => (
-                Some(WsReadState {
-                    reframer: st.reframer,
-                    read_scratch: st.read_scratch,
-                }),
-                Some(st.write),
-            ),
+            Some(st) => (Some(st.read), Some(st.write)),
             None => (None, None),
         };
         (
@@ -1757,12 +1869,21 @@ impl ObfsStream<TcpStream> {
     }
 }
 
-/// A duplex stream that can be split into owned read/write halves. Lets the
-/// TCP data-plane code be generic over the plain (`fake-tls`) and `obfs` wire
-/// modes without boxing.
+/// Idle writer hook for carrier control traffic; application bytes stay in the
+/// existing writer. Pending is cancellation-safe: only owned wire bytes drain.
+pub trait CarrierWriteControl: AsyncWrite + Unpin {
+    fn poll_control(&mut self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Pending
+    }
+}
+impl CarrierWriteControl for OwnedWriteHalf {}
+impl<T: AsyncRead + AsyncWrite + Unpin> CarrierWriteControl for tokio::io::WriteHalf<T> {}
+impl CarrierWriteControl for tokio::io::DuplexStream {}
+
+/// A duplex carrier with owned halves used by the common TCP data plane.
 pub trait SplitStream {
     type R: AsyncRead + Unpin + Send + 'static;
-    type W: AsyncWrite + Unpin + Send + 'static;
+    type W: CarrierWriteControl + Unpin + Send + 'static;
     fn split_io(self) -> (Self::R, Self::W);
 }
 
@@ -1862,6 +1983,9 @@ struct WsWriteState {
     out_buf: Vec<u8>,
     out_off: usize,
     error: Option<(io::ErrorKind, String)>,
+    sending_close: bool,
+    // Retain a cancelled Pending flush after the owned frame buffer drains.
+    control_flushing: bool,
     /// Shared with the read half — see `WsReframer::control_out`.
     control_out: ControlQueue,
 }
@@ -1895,6 +2019,23 @@ fn ws_read<R: AsyncRead + Unpin>(
                 .map_err(seek_err)?;
             buf.put_slice(&tmp[..n]);
             return Poll::Ready(Ok(()));
+        }
+        {
+            let mut q = ws
+                .reframer
+                .control_out
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if q.failed {
+                return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+            }
+            if q.closing {
+                if q.sent {
+                    return Poll::Ready(Ok(()));
+                }
+                q.reader = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
         }
         // Need more wire bytes.
         let mut rb = ReadBuf::new(&mut ws.read_scratch);
@@ -1932,16 +2073,17 @@ fn ws_drain<W: AsyncWrite + Unpin>(
     while ws.out_off < ws.out_buf.len() {
         match Pin::new(&mut *inner).poll_write(cx, &ws.out_buf[ws.out_off..]) {
             Poll::Ready(Ok(0)) => {
-                ws.error = Some((
+                let e = io::Error::new(
                     io::ErrorKind::WriteZero,
-                    "obfs ws: socket write returned zero".into(),
-                ));
-                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+                    "obfs ws: socket write returned zero",
+                );
+                ws_failed(ws, &e);
+                return Poll::Ready(Err(e));
             }
             Poll::Ready(Ok(n)) => ws.out_off += n,
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Err(e)) => {
-                ws.error = Some((e.kind(), e.to_string()));
+                ws_failed(ws, &e);
                 return Poll::Ready(Err(e));
             }
         }
@@ -1952,15 +2094,55 @@ fn ws_drain<W: AsyncWrite + Unpin>(
 }
 
 fn ws_queue_controls(ws: &mut WsWriteState) {
-    let owed = ws
-        .control_out
-        .lock()
-        .map(|mut q| std::mem::take(&mut *q))
-        .unwrap_or_default();
+    let owed = {
+        let mut q = ws.control_out.lock().unwrap_or_else(|e| e.into_inner());
+        let owed = std::mem::take(&mut q.replies);
+        if owed.iter().any(|(op, _)| *op == 8) {
+            q.closing = true;
+            ws.sending_close = true;
+        }
+        owed
+    };
+    ws.control_flushing |= !owed.is_empty();
     for (op, payload) in owed {
         ws.out_buf
             .extend_from_slice(&ws_encode_control(op, &payload, ws.masked));
     }
+}
+
+fn ws_failed(ws: &mut WsWriteState, e: &io::Error) {
+    ws.error = Some((e.kind(), e.to_string()));
+    let wake = {
+        let mut q = ws.control_out.lock().unwrap_or_else(|e| e.into_inner());
+        q.failed = true;
+        q.reader.take()
+    };
+    if let Some(waker) = wake {
+        waker.wake();
+    }
+}
+
+fn ws_control<W: AsyncWrite + Unpin>(
+    inner: &mut W,
+    ws: &mut WsWriteState,
+    cx: &mut Context<'_>,
+) -> Poll<io::Result<()>> {
+    if let Some((kind, message)) = &ws.error {
+        return Poll::Ready(Err(io::Error::new(*kind, message.clone())));
+    }
+    let pending = {
+        let mut q = ws.control_out.lock().unwrap_or_else(|e| e.into_inner());
+        q.writer = Some(cx.waker().clone());
+        !q.replies.is_empty()
+            || (!q.sent && ws.sending_close)
+            || ws.control_flushing
+            || !ws.out_buf.is_empty()
+    };
+    if !pending {
+        return Poll::Pending;
+    }
+    ws.control_flushing = true;
+    ws_flush(inner, ws, cx)
 }
 
 /// Own at most one data frame. Report accepted plaintext immediately, including
@@ -1977,14 +2159,23 @@ fn ws_write<W: AsyncWrite + Unpin>(
         return Poll::Ready(Ok(0));
     }
     ready!(ws_drain(inner, ws, cx))?;
+    ws_queue_controls(ws);
+    if ws
+        .control_out
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .closing
+    {
+        ready!(ws_flush(inner, ws, cx))?;
+        return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+    }
     let accepted = buf.len().min(WS_FRAME_MAX);
     let mut cipher_bytes = buf[..accepted].to_vec();
     if let Err(e) = cipher.try_apply_keystream(&mut cipher_bytes) {
         let e = seek_err(e);
-        ws.error = Some((e.kind(), e.to_string()));
+        ws_failed(ws, &e);
         return Poll::Ready(Err(e));
     }
-    ws_queue_controls(ws);
     ws.out_buf
         .extend_from_slice(&ws_encode_frames(&cipher_bytes, ws.masked));
     match ws_drain(inner, ws, cx) {
@@ -2002,13 +2193,26 @@ fn ws_flush<W: AsyncWrite + Unpin>(
     ready!(ws_drain(inner, ws, cx))?;
     ws_queue_controls(ws);
     ready!(ws_drain(inner, ws, cx))?;
-    match Pin::new(inner).poll_flush(cx) {
-        Poll::Ready(Err(e)) => {
-            ws.error = Some((e.kind(), e.to_string()));
-            Poll::Ready(Err(e))
-        }
-        other => other,
+    if let Err(e) = ready!(Pin::new(&mut *inner).poll_flush(cx)) {
+        ws_failed(ws, &e);
+        return Poll::Ready(Err(e));
     }
+    if ws.sending_close {
+        if let Err(e) = ready!(Pin::new(&mut *inner).poll_shutdown(cx)) {
+            ws_failed(ws, &e);
+            return Poll::Ready(Err(e));
+        }
+        let wake = {
+            let mut q = ws.control_out.lock().unwrap_or_else(|e| e.into_inner());
+            q.sent = true;
+            q.reader.take()
+        };
+        if let Some(waker) = wake {
+            waker.wake();
+        }
+    }
+    ws.control_flushing = false;
+    Poll::Ready(Ok(()))
 }
 
 fn ws_shutdown<W: AsyncWrite + Unpin>(
@@ -2020,7 +2224,7 @@ fn ws_shutdown<W: AsyncWrite + Unpin>(
     Pin::new(inner).poll_shutdown(cx)
 }
 
-impl<S: AsyncRead + Unpin> AsyncRead for ObfsStream<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for ObfsStream<S> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -2029,14 +2233,29 @@ impl<S: AsyncRead + Unpin> AsyncRead for ObfsStream<S> {
         let this = self.get_mut();
         match &mut this.ws {
             Some(st) => {
-                let mut rs = WsReadState {
-                    reframer: std::mem::take(&mut st.reframer),
-                    read_scratch: std::mem::take(&mut st.read_scratch),
-                };
-                let r = ws_read(&mut this.inner, &mut this.read_cipher, &mut rs, cx, buf);
-                st.reframer = rs.reframer;
-                st.read_scratch = rs.read_scratch;
-                r
+                if buf.remaining() == 0 {
+                    return Poll::Ready(Ok(()));
+                }
+                loop {
+                    let before = buf.filled().len();
+                    let result = ws_read(
+                        &mut this.inner,
+                        &mut this.read_cipher,
+                        &mut st.read,
+                        cx,
+                        buf,
+                    );
+                    match ws_control(&mut this.inner, &mut st.write, cx) {
+                        Poll::Ready(Err(e)) => {
+                            if buf.filled().len() > before {
+                                return result;
+                            }
+                            return Poll::Ready(Err(e));
+                        }
+                        Poll::Ready(Ok(())) if result.is_pending() => continue,
+                        _ => return result,
+                    }
+                }
             }
             None => read_xor(&mut this.inner, &mut this.read_cipher, cx, buf),
         }
@@ -2103,6 +2322,32 @@ pub struct ObfsWriteHalf {
     inner: OwnedWriteHalf,
     cipher: ChaCha20,
     ws: Option<WsWriteState>,
+}
+
+impl CarrierWriteControl for ObfsWriteHalf {
+    fn poll_control(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let Some(ws) = &mut self.ws else {
+            return Poll::Pending;
+        };
+        if ws
+            .control_out
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sent
+        {
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+        }
+        ready!(ws_control(&mut self.inner, ws, cx))?;
+        if ws
+            .control_out
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .sent
+        {
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+        }
+        Poll::Ready(Ok(()))
+    }
 }
 
 impl AsyncWrite for ObfsWriteHalf {
@@ -2353,7 +2598,367 @@ mod tests {
         let mut got = [0; 2];
         assert_eq!(r.read_pending(&mut got), 2);
         assert_eq!(got, [7, 8]);
-        assert_eq!(*r.control_out.lock().unwrap(), vec![(0xA, vec![9])]);
+        assert_eq!(r.control_out.lock().unwrap().replies, vec![(0xA, vec![9])]);
+    }
+
+    #[test]
+    fn q12c_close_single_byte_rejected() {
+        let mut r = WsReframer::default();
+        r.feed(&[0x88, 1, 7]);
+        assert!(r.drain_frames().is_err());
+    }
+    #[test]
+    fn q12c_close_reserved_status_rejected() {
+        for code in [
+            0u16,
+            999,
+            1004,
+            1005,
+            1006,
+            1015,
+            1016,
+            2999,
+            5000,
+            u16::MAX,
+        ] {
+            let mut r = WsReframer::default();
+            let mut frame = vec![0x88, 2];
+            frame.extend_from_slice(&code.to_be_bytes());
+            r.feed(&frame);
+            assert!(r.drain_frames().is_err(), "code {code}");
+        }
+    }
+    #[test]
+    fn q12c_close_invalid_utf8_rejected() {
+        let mut r = WsReframer::default();
+        r.feed(&[0x88, 3, 3, 232, 255]);
+        assert!(r.drain_frames().is_err());
+    }
+    #[test]
+    fn q12c_no_data_after_peer_close() {
+        let mut r = WsReframer::default();
+        r.feed(&[0x88, 0, 0x82, 1, 7]);
+        r.drain_frames().unwrap();
+        assert_eq!(r.available(), 0);
+    }
+    #[test]
+    fn q12c_close_survives_full_pong_queue() {
+        let mut r = WsReframer::default();
+        for _ in 0..MAX_CONTROL_OUT {
+            r.feed(&[0x89, 0]);
+            r.drain_frames().unwrap();
+        }
+        r.feed(&[0x88, 0]);
+        r.drain_frames().unwrap();
+        assert!(r
+            .control_out
+            .lock()
+            .unwrap()
+            .replies
+            .iter()
+            .any(|(op, _)| *op == 8));
+    }
+    #[test]
+    fn q12c_new_write_after_peer_close_rejected() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(usize::MAX);
+        s.ws.as_mut().unwrap().read.reframer.feed(&[0x88, 0]);
+        s.ws.as_mut().unwrap().read.reframer.drain_frames().unwrap();
+        assert!(matches!(
+            Pin::new(&mut s).poll_write(&mut cx, b"forbidden"),
+            Poll::Ready(Err(_))
+        ));
+        assert_eq!(s.inner.wire, vec![0x88, 0]);
+    }
+    async fn q12c_idle_control(op: u8) {
+        let (inner, mut peer) = tokio::io::duplex(128);
+        let mut s = ObfsStream {
+            inner,
+            read_cipher: cipher_from(&[7; 32], &[9; NONCE_LEN]),
+            write_cipher: cipher_from(&[7; 32], &[9; NONCE_LEN]),
+            ws: Some(WsState::new(false, WsReframer::default())),
+        };
+        let task = tokio::spawn(async move {
+            let mut data = [0; 1];
+            s.read(&mut data).await
+        });
+        peer.write_all(&[0x80 | op, 0]).await.unwrap();
+        let mut reply = [0; 2];
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            peer.read_exact(&mut reply),
+        )
+        .await;
+        task.abort();
+        let _ = task.await;
+        assert!(result.is_ok(), "idle control response timed out");
+        assert_eq!(reply, [if op == 9 { 0x8a } else { 0x88 }, 0]);
+    }
+    #[tokio::test]
+    async fn q12c_idle_ping_answered_without_application_write() {
+        q12c_idle_control(9).await;
+    }
+    #[tokio::test]
+    async fn q12c_idle_close_answered_without_application_write() {
+        q12c_idle_control(8).await;
+    }
+
+    #[test]
+    fn q12c_valid_close_codes_and_reasons() {
+        assert!(valid_ws_close(&[]));
+        for code in [
+            1000u16, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 3000, 3999,
+            4000, 4999,
+        ] {
+            let mut body = code.to_be_bytes().to_vec();
+            body.extend_from_slice("reason: завершено".as_bytes());
+            assert!(valid_ws_close(&body), "{code}");
+        }
+    }
+    #[test]
+    fn q12c_prior_data_drains_before_close_eof() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(usize::MAX);
+        s.ws.as_mut()
+            .unwrap()
+            .read
+            .reframer
+            .feed(&[0x82, 1, 7, 0x88, 0, 0x82, 1, 8]);
+        let mut data = [0; 8];
+        let mut buf = ReadBuf::new(&mut data);
+        assert!(matches!(
+            Pin::new(&mut s).poll_read(&mut cx, &mut buf),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(buf.filled().len(), 1);
+        assert_eq!(s.inner.wire, vec![0x88, 0]);
+        assert!(s.inner.shutdown);
+        for _ in 0..2 {
+            let mut buf = ReadBuf::new(&mut data);
+            assert!(matches!(
+                Pin::new(&mut s).poll_read(&mut cx, &mut buf),
+                Poll::Ready(Ok(()))
+            ));
+            assert_eq!(buf.filled().len(), 0);
+        }
+    }
+    #[test]
+    fn q12c_close_backpressure_never_accepts_new_plaintext() {
+        let waker = q12_context();
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(1);
+        s.ws.as_mut().unwrap().read.reframer.feed(&[0x88, 0]);
+        s.ws.as_mut().unwrap().read.reframer.drain_frames().unwrap();
+        assert!(Pin::new(&mut s)
+            .poll_write(&mut cx, b"cancel-this")
+            .is_pending());
+        s.inner.allowance = usize::MAX;
+        assert!(
+            matches!(Pin::new(&mut s).poll_write(&mut cx,b"changed-buffer"),Poll::Ready(Err(e)) if e.kind()==io::ErrorKind::BrokenPipe)
+        );
+        assert_eq!(s.inner.wire, vec![0x88, 0]);
+        assert!(s.inner.shutdown);
+    }
+    async fn q12c_read_control<S: AsyncRead + Unpin>(peer: &mut S, masked: bool) -> (u8, Vec<u8>) {
+        let mut head = [0; 2];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            peer.read_exact(&mut head),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(head[1] & 128 != 0, masked);
+        let n = usize::from(head[1] & 127);
+        assert!(n <= 125);
+        let mut mask = [0; 4];
+        if masked {
+            peer.read_exact(&mut mask).await.unwrap();
+        }
+        let mut body = vec![0; n];
+        peer.read_exact(&mut body).await.unwrap();
+        if masked {
+            for (i, b) in body.iter_mut().enumerate() {
+                *b ^= mask[i % 4];
+            }
+        }
+        (head[0] & 15, body)
+    }
+    #[tokio::test]
+    async fn q12c_split_idle_pong_close_and_eof() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (peer, accepted) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let mut peer = peer.unwrap();
+        let inner = accepted.unwrap().0;
+        let s = ObfsStream {
+            inner,
+            read_cipher: cipher_from(&[7; 32], &[9; NONCE_LEN]),
+            write_cipher: cipher_from(&[7; 32], &[9; NONCE_LEN]),
+            ws: Some(WsState::new(false, WsReframer::with_expected_mask(true))),
+        };
+        let (mut r, mut w) = s.into_split();
+        let reader = tokio::spawn(async move {
+            let mut b = [0; 1];
+            r.read(&mut b).await
+        });
+        let writer = tokio::spawn(async move {
+            while std::future::poll_fn(|cx| w.poll_control(cx)).await.is_ok() {}
+        });
+        peer.write_all(&ws_encode_control(9, b"ping", true))
+            .await
+            .unwrap();
+        assert_eq!(
+            q12c_read_control(&mut peer, false).await,
+            (10, b"ping".to_vec())
+        );
+        let close = b"\x03\xe8bye";
+        peer.write_all(&ws_encode_control(8, close, true))
+            .await
+            .unwrap();
+        assert_eq!(
+            q12c_read_control(&mut peer, false).await,
+            (8, close.to_vec())
+        );
+        let mut b = [0; 1];
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), peer.read(&mut b))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), reader)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(1), writer)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    #[test]
+    fn q12c_failed_close_wakes_waiting_reader() {
+        struct Counter(std::sync::atomic::AtomicUsize);
+        impl std::task::Wake for Counter {
+            fn wake(self: std::sync::Arc<Self>) {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let wake = std::sync::Arc::new(Counter(std::sync::atomic::AtomicUsize::new(0)));
+        let waker = std::task::Waker::from(wake.clone());
+        let mut cx = Context::from_waker(&waker);
+        let mut s = q12_stream(usize::MAX);
+        let st = s.ws.as_mut().unwrap();
+        st.read.reframer.feed(&[0x88, 0]);
+        let mut data = [0; 1];
+        let mut buf = ReadBuf::new(&mut data);
+        assert!(ws_read(
+            &mut s.inner,
+            &mut s.read_cipher,
+            &mut st.read,
+            &mut cx,
+            &mut buf
+        )
+        .is_pending());
+        s.inner.failure = Some(io::ErrorKind::BrokenPipe);
+        assert!(matches!(
+            ws_control(&mut s.inner, &mut st.write, &mut cx),
+            Poll::Ready(Err(_))
+        ));
+        assert!(wake.0.load(std::sync::atomic::Ordering::Relaxed) > 0);
+        assert!(
+            matches!(ws_read(&mut s.inner,&mut s.read_cipher,&mut st.read,&mut cx,&mut buf),Poll::Ready(Err(e)) if e.kind()==io::ErrorKind::BrokenPipe)
+        );
+    }
+    #[tokio::test]
+    async fn q12c_nonce_phase_answers_ping_in_both_directions() {
+        for masked in [false, true] {
+            let (mut inner, mut peer) = tokio::io::duplex(512);
+            let task = tokio::spawn(async move {
+                let mut r = WsReframer::with_expected_mask(!masked);
+                read_ws_nonce(&mut inner, &mut r, masked).await
+            });
+            peer.write_all(&ws_encode_control(9, b"nonce-ping", !masked))
+                .await
+                .unwrap();
+            assert_eq!(
+                q12c_read_control(&mut peer, masked).await,
+                (10, b"nonce-ping".to_vec())
+            );
+            peer.write_all(&ws_encode_frames(&[6; NONCE_LEN], !masked))
+                .await
+                .unwrap();
+            assert_eq!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), task)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap(),
+                [6; NONCE_LEN]
+            );
+        }
+    }
+    #[tokio::test]
+    async fn q12c_junk_phase_answers_close_before_error() {
+        let (mut inner, mut peer) = tokio::io::duplex(512);
+        let task = tokio::spawn(async move {
+            let mut r = WsReframer::with_expected_mask(true);
+            recv_junk_ws(&mut inner, 2, &mut r, false).await
+        });
+        peer.write_all(&ws_encode_control(8, b"", true))
+            .await
+            .unwrap();
+        assert_eq!(q12c_read_control(&mut peer, false).await, (8, Vec::new()));
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+    }
+    #[test]
+    fn q12c_bounded_pongs_retain_latest_payload() {
+        let mut r = WsReframer::default();
+        for i in 0..20 {
+            r.feed(&ws_encode_control(9, &[i], false));
+            r.drain_frames().unwrap();
+        }
+        let q = r.control_out.lock().unwrap();
+        assert_eq!(q.replies.len(), MAX_CONTROL_OUT);
+        assert_eq!(q.replies.last().unwrap(), &(10, vec![19]));
+    }
+
+    #[test]
+    fn q12c_idle_control_retains_cancelled_flush() {
+        let mut s = q12_stream(100);
+        s.inner.flush_pending = true;
+        s.ws.as_mut().unwrap().read.reframer.feed(&[0x89, 1, 7]);
+        s.ws.as_mut().unwrap().read.reframer.drain_frames().unwrap();
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        assert!(ws_control(&mut s.inner, &mut s.ws.as_mut().unwrap().write, &mut cx).is_pending());
+        assert_eq!(s.inner.wire, [0x8a, 1, 7]);
+        assert_eq!(s.inner.flush_calls, 1);
+        s.inner.flush_pending = false;
+        assert!(matches!(
+            ws_control(&mut s.inner, &mut s.ws.as_mut().unwrap().write, &mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert_eq!(s.inner.flush_calls, 2);
+        assert_eq!(s.inner.wire, [0x8a, 1, 7]);
+        assert!(ws_control(&mut s.inner, &mut s.ws.as_mut().unwrap().write, &mut cx).is_pending());
     }
 
     // Deterministic backpressure: a short prefix may reach the socket before it parks.
@@ -2363,6 +2968,8 @@ mod tests {
         allowance: usize,
         shutdown: bool,
         failure: Option<io::ErrorKind>,
+        flush_pending: bool,
+        flush_calls: usize,
     }
     impl AsyncRead for Q12Socket {
         fn poll_read(
@@ -2392,7 +2999,13 @@ mod tests {
             Poll::Ready(Ok(n))
         }
         fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-            Poll::Ready(Ok(()))
+            let s = self.get_mut();
+            s.flush_calls += 1;
+            if s.flush_pending {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok(()))
+            }
         }
         fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
             self.get_mut().shutdown = true;
@@ -2466,10 +3079,12 @@ mod tests {
         let mut s = q12_stream(2);
         s.ws.as_mut()
             .unwrap()
+            .read
             .reframer
             .control_out
             .lock()
             .unwrap()
+            .replies
             .push((0xA, b"ping".to_vec()));
         assert!(Pin::new(&mut s).poll_flush(&mut cx).is_pending());
         s.inner.allowance = usize::MAX;
@@ -2486,10 +3101,12 @@ mod tests {
         let mut s = q12_stream(0);
         s.ws.as_mut()
             .unwrap()
+            .read
             .reframer
             .control_out
             .lock()
             .unwrap()
+            .replies
             .push((8, Vec::new()));
         assert!(Pin::new(&mut s).poll_shutdown(&mut cx).is_pending());
         assert!(!s.inner.shutdown);
@@ -2925,7 +3542,8 @@ mod tests {
         rf.drain_frames()
             .expect("a Ping flood must parse, not error");
 
-        let owed = rf.control_out.lock().unwrap();
+        let guard = rf.control_out.lock().unwrap();
+        let owed = &guard.replies;
         assert!(
             owed.len() <= MAX_CONTROL_OUT,
             "owed replies must stay capped, got {}",
@@ -2962,10 +3580,12 @@ mod tests {
         // Owe a Pong, exactly as an inbound Ping would: the read half queues it and only
         // the write half can drain it.
         if let Some(ws) = cli.ws.as_mut() {
-            ws.reframer
+            ws.read
+                .reframer
                 .control_out
                 .lock()
                 .unwrap()
+                .replies
                 .push((0xA, b"keepalive".to_vec()));
         }
 
@@ -3045,7 +3665,7 @@ mod tests {
         rf.feed(&ping);
         rf.drain_frames().expect("control frame parses");
 
-        let owed = std::mem::take(&mut *rf.control_out.lock().unwrap());
+        let owed = std::mem::take(&mut rf.control_out.lock().unwrap().replies);
         assert_eq!(owed.len(), 1, "a Ping must queue exactly one reply");
         assert_eq!(owed[0].0, 0xA, "reply opcode must be Pong");
         assert_eq!(owed[0].1, payload, "Pong must echo the Ping payload");
@@ -3062,7 +3682,7 @@ mod tests {
         rf2.feed(&close);
         rf2.feed(&close);
         rf2.drain_frames().unwrap();
-        let owed2 = std::mem::take(&mut *rf2.control_out.lock().unwrap());
+        let owed2 = std::mem::take(&mut rf2.control_out.lock().unwrap().replies);
         assert_eq!(owed2.len(), 1, "Close must be answered exactly once");
         assert_eq!(owed2[0].0, 0x8);
     }

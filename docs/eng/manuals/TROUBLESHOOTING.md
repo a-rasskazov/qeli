@@ -2604,3 +2604,7 @@ With fronting=websocket,the shared core flushes each protocol record,including h
 <!-- normative-sync: manual-ws-read-v1 -->
 
 If WebSocket Upgrade fails,check that the intermediate HTTP endpoint preserves GET/HTTP/1.1,Host,Sec-WebSocket-Version13 and does not duplicate key/accept. Body,Transfer-Encoding,unoffered extensions/subprotocols and heads exceeding4096 bytes are unsupported. UnexpectedEof may indicate an unfinished frame or fragmented message. A later-frame failure follows already received payloads and requires a new connection. Configuration settings are unchanged;format remains INI. [Q12 report](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: manual-ws-control-v1 -->
+
+With front=websocket,Ping is handled without application data. Valid Close ends the connection after echo;later data is refused. A Close payload error indicates invalid length,status or UTF-8 reason. Terminal errors require a new carrier. `reality` is a Quick Start name:INI uses fake-tls with REALITY proxy;mode=reality-tls means real TLS. AWG jc must match for TCP obfs;on UDP it means junk datagrams. Configs remain INI. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

@@ -726,3 +726,7 @@ The shared WS writer accepts at most16384 data bytes per poll,reports owned byte
 <!-- normative-sync: core-ws-read-v1 -->
 
 HTTP Upgrade uses a shared bounded parser:4096-byte head including CRLFCRLF,GET/HTTP/1.1,Host,version13,unambiguous key/accept;body forbidden except Content-Length0. Client rejects unoffered extensions/subprotocols. Inbound WS lengths are minimal under the16384-byte payload cap;unfinished fragmentation at EOF is UnexpectedEof. Earlier payloads drain before a latched later-frame error;parsing cannot resume. Inner AEAD remains mandatory. [Q12 checks](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: core-ws-control-v1 -->
+
+The shared core answers idle Ping/Close,including pre-auth nonce/junk. Valid Close checks status/UTF-8,takes priority over bounded/coalesced Pongs,refuses later data;EOF follows echo/flush/shutdown. Cancelled Pending flush state persists until completion. Daemon and native clients use the same reader/writer states. INI wire-mode matrix and QUIC/AWG scope are in [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

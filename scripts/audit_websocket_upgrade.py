@@ -72,6 +72,56 @@ def main():
                          ("nonminimal-u64", b"\x82\xff" + (1).to_bytes(8, "big"))):
         exchange(name, head, True, prefix + b"\0\0\0\0x")
     exchange("unfinished-fragment-eof", head, True, b"\x02\x81\0\0\0\0x", True)
+    def masked_frame(opcode, payload):
+        assert len(payload) <= 125
+        return bytes([0x80 | opcode, 0x80 | len(payload)]) + bytes(4) + payload
+
+    def exact(connection, length):
+        output = bytearray()
+        while len(output) < length:
+            part = connection.recv(length-len(output))
+            assert part, "unexpected EOF"
+            output.extend(part)
+        return bytes(output)
+
+    def control_exchange(name, payload, close=False, nonce=False, reject=False, after=False):
+        with socket.create_connection(address, timeout=3) as connection:
+            connection.settimeout(3)
+            connection.sendall(head)
+            response = bytearray()
+            while not response.endswith(b"\r\n\r\n"):
+                response.extend(exact(connection, 1))
+                assert len(response) <= 4096
+            assert response.startswith(b"HTTP/1.1 101 "), name
+            if nonce:
+                connection.sendall(masked_frame(2, bytes(12)))
+                assert exact(connection, 2) == b"\x82\x0c", name
+                exact(connection, 12)
+            frame = masked_frame(8 if close else 9, payload)
+            if after:
+                frame += masked_frame(2, b"after-close")
+            connection.sendall(frame)
+            if reject:
+                try:
+                    assert connection.recv(1) == b"", name
+                except ConnectionResetError:
+                    pass
+            else:
+                assert exact(connection, 2) == bytes([0x88 if close else 0x8a,len(payload)]), name
+                assert exact(connection, len(payload)) == payload, name
+                if close:
+                    assert connection.recv(1) == b"", name
+        results.append(name)
+
+    control_exchange("nonce-idle-ping-empty", b"")
+    control_exchange("nonce-idle-ping-max", bytes(range(125)))
+    control_exchange("pq-idle-ping", b"ping", nonce=True)
+    for code in (None,1000,1014,3000,4999):
+        payload = b"" if code is None else code.to_bytes(2,"big") + "bye \u043c\u0438\u0440".encode()
+        control_exchange(f"valid-close-{code}",payload,close=True)
+    for name,payload in (("one-byte",b"x"),("reserved",(1005).to_bytes(2,"big")),("invalid-utf8",b"\x03\xe8\xff")):
+        control_exchange("invalid-close-"+name,payload,close=True,reject=True)
+    control_exchange("pq-close-discards-later-data",b"\x03\xe8bye",close=True,nonce=True,after=True)
     print(json.dumps({"status": "PASS", "checks_passed": len(results), "cases": results}))
 
 

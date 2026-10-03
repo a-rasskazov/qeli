@@ -1,8 +1,72 @@
 # Q12: транспорты и wire-маскировка
 
-<!-- normative-sync: audit-q12-ws-read-v2 -->
+<!-- normative-sync: audit-q12-final-v3 -->
 
-Дата: **4 октября 2026**. **Q12 IN_PROGRESS**. Проверены пакеты WS-записи и HTTP/WS-чтения; раздел ещё не закрыт. Текущий код: `19fed832`. Evidence: `release/certification/evidence/q12-ws-read-20261004.json`.
+Дата: **4 октября 2026**. **Q12 DONE/PASS**. Текущий код `9d5ae5bb`; полный пакет проверок: `release/certification/evidence/q12-ws-close-20261004.json`. Предыдущие WS writer/read пакеты ниже сохраняют исходные даты и артефакты.
+
+## Close, control и завершение Q12: 4 октября
+
+Код `9d5ae5bb`; evidence `release/certification/evidence/q12-ws-close-20261004.json`.
+
+- **Q12-C001, P2:** Close принимал payload длиной один байт, запрещённые статусы и некорректный UTF-8. Теперь разрешены пустой payload либо статус 1000–1003,1007–1014,3000–4999 и корректная UTF-8 причина. Неправильный кадр завершает транспорт с ошибкой.
+- **Q12-C002, P1:** после Close разбирались и выдавались следующие данные, а writer принимал новый plaintext. Close теперь terminal; ранее полученные данные выдаются один раз, следующие кадры отбрасываются, новые данные не принимаются.
+- **Q12-C003, P2:** Close терялся за заполненной очередью Pong. Он имеет приоритет; до восьми ожидающих Pong остаются ограниченными, при заполнении сохраняется ответ на последний Ping.
+- **Q12-C004, P1:** простаивающее соединение не отвечало на Ping/Close до следующей прикладной записи. Целый поток, существующий writer split-потока сервера/shared client core и pre-auth junk/nonce фазы теперь обслуживают control-ответы. Новых конкурирующих writer-задач нет.
+- **Q12-C005, P2:** read мог выдать EOF до отправки Close, после чего владелец останавливал writer. Теперь EOF следует за echo, flush и shutdown; отказ writer будит ожидающий reader. Состояние reader сохраняется между poll без повторного создания reframer/scratch.
+- **Q12-C006, P2:** отменённый Pending flush мог забываться после освобождения wire-буфера. Флаг незавершённого flush сохраняется до Ready, включая idle control path; ответ не кодируется повторно.
+
+**8 baseline groups: 0 PASS / 8 FAIL**, **17 новых тестов**. Тесты используют backpressure,
+замену входного буфера после Pending, короткий duplex и настоящий TCP split. Порядок
+Close, wake reader, idle Pong и обе MASK-направленности handshake проверены отдельно.
+
+Свежие проверки одного артефакта: **2352 Linux PASS / 60 ignored**, full/minimal
+Clippy и fmt; **13 wire cases / 267 transport assertions** и **64 Upgrade/frame/control
+probes**; отдельный **24-assertion REALITY-TLS/H2 smoke**; **18-case matrix + aggregate
+IPv4/IPv6 leak**; **100 TCP + 100 QUIC / 33 soak checks**; четыре independent native
+A/B артефакта, клиентские копии, exports и provenance. Live control probes идут
+перед nonce и в ожидании PQ ClientHello; post-auth idle split ownership проверяется
+TCP-тестом общего адаптера. TCP soak использует fake-TLS, это не отдельный WS soak.
+
+Два bounded **ASan/libFuzzer** прогона по 60 секунд: WebSocket frame — **2177214**,
+QUIC envelope — **7714313**, без crash. Проверяются shipping parsers через test-only
+feature, отсутствующий в native recipes; исходная pre-commit identity сохранена,
+хеши входов сверены с квалифицированным кодом. Это не исчерпывающее fuzz-покрытие.
+
+Требования Close/Pong сверены с [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455)
+и [реестром статусов IANA](https://www.iana.org/assignments/websocket).
+Общий транспорт не является универсальной WS-библиотекой: поддерживается бинарный
+carrier с cap16384 и без extensions; generic protocol-error Close1002 не заявляется.
+
+## Матрица конфигов, runtime и Quick Start
+
+| Transport / mode | Дополнительные условия | Реальное поведение |
+|---|---|---|
+| TCP / plain | Front/AWG/QUIC не выбирают этот carrier | Raw framing с обязательным inner Qeli AEAD |
+| TCP / fake-tls | REALITY proxy выключен | TLS-подобный handshake, без real TLS |
+| TCP / fake-tls + REALITY proxy | Legacy Quick Start `reality`; short_id | Token recognition, decoy bridge, без real TLS |
+| TCP / reality-tls | REALITY proxy и real_tls, short_id, pin, bind_static | Настоящий TLS 1.3/H2; см. Q11 |
+| TCP / obfs | Непустой obfs_key; front=websocket/none | Общий ChaCha20 stream и выбранный front; AWG требует совпадения jc |
+| UDP / fake-tls или obfs | Для obfs нужен ключ; QUIC optional | Datagram handshake/AEAD, optional camouflage; AWG — junk datagrams |
+| UDP / plain или reality-tls | Несовместимые сочетания | Отклоняются общими parser/validator и сервером |
+
+`reality` — имя Quick Start, не новое значение INI `mode`. Front работает только
+для TCP obfs; неактивные параметры сохраняются при редактировании. TCP AWG работает
+только с obfs; server validator предупреждает о неактивном AWG в других TCP режимах.
+Нормализация AWG ограничивает jc128 и jmax1400; junk/accept deadlines и peer byte
+budgets сохраняются. UDP не требует зеркального счётчика junk от сервера.
+
+QUIC здесь — строгая unprotected compatibility envelope, а не RFC QUIC/HTTP/3.
+Проверены общий KAT, exact flags/version/DCID/SCID/token/declared length, legacy
+spelling, truncation и varints; новых дефектов оболочки не найдено. Ссылка на Initial
+в комментариях исправлена на [RFC 9000 §17.2.2](https://www.rfc-editor.org/rfc/rfc9000.html#section-17.2.2).
+Устаревшие перечисления режимов в config comments и ошибочно прикреплённый rustdoc
+удалены; UI/RU текст больше не обещает гарантированного обхода entropy DPI.
+Эти проверки не являются новым throughput benchmark или DPI-вендорной сертификацией.
+
+На .11 полные snapshots совпадают. На .10 сохраняется raw snapshot false только
+при разнице трёх ранее описанных legacy rules; остальные поля/service/executable
+должны совпадать. Рабочие сервисы не заменены. Native cross-build не подтверждает
+новый app E2E; Mac/router/Windows VM исключены пользователем.
 
 ## HTTP Upgrade и входящие кадры: 4 октября
 
@@ -57,9 +121,6 @@ Upgrade: **1148461 прогонов**, без crash. SHA входов совпа
 устойчивость к DPI. Функциональный обмен не доказывает неотличимость wire-трафика.
 Требования WebSocket сверяются с [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455).
 
-## Остаток Q12
+## Следующий раздел
 
-Остаются Close lifecycle и гарантии control-ответов, структурный inbound-frame fuzz,
-проверка матрицы параметров/wire-режимов и оставшиеся QUIC/AWG контракты.
-HTTP Upgrade/head caps, minimal frame lengths, fragment EOF и выдача предыдущих
-данных перед ошибкой проверены в пакете 4 октября. Общий план: **11/37 DONE/PASS (29,7%)**.
+Q12 закрыт в согласованных границах. Общий план: **12/37 DONE/PASS (32,4%)**. Далее — Q13: recordizer, padding и shaping; проверки входят в каждый пакет исправлений.

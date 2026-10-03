@@ -152,7 +152,7 @@ function quickstartPage() {
       { id: 'fake-tls', name: 'fake-tls', transport: 'tcp', port: 8444, tag: 'TCP · 8444',
         desc: 'Mimics a TLS 1.3 handshake. Near-zero overhead — the lightweight default.' },
       { id: 'obfs-ws', name: 'obfs-ws', transport: 'tcp', port: 8445, tag: 'TCP · 8445',
-        desc: 'ChaCha20 stream + WebSocket fronting. Structure-free, beats "fully-encrypted" / entropy DPI.' },
+        desc: 'ChaCha20 stream inside binary WebSocket frames. HTTP Upgrade changes the initial wire signature; DPI resistance depends on the network.' },
       { id: 'obfs-none', name: 'obfs-none', transport: 'tcp', port: 8446, tag: 'TCP · 8446',
         desc: 'ChaCha20 stream obfuscation without fronting — bare random-looking stream.' },
       { id: 'plain', name: 'plain', transport: 'tcp', port: 8447, tag: 'TCP · 8447',

@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v27 -->
+<!-- normative-sync: full-system-audit-v28 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -156,7 +156,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | DONE |
-| 12 | Транспорты и wire-маскировка | H02, H07–H08 | IN_PROGRESS |
+| 12 | Транспорты и wire-маскировка | H02, H07–H08 | PASS |
 | 13 | Recordizer, padding и shaping | H02, H07–H08 | TODO |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | IN_PROGRESS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | IN_PROGRESS |
@@ -471,7 +471,9 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 
 ### 12. Транспорты и wire-маскировка
 
-**4 октября, WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): четыре исправления общего writer/read,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,свежие matrix/soak/native A/B PASS. HTTP/inbound frame/fuzz ещё впереди; весь Q12 IN_PROGRESS,общий план11/37 (29,7%).
+**4 октября, Q12 DONE/PASS:** Close/control и wire-матрица завершены; 8 baseline FAIL,17 новых тестов,2352 Linux PASS,13 fresh wire cases,64 probes,два frame/QUIC ASan прогона,свежие matrix/soak/четыре native A/B PASS. [Evidence и границы](../reports/AUDIT-Q12-TRANSPORTS.md). Общий план **12/37 (32,4%)**; далее Q13.
+
+**4 октября, WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): четыре исправления общего writer/read,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,свежие matrix/soak/native A/B PASS. На момент того пакета HTTP/inbound frame/fuzz оставались впереди; тогда Q12 IN_PROGRESS,план11/37 (29,7%).
 
 **Код:** `qeli/src/protocol/tls.rs`, `qeli/src/protocol/obfs.rs`, `qeli/src/protocol/quic.rs`, `qeli/src/transport`.
 
@@ -479,13 +481,13 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 
 **Имеющаяся обвязка/fixtures:** `conformance/quic.json`, `qeli/fuzz/fuzz_targets/websocket_head.rs`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: DONE/PASS.**
 
 ### 13. Recordizer, padding и shaping
 
@@ -2088,4 +2090,4 @@ D05/D09: [Q25-F112/F113 — файлы идентичности](../reports/AUDI
 
 D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): файлы доверия обрабатываются в одном присоединяемом потоке; отмена и timeout не оставляют запись без владельца, поздний отказ сохраняется до terminal result. 9 portable regressions; 16 worker cases + 16 файловых + 6 teardown и 2 recovery PASS. 1584 host + 71 config; 2157 Linux + 48 privileged + 8 lifecycle PASS. Общий deadline и другие startup I/O/Drop остаются D05. **Техдолг: 4/15 DONE (26,7%), 9 IN_PROGRESS, 2 TODO.**
 
-**4 октября, HTTP/WS read batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): 6 исправлений,9 baseline FAIL,11 новых тестов,2335 Linux PASS,40 live probes+63 transport assertions,request-head ASan/libFuzzer,свежие matrix/soak/четыре native A/B PASS. Close/control lifecycle и оставшаяся wire-матрица ещё впереди. Q12 IN_PROGRESS;общий план11/37 (29,7%).
+**4 октября, HTTP/WS read batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): 6 исправлений,9 baseline FAIL,11 новых тестов,2335 Linux PASS,40 live probes+63 transport assertions,request-head ASan/libFuzzer,свежие matrix/soak/четыре native A/B PASS. На момент read-пакета Close/control lifecycle и wire-матрица оставались открытыми; тогда Q12 IN_PROGRESS,план11/37 (29,7%).

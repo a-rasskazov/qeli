@@ -1027,8 +1027,8 @@
         'REALITY-прокси: чужой/зондирующий трафик проксируется на реальный сайт; наши клиенты опознаются по токену short_id (fake-TLS, без внутреннего TLS).',
       'Mimics a TLS 1.3 handshake. Near-zero overhead — the lightweight default.':
         'Имитирует рукопожатие TLS 1.3. Почти без накладных расходов — лёгкий вариант.',
-      'ChaCha20 stream + WebSocket fronting. Structure-free, beats "fully-encrypted" / entropy DPI.':
-        'Поток ChaCha20 + WebSocket-фронтинг. Без структуры, обходит DPI «полностью зашифрованного» / энтропийный.',
+      'ChaCha20 stream inside binary WebSocket frames. HTTP Upgrade changes the initial wire signature; DPI resistance depends on the network.':
+        'Поток ChaCha20 внутри бинарных кадров WebSocket. HTTP Upgrade меняет начальную сигнатуру; устойчивость к DPI зависит от сети.',
       'ChaCha20 stream obfuscation without fronting — bare random-looking stream.':
         'Обфускация ChaCha20 без фронтинга — голый случайный поток.',
       'Raw tunnel, no obfuscation. For debugging or fully trusted links only.':

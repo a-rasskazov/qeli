@@ -723,3 +723,7 @@ CLI/cross-language KAT. UI reachability теперь вызывает Rust ABI 1
 <!-- normative-sync: core-ws-read-v1 -->
 
 HTTP Upgrade использует общий bounded parser: head до 4096 байт включая CRLFCRLF,GET/HTTP/1.1,Host,версия13,однозначные ключ/accept;body запрещён кроме Content-Length0. Клиент не принимает незапрошенные extensions/subprotocol. Inbound WS lengths минимальны при payload cap16384;незавершённая фрагментация при EOF — UnexpectedEof. Уже готовые данные выдаются до сохранённой ошибки следующего кадра;дальнейший разбор не возобновляется. Inner AEAD обязателен. [Проверки Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: core-ws-control-v1 -->
+
+Общий core отвечает на Ping/Close при простое, включая pre-auth nonce/junk. Valid Close проверяет status/UTF-8, имеет приоритет над bounded/coalesced Pong, запрещает следующие данные; EOF выдаётся после echo/flush/shutdown. Отменённый Pending flush сохраняется до завершения. Одни reader/writer состояния используются daemon и native clients. Матрица INI wire-режимов и границы QUIC/AWG приведены в [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).

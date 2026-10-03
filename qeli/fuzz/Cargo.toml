@@ -18,6 +18,7 @@ aes-gcm = "0.10"
 package = "qeli"
 path = ".."
 default-features = false
+features = ["fuzzing"]
 
 [[bin]]
 name = "clienthello"
@@ -109,6 +110,20 @@ debug = 1
 [[bin]]
 name = "realtls_client"
 path = "fuzz_targets/realtls_client.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "websocket_frame"
+path = "fuzz_targets/websocket_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "quic_envelope"
+path = "fuzz_targets/quic_envelope.rs"
 test = false
 doc = false
 bench = false

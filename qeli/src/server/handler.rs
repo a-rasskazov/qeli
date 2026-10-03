@@ -2274,7 +2274,7 @@ async fn run_stream<R, W>(
     stream_attach: StreamAttach,
 ) where
     R: AsyncRead + Unpin + Send + 'static,
-    W: AsyncWrite + Unpin + Send,
+    W: crate::protocol::obfs::CarrierWriteControl + Unpin + Send,
 {
     let pcfg = &profile.config;
     let hb_config = &pcfg.obfuscation.heartbeat;
@@ -2728,6 +2728,10 @@ async fn run_stream<R, W>(
         tokio::pin!(terminal_management);
         tokio::select! {
             biased;
+
+            control = std::future::poll_fn(|cx| crate::protocol::obfs::CarrierWriteControl::poll_control(&mut write_half,cx)) => {
+                if control.is_err() {break;}
+            }
 
             _terminal_event = &mut terminal_management => {
                 #[cfg(feature = "experimental-roaming")]

@@ -1291,8 +1291,8 @@ pub struct DnsConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct ServerObfuscationConfig {
-    /// Wire mode: "fake-tls" (default, TLS-1.3-mimicking handshake) or "obfs"
-    /// (ChaCha20 stream obfuscation, structure-free). TCP only.
+    /// Wire mode: fake-tls (default), obfs, plain or reality-tls.
+    /// plain and reality-tls require TCP; fake-tls and obfs also support UDP.
     #[serde(default = "default_wire_mode")]
     pub mode: String,
     /// Pre-shared key for "obfs" mode. Must match the client.
@@ -1300,7 +1300,7 @@ pub struct ServerObfuscationConfig {
     pub obfs_key: String,
     /// `obfs` anti-FET fronting: "websocket" (default) wraps the nonce exchange in
     /// a WebSocket Upgrade handshake so the connection's first bytes are printable
-    /// HTTP text (defeats GFW/TSPU "fully encrypted traffic" heuristics); "none"
+    /// HTTP text (changes the initial wire signature); "none"
     /// is the legacy raw nonce. Must match the client.
     #[serde(default = "default_obfs_fronting")]
     pub fronting: String,

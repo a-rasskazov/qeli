@@ -58,7 +58,7 @@ TARGET_JOB_PID=
 LOAD_JOB_PID=
 
 usage() {
-  echo "usage: $0 [qeli-binary] [success|resume|grace-expiry|soak|perf|multinode] [fake-tls|reality-tls|plain|obfs-ws|obfs-none|obfs-awg]" >&2
+  echo "usage: $0 [qeli-binary] [success|resume|grace-expiry|soak|perf|multinode] [fake-tls|reality|reality-tls|plain|obfs-ws|obfs-none|obfs-awg|obfs-awg-none]" >&2
 }
 
 if [ "$#" -gt 3 ]; then
@@ -155,6 +155,16 @@ CLIENT_BIND_STATIC=false
 REALITY_TARGET=false
 case "$WIRE_MODE" in
   fake-tls) ;;
+  reality)
+    SERVER_OBF_MODE=fake-tls
+    CLIENT_OBF_MODE=fake-tls
+    AUTH_REQUIRE_KEY_PROOF=true
+    AUTH_BIND_STATIC=true
+    CLIENT_BIND_STATIC=true
+    REALITY_TARGET=true
+    SERVER_OBF_EXTRA=$'obf.tls.server_name = www.microsoft.com\nobf.tls.reality_proxy.enabled = true\nobf.tls.reality_proxy.target = 10.40.3.1\nobf.tls.reality_proxy.target_port = 9443\nobf.tls.reality_proxy.short_ids = 0123456789abcdef\nobf.tls.reality_proxy.real_tls = false\nobf.tls.reality_proxy.handrolled = true'
+    CLIENT_OBF_EXTRA=$'reality_sid = 0123456789abcdef\nsni = www.microsoft.com'
+    ;;
   reality-tls)
     SERVER_OBF_MODE=reality-tls
     CLIENT_OBF_MODE=reality-tls
@@ -180,6 +190,12 @@ case "$WIRE_MODE" in
     CLIENT_OBF_MODE=obfs
     SERVER_OBF_EXTRA=$'obf.obfs_key = roam-tcp-obfs-key-1234\nobf.obfs_fronting = none'
     CLIENT_OBF_EXTRA=$'obfs_key = roam-tcp-obfs-key-1234\nfront = none'
+    ;;
+  obfs-awg-none)
+    SERVER_OBF_MODE=obfs
+    CLIENT_OBF_MODE=obfs
+    SERVER_OBF_EXTRA=$'obf.obfs_key = roam-tcp-obfs-key-1234\nobf.obfs_fronting = none\nobf.awg.enabled = true\nobf.awg.jc = 4\nobf.awg.jmin = 48\nobf.awg.jmax = 160'
+    CLIENT_OBF_EXTRA=$'obfs_key = roam-tcp-obfs-key-1234\nfront = none\nawg = true\njc = 4\njmin = 48\njmax = 160'
     ;;
   obfs-awg)
     SERVER_OBF_MODE=obfs
@@ -390,8 +406,13 @@ if [ "$CASE" = multinode ]; then
     "ip netns exec $RTR_NS iptables -t nat -C PREROUTING -i qrm-br -p tcp -d 10.40.3.2 --dport 4443 -j DNAT --to-destination 10.40.3.2:4444"
 fi
 if [ "$REALITY_TARGET" = true ]; then
+  if [ "$WIRE_MODE" = reality ]; then
+    check "legacy REALITY keeps fake-TLS instead of real TLS termination" \
+      "! grep -q 'real-TLS termination enabled' $WORK/server.log"
+  else
   check "REALITY server borrowed the target TLS shape and certificate" \
     "grep -q 'borrowed TLS shape.*real cert chain: captured' $WORK/server.log"
+  fi
   ip netns exec "$CLI_NS" timeout 10 openssl s_client -connect 10.40.3.2:4443 \
     -servername www.microsoft.com -showcerts </dev/null >"$WORK/decoy.log" 2>&1 || true
   check "non-Qeli TLS probe was bridged to the REALITY target" \
