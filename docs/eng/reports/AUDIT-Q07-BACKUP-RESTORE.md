@@ -1,8 +1,8 @@
-# Q07: backup, restore and history — batches 1–2
+# Q07: backup, restore and history — batches 1–3
 
-<!-- normative-sync: audit-q07-backup-restore-v2 -->
+<!-- normative-sync: audit-q07-backup-restore-v3 -->
 
-Date: 3 October 2026. **Batch: PASS; overall Q07: IN_PROGRESS.**
+Date: 3 October 2026. **Overall Q07: PASS within the agreed available Linux/runtime scope.**
 Configurations remain INI; JSON serves API responses and audit evidence.
 
 ## Confirmed defects
@@ -44,15 +44,9 @@ failure, FileLock budget and recovery. Linux: 2265 units PASS / 60 ignored,
 full/minimal Clippy and rustfmt PASS. Native/release qualification is retained
 in the evidence below. No performance benchmark or physical qualification claimed.
 
-## Remaining Q07
+## Validation boundaries
 
-Q07 remains open. After the second batch, fresh restoration with mixed
-inline/external users and the panel-secret lifecycle remain to be tested.
-Archive-restore preparation faults (actual ENOSPC/read-only and HTTP cancellation)
-still need direct coverage; passing Q05 history tests do not substitute for them.
-Multi-file publication is not an atomic transaction and has no automatic rollback.
-Power loss and uncoordinated root writes are not certified.
-[Budget report](AUDIT-Q05-ARCHIVE-BUDGET.md).
+Scenarios remaining after batch two are completed by batch three below. Whole-tree atomicity, automatic rollback, power loss and uncoordinated root writes are not claimed. [Budget report](AUDIT-Q05-ARCHIVE-BUDGET.md).
 
 Shared services and deployed binaries were not replaced. Full .11 snapshots match.
 Desktop .10 SDK A/B passes; default/explicit legacy IPv4 dumps differ, while nft,
@@ -102,3 +96,24 @@ errors are not treated as publication start. Power loss and whole-tree atomicity
 not claimed. [Second batch evidence](../../../release/certification/evidence/q07-publication-20261003.json).
 
 Second-batch qualification: 2265 units / 60 ignored, full/minimal Clippy and rustfmt PASS; fresh 18/327 matrix, aggregate leak and 100 TCP + 100 QUIC / 33 soak PASS. All four native cores passed A/B and match first Q07 byte-for-byte; ABI, copies and provenance PASS. .11 snapshots match; historical .10 legacy IPv4 dump limitations are retained although the current pair matches.
+
+## Third batch and Q07 completion
+
+Final release: `ba7d93afc47c71592e2d1d20e18d2c7c6a6cb0eb4248b674cf713e756aa1c712`.
+
+| ID | Problem | Fix |
+| --- | --- | --- |
+| Q07-F014, P2 | Actual ENOSPC extracting a valid tar returned HTTP 400. | Extraction failure returns HTTP 500; malformed gzip remains HTTP 400. |
+| Q07-F015, P2 | Opening a FileLock on read-only storage returned HTTP 409. | Only the actual FileLock wait timeout returns 409; open, trust and IO failures return 500. |
+
+Both cases were reproduced on the previous exact release: **2 FAIL of 25** preparation checks. Independent probes continued while the baseline failed overall. Invalid intermediate fixtures are not defect evidence.
+
+The final release passes **226 HTTP/system checks**: state 25, preparation 25, policy 14, publication 49, archives 38 and history 75. State coverage includes merged inline/external users and groups, external-file precedence for duplicates, disabled users/limits, exact config/users/identity bytes and a fresh worker after restoration. Actual inline/external VPN clients authenticate and pass tunnel ping. On a new host without the panel secret, the original password hash also authenticates a real client; credential reissue requires separately recovering machine-local state or explicit reset. Failed decryption never resets the password by itself. Same-host reissue, manual state-key recovery and legacy migration into a 0600 file pass. Portable archives exclude both panel-key variants.
+
+Preparation uses actual private 128 KiB tmpfs ENOSPC and read-only bind mounts for upload, tar write and pre-restore snapshots. Process-scoped LD_PRELOAD coordinates only the owned supervisor; no host library replacement. Pre-publication failures retain existing data/recovery sets and report `publication_started=false`, `rollback_snapshot=null`. Disconnecting HTTP during restore does not release its guards early: a second request receives 409, status remains responsive, the original restore completes and cleans staging, and the next restore succeeds.
+
+Review covers archive source/shape, streaming limits/child ownership, staged trust/dependencies, locks/cancellation, publication/pruning/recovery, privacy/retention and history/state. No unused runtime implementation requiring removal was identified in this batch. Linux: **2266 units PASS / 60 ignored**, full/minimal Clippy and rustfmt PASS. Fresh **18 scenarios / 327 matrix checks**, aggregate leak and **100 TCP + 100 QUIC / 33 soak checks PASS**. All four native cores passed A/B, ABI/copies/provenance and match previous Q07 byte-for-byte. Android disk preflight was retried after transient unit-link outputs were released; the initial refusal is retained. .11 snapshots match; the current .10 pair matches while the historical legacy IPv4 dump limitation remains.
+
+**Q07: PASS within the agreed available Linux/runtime scope.** Read-only storage after extraction prevents immediate staging cleanup: remaining files are private (0700/0600), excluded from backups and removable manually once storage is writable and restore has ended. This filesystem limitation is documented. Publication remains per-file rename without whole-tree atomicity or automatic rollback; power loss and uncoordinated root writes are not certified. Physical advisory checks retain agreed exclusions. Working services were not replaced and no push occurred. The next plan section is Q08.
+
+[Final Q07 evidence](../../../release/certification/evidence/q07-completion-20261003.json).

@@ -395,6 +395,27 @@ while removing that directory's ordinary files.
 surrounding spaces. An absent parameter means overlay. Empty or unknown values
 return HTTP 400 before restore starts.
 
+
+Filesystem failures opening/checking locks and tar extraction failures return
+HTTP 500; actual external FileLock contention timeout returns HTTP 409. Structurally
+invalid uploads still return HTTP 400. Pre-publication failure reports
+`publication_started: false` and `rollback_snapshot: null`.
+If storage becomes read-only after extraction, staging cannot be removed either:
+a private `.restore-staging-*` directory remains with modes 0700/0600. Once storage
+is writable and restore has finished, inspect and remove that temporary directory.
+Subsequent restores do not use it; portable backups and rollback snapshots exclude
+operational staging/upload paths.
+
+Fresh restoration with mixed inline/external users requires the external users INI
+in the archive even when inline accounts exist. The external file wins duplicate
+user/group names; group references are validated on the union. Restart applies
+the restored credentials and restrictions. `/var/lib/qeli/panel-secret.key` remains
+machine-local state excluded from portable archives. On the same server the preserved
+key allows reissuing the old link. On a new server without that key, old password_hash
+values still authenticate, but reissuing password_enc needs recovery of a separate
+state backup or an explicitly authorized password reset. Decryption failure itself
+does not change passwords.
+
 ### Quick start page
 Its own sidebar page: a table of ten masking modes, each launchable with **Launch** —
 `reality-tls` (TCP 443, badged "flagship"), `reality` (8443), `fake-tls` (8444),
@@ -1010,7 +1031,7 @@ applies new listener settings and retains sessions with healthy persistent keys.
 
 ### Users API and live access
 
-<!-- normative-sync: panel-user-mutations-v5 -->
+<!-- normative-sync: panel-user-mutations-v6 -->
 
 User/group/limit mutation bodies must be objects; wrong types cannot become Unlimited or a successful no-op. `enabled` is boolean, `bandwidth` an object, password/hash strings, route gateway string/null. Configurations are saved only as INI.
 

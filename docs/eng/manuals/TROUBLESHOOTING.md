@@ -2070,6 +2070,8 @@ complete backup exists. If publication already started and failed, use the retai
 [Analysis and verification](../reports/AUDIT-Q05-ARCHIVE-BUDGET.md).
 
 
+HTTP 409 means actual contention or a FileLock wait timeout. Read-only lock-open errors, upload/extraction ENOSPC and snapshot failures return HTTP 500; malformed archives return HTTP 400. Before publication, the response reports `publication_started=false`, `rollback_snapshot=null`. If storage becomes read-only after extraction, private `.restore-staging-*` may remain: inspect and remove it manually once writes are restored and restore has ended. These operational paths are excluded from backups and never reused by the next restore. [Q07 checks](../reports/AUDIT-Q07-BACKUP-RESTORE.md).
+
 ### 6.60. Sysctl: namespace changed during a transaction
 
 `host sysctl namespace changed during the journal transaction` or `transaction lost

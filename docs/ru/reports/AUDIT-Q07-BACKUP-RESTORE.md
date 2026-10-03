@@ -1,8 +1,8 @@
-# Q07: backup, restore и history — пакеты 1–2
+# Q07: backup, restore и history — пакеты 1–3
 
-<!-- normative-sync: audit-q07-backup-restore-v2 -->
+<!-- normative-sync: audit-q07-backup-restore-v3 -->
 
-Дата: 3 октября 2026. **Пакет: PASS; полный Q07: IN_PROGRESS.**
+Дата: 3 октября 2026. **Полный Q07: PASS в согласованном доступном Linux/runtime scope.**
 Конфигурации остаются INI; JSON используется для служебных ответов API/evidence.
 
 ## Подтверждённые ошибки
@@ -44,15 +44,9 @@ FileLock budget и recovery. Linux: 2265 units PASS / 60 ignored, full/minimal
 Clippy и rustfmt PASS. Native и release qualification указаны в evidence ниже.
 Это функциональный аудит, не performance benchmark или physical qualification.
 
-## Оставшийся Q07
+## Границы проверки
 
-Полный Q07 пока не закрыт. После второго пакета остаются fresh restore со
-смешанными inline/external users и проверка жизненного цикла panel-secret.
-Дополнительно нужно проверить отказы подготовки именно архивного restore
-(реальные ENOSPC/read-only и отмена HTTP), не подменяя их уже прошедшими
-Q05 history tests. Multi-file publication не является атомарной транзакцией;
-автоматического rollback нет. Power loss и несогласованные root writes не
-сертифицированы. [Отчёт бюджета](AUDIT-Q05-ARCHIVE-BUDGET.md).
+Оставшиеся после второго пакета сценарии закрыты третьим пакетом ниже. Whole-tree atomicity, автоматический rollback, power loss и несогласованные root writes не заявляются. [Отчёт бюджета](AUDIT-Q05-ARCHIVE-BUDGET.md).
 
 Рабочие службы и binaries не заменялись. Все полные .11 snapshots совпали.
 SDK .10 A/B прошёл; default/explicit legacy IPv4 firewall dumps отличаются,
@@ -102,3 +96,24 @@ EIO/ENOSPC/EACCES второго rename и EACCES prune внедрены process
 заявляются. [Свидетельства второго пакета](../../../release/certification/evidence/q07-publication-20261003.json).
 
 Квалификация второго пакета: 2265 units / 60 ignored, full/minimal Clippy и rustfmt PASS; свежие 18/327 matrix, aggregate leak и 100 TCP + 100 QUIC / 33 soak PASS. Все четыре native cores прошли A/B и совпали с первым Q07 побайтно; ABI, copies и provenance PASS. .11 snapshots совпали; историческое ограничение .10 legacy IPv4 dumps сохранено, хотя текущая пара совпала.
+
+## Третий пакет и закрытие Q07
+
+Финальный release: `ba7d93afc47c71592e2d1d20e18d2c7c6a6cb0eb4248b674cf713e756aa1c712`.
+
+| ID | Проблема | Исправление |
+| --- | --- | --- |
+| Q07-F014, P2 | Реальный ENOSPC при распаковке корректного tar возвращал HTTP 400. | Extraction failure возвращает HTTP 500; malformed gzip остаётся HTTP 400. |
+| Q07-F015, P2 | Ошибка открытия FileLock на read-only storage возвращала HTTP 409. | Только штатный timeout ожидания FileLock означает 409; ошибки открытия, доверия и IO означают 500. |
+
+На предыдущем точном release оба случая воспроизведены: **2 FAIL из 25** prepare checks. Независимые probes продолжались, общий baseline остался FAIL. Ошибочные промежуточные fixtures не считаются доказательством дефектов.
+
+На финальном release **226 HTTP/system checks PASS**: state 25, prepare 25, policy 14, publication 49, archives 38, history 75. State проверяет объединение inline/external пользователей и групп, приоритет внешнего файла для дубликатов, disabled/лимиты, точные bytes config/users/identity и свежий worker после restore. Реальные inline/external VPN-клиенты аутентифицируются и передают tunnel ping. На новом сервере без panel-secret старый password hash также реально аутентифицирует клиента; выдача прежнего пароля требует отдельного восстановления machine-local state либо явного reset. Неуспешная расшифровка сама пароль не меняет. Same-host reissue, ручное восстановление state key и legacy migration в 0600 проверены. Portable archive исключает оба варианта panel key.
+
+Prepare использует настоящие private tmpfs 128 KiB с ENOSPC и read-only bind mounts: upload, tar write, pre-restore snapshot. Process-scoped LD_PRELOAD только согласует момент операций собственного supervisor; host library не заменяется. До публикации прежние данные и recovery set сохраняются, metadata указывают `publication_started=false` и `rollback_snapshot=null`. Разрыв HTTP во время restore не освобождает guards преждевременно: второй запрос получает 409, status отвечает, первый завершает работу и очищает staging, следующий restore проходит.
+
+Review покрывает источник/структуру архивов, streaming limits и дочерние процессы, staged trust/dependencies, locks и отмену, publication/pruning/recovery, приватность/rotation и history/state. Неиспользуемых runtime-реализаций для удаления в этом пакете не выявлено. Linux: **2266 units PASS / 60 ignored**, full/minimal Clippy и rustfmt PASS. Свежие **18 сценариев / 327 matrix checks**, aggregate leak и **100 TCP + 100 QUIC / 33 soak checks PASS**. Все четыре native cores прошли A/B, ABI/copies/provenance PASS и побайтно совпали с предыдущим Q07. Android disk preflight повторён после освобождения временных unit-link outputs; исходный отказ не скрыт. .11 snapshots совпали; текущая .10 пара совпала, историческое ограничение legacy IPv4 dumps сохраняется.
+
+**Q07: PASS в согласованном доступном Linux/runtime scope.** При read-only после extraction немедленная очистка staging невозможна: оставшиеся файлы приватны (0700/0600), исключены из backups и удаляются вручную после восстановления записи и завершения restore. Это документированное ограничение файловой системы. Публикация остаётся набором per-file rename, без whole-tree atomicity и автоматического rollback; power loss и несогласованные root writes не сертифицированы. Физические advisory-проверки сохраняют согласованные исключения. Рабочие службы не заменялись, push не выполнялся. Следующий раздел плана — Q08.
+
+[Финальные свидетельства Q07](../../../release/certification/evidence/q07-completion-20261003.json).

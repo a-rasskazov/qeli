@@ -441,6 +441,9 @@ const SERVER_FAULT_MARKERS: &[&str] = &[
     "write temp file",
     "tar list failed",
     "tar extract execution failed",
+    "extract failed:",
+    "cannot lock runtime dependency for restore",
+    "cannot lock server config for restore",
     "cannot create the staging directory",
     "publishing the restored files failed",
     "could not run tar for the pre-restore snapshot",
@@ -450,11 +453,19 @@ const SERVER_FAULT_MARKERS: &[&str] = &[
     "cannot normalize restored config/key permissions",
 ];
 
+fn restore_lock_error(prefix: &str, error: anyhow::Error) -> String {
+    // FileLock distinguishes bounded flock contention from open/stat/trust/I/O errors.
+    // Match its error prefix, never arbitrary text from a configured pathname.
+    let detail = error.to_string();
+    if detail.starts_with("timed out waiting for lock ") {
+        format!("restore lock contention: {prefix}: {detail}")
+    } else {
+        format!("{prefix}: {detail}")
+    }
+}
+
 fn restore_error_status(msg: &str) -> StatusCode {
-    if msg == RESTORE_BUSY
-        || msg.starts_with("cannot lock runtime dependency for restore")
-        || msg.starts_with("cannot lock server config for restore")
-    {
+    if msg == RESTORE_BUSY || msg.starts_with("restore lock contention:") {
         StatusCode::CONFLICT
     } else if SERVER_FAULT_MARKERS.iter().any(|m| msg.contains(m)) {
         StatusCode::INTERNAL_SERVER_ERROR
@@ -571,8 +582,8 @@ static RESTORE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 ///  * dotfiles and *.lock files are left alone: they are operational state, and
 ///    a backup has no authority to unlink an active advisory-lock inode.
 ///
-/// Returns the number of entries removed. Errors are collected, not fatal: a partial
-/// cleanup with a warning beats aborting after the files were already published.
+/// Returns the number of entries removed and cleanup errors. The caller reports
+/// failure with recovery metadata when publication has succeeded but cleanup has not.
 ///
 /// `archive_names` MUST be captured BEFORE publishing. `publish_staged_tree` moves entries
 /// out of the staging directory with `fs::rename`, so by the time this runs the staging
@@ -717,9 +728,12 @@ fn lock_restore_dependencies(
             .min(Duration::from_secs(5));
         guards.push(
             crate::util::FileLock::acquire_timeout(&target, wait).map_err(|error| {
-                format!(
-                    "cannot lock runtime dependency for restore '{}': {error}",
-                    target.display()
+                restore_lock_error(
+                    &format!(
+                        "cannot lock runtime dependency for restore '{}'",
+                        target.display()
+                    ),
+                    error,
                 )
             })?,
         );
@@ -746,7 +760,7 @@ fn restore_blocking(
         .saturating_duration_since(Instant::now())
         .min(Duration::from_secs(5));
     let _config_file_guard = crate::util::FileLock::acquire_timeout(&lock_path, lock_wait)
-        .map_err(|error| format!("cannot lock server config for restore: {error}"))?;
+        .map_err(|error| restore_lock_error("cannot lock server config for restore", error))?;
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -940,8 +954,8 @@ fn restore_blocking(
     // Publication is the commit boundary: do not abandon half a tree just because
     // the preparation deadline expires during filesystem renames.
     // Vetted — publish. Same filesystem, so each rename is atomic; a failure part-way
-    // leaves the rest of the live directory intact and the pre-restore snapshot above
-    // restores the whole thing.
+    // may leave a mix of old and new files. The snapshot supports manual recovery;
+    // extracting it alone does not remove newly introduced files.
     if let Err(e) = publish_staged_tree(&staged_root, "/etc/qeli") {
         stage_cleanup();
         return Err(RestoreFailure {
@@ -950,7 +964,7 @@ fn restore_blocking(
         });
     }
     // Exact mode: drop what the archive did not carry. Done AFTER publish, so a failure
-    // during publish leaves the live directory intact rather than half-deleted. (Р1)
+    // during publish avoids pruning old extras, but may still replace some live files. (Р1)
     let mut pruned = String::new();
     if exact {
         let (removed, errors) = prune_absent(&archive_names, "/etc/qeli");
@@ -1939,6 +1953,33 @@ mod tests {
             .unwrap();
         let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(reply["error"], RESTORE_BUSY);
+    }
+
+    #[test]
+    fn restore_storage_errors_are_not_archive_or_contention_errors() {
+        for prefix in [
+            "cannot lock server config for restore",
+            "cannot lock runtime dependency for restore '/etc/qeli/users.conf'",
+        ] {
+            let busy = restore_lock_error(
+                prefix,
+                anyhow::anyhow!("timed out waiting for lock file after 5s"),
+            );
+            assert_eq!(restore_error_status(&busy), StatusCode::CONFLICT);
+            let io = restore_lock_error(
+                prefix,
+                anyhow::anyhow!("cannot open the lock: Read-only file system"),
+            );
+            assert_eq!(restore_error_status(&io), StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        assert_eq!(
+            restore_error_status("extract failed: tar: Wrote only 1536 of 10240 bytes"),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            restore_error_status("not a gzip archive"),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]

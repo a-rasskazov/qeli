@@ -2072,6 +2072,8 @@ Portable gzip ограничен 16 МиБ, как загрузка панели
 [Разбор и проверки](../reports/AUDIT-Q05-ARCHIVE-BUDGET.md).
 
 
+HTTP 409 означает реальную конкуренцию или timeout ожидания FileLock. Ошибки открытия lock на read-only storage, ENOSPC при upload/extraction и сбой snapshot возвращают HTTP 500; malformed archive — HTTP 400. До публикации ответ указывает `publication_started=false`, `rollback_snapshot=null`. Если запись запретилась после распаковки, приватный `.restore-staging-*` может остаться: после возврата записи и завершения restore проверьте и удалите его вручную. Такие операционные пути исключены из backups и не используются следующим restore. [Проверки Q07](../reports/AUDIT-Q07-BACKUP-RESTORE.md).
+
 ### 6.60. Sysctl: namespace изменился во время транзакции
 
 `host sysctl namespace changed during the journal transaction` или `transaction lost

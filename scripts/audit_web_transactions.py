@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults','archive-state','archive-prepare'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -318,6 +318,184 @@ int unlink(const char *path) {
   finally:
    action.unlink(missing_ok=True);stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
   print(('PASS' if complete else 'FAIL')+' Q07 publication '+str(len(checks))+' checks',flush=True)
+  if not complete:raise SystemExit(1)
+
+ elif a.scenario=='archive-state':
+  import io,tarfile
+  clients=[];client_streams=[];ns='q07-restore-client';network_setup=False
+  users=Path('/etc/qeli/users.conf');key=Path('/var/lib/qeli/panel-secret.key');legacy=Path('/etc/qeli/panel-secret.key')
+  def archive(items):
+   out=io.BytesIO()
+   with tarfile.open(fileobj=out,mode='w:gz') as tar:
+    for name,data in items.items():
+     t=tarfile.TarInfo(name);t.size=len(data);t.mode=0o600;tar.addfile(t,io.BytesIO(data))
+   return out.getvalue()
+  def unpack(blob):
+   with tarfile.open(fileobj=io.BytesIO(blob),mode='r:gz') as tar:return {m.name:tar.extractfile(m).read() for m in tar if m.isfile()}
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());assert r[0]==200,(path,r[0]);return r[1]
+  def listed():return {u['username']:u for u in api('/api/users')['users']}
+  def loaded(name):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(3);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps({'cmd':'show-routes','username':name})+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536)).get('ok') is True
+  def client_stop():
+   for p in clients:
+    if p.poll() is None:
+     p.terminate()
+     try:p.wait(timeout=20)
+     except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5)
+   clients.clear()
+   for f in client_streams:f.close()
+   client_streams.clear()
+  def authenticate(name):
+   config=root/(name+'-restored.ini');config.write_text('[qeli]\nserver=198.18.0.1:24843\nproto=tcp\nuser='+name+'\npass=fixture-client-password\nmode=fake-tls\nbind_static=false\nquic=false\ndev=q07client\ngateway=false\ndns=off\nkill_switch=false\ntimeout=8\n[logging]\nlevel=info\n');config.chmod(0o600)
+   log=(root/(name+'-restored-client.log')).open('w');client_streams.append(log);client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(name+'-known-hosts')),QELI_DEVICE_ID_FILE=str(root/(name+'-device-id')))
+   clients.append(subprocess.Popen(['ip','netns','exec',ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT))
+   wait(lambda:any(x.get('username')==name for x in api('/api/clients').get('clients',[])),'restored credentials failed VPN authentication: '+name)
+   wait(lambda:'dev q07client' in run(['ip','netns','exec',ns,'ip','route','get','10.77.0.1']),'restored client route not ready')
+   run(['ip','netns','exec',ns,'ping','-c','1','-W','2','10.77.0.1']);check(name+' restored credential authenticates and carries actual tunnel traffic',True);client_stop()
+  def share():return api('/api/share','POST',{'profile':'fixture','host':'vpn.fixture.invalid','user':'external-only'})
+  try:
+   for cmd in (['ip','netns','add',ns],['ip','link','add','q07-srv','type','veth','peer','name','q07-cli'],['ip','link','set','q07-cli','netns',ns],['ip','addr','add','198.18.0.1/30','dev','q07-srv'],['ip','link','set','q07-srv','up'],['ip','netns','exec',ns,'ip','link','set','lo','up'],['ip','netns','exec',ns,'ip','addr','add','198.18.0.2/30','dev','q07-cli'],['ip','netns','exec',ns,'ip','link','set','q07-cli','up'],['ip','netns','exec',ns,'ip','route','add','default','via','198.18.0.1']):run(cmd)
+   network_setup=True;run(['iptables','-A','INPUT','-i','q07-srv','-d','10.77.0.1','-j','DROP'])
+   cfg.write_text(cfg.read_text().replace('[auth]','[auth]\nrequire_client_key_proof=false\nbind_static_to_session=false').replace('bind.address = 127.0.0.1','bind.address = 198.18.0.1'))
+   start();hashed=api('/api/hash-password','POST',{'password':'fixture-client-password'})['hash'];stop()
+   cfg.write_text(cfg.read_text()+'\n[group:shared]\nbandwidth_limit_mbps=9\n[group:inline-group]\nmax_sessions=2\n[user:inline-only]\npassword_hash='+hashed+'\ngroup=external-group\n[user:duplicate]\npassword_hash='+hashed+'\nenabled=true\nmax_sessions=9\n')
+   users.write_text('[group:shared]\nbandwidth_limit_mbps=1\n[group:external-group]\nmax_sessions=3\n[user:duplicate]\npassword_hash='+hashed+'\nenabled=false\nmax_sessions=1\n');users.chmod(0o600);start()
+   check('mixed source fresh worker starts and loads both names',loaded('inline-only') and not loaded('duplicate'))
+   check('external duplicate overrides inline enable and limits',listed()['duplicate']['enabled'] is False and listed()['duplicate']['max_sessions']==1)
+   check('external group overrides inline group',api('/api/groups')['groups']['shared']['bandwidth_limit_mbps']==1)
+   r=api('/api/users','POST',{'username':'external-only','password':'fixture-client-password','group':'inline-group'});check('external user can reference inline group',r.get('ok') is True,r.get('error'));wait(lambda:loaded('external-only'),'external user reload')
+   original_key=key.read_bytes();check('panel encryption key generated private outside managed root',len(original_key)==32 and key.stat().st_mode&0o777==0o600)
+   legacy.write_bytes(original_key);legacy.chmod(0o600)
+   initial=share();check('seed encrypted credentials reissue without reset',initial.get('ok') is True and initial.get('reset') is False)
+   r=req('/api/backup',headers=basic());check('mixed source portable archive downloads',r[0]==200);members=unpack(r[3]);check('portable includes exact inline and external INI',members['qeli/server.conf']==cfg.read_bytes() and members['qeli/users.conf']==users.read_bytes());check('portable excludes both modern and legacy panel keys',not any('panel-secret.key' in n for n in members))
+   saved={cfg:cfg.read_bytes(),users:users.read_bytes(),Path('/etc/qeli/identity/fixture.key'):Path('/etc/qeli/identity/fixture.key').read_bytes()};original_users=listed()
+   missing=dict(members);missing.pop('qeli/users.conf');r=req('/api/restore','POST',archive(missing),headers=basic());check('inline accounts do not allow missing external archive database',r[0]==400 and r[1].get('ok') is False and all(p.read_bytes()==b for p,b in saved.items()))
+   invalid=dict(members);invalid['qeli/users.conf']=members['qeli/users.conf'].replace(b'group = inline-group',b'group = missing-group');r=req('/api/restore','POST',archive(invalid),headers=basic());check('restore rejects unresolved merged group without changing files',invalid['qeli/users.conf']!=members['qeli/users.conf'] and r[0]==400 and r[1].get('ok') is False and all(p.read_bytes()==b for p,b in saved.items()))
+   r=api('/api/users/external-only','PUT',{'password':'changed-fixture-password'});check('change credential before restore',r.get('ok') is True)
+   cfg.write_bytes(cfg.read_bytes()+b'\n# changed after backup\n')
+   r=req('/api/restore?exact=1','POST',archive(members),headers=basic());check('exact mixed restore succeeds',r[0]==200 and r[1].get('ok') is True,r[1]);check('mixed restore returns exact dependency bytes and preserves modern key',all(p.read_bytes()==b for p,b in saved.items()) and key.read_bytes()==original_key)
+   stop();start();restored=listed();check('fresh restored worker loads union without duplicate names',set(restored)==set(original_users) and all(loaded(n)==u['enabled'] for n,u in restored.items()));check('fresh restore preserves file precedence and cross-source groups',restored['duplicate']['enabled'] is False and restored['inline-only']['group']=='external-group' and restored['external-only']['group']=='inline-group' and api('/api/groups')['groups']['shared']['bandwidth_limit_mbps']==1)
+   r=share();check('same-server restored encrypted credential reissues exact URI without reset',r.get('ok') is True and r.get('reset') is False and r.get('uri')==initial['uri'])
+   for name in ['inline-only','external-only']:authenticate(name)
+   # New-host simulation: config archive is unchanged, machine-local key is absent.
+   stop();key.unlink();legacy.unlink(missing_ok=True);start();before_users=users.read_bytes();r=share();check('new host without old key requires explicit reset',r.get('ok') is False and r.get('needs_reset') is True and users.read_bytes()==before_users and cfg.read_bytes()==saved[cfg]);check('missing machine-local key never prevents restored worker loading users',all(loaded(n)==u['enabled'] for n,u in original_users.items()))
+   authenticate('external-only')
+   stop();key.write_bytes(original_key);key.chmod(0o600);start();r=share();check('manual state-key recovery restores exact reissue without password change',r.get('ok') is True and r.get('reset') is False and r.get('uri')==initial['uri'] and users.read_bytes()==before_users)
+   # Legacy installations can migrate their existing key after config restoration.
+   stop();key.unlink();legacy.write_bytes(original_key);legacy.chmod(0o600);start();r=share();check('legacy key migrates and reissues old credential',r.get('ok') is True and r.get('reset') is False and r.get('uri')==initial['uri'] and key.read_bytes()==original_key and key.stat().st_mode&0o777==0o600)
+   complete=True
+  finally:
+   client_stop();stop()
+   if network_setup:
+    run(['iptables','-D','INPUT','-i','q07-srv','-d','10.77.0.1','-j','DROP']);run(['ip','link','del','q07-srv']);run(['ip','netns','del',ns])
+   save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  print('PASS Q07 mixed users/state '+str(len(checks))+' checks',flush=True)
+
+ elif a.scenario=='archive-prepare':
+  import io,tarfile,errno
+  parent=Path('/etc/qeli');mounted=[];action=Path('/tmp/q07-prepare-action');event=Path('/tmp/q07-prepare-event');nonce=0
+  def archive(items):
+   out=io.BytesIO()
+   with tarfile.open(fileobj=out,mode='w:gz') as tar:
+    for name,data in items.items():
+     t=tarfile.TarInfo('qeli/'+name);t.size=len(data);t.mode=0o600;tar.addfile(t,io.BytesIO(data))
+   return out.getvalue()
+  def current():return {n:(parent/n).read_bytes() for n in ['server.conf','users.conf','identity/fixture.key']}
+  def probe(name,r,previous,cleanup_required=True):
+   ok=r[0]==500 and r[1].get('ok') is False and r[1].get('publication_started') is False and r[1].get('rollback_snapshot') is None and current()==previous
+   checks.append(dict(name=name+' refuses before publication with server error',status='PASS' if ok else 'FAIL',detail={'http_status':r[0],'response':r[1]}));save();print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+   if cleanup_required:check(name+' cleans upload staging and atomic fragments',not list(parent.glob('.restore-*')) and not any('qeli-tmp-' in p.name for p in parent.iterdir()))
+  def limited_root():
+   previous=current();run(['mount','-t','tmpfs','-o','size=128k,mode=0700','q07-storage',str(parent)]);mounted.append(str(parent))
+   for n,data in previous.items():p=parent/n;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data);p.chmod(0o600)
+   return previous
+  def full():
+   with (parent/'fixture-fill').open('wb',buffering=0) as f:
+    while True:
+     try:f.write(b'0'*4096)
+     except OSError as e:assert e.errno==errno.ENOSPC;break
+   check('private tmpfs reaches real ENOSPC',os.statvfs(parent).f_bavail==0)
+  def unmount():run(['umount',mounted.pop()])
+  def arm(mode):
+   nonlocal nonce
+   nonce+=1;event.unlink(missing_ok=True);action.write_text(f'{sup.pid} {mode} {nonce}')
+  shim_c=r"""
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+static int wanted(const char *mode) {
+ char b[128]={0},m[64]={0};int fd=syscall(SYS_openat,AT_FDCWD,"/tmp/q07-prepare-action",O_RDONLY,0);if(fd<0)return 0;
+ ssize_t n=read(fd,b,127);close(fd);int pid=0;return n>0 && sscanf(b,"%d %63s",&pid,m)==2 && pid==getpid() && !strcmp(mode,m);
+}
+static void gate(const char *mode) {
+ int fd=syscall(SYS_openat,AT_FDCWD,"/tmp/q07-prepare-event",O_CREAT|O_TRUNC|O_WRONLY,0600);
+ if(fd>=0){ssize_t n=write(fd,mode,strlen(mode));(void)n;close(fd);}
+ while(access("/tmp/q07-prepare-action",F_OK)==0)usleep(10000);
+}
+int open64(const char *path,int flags,...) {
+ static int(*real)(const char*,int,...);if(!real)real=dlsym(RTLD_NEXT,"open64");mode_t mode=0;
+ if(flags&O_CREAT){va_list args;va_start(args,flags);mode=va_arg(args,int);va_end(args);}
+ if(!strncmp(path,"/etc/qeli/",10) && strstr(path,".pre-restore-") && strstr(path,"qeli-tmp-") && wanted("snapshot"))gate("snapshot");
+ return real(path,flags,mode);
+}
+int rename(const char *old,const char *next) {
+ static int(*real)(const char*,const char*);if(!real)real=dlsym(RTLD_NEXT,"rename");int rc=real(old,next);
+ if(rc==0 && strstr(next,"/etc/qeli/.restore-upload-") && wanted("cancel")){gate("cancel");}
+ return rc;
+}
+"""
+  shim=Path('/tmp/q07-prepare.so');c=Path('/tmp/q07-prepare.c');c.write_text(shim_c);run(['gcc','-shared','-fPIC','-O2','-Wall','-Wextra','-Werror','-o',str(shim),str(c),'-ldl']);env['LD_PRELOAD']=str(shim)
+  try:
+   start();good=current();blob=archive(good);check('prepare gates are process-scoped to owned supervisor',str(shim) in Path('/proc/'+str(sup.pid)+'/maps').read_text())
+   # Upload failures occur on real read-only/full private filesystems.
+   run(['mount','--bind',str(parent),str(parent)]);mounted.append(str(parent));run(['mount','-o','remount,bind,ro',str(parent)])
+   try:r=req('/api/restore','POST',blob,headers=basic());probe('read-only upload',r,good)
+   finally:unmount()
+   previous=limited_root()
+   try:full();r=req('/api/restore','POST',blob,headers=basic());probe('ENOSPC upload',r,previous)
+   finally:unmount()
+   previous=limited_root()
+   try:r=req('/api/restore','POST',archive({**good,'padding.bin':b'0'*(256*1024)}),headers=basic());probe('ENOSPC tar extraction',r,previous);check('extraction failure reaches real storage error',r[1].get('error','').startswith('extract failed:') and ('No space left on device' in r[1].get('error','') or 'Wrote only' in r[1].get('error','')))
+   finally:unmount()
+   for mode in ['full','read-only']:
+    previous=limited_root() if mode=='full' else current();snaps={p.name:p.read_bytes() for p in parent.glob('.pre-restore-*.tgz')};arm('snapshot')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+     pending=pool.submit(req,'/api/restore','POST',blob,basic());wait(lambda:event.exists() and event.read_text()=='snapshot','snapshot persistence gate not reached')
+     if mode=='full':full()
+     else:
+      run(['mount','--bind',str(parent),str(parent)]);mounted.append(str(parent));run(['mount','-o','remount,bind,ro',str(parent)])
+     action.unlink();r=pending.result();probe('snapshot '+mode,r,previous,cleanup_required=mode!='read-only')
+     check('snapshot '+mode+' preserves previous recovery set',snaps=={p.name:p.read_bytes() for p in parent.glob('.pre-restore-*.tgz')})
+     private_stages=list(parent.glob('.restore-staging-*'))
+     if mode=='read-only':check('read-only snapshot leaves only private preparation artifacts',private_stages and all(p.stat().st_mode&0o777==0o700 for p in private_stages) and all(p.stat().st_mode&0o077==0 for stage in private_stages for p in stage.rglob('*')))
+     unmount()
+     if mode=='read-only':
+      import shutil
+      for stage in private_stages:
+       assert stage.parent.resolve()==parent.resolve() and stage.name.startswith('.restore-staging-') and not stage.is_symlink();shutil.rmtree(stage)
+      check('preparation artifacts removable after private storage becomes writable',not list(parent.glob('.restore-*')))
+   check('status healthy after storage refusals',req('/api/status',headers=basic())[0]==200)
+   # Closing HTTP must not release restore admission while its blocking work is alive.
+   candidate={**good,'server.conf':good['server.conf']+b'\n# completed after HTTP cancellation\n'};arm('cancel');connection=http.client.HTTPConnection('127.0.0.1',port,timeout=10)
+   connection.request('POST',prefix+'/api/restore',body=archive(candidate),headers={**basic(),'Content-Type':'application/gzip'});wait(lambda:event.exists() and event.read_text()=='cancel','cancellation gate not reached');connection.sock.shutdown(socket.SHUT_RDWR);connection.close()
+   check('cancelled request leaves pre-publication files unchanged at gate',current()==good)
+   r=req('/api/restore','POST',blob,headers=basic());check('HTTP cancellation does not release busy admission',r[0]==409,r[1]);check('status responsive after HTTP cancellation',req('/api/status',headers=basic())[0]==200)
+   action.unlink();wait(lambda:current()==candidate and not list(parent.glob('.restore-*')),'cancelled HTTP restore did not settle');check('blocking restore completes and cleans up after caller disconnects',current()==candidate and not list(parent.glob('.restore-*')))
+   snaps=list(parent.glob('.pre-restore-*.tgz'));check('cancelled request still persisted private rollback snapshot',any(p.stat().st_mode&0o777==0o600 for p in snaps))
+   r=req('/api/restore','POST',blob,headers=basic());check('restore admission recovers after cancellation and faults',r[0]==200 and r[1].get('ok') is True and current()==good,r[1]);complete=all(x['status']=='PASS' for x in checks)
+  finally:
+   action.unlink(missing_ok=True)
+   for target in reversed(mounted):run(['umount',target])
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  print(('PASS' if complete else 'FAIL')+' Q07 prepare '+str(len(checks))+' checks',flush=True)
   if not complete:raise SystemExit(1)
 
  elif a.scenario=='basic':

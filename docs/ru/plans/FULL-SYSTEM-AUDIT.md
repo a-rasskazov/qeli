@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v16 -->
+<!-- normative-sync: full-system-audit-v17 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -150,8 +150,8 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 03 | Панель: UI и состояние | H02, H09–H11 | PASS |
 | 04 | Web auth и защита API | H01–H03, H08–H09 | PASS |
 | 05 | Транзакции конфигурации и restart | H08–H10 | PASS |
-| 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | IN_PROGRESS |
-| 07 | Backup, restore и history | H03–H04, H08, H10 | TODO |
+| 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | PASS |
+| 07 | Backup, restore и history | H03–H04, H08, H10 | PASS |
 | 08 | Криптография, identity и ключи | H01, H04, H08 | TODO |
 | 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | IN_PROGRESS |
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | TODO |
@@ -361,18 +361,20 @@ Fresh restore с custom paths, inline+external users, identity и panel-secret. 
 
 **Имеющаяся обвязка/fixtures:** `scripts/audit_web_auth_lab.py --audit q07 --scenario archives --fixture scripts/audit_web_transactions.py`; общий Q05 `basic` для history/config regression.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: PASS в согласованном доступном Linux/runtime scope.**
 
 
-**3 октября, первый пакет:** HTTP-воспроизведение выявило отказ exact при вложенных lock-файлах, отсутствие проверки identity/TLS и сохранение чужого UID из tar. Исправления и текущая квалификация описаны в [отчёте Q07](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Полный Q07 остаётся открытым: crash/partial publication и recovery, файловые отказы, cross-process users/identity writers, mixed users и panel-secret, операционные файлы/rotation и дополнительные INI trust boundaries (исторический список до второго пакета).
+**История, 3 октября, первый пакет:** HTTP-воспроизведение выявило отказ exact при вложенных lock-файлах, отсутствие проверки identity/TLS и сохранение чужого UID из tar. Исправления и текущая квалификация описаны в [отчёте Q07](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Полный Q07 остаётся открытым: crash/partial publication и recovery, файловые отказы, cross-process users/identity writers, mixed users и panel-secret, операционные файлы/rotation и дополнительные INI trust boundaries (исторический список до второго пакета).
 
-**3 октября, второй пакет:** Q07-F005–F013: strict exact, INI command trust, operational snapshots/rotation, old/new users/identity FileLocks, absent-directory lock inode, partial-publication metadata и отказ вместо ложного exact success. 17 baseline checks FAIL; текущие 176 HTTP/system checks PASS. SIGKILL до/после первого rename и manual tar recovery проверены. Остаются mixed inline/external users, panel-secret и прямые prepare ENOSPC/read-only/HTTP cancellation для архивного restore. Общий Q07 ещё IN_PROGRESS.
+**История, 3 октября, второй пакет:** Q07-F005–F013: strict exact, INI command trust, operational snapshots/rotation, old/new users/identity FileLocks, absent-directory lock inode, partial-publication metadata и отказ вместо ложного exact success. 17 baseline checks FAIL; текущие 176 HTTP/system checks PASS. SIGKILL до/после первого rename и manual tar recovery проверены. Остаются mixed inline/external users, panel-secret и прямые prepare ENOSPC/read-only/HTTP cancellation для архивного restore. Общий Q07 ещё IN_PROGRESS.
+
+**3 октября, закрытие Q07:** Q07-F014–F015 исправлены: extraction ENOSPC → HTTP 500; только реальный FileLock timeout → 409. Mixed users/groups, real restored VPN clients, same/new-host panel-secret, legacy migration, real archive prepare ENOSPC/read-only и HTTP cancellation проверены. Финальные 226 HTTP/system checks, 2266 units, matrix 18/327, soak 33 и native A/B PASS. Review всех семи слоёв завершён; приватный staging при read-only и per-file publication описаны как принятые ограничения. [Финальный отчёт](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Следующий раздел: Q08.
 
 ### 08. Криптография, identity и ключи
 

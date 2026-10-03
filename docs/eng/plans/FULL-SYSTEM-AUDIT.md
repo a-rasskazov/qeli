@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v16 -->
+<!-- normative-sync: full-system-audit-v17 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -145,8 +145,8 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 03 | Panel UI and state | H02, H09–H11 | PASS |
 | 04 | Web auth and API protection | H01–H03, H08–H09 | PASS |
 | 05 | Config transactions and restart | H08–H10 | PASS |
-| 06 | Users, groups and provisioning | H01, H04, H09–H10 | IN_PROGRESS |
-| 07 | Backup, restore and history | H03–H04, H08, H10 | TODO |
+| 06 | Users, groups and provisioning | H01, H04, H09–H10 | PASS |
+| 07 | Backup, restore and history | H03–H04, H08, H10 | PASS |
 | 08 | Cryptography, identity and keys | H01, H04, H08 | TODO |
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | IN_PROGRESS |
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | TODO |
@@ -356,18 +356,20 @@ Fresh restore with custom paths, mixed user sources, identity and panel secret. 
 
 **Existing harness/fixtures:** `scripts/audit_web_auth_lab.py --audit q07 --scenario archives --fixture scripts/audit_web_transactions.py`; shared Q05 `basic` for history/config regression.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: PASS within the agreed available Linux/runtime scope.**
 
 
-**3 October, first batch:** HTTP reproduction found exact rejection with nested locks, missing identity/TLS validation and archive UID retention. Fixes and current qualification are recorded in the [Q07 report](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Overall Q07 remains open: crash/partial publication and recovery, filesystem faults, cross-process users/identity writers, mixed users/panel-secret, operational files/rotation and additional INI trust boundaries (historical list before batch two).
+**History, 3 October, first batch:** HTTP reproduction found exact rejection with nested locks, missing identity/TLS validation and archive UID retention. Fixes and current qualification are recorded in the [Q07 report](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Overall Q07 remains open: crash/partial publication and recovery, filesystem faults, cross-process users/identity writers, mixed users/panel-secret, operational files/rotation and additional INI trust boundaries (historical list before batch two).
 
-**3 October, second batch:** Q07-F005–F013 cover strict exact, INI command trust, operational snapshots/rotation, old/new users/identity FileLocks, absent-directory lock inode, partial-publication metadata and failure instead of false exact success. 17 baseline checks FAIL; current 176 HTTP/system checks PASS. SIGKILL before/after first rename and manual tar recovery are verified. Mixed inline/external users, panel-secret and direct archive-restore prepare ENOSPC/read-only/HTTP cancellation remain. Overall Q07 is still IN_PROGRESS.
+**History, 3 October, second batch:** Q07-F005–F013 cover strict exact, INI command trust, operational snapshots/rotation, old/new users/identity FileLocks, absent-directory lock inode, partial-publication metadata and failure instead of false exact success. 17 baseline checks FAIL; current 176 HTTP/system checks PASS. SIGKILL before/after first rename and manual tar recovery are verified. Mixed inline/external users, panel-secret and direct archive-restore prepare ENOSPC/read-only/HTTP cancellation remain. Overall Q07 is still IN_PROGRESS.
+
+**3 October, Q07 completion:** Q07-F014–F015 fixed: extraction ENOSPC → HTTP 500; only actual FileLock timeout → 409. Mixed users/groups, real restored VPN clients, same/new-host panel-secret, legacy migration, actual archive preparation ENOSPC/read-only and HTTP cancellation pass. Final 226 HTTP/system checks, 2266 units, matrix 18/327, soak 33 and native A/B PASS. Seven-layer review completed; private staging on read-only storage and per-file publication are documented accepted limits. [Final report](../reports/AUDIT-Q07-BACKUP-RESTORE.md). Next section: Q08.
 
 ### 08. Cryptography, identity and keys
 
