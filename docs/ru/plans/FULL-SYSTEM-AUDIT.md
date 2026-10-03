@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v24 -->
+<!-- normative-sync: full-system-audit-v25 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -155,7 +155,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 08 | Криптография, identity и ключи | H01, H04, H08 | DONE |
 | 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | DONE |
-| 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | IN_PROGRESS |
+| 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | DONE |
 | 12 | Транспорты и wire-маскировка | H02, H07–H08 | TODO |
 | 13 | Recordizer, padding и shaping | H02, H07–H08 | TODO |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | IN_PROGRESS |
@@ -451,21 +451,23 @@ Lengths 0/min/max/overflow, AEAD tags, sequence около 2^63/2^64, replay-win
 
 Transcript/replay/decoy, TLS key budget. H2 zero/small window, SETTINGS/WINDOW_UPDATE/GOAWAY/RST, partial I/O, backpressure. Stop/timeout освобождает task/socket/permit. PCAP/active probing отдельно от работоспособности туннеля.
 
-**Имеющаяся обвязка/fixtures:** `qeli/src/protocol/h2_carrier/hardening_tests.rs`, `scripts/reality_tls_repeat.py`.
+**Имеющаяся обвязка/fixtures:** `qeli/src/protocol/h2_carrier/hardening_tests.rs`, `scripts/roaming_netns_e2e.sh`, `scripts/audit_realtls_wire.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE.**
 
 **Серверный H2 и pre-auth, 23 сентября 2026:**
 [Q14-F022/F023](../reports/AUDIT-Q14-H2-TASKS.md): профиль ждёт вложенные H2-задачи перед
 teardown; flush отказа сохраняет pre-auth slot до освобождения I/O. 13 новых регрессий,
 969 Rust tests PASS. H2/ProfileTasks/semaphore проверены на host, production Linux только
 кросс-компилирован. Остальные сценарии раздела и live Linux E2E остаются открытыми.
+
+**3 октября, завершение Q11:** [REALITY/TLS/H2](../reports/AUDIT-Q11-REALITY-TLS-H2.md): пять исправлений общего TLS,2317 Linux units,73 REALITY-TLS/H2 checks,3 PCAP/6 wire-probe результатов,два bounded ASan fuzz,свежие matrix/soak/четыре native A/B PASS. Общий план:11/37 DONE/PASS (29,7%). Следующий раздел — Q12.
 
 ### 12. Транспорты и wire-маскировка
 

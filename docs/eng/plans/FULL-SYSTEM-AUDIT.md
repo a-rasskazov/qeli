@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v24 -->
+<!-- normative-sync: full-system-audit-v25 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -150,7 +150,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 08 | Cryptography, identity and keys | H01, H04, H08 | DONE |
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | DONE |
-| 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | IN_PROGRESS |
+| 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | DONE |
 | 12 | Transports and wire camouflage | H02, H07–H08 | TODO |
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | TODO |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | IN_PROGRESS |
@@ -446,21 +446,23 @@ Lengths 0/min/max/overflow, AEAD tags, sequences around 2^63/2^64, replay window
 
 Transcripts/replay/decoys and TLS key budgets. H2 zero/small windows, SETTINGS/WINDOW_UPDATE/GOAWAY/RST, partial I/O and backpressure. Stop/timeout releases tasks/sockets/permits. PCAP/active probing is separate from tunnel functionality.
 
-**Existing harness/fixtures:** `qeli/src/protocol/h2_carrier/hardening_tests.rs`, `scripts/reality_tls_repeat.py`.
+**Existing harness/fixtures:** `qeli/src/protocol/h2_carrier/hardening_tests.rs`, `scripts/roaming_netns_e2e.sh`, `scripts/audit_realtls_wire.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE.**
 
 **Server H2 and pre-auth, 23 September 2026:**
 [Q14-F022/F023](../reports/AUDIT-Q14-H2-TASKS.md): the profile joins nested H2 tasks before
 teardown; a rejection flush retains its pre-auth slot until I/O release. 13 new regressions,
 969 Rust tests PASS. H2/ProfileTasks/semaphores were exercised on the host; production Linux
 was cross-compiled only. Other section scenarios and live Linux E2E remain open.
+
+**3 October, Q11 completion:** [REALITY/TLS/H2](../reports/AUDIT-Q11-REALITY-TLS-H2.md): five common TLS fixes,2317 Linux units,73 REALITY-TLS/H2 checks,3 PCAP/6 wire-probe results,two bounded ASan campaigns,fresh matrix/soak/four native A/B PASS. Overall:11/37 DONE/PASS (29.7%). NextQ12.
 
 ### 12. Transports and wire camouflage
 

@@ -365,3 +365,5 @@
 - [Q09: итоговый аудит и сохранение KICK](reports/AUDIT-Q09-FINAL.md)
 
 - [Q10: PacketCodec, replay и CONTROL_V2](reports/AUDIT-Q10-CODEC-CONTROL.md)
+
+- [Q11: REALITY, TLS 1.3 и HTTP/2](reports/AUDIT-Q11-REALITY-TLS-H2.md)

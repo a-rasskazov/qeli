@@ -95,6 +95,10 @@ reconnect policy. [Validation](../reports/AUDIT-Q09-FINAL.md).
 
 A management ACK requires a complete valid payload. Repeating an unfinished fragment, malformed KICK or conflicting contents under an old ID receives no receipt. An exact repeat of an accepted message is ACKed again; it must use a newly authenticated PacketCodec record, because the replay window rejects repeated ciphertext. [Q10 validation](../reports/AUDIT-Q10-CODEC-CONTROL.md).
 
+<!-- normative-sync: core-realtls-policy-v1 -->
+
+REALITY-TLS uses common strict ServerHello decoding and post-handshake policy in async/sans-IO. Validated application bytes precede a later record fatal error; the failed session accepts/sends no new records. Fragmented NewSessionTicket is accumulated within bounds and ignored; unsupported KeyUpdate requires reconnection. Legacy `qeli_realtls_open` returns earlier plaintext with `0`, then terminal `-1` on the next call; close_notify uses that terminal code because the ABI has no separate EOF result. [Q11](../reports/AUDIT-Q11-REALITY-TLS-H2.md).
+
 ## 1. The verdict: what justifies this, and what does not
 
 **Justified by implementation divergence. Not justified by speed.**

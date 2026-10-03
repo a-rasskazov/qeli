@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+aes-gcm = "0.10"
 
 # Only the cross-platform parser core (config/crypto/protocol/util) is needed —
 # default-features off drops the Linux-only server/client/tun/web stack, so the
@@ -104,3 +105,10 @@ bench = false
 # cargo-fuzz needs some debuginfo in release for useful crash backtraces.
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "realtls_client"
+path = "fuzz_targets/realtls_client.rs"
+test = false
+doc = false
+bench = false

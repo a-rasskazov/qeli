@@ -96,6 +96,10 @@ Authenticated `KICK` сохраняет `reconnect_allowed` при одновр�
 
 ACK management-сообщения требует полного корректного payload. Повтор фрагмента до завершения сборки, неверный KICK и конфликт содержимого под прежним ID не подтверждаются. Точный повтор принятого сообщения подтверждается снова; повтор отправляется в новом authenticated PacketCodec record, поскольку повтор ciphertext отсекает replay window. [Проверки Q10](../reports/AUDIT-Q10-CODEC-CONTROL.md).
 
+<!-- normative-sync: core-realtls-policy-v1 -->
+
+REALITY-TLS использует общий строгий ServerHello decoder и post-handshake policy в async/sans-IO. Уже проверенные application bytes выдаются перед фатальной ошибкой следующей записи; после ошибки сеанс не принимает/не отправляет новые записи. Fragmented NewSessionTicket ограниченно собирается и пропускается; KeyUpdate не поддерживается и требует переподключения. В старом `qeli_realtls_open` предшествующий plaintext выдаётся с `0`, затем следующий вызов получает terminal `-1`; close_notify использует тот же terminal код, поскольку отдельного EOF-кода в ABI нет. [Q11](../reports/AUDIT-Q11-REALITY-TLS-H2.md).
+
 ## 1. Вердикт: чем это оправдано, а чем — нет
 
 **Оправдано расхождением реализаций. Не оправдано скоростью.**

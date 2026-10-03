@@ -13,8 +13,7 @@ use aes_gcm::{Aes128Gcm, Aes256Gcm, Nonce};
 use std::io;
 
 /// RFC 8446 §5.1: a TLSPlaintext fragment may not exceed 2^14 bytes. `encrypt`
-/// fragments at this boundary; anything larger in a single record would overflow the
-/// 16-bit length field in the header.
+/// fragments at this boundary; the inner content type may add one more byte.
 pub const MAX_PLAINTEXT: usize = 16384;
 
 // Below RFC 8446 §5.5's ~2^24.5 full-size AES-GCM records, independently per key
@@ -110,9 +109,14 @@ impl RecordCrypto {
     /// back-to-back records are just bytes on the stream and the reader already handles
     /// one record at a time. (Audit 2026-07-27, F3.)
     pub fn encrypt(&mut self, content_type: u8, plaintext: &[u8]) -> io::Result<Vec<u8>> {
-        // The inner plaintext is `plaintext || content_type`, so each fragment may carry
-        // at most MAX_PLAINTEXT - 1 caller bytes.
-        let chunk = MAX_PLAINTEXT - 1;
+        // TLSInnerPlaintext may carry 2^14 content bytes plus its type byte.
+        if !matches!(content_type, 0x15..=0x17) || (content_type != 0x17 && plaintext.is_empty()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid TLS inner content",
+            ));
+        }
+        let chunk = MAX_PLAINTEXT;
         let records = plaintext.len().div_ceil(chunk).max(1) as u64;
         let bytes = (plaintext.len() as u64).saturating_add(records.saturating_mul(17));
         // Check the WHOLE call before emitting anything or advancing its sequence.
@@ -145,9 +149,9 @@ impl RecordCrypto {
         true
     }
 
-    /// Encrypt exactly one record; `plaintext.len()` must be `< MAX_PLAINTEXT`.
+    /// Encrypt exactly one record; `plaintext.len()` must be `<= MAX_PLAINTEXT`.
     fn encrypt_one(&mut self, content_type: u8, plaintext: &[u8]) -> Vec<u8> {
-        debug_assert!(plaintext.len() < MAX_PLAINTEXT);
+        debug_assert!(plaintext.len() <= MAX_PLAINTEXT);
         let mut inner = Vec::with_capacity(plaintext.len() + 1);
         inner.extend_from_slice(plaintext);
         inner.push(content_type);
@@ -169,7 +173,7 @@ impl RecordCrypto {
     /// plaintext)` with trailing zero padding stripped. Advances the sequence
     /// number only on success.
     pub fn decrypt(&mut self, record: &[u8]) -> Option<(u8, Vec<u8>)> {
-        if record.len() < 5 + 16 || record[0] != 0x17 {
+        if record.len() < 5 + 16 || record[..3] != [0x17, 0x03, 0x03] {
             return None;
         }
         let len = u16::from_be_bytes([record[3], record[4]]) as usize;
@@ -180,8 +184,10 @@ impl RecordCrypto {
         let aad = &record[..5];
         let nonce = self.nonce();
         let pt = self.open(&nonce, &record[5..], aad)?;
-        self.seq += 1;
-        self.ciphertext_bytes += len as u64;
+        // RFC 8446 §5.4 includes content type AND padding in this bound.
+        if pt.len() > MAX_PLAINTEXT + 1 {
+            return None;
+        }
 
         // TLSInnerPlaintext: content || content_type || zeros. The content type is
         // the last non-zero byte.
@@ -189,9 +195,11 @@ impl RecordCrypto {
         while i > 0 && pt[i - 1] == 0 {
             i -= 1;
         }
-        if i == 0 {
+        if i == 0 || !matches!(pt[i - 1], 0x15..=0x17) || (pt[i - 1] != 0x17 && i == 1) {
             return None;
         }
+        self.seq += 1;
+        self.ciphertext_bytes += len as u64;
         Some((pt[i - 1], pt[..i - 1].to_vec()))
     }
 }
@@ -199,6 +207,42 @@ impl RecordCrypto {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn q11_authenticated_invalid_inner_does_not_publish_sequence() {
+        for key in [vec![7; 16], vec![8; 32]] {
+            for inner in [
+                vec![0; 3],
+                vec![0x17; MAX_PLAINTEXT + 2],
+                vec![0x19],
+                vec![0x16],
+            ] {
+                let enc = RecordCrypto::new(&key, &[3; 12]);
+                let total = inner.len() + 16;
+                let aad = [0x17, 3, 3, (total >> 8) as u8, total as u8];
+                let mut malformed = aad.to_vec();
+                malformed.extend(enc.seal(&enc.nonce(), &inner, &aad));
+                let mut dec = RecordCrypto::new(&key, &[3; 12]);
+                assert!(
+                    dec.decrypt(&malformed).is_none(),
+                    "invalid inner accepted, length {}",
+                    inner.len()
+                );
+                assert_eq!(
+                    (dec.seq, dec.ciphertext_bytes),
+                    (0, 0),
+                    "invalid inner burned sequence"
+                );
+                let mut enc = RecordCrypto::new(&key, &[3; 12]);
+                assert_eq!(
+                    dec.decrypt(&enc.encrypt(0x17, b"valid").unwrap())
+                        .unwrap()
+                        .1,
+                    b"valid"
+                );
+            }
+        }
+    }
 
     #[test]
     fn key_budget_is_directional_atomic_and_sticky() {
@@ -213,7 +257,7 @@ mod tests {
 
         let mut enc = RecordCrypto::new(&[7; 16], &[3; 12]);
         enc.seq = MAX_KEY_RECORDS - 1;
-        assert!(enc.encrypt(0x17, &vec![0; MAX_PLAINTEXT]).is_err());
+        assert!(enc.encrypt(0x17, &vec![0; MAX_PLAINTEXT + 1]).is_err());
         assert_eq!(enc.seq, MAX_KEY_RECORDS - 1, "no partially emitted call");
         assert!(enc.encrypt(0x17, b"").is_err(), "exhaustion is terminal");
 
@@ -225,6 +269,49 @@ mod tests {
         assert!(dec.decrypt(&record).is_some());
         assert!(enc.encrypt(0x17, b"").is_err());
         assert!(dec.decrypt(&record).is_none());
+    }
+
+    #[test]
+    fn q11_full_fragment_boundary_and_authenticated_header() {
+        for key in [vec![7; 16], vec![8; 32]] {
+            for size in [
+                0,
+                1,
+                MAX_PLAINTEXT - 1,
+                MAX_PLAINTEXT,
+                MAX_PLAINTEXT + 1,
+                MAX_PLAINTEXT * 3,
+            ] {
+                let payload = vec![0x42; size];
+                let mut enc = RecordCrypto::new(&key, &[3; 12]);
+                let wire = enc.encrypt(0x17, &payload).unwrap();
+                let mut dec = RecordCrypto::new(&key, &[3; 12]);
+                let mut offset = 0;
+                let mut got = Vec::new();
+                let mut records = 0;
+                while offset < wire.len() {
+                    let total =
+                        5 + usize::from(u16::from_be_bytes([wire[offset + 3], wire[offset + 4]]));
+                    assert!(total <= MAX_PLAINTEXT + 22);
+                    got.extend(dec.decrypt(&wire[offset..offset + total]).unwrap().1);
+                    offset += total;
+                    records += 1;
+                }
+                assert_eq!(records, size.div_ceil(MAX_PLAINTEXT).max(1));
+                assert_eq!(got, payload);
+            }
+            let enc = RecordCrypto::new(&key, &[3; 12]);
+            let inner = [42, 0x17];
+            let aad = [0x17, 3, 1, 0, 18];
+            let mut bad = aad.to_vec();
+            bad.extend(enc.seal(&enc.nonce(), &inner, &aad));
+            let mut dec = RecordCrypto::new(&key, &[3; 12]);
+            assert!(
+                dec.decrypt(&bad).is_none(),
+                "authenticated legacy version is checked"
+            );
+            assert_eq!(dec.seq, 0);
+        }
     }
 
     fn hx(s: &str) -> Vec<u8> {

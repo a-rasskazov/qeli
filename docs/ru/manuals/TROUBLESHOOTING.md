@@ -1040,6 +1040,10 @@ kill-switch автоматически. Проверьте первую ошиб
 
 ACK management-сообщения требует полного корректного payload. Повтор фрагмента до завершения сборки, неверный KICK и конфликт содержимого под прежним ID не подтверждаются. Точный повтор принятого сообщения подтверждается снова; повтор отправляется в новом authenticated PacketCodec record, поскольку повтор ciphertext отсекает replay window. [Проверки Q10](../reports/AUDIT-Q10-CODEC-CONTROL.md).
 
+<!-- normative-sync: manual-realtls-policy-v1 -->
+
+REALITY-TLS использует общий строгий ServerHello decoder и post-handshake policy в async/sans-IO. Уже проверенные application bytes выдаются перед фатальной ошибкой следующей записи; после ошибки сеанс не принимает/не отправляет новые записи. Fragmented NewSessionTicket ограниченно собирается и пропускается; KeyUpdate не поддерживается и требует переподключения. В старом `qeli_realtls_open` предшествующий plaintext выдаётся с `0`, затем следующий вызов получает terminal `-1`; close_notify использует тот же terminal код, поскольку отдельного EOF-кода в ABI нет. [Q11](../reports/AUDIT-Q11-REALITY-TLS-H2.md).
+
 ### 6.22 TCP: остановка ожидает фоновые операции
 
 Штатная остановка закрывает создание TCP-задач и ждёт завершения reader/writer, decrypt

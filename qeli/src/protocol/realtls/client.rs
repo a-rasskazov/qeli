@@ -99,44 +99,87 @@ pub(crate) async fn read_record<S: AsyncRead + Unpin>(s: &mut S) -> io::Result<(
     Ok((hdr[0], rec))
 }
 
-/// Recover the x25519 `key_share` from a (standard) ServerHello handshake message
-/// and confirm the negotiated cipher suite is TLS_AES_128_GCM_SHA256.
-pub(crate) fn parse_server_hello(msg: &[u8]) -> io::Result<(Suite, u16, Vec<u8>)> {
-    if msg.len() < 39 || msg[0] != 0x02 {
-        return Err(ierr("not a ServerHello"));
+/// A fully validated ServerHello, including target fingerprint extension order.
+pub(crate) struct ServerHello<'a> {
+    pub(crate) suite: Suite,
+    pub(crate) group: u16,
+    pub(crate) key_share: &'a [u8],
+    pub(crate) session_id: &'a [u8],
+    pub(crate) key_share_first: bool,
+}
+
+pub(crate) fn decode_server_hello(msg: &[u8]) -> io::Result<ServerHello<'_>> {
+    if msg.len() < 44 || msg[0] != 2 || u24(&msg[1..4]) != msg.len() - 4 || msg[4..6] != [3, 3] {
+        return Err(ierr("invalid ServerHello header"));
     }
-    let sid_len = msg[38] as usize;
-    let mut o = 39 + sid_len;
-    if o + 3 > msg.len() {
-        return Err(ierr("ServerHello truncated"));
+    let sid_len = usize::from(msg[38]);
+    let mut offset = 39 + sid_len;
+    if sid_len > 32 || offset + 5 > msg.len() || msg[offset + 2] != 0 {
+        return Err(ierr("invalid ServerHello session ID or compression"));
     }
-    let cipher = u16::from_be_bytes([msg[o], msg[o + 1]]);
-    let suite = Suite::from_code(cipher)
+    let suite = Suite::from_code(u16::from_be_bytes([msg[offset], msg[offset + 1]]))
         .ok_or_else(|| ierr("server negotiated an unsupported cipher suite"))?;
-    o += 3; // cipher suite (2) + legacy_compression (1)
-    if o + 2 > msg.len() {
-        return Err(ierr("ServerHello missing extensions"));
+    offset += 3;
+    let extension_len = usize::from(u16::from_be_bytes([msg[offset], msg[offset + 1]]));
+    offset += 2;
+    if offset + extension_len != msg.len() {
+        return Err(ierr("invalid ServerHello extension vector length"));
     }
-    let ext_len = u16::from_be_bytes([msg[o], msg[o + 1]]) as usize;
-    o += 2;
-    let end = (o + ext_len).min(msg.len());
-    while o + 4 <= end {
-        let et = u16::from_be_bytes([msg[o], msg[o + 1]]);
-        let el = u16::from_be_bytes([msg[o + 2], msg[o + 3]]) as usize;
-        o += 4;
-        if o + el > end {
-            break;
+    let mut version = false;
+    let mut share = None;
+    let mut key_share_first = false;
+    while offset < msg.len() {
+        if msg.len() - offset < 4 {
+            return Err(ierr("truncated ServerHello extension header"));
         }
-        if et == 0x0033 && el >= 4 {
-            let group = u16::from_be_bytes([msg[o], msg[o + 1]]);
-            let klen = u16::from_be_bytes([msg[o + 2], msg[o + 3]]) as usize;
-            if o + 4 + klen <= o + el {
-                return Ok((suite, group, msg[o + 4..o + 4 + klen].to_vec()));
+        let kind = u16::from_be_bytes([msg[offset], msg[offset + 1]]);
+        let len = usize::from(u16::from_be_bytes([msg[offset + 2], msg[offset + 3]]));
+        offset += 4;
+        if len > msg.len() - offset {
+            return Err(ierr("truncated ServerHello extension body"));
+        }
+        let data = &msg[offset..offset + len];
+        match kind {
+            0x2b if !version && data == [3, 4] => version = true,
+            0x33 if share.is_none() && data.len() >= 4 => {
+                let group = u16::from_be_bytes([data[0], data[1]]);
+                let key_len = usize::from(u16::from_be_bytes([data[2], data[3]]));
+                let expected = match group {
+                    0x1d => 32,
+                    0x11ec => MLKEM768_CT_LEN + 32,
+                    _ => return Err(ierr("server chose an unsupported key_share group")),
+                };
+                if key_len != expected || data.len() != 4 + key_len {
+                    return Err(ierr("invalid ServerHello key_share length"));
+                }
+                key_share_first = !version;
+                share = Some((group, &data[4..]));
+            }
+            // Neither client offers PSK or other ServerHello extensions.
+            _ => {
+                return Err(ierr(
+                    "duplicate, unsupported or invalid ServerHello extension",
+                ))
             }
         }
-        o += el;
+        offset += len;
     }
-    Err(ierr("ServerHello has no key_share"))
+    if !version {
+        return Err(ierr("ServerHello has no TLS 1.3 supported_versions"));
+    }
+    let (group, key_share) = share.ok_or_else(|| ierr("ServerHello has no key_share"))?;
+    Ok(ServerHello {
+        suite,
+        group,
+        key_share,
+        session_id: &msg[39..39 + sid_len],
+        key_share_first,
+    })
+}
+
+pub(crate) fn parse_server_hello(msg: &[u8]) -> io::Result<(Suite, u16, Vec<u8>)> {
+    let parsed = decode_server_hello(msg)?;
+    Ok((parsed.suite, parsed.group, parsed.key_share.to_vec()))
 }
 
 /// Run the TLS 1.3 client handshake. `ephemeral` is the x25519 key whose public
@@ -235,7 +278,13 @@ async fn client_handshake_inner<S: AsyncRead + AsyncWrite + Unpin>(
         }
     };
     let sh_msg = &sh_record[5..];
-    let (suite, group, server_ks) = parse_server_hello(sh_msg)?;
+    let parsed = decode_server_hello(sh_msg)?;
+    if parsed.session_id != session_id || (compact && parsed.group != 0x1d) {
+        return Err(ierr(
+            "ServerHello does not match the offered session ID or key share",
+        ));
+    }
+    let (suite, group, server_ks) = (parsed.suite, parsed.group, parsed.key_share.to_vec());
     transcript.extend_from_slice(sh_msg);
 
     // Compute the (EC)DHE / hybrid shared secret per the group the server chose,
@@ -389,6 +438,50 @@ async fn client_handshake_inner<S: AsyncRead + AsyncWrite + Unpin>(
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn q11_server_hello_rejects_malformed_tail_and_required_fields() {
+        fn hello(exts: &[u8]) -> Vec<u8> {
+            let mut body = vec![3, 3];
+            body.extend([0x11; 32]);
+            body.push(0);
+            body.extend([0x13, 1, 0]);
+            body.extend((exts.len() as u16).to_be_bytes());
+            body.extend(exts);
+            let n = body.len();
+            let mut out = vec![2, (n >> 16) as u8, (n >> 8) as u8, n as u8];
+            out.extend(body);
+            out
+        }
+        let mut exts = vec![0, 0x33, 0, 36, 0, 0x1d, 0, 32];
+        exts.extend([7; 32]);
+        exts.extend([0, 0x2b, 0, 2, 3, 4]);
+        let good = hello(&exts);
+        assert!(parse_server_hello(&good).is_ok());
+        let mut tail = exts.clone();
+        tail.extend([0xff]);
+        let mut duplicate = exts.clone();
+        duplicate.extend([0, 0x2b, 0, 2, 3, 4]);
+        let mut bad_length = good.clone();
+        bad_length[3] -= 1;
+        let mut bad_version = good.clone();
+        bad_version[5] = 1;
+        let mut bad_compression = good.clone();
+        bad_compression[41] = 1;
+        for msg in [
+            hello(&tail),
+            hello(&duplicate),
+            hello(&exts[..40]),
+            bad_length,
+            bad_version,
+            bad_compression,
+        ] {
+            assert!(
+                parse_server_hello(&msg).is_err(),
+                "malformed ServerHello accepted"
+            );
+        }
+    }
     use crate::crypto::{reality, StaticKeypair};
     use crate::protocol::FakeTlsHandshake;
 
