@@ -123,16 +123,15 @@ qeli_vpn/
 4. **Данные.** PacketCodec остаётся end-to-end ChaCha20-Poly1305 с PRP-маскировкой nonce.
    Legacy-режимы сохраняют своё framing; текущий `reality-tls` несёт raw private qeli records
    внутри H2. Внешний TLS AEAD и внутренний qeli AEAD остаются, но вложенного fake-TLS нет.
-Подробности безопасности — [AUDIT.md](reports/AUDIT.md). Против **активного** пробинга
-работает REALITY: `reality` мостит чужих на реальный сайт, а `reality-tls` несёт
-туннель внутри настоящего TLS 1.3 (с `handrolled` — одолженный реальный серт
-target'а). PQ-гибрид X25519MLKEM768 теперь и во **внутреннем** qeli-туннеле: ключи
-данных = X25519 ⊕ ML-KEM-768 (`derive_keys_hybrid`) во всех режимах кроме `plain`
-(`fake-tls`/`obfs`/`reality-tls`/UDP), так что защита от harvest-now-decrypt-later
-не зависит от обёртки. Сервер ТРЕБУЕТ PQ-долю для не-`plain` режимов (нет тихого
-даунгрейда). Managed-клиенты (C#/Kotlin) берут ML-KEM из общего Rust-ядра через
-FFI/JNI. В режимах `fake-tls`/`obfs` сам внешний TLS не настоящий (серт-заглушка) —
-они рассчитаны на пассивный/энтропийный DPI.
+Подробности безопасности — [AUDIT.md](reports/AUDIT.md). Против активного пробинга
+REALITY мостит чужих на реальный сайт; `reality-tls` несёт туннель в настоящем TLS 1.3/H2.
+Legacy camouflage (`fake-tls`/`obfs`/`reality`/UDP) требует X25519MLKEM768 во внутреннем
+туннеле: ключи зависят от X25519 и ML-KEM-768, без классического fallback.
+Текущий `reality-tls` использует классический внутренний обмен с привязкой identity.
+Внешний TLS допускает X25519MLKEM768 и классический X25519; PQ-защита зависит
+от согласованной внешней группы. `plain` — классический. Общий Rust core реализует
+ML-KEM для native-клиентов. В `fake-tls`/`obfs` внешний сертификат — заглушка;
+они рассчитаны на пассивный/энтропийный DPI. См. [THREAT-MODEL.md](reference/THREAT-MODEL.md).
 
 ## Быстрый старт
 

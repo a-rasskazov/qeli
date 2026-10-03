@@ -733,6 +733,38 @@ mod tests {
     /// changes `prp_nonce` without regenerating, which is exactly how the other three
     /// implementations would start disagreeing with a file they still believe is authoritative.
     #[test]
+    fn nonce_exhaustion_never_wraps_or_retransmits_old_record() {
+        for raw in [false, true] {
+            let mut codec = if raw {
+                PacketCodec::new_raw([17; 32])
+            } else {
+                PacketCodec::new([17; 32])
+            };
+            codec.counter = u64::MAX - 1001;
+            let mut record = Vec::new();
+            codec
+                .encrypt_packet_into(b"last permitted packet", &[], &mut record)
+                .unwrap();
+            assert!(!record.is_empty());
+            for exhausted in [u64::MAX - 1000, u64::MAX - 1, u64::MAX] {
+                codec.counter = exhausted;
+                record.extend_from_slice(b"old record");
+                assert!(matches!(
+                    codec.encrypt_packet_into(b"must refuse", &[], &mut record),
+                    Err(PacketError::CounterExhausted)
+                ));
+                assert!(record.is_empty());
+                assert_eq!(codec.counter, exhausted);
+                assert!(matches!(
+                    codec.encrypt_packet(b"must refuse", &[]),
+                    Err(PacketError::CounterExhausted)
+                ));
+                assert_eq!(codec.counter, exhausted);
+            }
+        }
+    }
+
+    #[test]
     fn prp_nonce_matches_shared_conformance_vectors() {
         // Compiled in, so the test cannot silently pass because a path moved.
         let fx: serde_json::Value =

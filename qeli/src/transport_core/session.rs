@@ -691,5 +691,113 @@ pub(crate) fn static_es(
         );
     }
     let server_static = crate::crypto::PublicKey::from_bytes(&public);
-    Ok(Some(client_keypair.derive_shared(&server_static).0))
+    let shared = client_keypair
+        .derive_shared_checked(&server_static)
+        .ok_or_else(|| anyhow::anyhow!("auth.server_public_key is a low-order X25519 point"))?;
+    Ok(Some(shared.0))
+}
+
+#[cfg(test)]
+mod static_binding_tests {
+    use super::*;
+
+    #[test]
+    fn static_binding_rejects_degenerate_pins_before_kdf() {
+        fn hex(bytes: impl AsRef<[u8]>) -> String {
+            bytes
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+        let mut config = crate::config::client::ClientConfig::default();
+        config.auth.bind_static_to_session = true;
+        let client = Keypair::generate();
+        for pin in [None, Some("invalid".into()), Some(hex([0u8; 32]))] {
+            config.auth.server_public_key = pin;
+            assert!(static_es(&config, &client).is_err());
+        }
+        let mut low_order = [0u8; 32];
+        low_order[0] = 1;
+        config.auth.server_public_key = Some(hex(low_order));
+        assert!(static_es(&config, &client).is_err());
+        let identity = crate::crypto::StaticKeypair::generate();
+        config.auth.server_public_key = Some(hex(identity.public.as_bytes()));
+        assert_eq!(
+            static_es(&config, &client).unwrap().unwrap(),
+            identity.derive_shared(client.public()).0
+        );
+        config.auth.bind_static_to_session = false;
+        config.auth.server_public_key = Some(hex(low_order));
+        assert!(static_es(&config, &client).unwrap().is_none());
+    }
+    #[tokio::test]
+    async fn credentials_wait_for_proof_and_trust_admission() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use std::time::Duration;
+        for tamper_proof in [true, false] {
+            let (mut client, mut peer) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let mut public = [0u8; 32];
+                peer.read_exact(&mut public).await.unwrap();
+                let kp = Keypair::generate();
+                peer.write_all(kp.public().as_bytes()).await.unwrap();
+                let shared = kp
+                    .derive_shared_checked(&crate::crypto::PublicKey::from_bytes(&public))
+                    .unwrap();
+                let transcript = handshake_transcript_hash(&[&public, kp.public().as_bytes()]);
+                let identity = crate::crypto::StaticKeypair::generate();
+                let mut proof = crate::crypto::build_server_auth_message(
+                    &identity,
+                    &crate::crypto::PublicKey::from_bytes(&public),
+                    &shared.0,
+                    &transcript,
+                );
+                if tamper_proof {
+                    proof[63] ^= 1;
+                }
+                let (tx, _) = derive_keys(&shared.0);
+                let packet = PacketCodec::new_raw(tx)
+                    .encrypt_packet(&proof, &[])
+                    .unwrap();
+                peer.write_all(&packet).await.unwrap();
+                peer
+            });
+            let mut config = crate::config::client::ClientConfig::default();
+            config.obfuscation.mode = "plain".into();
+            config.auth.bind_static_to_session = false;
+            config.auth.username = "must-never-be-sent".into();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let verifier_calls = calls.clone();
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                authenticate_tcp(
+                    &mut client,
+                    &config,
+                    "secret-password",
+                    &[7; crate::protocol::DEVICE_ID_LEN],
+                    0,
+                    move |_| {
+                        verifier_calls.fetch_add(1, Ordering::Relaxed);
+                        async { anyhow::bail!("fixture trust rejection") }
+                    },
+                ),
+            )
+            .await
+            .expect("failed admission must finish before waiting for AuthOK");
+            assert!(result.is_err());
+            assert_eq!(calls.load(Ordering::Relaxed), usize::from(!tamper_proof));
+            let mut peer = server.await.unwrap();
+            let mut byte = [0u8; 1];
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), peer.read_exact(&mut byte))
+                    .await
+                    .is_err(),
+                "no credentials may follow a failed proof or trust policy"
+            );
+        }
+    }
 }

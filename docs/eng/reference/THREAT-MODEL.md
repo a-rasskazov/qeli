@@ -1,5 +1,5 @@
 # qeli — Threat Model
-<!-- normative-sync: threat-identity-v2 -->
+<!-- normative-sync: threat-identity-v3 -->
 
 This document states **what qeli defends against, what it deliberately does
 not, and the current assurance status.** It is written so a user can decide
@@ -23,7 +23,7 @@ flow and block it.** Privacy from the *server operator* is explicitly a non-goal
 | **On-path passive DPI** (GFW / TSPU style) | Reads every byte, classifies by signature/entropy/fingerprint | `reality-tls` uses REALITY TLS 1.3 + genuine H2 with randomized batching; `obfs` rides WebSocket fronting; nonce PRP protects the private record counter. Browser/H2 semantic parity remains incomplete and is not claimed. |
 | **On-path active prober** | Replays/initiates connections to the server to test if it is a proxy | REALITY: a connection without a valid crypto token in the ClientHello `session_id` is transparently bridged to the real decoy site. Replayed ClientHellos are detected and also bridged. This reduces the obvious active-probe oracle; it does not prove universal equivalence to the target under timing or correlation analysis. |
 | **On-path active MITM** | Intercepts and rewrites handshake records | Server-identity proof bound to the handshake transcript (channel binding): any swap of ServerHello/Certificate/Finished breaks the proof. Optional `bind_static_to_session` (on by default) binds session keys to the server's long-lived identity (Noise-IK style). |
-| **Store-now-decrypt-later / future quantum** | Records traffic today, breaks X25519 with a future quantum computer | All non-`plain` modes run a hybrid X25519 + ML-KEM-768 key exchange; the data keys depend on **both** secrets. The server refuses a non-PQ handshake (no silent downgrade). |
+| **Store-now-decrypt-later / future quantum** | Records traffic today, breaks X25519 with a future quantum computer | Legacy camouflage (`fake-tls`/`obfs`/`reality`/UDP) requires hybrid X25519 + ML-KEM-768 in the inner tunnel. `reality-tls` has a classic inner exchange; PQ protection depends on negotiating X25519MLKEM768 in outer TLS, which also permits classic X25519. `plain` is classic. |
 | **Online credential guesser** | Tries to brute-force a user password or the panel admin | Argon2id password hashing; per-IP lockout + per-username adaptive tarpit on the tunnel; the same on the web panel API; constant-time proof comparison; dummy-hash work on unknown users to avoid username enumeration by timing. |
 | **Replay attacker** | Re-sends captured ciphertext | 2048-bit sliding replay window per session; AEAD with unique per-packet nonces. |
 | **Local unprivileged user on the client** | Tries to read secrets or hijack qeli's privileged file writes | Secrets/config/keys written atomically with `O_EXCL` + `O_NOFOLLOW` and preserved `0600` mode; control socket gated by a `0700` directory. |
@@ -167,7 +167,9 @@ It improves continuity; it does not make the old and new paths unlinkable.
   for client convenience; migrating to published, checksummed, reproducible
   build artifacts is tracked in [`ROADMAP.md`](../plans/ROADMAP.md).
 - **Memory hygiene (accepted limitation):** long-lived secrets are zeroized on
-  drop (X25519 static/ephemeral keys, the HKDF input keying material). The
+  drop (X25519 static/ephemeral keys, retained ML-KEM decapsulation keys,
+  the HKDF input keying material). This is not a guarantee that every temporary
+  copy, FFI-owned buffer, register, crash dump or swapped page is erased. The
   *transient* per-session AEAD keys held inside the realtls TLS-record objects
   (`aes-gcm`'s expanded key schedule) are NOT zeroized — the upstream `aes-gcm`
   crate does not implement `Zeroize`, and the expanded round keys live inside its

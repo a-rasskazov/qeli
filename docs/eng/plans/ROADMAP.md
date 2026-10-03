@@ -1,5 +1,6 @@
 # qeli roadmap
 
+
 Priorities: **P1** — noticeably affects security/functionality, **P2** — quality,
 **P3** — long-term/experimental.
 ## 0.8.0 (released, 2026-09-02) — genuine H2 carrier for Reality
@@ -849,14 +850,16 @@ follows was deliberately deferred.
 
 7. ✅ **Post-quantum hybrid KEX** (2026-06): **X25519MLKEM768** (ML-KEM-768, FIPS 203).
    The inner qeli tunnel derives the data-plane keys from X25519 ⊕ ML-KEM-768
-   (`derive_keys_hybrid`, salt `…v2-hybrid`) in ALL modes except `plain`
-   (`fake-tls`/`obfs`/`reality-tls`/UDP) — the server encapsulates / the client
+   (`derive_keys_hybrid`, salt `…v2-hybrid`) in legacy camouflage modes
+   (`fake-tls`/`obfs`/`reality`/UDP) — the server encapsulates / the client
    decapsulates; the ClientHello carries a REAL ML-KEM share (not just a
-   fingerprint-parity with Chrome). The server REQUIRES X25519MLKEM768 for non-`plain`
+   fingerprint-parity with Chrome). The server REQUIRES X25519MLKEM768 for these legacy camouflage modes
    (no silent downgrade). The `ml-kem` crate (pure-Rust); managed clients (C#/Kotlin)
    take ML-KEM from the same core via the C-ABI/JNI (`qeli_mlkem_*` /
    `Java_com_qeli_MlKem_*`) — BouncyCastle has no ML-KEM. Live-verified on the lab
    (tcp-faketls/obfs/udp, 0% loss, 570–700 Mbps TCP).
+   Current `reality-tls` has a classic, identity-bound inner exchange; its outer TLS
+   permits hybrid and classic X25519. PQ protection depends on the negotiated group.
 8. ✅ **obfs for UDP** (per-datagram keyed XOR) — an `ObfsUdp` wrapper (nonce(12) +
    ChaCha20-XOR per datagram, stateless); pure-Kotlin ChaCha20 on Android (javax
    `Cipher("ChaCha20")` is broken on some runtimes); qeli-win — `DatagramSeal/Open`

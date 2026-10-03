@@ -126,17 +126,15 @@ qeli_vpn/
 4. **Data.** PacketCodec remains end-to-end ChaCha20-Poly1305 with PRP-masked nonces. Legacy
    camouflage modes retain their own framing; current `reality-tls` carries raw private qeli
    records inside H2. This is still outer TLS AEAD plus inner qeli AEAD, but no nested fake-TLS.
-Security details — [AUDIT.md](reports/AUDIT.md). Against **active** probing, REALITY does
-the work: `reality` bridges foreign parties to a real site, while `reality-tls`
-carries the tunnel inside real TLS 1.3 (with `handrolled` — the target's borrowed
-real certificate). The X25519MLKEM768 PQ hybrid is now also in the **inner** qeli
-tunnel: the data keys = X25519 ⊕ ML-KEM-768 (`derive_keys_hybrid`) in all modes
-except `plain` (`fake-tls`/`obfs`/`reality-tls`/UDP), so protection against
-harvest-now-decrypt-later does not depend on the wrapper. The server REQUIRES the
-PQ share for non-`plain` modes (no silent downgrade). Managed clients (C#/Kotlin)
-take ML-KEM from the shared Rust core via FFI/JNI. In `fake-tls`/`obfs` modes the
-outer TLS itself is not real (a stub certificate) — they are designed for
-passive/entropy-based DPI.
+Security details — [AUDIT.md](reports/AUDIT.md). Against active probing, REALITY bridges
+foreign parties to a real site; `reality-tls` carries the tunnel in real TLS 1.3/H2.
+Legacy camouflage (`fake-tls`/`obfs`/`reality`/UDP) requires X25519MLKEM768 in the
+inner tunnel: keys depend on both X25519 and ML-KEM-768, with no classic fallback.
+Current `reality-tls` instead uses a classic, identity-bound private inner exchange.
+Its outer TLS can negotiate X25519MLKEM768 or classic X25519; PQ protection depends
+on the negotiated outer group. `plain` is classic. The shared Rust core implements
+ML-KEM for native clients. `fake-tls`/`obfs` have a stub outer certificate and target
+passive/entropy-based DPI. See [THREAT-MODEL.md](reference/THREAT-MODEL.md).
 
 ## Quick start
 

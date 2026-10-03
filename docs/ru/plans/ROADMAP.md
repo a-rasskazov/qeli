@@ -1,5 +1,6 @@
 # План развития qeli
 
+
 Приоритеты: **P1** — заметно влияет на безопасность/функциональность, **P2** —
 качество, **P3** — long-term/экспериментальное.
 ## 0.8.0 (выпущен, 2026-09-02) — настоящий H2 carrier для Reality
@@ -783,13 +784,15 @@ Chrome/Firefox/Schannel, `gmt_unix_time` и произвольного сост�
 
 7. ✅ **Post-quantum hybrid KEX** (2026-06): **X25519MLKEM768** (ML-KEM-768, FIPS 203).
    Внутренний qeli-туннель выводит ключи плоскости данных из X25519 ⊕ ML-KEM-768
-   (`derive_keys_hybrid`, соль `…v2-hybrid`) во ВСЕХ режимах кроме `plain`
-   (`fake-tls`/`obfs`/`reality-tls`/UDP) — сервер encapsulate / клиент decapsulate;
+   (`derive_keys_hybrid`, соль `…v2-hybrid`) в legacy camouflage
+   (`fake-tls`/`obfs`/`reality`/UDP) — сервер encapsulate / клиент decapsulate;
    ClientHello несёт РЕАЛЬНУЮ ML-KEM-долю (а не только фингерпринт-паритет с Chrome).
-   Сервер ТРЕБУЕТ X25519MLKEM768 для не-`plain` (нет тихого даунгрейда). Крейт `ml-kem`
+   Сервер ТРЕБУЕТ X25519MLKEM768 для этих legacy camouflage режимов (нет тихого даунгрейда). Крейт `ml-kem`
    (pure-Rust); managed-клиенты (C#/Kotlin) берут ML-KEM из того же ядра через C-ABI/JNI
    (`qeli_mlkem_*` / `Java_com_qeli_MlKem_*`) — BouncyCastle ML-KEM не содержит. Live-
    проверено на лабе (tcp-faketls/obfs/udp, 0 % потерь, 570–700 Мбит/с TCP).
+   Текущий `reality-tls`: классический внутренний обмен с привязкой identity; внешний
+   TLS допускает hybrid и классический X25519. PQ зависит от согласованной группы.
 8. ✅ **obfs для UDP** (per-datagram keyed XOR) — `ObfsUdp`-обёртка (nonce(12) +
    ChaCha20-XOR на датаграмму, stateless); pure-Kotlin ChaCha20 на Android
    (javax `Cipher("ChaCha20")` сломан на части рантаймов); qeli-win — `DatagramSeal/Open`

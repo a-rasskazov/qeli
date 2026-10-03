@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v18 -->
+<!-- normative-sync: full-system-audit-v19 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -147,7 +147,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 05 | Config transactions and restart | H08–H10 | PASS |
 | 06 | Users, groups and provisioning | H01, H04, H09–H10 | PASS |
 | 07 | Backup, restore and history | H03–H04, H08, H10 | PASS |
-| 08 | Cryptography, identity and keys | H01, H04, H08 | IN_PROGRESS |
+| 08 | Cryptography, identity and keys | H01, H04, H08 | DONE |
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | IN_PROGRESS |
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | TODO |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | IN_PROGRESS |
@@ -379,15 +379,18 @@ X25519/ML-KEM/HKDF/AEAD KAT and negative vectors; static binding, proof before c
 
 **Existing harness/fixtures:** `conformance/hkdf.json`, `conformance/prp-nonce.json`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE.**
 
-**3 October, first Q08 batch:** Q08-F001–F003: shared bounded 32-byte identity/panel/session-key reads, FIFO/dangling-link refusal without replacement, serialized legacy migration with modern-key recheck and corrupt-legacy refusal; client proof verification rejects low-order static identities. Six filesystem checks fail on the previous release; current runtime and fresh qualification are in the [Q08 report](../reports/AUDIT-Q08-CRYPTO-KEYS.md). Overall Q08 still needs independent X25519/ML-KEM/AEAD vectors, full static binding/proof-before-credentials review, TOFU/RNG/nonce exhaustion/rotation/zeroization and owner/mode/link policies. Current fixes close with their required checks; overall Q08 remains IN_PROGRESS.
+**First Q08 batch:** Q08-F001–F003, shared bounded key reads, serialized legacy migration and low-order proof refusal. Previous release reproduces six filesystem failures; first-batch qualification is retained in the [report](../reports/AUDIT-Q08-CRYPTO-KEYS.md).
+
+
+**3 October, Q08 complete:** Q08-F004–F007, independent NIST/RFC/AEAD/HKDF vectors, seven-area review,31 key/rotation +25 restore/state checks with actual pinned clients,2279 units, matrix18/327, soak33 and native A/B PASS. All mandatory fix checks closed. Accepted limits and conditional REALITY TLS PQ scope are recorded in the [final report](../reports/AUDIT-Q08-CRYPTO-KEYS.md). Next Q09.
 
 ### 09. Handshake and TCP/UDP pre-auth
 

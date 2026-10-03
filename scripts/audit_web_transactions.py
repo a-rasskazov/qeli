@@ -8,7 +8,7 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults','archive-state','archive-prepare','keys'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability','users-admission','users-bandwidth','archives','archive-policy','archive-faults','archive-state','archive-prepare','keys','keys-rotation'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
@@ -91,7 +91,7 @@ obf.mode = fake-tls
  before=network()
 
 
- if a.scenario=='keys':
+ if a.scenario in ('keys','keys-rotation'):
   import fcntl,stat
   identity=Path('/etc/qeli/identity/fixture.key');identity.parent.mkdir(mode=0o700,exist_ok=True)
   modern=Path('/var/lib/qeli/panel-secret.key');legacy=Path('/etc/qeli/panel-secret.key')
@@ -148,6 +148,37 @@ obf.mode = fake-tls
    stop()
    session.unlink();start();r=login();record('session storage recovers with a private persisted key',r[0]==200 and session.is_file() and len(session.read_bytes())==32 and session.stat().st_mode&0o777==0o600)
    cookie=token_from(r);stop();start();record('persisted session survives a fresh supervisor',req('/api/status',token=cookie)[0]==200)
+   if a.scenario=='keys-rotation':
+    def api(path,method='GET',body=None):
+     result=req(path,method,body,headers=basic());assert result[0]==200,(path,result[0]);return result[1]
+    def public():return api('/api/identity')['profiles'][0]['public_key']
+    def client_attempt(pin,label,expect_success):
+     config=root/(label+'.ini');config.write_text('[qeli]\nserver=127.0.0.1:24843\nproto=tcp\nuser=panel-create\npass=fixture-only-key-password\nkey='+pin+'\nmode=fake-tls\nbind_static=true\nquic=false\ndev=q08cli\ngateway=false\ndns=off\nkill_switch=false\ntimeout=4\n[logging]\nlevel=info\n');config.chmod(0o600)
+     logpath=root/(label+'.log');log=logpath.open('w');proc=subprocess.Popen([str(binary),'client','-c',str(config)],env=dict(env,QELI_DEVICE_ID_FILE=str(root/'rotation-device')),stdout=log,stderr=subprocess.STDOUT)
+     try:
+      def outcome():
+       text=logpath.read_text(errors='replace')
+       return ('Auth OK' in text) if expect_success else any(marker in text.lower() for marker in ('decryption failed','server auth proof verification failed','server key mismatch'))
+      wait(outcome,'rotation client admission did not finish: '+label)
+      text=logpath.read_text(errors='replace');record(label,('Auth OK' in text) if expect_success else 'Auth OK' not in text and any(marker in text.lower() for marker in ('decryption failed','server auth proof verification failed','server key mismatch')))
+     finally:
+      if proc.poll() is None:proc.terminate();proc.wait(timeout=25)
+      log.close()
+    old_pub=public();old_bytes=identity.read_bytes();client_attempt(old_pub,'old pin authenticates before rotation',True)
+    old_workers=Path('/proc/'+str(sup.pid)+'/task/'+str(sup.pid)+'/children').read_text().split()
+    rotated=api('/api/identity/fixture/rotate','POST',{});new_pub=rotated.get('public_key')
+    record('API rotation publishes a different private key',rotated.get('ok') is True and new_pub!=old_pub and identity.read_bytes()!=old_bytes and identity.stat().st_mode&0o777==0o600)
+    record('API rotation does not silently restart running workers',old_workers==Path('/proc/'+str(sup.pid)+'/task/'+str(sup.pid)+'/children').read_text().split())
+    record('API list returns the newly persisted public key',public()==new_pub)
+    client_attempt(old_pub,'running worker retains old identity until restart',True)
+    client_attempt(new_pub,'new pin refused by worker still holding old identity',False)
+    stop();start();client_attempt(new_pub,'new pin authenticates after explicit restart',True)
+    client_attempt(old_pub,'old pin refused after explicit restart',False)
+    before_cli=identity.read_bytes();r=cli(['rotate-identity','fixture'])
+    record('CLI rotation publishes a different private key',r['completed'] and r['code']==0 and identity.read_bytes()!=before_cli and identity.stat().st_mode&0o777==0o600)
+    cli_pub=public();record('CLI rotation differs from API generation',cli_pub!=new_pub)
+    stop();start();client_attempt(cli_pub,'CLI rotated pin authenticates after restart',True)
+    client_attempt(new_pub,'previous API pin refused after CLI restart',False)
    complete=all(c['status']=='PASS' for c in checks)
   finally:
    stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)

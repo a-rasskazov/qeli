@@ -619,7 +619,7 @@ revision rejects the write; reload the config and retry.
 
 ### Server identity: show & rotate
 **Config → Global → Server identity keys** (`GET /api/identity`) lists each profile with
-its bind string and its **pinned public key** (hex) — the panel equivalent of
+its bind string and its **persisted public key** (hex) — the panel equivalent of
 `qeli show-identity`; the key file is created on first read if it doesn't exist yet.
 The panel reads a bounded snapshot of the current INI and refuses identity listing,
 rotation, and Share when an explicit `identity_key` comes from an untrusted file.
@@ -630,6 +630,10 @@ It also refuses a custom `auth.users_file` from that snapshot for user operation
 **every client of that profile must be given the new `auth.server_public_key`** — the key
 they pinned before will no longer match. In other words rotating means re-issuing the
 config/link to all of that profile's clients, so don't do it "just in case".
+
+The Identity list reads the persisted key. After rotation it shows the new key even
+while the running worker still holds the old one; coordinate client pin updates with
+the explicit worker restart.
 
 ### Users & groups
 - **Create/edit:** enter the password in **plaintext** — the server hashes it

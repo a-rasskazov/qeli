@@ -110,7 +110,7 @@ aes-gcm = { version = "0.10", features = ["zeroize"] }
 # in the ClientHello — fingerprint parity with current Chrome. No C deps (unlike
 # aws-lc-rs), so it cross-compiles to the Android/Windows/macOS FFI clients.
 # `getrandom` enables `generate_keypair()` (OS RNG) — no rand_core version coupling.
-ml-kem = { version = "0.3", features = ["getrandom"] }
+ml-kem = { version = "0.3", features = ["getrandom", "zeroize"] }
 sha2 = "0.11"
 hkdf = "0.13"
 hmac = "0.13"
