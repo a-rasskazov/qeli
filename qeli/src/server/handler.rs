@@ -980,7 +980,8 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static + SplitStream,
 {
     let pcfg = &profile.config;
-    let handshake_timeout = Duration::from_secs(pcfg.performance.connection.handshake_timeout_secs);
+    let handshake_deadline = tokio::time::Instant::now()
+        + Duration::from_secs(pcfg.performance.connection.handshake_timeout_secs);
     let framing = if pcfg.obfuscation.mode == "plain" || inner_raw {
         Framing::Raw
     } else {
@@ -996,12 +997,11 @@ where
         transcript_hash,
         _handshake_resume_secret,
         first,
-    ) = tokio::time::timeout(
-        handshake_timeout,
+    ) = handshake_until(
+        handshake_deadline,
         qeli_handshake(&server_state, &profile, &mut stream, addr, pcfg, inner_raw),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("handshake timeout for {}", addr))?
     .map_err(|e| anyhow::anyhow!("handshake failed for {}: {}", addr, e))?;
     let max_streams = if pcfg.obfuscation.multipath.enabled {
         pcfg.obfuscation.multipath.max_streams.max(1)
@@ -1029,17 +1029,20 @@ where
                 pcfg.name,
                 crate::util::log_identity(&username)
             );
-            verify_client_auth(
-                &server_state,
-                &profile,
-                addr,
-                "TCP",
-                &proof,
-                &username,
-                &password,
-                &static_shared,
-                &shared,
-                &transcript_hash,
+            handshake_until(
+                handshake_deadline,
+                verify_client_auth(
+                    &server_state,
+                    &profile,
+                    addr,
+                    "TCP",
+                    &proof,
+                    &username,
+                    &password,
+                    &static_shared,
+                    &shared,
+                    &transcript_hash,
+                ),
             )
             .await?;
 
@@ -1053,7 +1056,12 @@ where
                     let reason = error.to_string();
                     let message = build_auth_error(&reason);
                     if let Ok(record) = server_tx_codec.encrypt_packet(message.as_bytes(), &[]) {
-                        if let Err(send_error) = stream.write_all(&record).await {
+                        if let Err(send_error) = handshake_until(handshake_deadline, async {
+                            stream.write_all(&record).await?;
+                            Ok(())
+                        })
+                        .await
+                        {
                             log::debug!(
                                 "TCP {addr}: failed to send recordizer negotiation error: {send_error}"
                             );
@@ -1075,7 +1083,12 @@ where
                     let message = build_auth_error(&reason);
                     match server_tx_codec.encrypt_packet(message.as_bytes(), &[]) {
                         Ok(record) => {
-                            if let Err(send_error) = stream.write_all(&record).await {
+                            if let Err(send_error) = handshake_until(handshake_deadline, async {
+                                stream.write_all(&record).await?;
+                                Ok(())
+                            })
+                            .await
+                            {
                                 log::debug!(
                                     "TCP {addr}: failed to send authenticated negotiation error: {send_error}"
                                 );
@@ -1132,7 +1145,10 @@ where
             // while holding the sessions write lock).
             // Pool leases, session ownership and kernel iroutes must change atomically
             // across TCP and UDP authentication for this profile.
-            let admission_guard = profile.admission.lock().await;
+            let admission_guard = handshake_until(handshake_deadline, async {
+                Ok(profile.admission.lock().await)
+            })
+            .await?;
             let mut programmed_client_routes: Vec<String> = Vec::new();
             let mut evicted_client_routes: Vec<String> = Vec::new();
             // Devices evicted by the per-user session cap below whose pool IP must be
@@ -1468,7 +1484,7 @@ where
             // ids until the pool or the cap was exhausted (`max_sessions = 0` is the
             // default). Roll the whole thing back before propagating the error.
             // (Audit 2026-07-27, B5.)
-            let send_result = async {
+            let send_result = handshake_until(handshake_deadline, async {
                 let msg = build_auth_ok_for_addresses(
                     assigned,
                     pcfg,
@@ -1480,7 +1496,7 @@ where
                 let auth_response = server_tx_codec.encrypt_packet(msg.as_bytes(), &[])?;
                 stream.write_all(&auth_response).await?;
                 Ok::<(), anyhow::Error>(())
-            }
+            })
             .await;
             if let Err(e) = send_result {
                 let orphan_routes = {
@@ -1734,9 +1750,11 @@ fn parse_first_message(plaintext: &[u8]) -> anyhow::Result<FirstMessage> {
             .map_err(|error| anyhow::anyhow!("invalid TCP resume JOIN: {error}"))?;
         return Ok(FirstMessage::Resume { join });
     }
-    if plaintext.len() > JOIN_MAGIC.len() + JOIN_TOKEN_LEN
-        && &plaintext[..JOIN_MAGIC.len()] == JOIN_MAGIC.as_slice()
-    {
+    if plaintext.starts_with(JOIN_MAGIC.as_slice()) {
+        anyhow::ensure!(
+            plaintext.len() == JOIN_MAGIC.len() + JOIN_TOKEN_LEN + 1,
+            "invalid TCP JOIN length"
+        );
         let off = JOIN_MAGIC.len();
         let mut token = [0u8; JOIN_TOKEN_LEN];
         token.copy_from_slice(&plaintext[off..off + JOIN_TOKEN_LEN]);
@@ -3471,6 +3489,22 @@ fn dummy_selector_is_stable_and_uses_configured_costs() {
     assert!(first.contains("m=16384,t=2,p=1"));
 }
 
+/// Keep one original deadline across handshake and authentication stages.
+/// Only wrap cancellation-safe stages; admission mutations must explicitly roll back.
+pub(super) async fn handshake_until<T>(
+    deadline: tokio::time::Instant,
+    operation: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    // timeout_at may poll an immediately-ready operation before an expired timer.
+    anyhow::ensure!(
+        tokio::time::Instant::now() < deadline,
+        "handshake authentication deadline exceeded"
+    );
+    tokio::time::timeout_at(deadline, operation)
+        .await
+        .map_err(|_| anyhow::anyhow!("handshake authentication deadline exceeded"))?
+}
+
 /// Verify a client's authentication (after the parsed `[key_proof][user:pass]`).
 /// Runs every check in the canonical order — server-key-proof (when required),
 /// brute-force lockout, user lookup, Argon2 password, per-profile authorisation
@@ -5095,5 +5129,88 @@ mod downlink_mtu_tests {
             downlink_mtu_for_packet(1280, 1500, IpVersion::V6),
             Some(1280)
         );
+    }
+}
+
+#[cfg(test)]
+mod handshake_deadline_tests {
+    use super::{handshake_until, parse_first_message, FirstMessage, JOIN_MAGIC, JOIN_TOKEN_LEN};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio::time::Instant;
+
+    #[tokio::test]
+    async fn expired_deadline_rejects_even_immediately_ready_auth() {
+        let result =
+            handshake_until(Instant::now() - Duration::from_millis(1), async { Ok(42) }).await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("authentication deadline"));
+        assert_eq!(
+            handshake_until(Instant::now() + Duration::from_secs(1), async { Ok(42) })
+                .await
+                .unwrap(),
+            42
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_wait_cancellation_releases_pre_auth_permit() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = gate.clone().acquire_owned().await.unwrap();
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let result = handshake_until(deadline, async move {
+            let _permit = permit;
+            std::future::pending::<anyhow::Result<()>>().await
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(gate.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn blocked_auth_ok_write_obeys_original_deadline() {
+        let (mut stream, _nonreading_peer) = tokio::io::duplex(1);
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let result = handshake_until(deadline, async {
+            stream.write_all(&[0; 64]).await?;
+            Ok(())
+        })
+        .await;
+        assert!(result.is_err());
+        // A follow-up stage must not receive a fresh time budget.
+        assert!(handshake_until(deadline, async { Ok(()) }).await.is_err());
+    }
+
+    #[test]
+    fn legacy_join_has_one_exact_wire_length() {
+        let mut join = JOIN_MAGIC.to_vec();
+        join.extend_from_slice(&[0x61; JOIN_TOKEN_LEN]);
+        join.push(2);
+        assert!(matches!(
+            parse_first_message(&join).unwrap(),
+            FirstMessage::Join {
+                stream_index: 2,
+                ..
+            }
+        ));
+        for end in JOIN_MAGIC.len()..join.len() {
+            assert!(parse_first_message(&join[..end]).is_err());
+        }
+        join.push(0);
+        assert!(parse_first_message(&join).is_err());
+        let mut auth = vec![0x72; 32];
+        auth.extend_from_slice(b"legacy:password:with:colon");
+        match parse_first_message(&auth).unwrap() {
+            FirstMessage::Auth {
+                username, password, ..
+            } => {
+                assert_eq!(username, "legacy");
+                assert_eq!(password, "password:with:colon");
+            }
+            _ => panic!("legacy AUTH changed classification"),
+        }
     }
 }

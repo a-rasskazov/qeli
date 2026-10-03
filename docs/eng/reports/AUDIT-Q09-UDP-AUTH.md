@@ -1,6 +1,6 @@
 # Q09: UDP AUTH ownership and pre-authentication PMTU
 
-<!-- normative-sync: audit-q09-udp-auth-v1 -->
+<!-- normative-sync: audit-q09-udp-auth-v2 -->
 
 Date: **3 October 2026**. Code: `616cb54b`. This fix batch is qualified;
 Q09 overall remains **IN_PROGRESS**. [Evidence](../../../release/certification/evidence/q09-udp-auth-20261003.json).
@@ -38,8 +38,4 @@ Raw logs, source/fixture hashes and retained artifacts:
 
 ## Remaining Q09
 
-The next batch covers TCP pre-authentication deadlines/admission saturation, UDP
-anti-amplification coverage, truncation/replay/reordering/slow peers, incorrect
-PQ/proof/password, capabilities/downgrade and handshake parser/fuzz coverage. Two fixes
-do not close the entire section; required verification for **this** batch is complete.
-Physical-platform status and earlier Q08 limitations are unchanged.
+TCP deadlines/saturation and complete ClientHello/JOIN were qualified by the subsequent [Q09-F003–F005 batch](AUDIT-Q09-TCP-PARSER.md). UDP anti-amplification, replay/reordering, invalid PQ/proof/password, capabilities/downgrade and final review remain. Q09 overall remains IN_PROGRESS; this UDP batch has no pending checks. Physical platforms and prior Q08 limitations are unchanged.

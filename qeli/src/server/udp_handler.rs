@@ -1104,15 +1104,6 @@ impl Drop for UdpAuthLease {
     }
 }
 
-async fn verify_udp_auth_until(
-    deadline: tokio::time::Instant,
-    verification: impl std::future::Future<Output = anyhow::Result<()>>,
-) -> anyhow::Result<()> {
-    tokio::time::timeout_at(deadline, verification)
-        .await
-        .map_err(|_| anyhow::anyhow!("handshake authentication deadline exceeded"))?
-}
-
 impl UdpSessionState {
     fn evictable_half_open(&self, auth_active: bool) -> bool {
         matches!(self, Self::AwaitingAuth) && !auth_active
@@ -4025,7 +4016,7 @@ async fn handle_udp_auth(
     // timeout for each retransmission. This bounds a reserved half-open AUTH entry.
     let deadline = tokio::time::Instant::from_std(created_at)
         + std::time::Duration::from_secs(pcfg.performance.connection.handshake_timeout_secs);
-    let verification = verify_udp_auth_until(
+    let verification = crate::server::handler::handshake_until(
         deadline,
         handler::verify_client_auth(
             server_state,
@@ -5669,7 +5660,7 @@ mod tests {
         let deadline = tokio::time::Instant::now() - Duration::from_millis(1);
         let result = tokio::time::timeout(
             Duration::from_secs(1),
-            super::verify_udp_auth_until(deadline, verification),
+            crate::server::handler::handshake_until(deadline, verification),
         )
         .await
         .expect("expired original deadline must not grant a fresh handshake window");
@@ -5678,7 +5669,7 @@ mod tests {
             .to_string()
             .contains("authentication deadline"));
         assert!(super::UdpAuthLease::acquire(&active).is_some());
-        assert!(super::verify_udp_auth_until(
+        assert!(crate::server::handler::handshake_until(
             tokio::time::Instant::now() + Duration::from_secs(1),
             async { Ok(()) }
         )

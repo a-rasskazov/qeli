@@ -3322,7 +3322,7 @@ defaults".
 | `perf.udp.send_buffer_size` | `0` | `SO_SNDBUF` on the UDP listener. `0` = leave alone; maximum 64 MiB per socket. A full send buffer applies backpressure rather than losing data, so there is no send-buffer auto-grow |
 | `perf.tun.read_buffer_size` | `65535` | TUN read-buffer size, **per queue**. Must be at least `tun.mtu` (plus 14 bytes of Ethernet header for TAP) and at most 1 MiB; out-of-range values are **rejected at load**. `0` is not "auto" — it makes the read return EOF immediately and stops the data plane |
 | `perf.connection.max_clients` | `128` | total sessions per profile (all users; see "Connection limits") |
-| `perf.connection.handshake_timeout_secs` | `10` | 10 seconds: TCP key exchange, proof and first AUTH/JOIN read; UDP also covers AUTH verification, measured from handshake creation |
+| `perf.connection.handshake_timeout_secs` | `10` | 10 seconds: TCP key exchange, proof, first AUTH/JOIN, AUTH verification and AUTH OK sending share one inner-handshake deadline; UDP AUTH verification is timed from handshake creation. Resource rollback may finish after that deadline |
 | `perf.connection.idle_timeout_secs` | `300` | idle timeout (`0` = never idle-drop) |
 | `perf.connection.new_session_rate_max` | `10` | max new sessions from one source IP per window |
 | `perf.connection.new_session_rate_window_secs` | `60` | window for `new_session_rate_max` (seconds) |

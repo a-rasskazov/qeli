@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v20 -->
+<!-- normative-sync: full-system-audit-v21 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -415,6 +415,8 @@ teardown; a rejection flush retains its pre-auth slot until I/O release. 13 new 
 was cross-compiled only. Other section scenarios and live Linux E2E remain open.
 
 **3 October, UDP AUTH/PMTU:** [Q09-F001/F002](../reports/AUDIT-Q09-UDP-AUTH.md) fixed/retested: handshake reservation/cancellation/deadline and PMTU only after non-revoked AuthOK. 2283 units, 16 old/new UDP/QUIC + 35 admission checks and fresh matrix/soak/native PASS; Q09 overall remains IN_PROGRESS.
+
+**3 October, TCP/parser:** [Q09-F003–F005](../reports/AUDIT-Q09-TCP-PARSER.md): original AUTH deadline, AUTH OK rollback, strict complete ClientHello and JOIN. 2290 units, 8 real baseline/fixed TCP checks and 256-slot saturation, bounded ASan/libFuzzer, fresh matrix/soak/native PASS. UDP anti-amplification/replay/reordering and negative auth/capabilities contracts remain; Q09 overall IN_PROGRESS.
 
 ### 10. PacketCodec, replay and control framing
 

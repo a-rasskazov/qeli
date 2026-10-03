@@ -360,3 +360,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 
 - [Q08: cryptography and key storage](reports/AUDIT-Q08-CRYPTO-KEYS.md)
 - [Q09: UDP AUTH ownership and pre-authentication PMTU](reports/AUDIT-Q09-UDP-AUTH.md)
+- [Q09: TCP authentication and ClientHello](reports/AUDIT-Q09-TCP-PARSER.md)

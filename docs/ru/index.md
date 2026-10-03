@@ -360,3 +360,4 @@
 
 - [Q08: криптография и хранение ключей](reports/AUDIT-Q08-CRYPTO-KEYS.md)
 - [Q09: владение UDP AUTH и PMTU до авторизации](reports/AUDIT-Q09-UDP-AUTH.md)
+- [Q09: TCP-аутентификация и ClientHello](reports/AUDIT-Q09-TCP-PARSER.md)
