@@ -1,0 +1,738 @@
+{
+  "schema_version": 1,
+  "kind": "qeli-q03-remaining-panel",
+  "status": "UI_PASS_RELEASE_CHECKS_PENDING",
+  "executed_at": "2026-10-03T01:59:02.837236+00:00",
+  "scope": [
+    "dashboard",
+    "client",
+    "users",
+    "layout",
+    "logs responsive"
+  ],
+  "js_groups_passed": 71,
+  "new_js_groups": 34,
+  "browser": {
+    "status": "PASS",
+    "browser": "154.0.4258.48",
+    "execution": "Real Edge/repository UI with loopback fixture APIs, no backend persistence/auth claim",
+    "scenarios": [
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 320,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 166,
+            "height": 32,
+            "top": 84,
+            "right": 182,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 190,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 304,
+            "bottom": 116,
+            "left": 190
+          },
+          "viewport": 320
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 390,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 236,
+            "height": 32,
+            "top": 84,
+            "right": 252,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 260,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 374,
+            "bottom": 116,
+            "left": 260
+          },
+          "viewport": 390
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 768,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 320,
+            "height": 32,
+            "top": 84,
+            "right": 568,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 576,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 690,
+            "bottom": 116,
+            "left": 576
+          },
+          "viewport": 768
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 1440,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 320,
+            "height": 32,
+            "top": 84,
+            "right": 568,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 576,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 690,
+            "bottom": 116,
+            "left": 576
+          },
+          "viewport": 1440
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 320,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 161,
+            "height": 32,
+            "top": 84,
+            "right": 177,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 185,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 304,
+            "bottom": 116,
+            "left": 185
+          },
+          "viewport": 320
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 390,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 231,
+            "height": 32,
+            "top": 84,
+            "right": 247,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 255,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 374,
+            "bottom": 116,
+            "left": 255
+          },
+          "viewport": 390
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 768,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 320,
+            "height": 32,
+            "top": 84,
+            "right": 568,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 576,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 695,
+            "bottom": 116,
+            "left": 576
+          },
+          "viewport": 768
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 1440,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 320,
+            "height": 32,
+            "top": 84,
+            "right": 568,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 576,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 695,
+            "bottom": 116,
+            "left": 576
+          },
+          "viewport": 1440
+        }
+      },
+      {
+        "kind": "page",
+        "page": "dashboard",
+        "language": "en",
+        "mobile": false,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "client",
+        "language": "en",
+        "mobile": false,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "users",
+        "language": "en",
+        "mobile": false,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "layout",
+        "language": "en",
+        "mobile": false,
+        "failed_status_not_healthy": true,
+        "retry": true
+      },
+      {
+        "kind": "page",
+        "page": "dashboard",
+        "language": "en",
+        "mobile": true,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "client",
+        "language": "en",
+        "mobile": true,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "users",
+        "language": "en",
+        "mobile": true,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "layout",
+        "language": "en",
+        "mobile": true,
+        "failed_status_not_healthy": true,
+        "retry": true
+      },
+      {
+        "kind": "page",
+        "page": "dashboard",
+        "language": "ru",
+        "mobile": false,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "client",
+        "language": "ru",
+        "mobile": false,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "users",
+        "language": "ru",
+        "mobile": false,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "layout",
+        "language": "ru",
+        "mobile": false,
+        "failed_status_not_healthy": true,
+        "retry": true
+      },
+      {
+        "kind": "page",
+        "page": "dashboard",
+        "language": "ru",
+        "mobile": true,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "client",
+        "language": "ru",
+        "mobile": true,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "users",
+        "language": "ru",
+        "mobile": true,
+        "error_retry": true,
+        "late_reads": true,
+        "keyboard_save": true,
+        "new_modal_preserved": true,
+        "single_post": true,
+        "page_errors": []
+      },
+      {
+        "kind": "page",
+        "page": "layout",
+        "language": "ru",
+        "mobile": true,
+        "failed_status_not_healthy": true,
+        "retry": true
+      }
+    ]
+  },
+  "baseline": {
+    "status": "PASS_DEFECT_REPRODUCTION",
+    "source_commit": "78f7ff7a4f31018c91b2ed0a43df484647c50943",
+    "results": [
+      {
+        "defect": "dashboard API refusal has no visible load error",
+        "reproduced": true
+      },
+      {
+        "defect": "clientPage API refusal has no visible load error",
+        "reproduced": true
+      },
+      {
+        "defect": "usersPage API refusal has no visible load error",
+        "reproduced": true
+      },
+      {
+        "defect": "dashboard older successful write closes B modal",
+        "reproduced": true
+      },
+      {
+        "defect": "client older successful write closes B modal",
+        "reproduced": true
+      },
+      {
+        "defect": "users older successful write closes B modal",
+        "reproduced": true
+      },
+      {
+        "defect": "A sharing credentials appear in B modal",
+        "reproduced": true
+      },
+      {
+        "defect": "initial server state green before first response",
+        "reproduced": true
+      }
+    ]
+  },
+  "responsive_before": {
+    "status": "PASS_DEFECT_REPRODUCTION",
+    "scenarios": [
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 320,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 166,
+            "height": 32,
+            "top": 84,
+            "right": 182,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 190,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 304,
+            "bottom": 116,
+            "left": 190
+          },
+          "viewport": 320
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 390,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 46,
+            "height": 32,
+            "top": 84,
+            "right": 62,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 24,
+            "y": 84,
+            "width": 50,
+            "height": 32,
+            "top": 84,
+            "right": 74,
+            "bottom": 116,
+            "left": 24
+          },
+          "viewport": 390
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 768,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 58.515625,
+            "height": 32,
+            "top": 84,
+            "right": 306.515625,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 314.515625,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 428.515625,
+            "bottom": 116,
+            "left": 314.515625
+          },
+          "viewport": 768
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "en",
+        "width": 1440,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 320,
+            "height": 32,
+            "top": 84,
+            "right": 568,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 576,
+            "y": 84,
+            "width": 114,
+            "height": 32,
+            "top": 84,
+            "right": 690,
+            "bottom": 116,
+            "left": 576
+          },
+          "viewport": 1440
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 320,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 161,
+            "height": 32,
+            "top": 84,
+            "right": 177,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 185,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 304,
+            "bottom": 116,
+            "left": 185
+          },
+          "viewport": 320
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 390,
+        "rects": {
+          "input": {
+            "x": 16,
+            "y": 84,
+            "width": 46,
+            "height": 32,
+            "top": 84,
+            "right": 62,
+            "bottom": 116,
+            "left": 16
+          },
+          "select": {
+            "x": 24,
+            "y": 84,
+            "width": 50,
+            "height": 32,
+            "top": 84,
+            "right": 74,
+            "bottom": 116,
+            "left": 24
+          },
+          "viewport": 390
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 768,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 46,
+            "height": 32,
+            "top": 84,
+            "right": 294,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 292.921875,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 411.921875,
+            "bottom": 116,
+            "left": 292.921875
+          },
+          "viewport": 768
+        }
+      },
+      {
+        "kind": "responsive",
+        "page": "logs",
+        "language": "ru",
+        "width": 1440,
+        "rects": {
+          "input": {
+            "x": 248,
+            "y": 84,
+            "width": 320,
+            "height": 32,
+            "top": 84,
+            "right": 568,
+            "bottom": 116,
+            "left": 248
+          },
+          "select": {
+            "x": 576,
+            "y": 84,
+            "width": 119,
+            "height": 32,
+            "top": 84,
+            "right": 695,
+            "bottom": 116,
+            "left": 576
+          },
+          "viewport": 1440
+        }
+      }
+    ]
+  },
+  "wip_integration": {
+    "status": "PASS",
+    "source": "merged-wip-users.html",
+    "checks": [
+      "editor suppresses live users",
+      "editor opened during pending response preserves row",
+      "manual load beats older live refresh",
+      "destroy blocks live reload"
+    ],
+    "source_sha256": "d538a92d034d86a01850f9fb9886349d2ec10da38732d9bd6fc7e27087966199"
+  },
+  "main_wip_before": {
+    "head": "c89c9e5586fef8147e203a7699ef39f69e9cdb15",
+    "status": " M CHANGELOG.md\n M qeli/src/web/templates/users.html",
+    "files": {
+      "CHANGELOG.md": "a90befc3868cb8a2445786edd3f8f7e1be68abd623dc7c810f59adf2d9e87680",
+      "qeli/src/web/templates/users.html": "087b056bbbb6e27cb2b8111fad3f48565bd5944a6f439eb7e6aa0942767a1377"
+    }
+  },
+  "limitations": [
+    "Fixture APIs do not qualify backend auth/persistence",
+    "Closing a modal does not cancel sent HTTP writes",
+    "Merged user live-refresh remains outside committed certification",
+    "Q03 still IN_PROGRESS"
+  ],
+  "rust_native_reuse": {
+    "source_commit": "78f7ff7a4f31018c91b2ed0a43df484647c50943",
+    "native_digest": "4114e360940dd1dbffabcb70068a914445a1a7310af2606da692acd8cbbf8a8f",
+    "unit_passed": 2257,
+    "prior_evidence": "release/certification/evidence/q03-panel-load-20261003.json",
+    "reason": "Only embedded HTML/JS and regenerated CSS changed; no new Rust/native test execution claimed"
+  },
+  "raw_root": "C:\\Users\\litvi\\OneDrive\\Documents\\qeli\\audit-debt-20260924\\q03-remaining-20261003"
+}

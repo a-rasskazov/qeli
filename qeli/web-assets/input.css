@@ -642,3 +642,8 @@ html[data-theme=light] ::-webkit-scrollbar-thumb:hover{background:#aebccf}
   .card:has(>table){overflow-x:auto;-webkit-overflow-scrolling:touch}
   .card>table{min-width:620px}
 }
+
+/* Keep the log search/line selector readable before wrapping the actions. */
+.logs-inputs{flex:1 1 16rem}
+.logs-search{min-width:6rem}
+@media (max-width:639px){.logs-inputs{flex-basis:100%}}

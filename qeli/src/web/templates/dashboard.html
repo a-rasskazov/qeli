@@ -1,4 +1,5 @@
 <div x-data="dashboard">
+  <div x-show="loadError" role="alert" class="card p-3 mb-4 text-xs text-red-400" x-text="loadError"></div>
 
   <!-- ═══ OPERATIONAL WARNINGS (e.g. NAT enabled but iptables missing) ═══ -->
   <template x-for="w in warnings" :key="w">
@@ -245,7 +246,7 @@
       </div>
     </div>
 
-    <div x-show="!loading && filtered.length === 0" class="py-16 text-center text-slate-600 text-sm">
+    <div x-show="loaded && !loading && !loadError && filtered.length === 0" class="py-16 text-center text-slate-600 text-sm">
       <svg class="w-10 h-10 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="1.5" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8z"/></svg>
       <span x-text="clients.length ? 'No matching clients' : 'No clients connected'"></span>
     </div>
@@ -348,7 +349,9 @@ function dashboard() {
     filtered: [],
     profiles: [],
     warnings: [],          // server-side operational warnings (e.g. iptables missing)
-    loading: false,
+    loading: false, loaded: false, loadError: '',
+    loadSequence: 0, pendingLoads: 0, metricsSequence: 0, metricsPending: 0,
+    destroyed: false, refreshTimer: null, metricsTimer: null, visibilityHandler: null,
     filterProfile: '',
     search: '',
     sortMode: 'uptime_desc',
@@ -522,14 +525,22 @@ function dashboard() {
 
     async init() {
       await this.load();
+      if (this.destroyed) return;
       this.loadMetrics();
-      // Live updates pause while the tab is hidden — no wasted requests in the
-      // background — and refresh immediately when it becomes visible again.
-      setInterval(() => { if (!document.hidden) this.load(); }, 10000);
-      setInterval(() => { if (!document.hidden) this.loadMetrics(); }, 2000);
-      document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) { this.load(); this.loadMetrics(); }
-      });
+      this.refreshTimer = setInterval(() => { if (!document.hidden) this.load(true); }, 10000);
+      this.metricsTimer = setInterval(() => { if (!document.hidden) this.loadMetrics(true); }, 2000);
+      this.visibilityHandler = () => {
+        if (!this.destroyed && !document.hidden) { this.load(true); this.loadMetrics(true); }
+      };
+      document.addEventListener('visibilitychange', this.visibilityHandler);
+    },
+    destroy() {
+      this.destroyed = true;
+      this.loadSequence++; this.metricsSequence++;
+      this.loading = false;
+      clearInterval(this.refreshTimer); clearInterval(this.metricsTimer);
+      if (this.visibilityHandler) document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.refreshTimer = this.metricsTimer = this.visibilityHandler = null;
     },
 
     // Restore /etc/qeli from an uploaded backup .tar.gz (server snapshots first).
@@ -566,21 +577,28 @@ function dashboard() {
     },
 
     // Host + tunnel metrics for the dashboard (host load card + throughput chart).
-    async loadMetrics() {
+    async loadMetrics(background = false) {
+      if (this.destroyed || (background && this.metricsPending)) return;
+      const sequence = ++this.metricsSequence;
+      this.metricsPending++;
       try {
         const [s, m] = await Promise.all([
           apiFetch('api/system'),
           apiFetch('api/metrics'),
         ]);
+        if (this.destroyed || sequence !== this.metricsSequence) return;
         if (s.ok) this.sys = s;
-        if (m.ok) this.points = m.points || [];
+        const validPoints = m.ok && Array.isArray(m.points || []);
+        if (validPoints) this.points = m.points || [];
         this.systemMetricsErr = !s.ok;
-        this.metricsErr = !(s.ok && m.ok);
+        this.metricsErr = !(s.ok && validPoints);
       } catch {
-        this.systemMetricsErr = true;
-        this.metricsErr = true;
+        if (!this.destroyed && sequence === this.metricsSequence) {
+          this.systemMetricsErr = true; this.metricsErr = true;
+        }
       } finally {
-        this.metricsLoaded = true;
+        this.metricsPending--;
+        if (!this.destroyed && sequence === this.metricsSequence) this.metricsLoaded = true;
       }
     },
     get upStr() {
@@ -604,21 +622,27 @@ function dashboard() {
       return { down, up: line('up_mbps'), area: down ? `${down} L${W},${H} L0,${H} Z` : '', max: max.toFixed(0), cpu, clients, maxClients };
     },
 
-    async load() {
-      this.loading = true;
+    async load(background = false) {
+      if (this.destroyed || (background && this.pendingLoads)) return;
+      const sequence = ++this.loadSequence;
+      this.pendingLoads++;
+      if (!background) this.loading = true;
       try {
-        const [st, cl] = await Promise.all([
-          apiFetch('api/status'),
-          apiFetch('api/clients'),
-        ]);
-        if (st.ok) this.profiles = st.profiles || [];
-        if (st.ok) this.warnings = st.warnings || [];
-        if (cl.ok) {
-          this.clients = cl.clients || [];
-          this.refreshView();
-        }
-      } catch {}
-      this.loading = false;
+        const [st, cl] = await Promise.all([apiFetch('api/status'), apiFetch('api/clients')]);
+        if (this.destroyed || sequence !== this.loadSequence) return;
+        if (!st.ok || !cl.ok) throw new Error([st, cl].filter(r => !r.ok).map(r => r.error || qeliT('Request failed')).join('; '));
+        if (!Array.isArray(st.profiles || []) || !Array.isArray(cl.clients || [])) throw new Error(qeliT('Request failed'));
+        this.profiles = st.profiles || [];
+        this.warnings = st.warnings || [];
+        this.clients = cl.clients || [];
+        this.loaded = true; this.loadError = '';
+        this.refreshView();
+      } catch (e) {
+        if (!this.destroyed && sequence === this.loadSequence) this.loadError = e.message;
+      } finally {
+        this.pendingLoads--;
+        if (sequence === this.loadSequence) this.loading = false;
+      }
     },
 
     async kick(c) {
@@ -643,20 +667,24 @@ function dashboard() {
     },
 
     async saveBw() {
-      this.bwModal.saving = true;
-      const r = await apiFetch(`api/clients/${encodeURIComponent(this.bwModal.username)}/bandwidth`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ profile: this.bwModal.profile, mbps: this.bwModal.mbps }),
-      });
-      this.bwModal.saving = false;
-      if (r.ok) {
-        this.bwModal.show = false;
-        this.$dispatch('notify', { msg: r.message, type: 'success' });
-        await this.load();
-      } else {
-        this.$dispatch('notify', { msg: r.error, type: 'error' });
-      }
+      const modal = this.bwModal;
+      if (this.destroyed || !modal.show || modal.saving) return;
+      const mbps = modal.mbps;
+      modal.saving = true;
+      try {
+        const r = await apiFetch(`api/clients/${encodeURIComponent(modal.username)}/bandwidth`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ profile: modal.profile, mbps: modal.mbps }),
+        });
+        if (this.destroyed) return;
+        if (r.ok) {
+          if (this.bwModal === modal && modal.mbps === mbps) modal.show = false;
+          this.$dispatch('notify', { msg: r.message, type: 'success' });
+          await this.load();
+        } else this.$dispatch('notify', { msg: r.error, type: 'error' });
+      } catch (e) {
+        if (!this.destroyed) this.$dispatch('notify', { msg: e.message, type: 'error' });
+      } finally { modal.saving = false; }
     },
 
   };

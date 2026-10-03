@@ -9,13 +9,15 @@ function component(file, factory, overrides = {}) {
   const html = fs.readFileSync(path.join(templates, file), 'utf8');
   const events = [];
   const context = {
-    console, document: { addEventListener() {} }, window: {},
+    clearInterval() {}, clearTimeout() {},
+    console, document: { readyState: 'loading', hidden: false, addEventListener() {}, removeEventListener() {}, getElementById() { return null; } }, window: {},
     qeliT: s => s, qeliTf: s => s, qeliConfirm: async () => true,
     apiFetch: async () => ({ ok: true }), fetch: async () => ({ json: async () => ({ ok: false }) }),
     ...overrides,
   };
   vm.createContext(context);
   for (const match of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) new vm.Script(match[1]).runInContext(context);
+  if (file === 'layout.html') context.apiFetch = overrides.apiFetch || (async () => ({ok:true}));
   const model = context[factory]();
   model.$dispatch = (...args) => events.push(args);
   return { model, context, events, html };
@@ -144,8 +146,10 @@ async function main() {
     const expiry = 1790847000;
     model.openUsage('alice', { expire_at: expiry, data_limit_gb: 10 }, 'limit'); model.usageForm.data_limit_gb = 20;
     await model.saveLimit(); assert.equal(sent.expire_at, expiry); assert.equal(sent.data_limit_gb, 20);
+    model.openUsage('alice', { expire_at: expiry, data_limit_gb: 20 }, 'limit');
     model.usageForm.expire_date = '2026-10-03'; model.syncFromDate(); await model.saveLimit();
     assert.equal(sent.expire_at, Math.floor(new Date('2026-10-03T23:59:59').getTime() / 1000));
+    model.openUsage('alice', { expire_at: expiry, data_limit_gb: 20 }, 'limit');
     model.usageForm.expire_date = ''; model.syncFromDate(); await model.saveLimit(); assert.equal(sent.expire_at, null);
   });
   await check('shared Rust INI corpus survives the client editor exactly', () => {
@@ -307,6 +311,115 @@ async function main() {
       for (const fn of callbacks) fn(); await Promise.resolve();
       assert.equal(calls, before); assert.equal(cleared.length, callbacks.length);
     }
+  });
+
+  for (const [file, factory, method, errorKey, success, dataKey] of [
+    ['dashboard.html','dashboard','load','loadError',url => url.endsWith('status') ? {ok:true,profiles:[],warnings:[]} : {ok:true,clients:[{username:'fresh'}]},'clients'],
+    ['client.html','clientPage','refresh','loadError',() => ({ok:true,profiles:[{name:'fresh'}]}),'profiles'],
+    ['users.html','usersPage','load','loadError',url => url.endsWith('users') ? {ok:true,users:[{username:'fresh'}]} : {ok:true,usage:[],clients:[],groups:{},config:{profiles:[]}},'users'],
+    ['layout.html','app','fetchStatus','statusError',() => ({ok:true,client_count:7,version:'0.8.2'}),'activeInboundSessions'],
+  ]) {
+    await check(factory + ' displays API refusal, preserves snapshot and recovers', async () => {
+      const {model,context,html}=component(file,factory,{apiFetch:async()=>({ok:false,error:'fixture refused'})});
+      await model[method](); assert.match(model[errorKey],/fixture refused/);
+      assert(html.includes('role="alert"')); context.apiFetch=async url=>success(url);
+      await model[method](); assert.equal(model[errorKey],'');
+      const snapshot=JSON.stringify(model[dataKey]); context.apiFetch=async()=>({ok:false,error:'fixture later refused'});
+      await model[method](true); assert.equal(JSON.stringify(model[dataKey]),snapshot); assert.match(model[errorKey],/fixture later refused/);
+    });
+    await check(factory + ' ignores obsolete reads, bounds polls and ignores completion after destroy',async()=>{
+      const pending=[]; const {model,context}=component(file,factory,{apiFetch:url=>new Promise(resolve=>pending.push({url,resolve}))});
+      if(factory==='usersPage'){model.loadGroups=async()=>{};model.loadProfiles=async()=>{};model.loadUsage=async()=>{};}
+      const old=model[method](); const split=pending.length; const fresh=model[method](); const count=pending.length;
+      const background=model[method](true); assert.equal(pending.length,count); await background;
+      for(const req of pending.slice(split)) req.resolve(success(req.url)); await fresh;
+      const snapshot=JSON.stringify(model[dataKey]);
+      for(const req of pending.slice(0,split)) req.resolve({ok:false,error:'obsolete failure'}); await old;
+      assert.equal(model[errorKey],''); assert.equal(JSON.stringify(model[dataKey]),snapshot);
+      const after=model[method](); model.destroy(); for(const req of pending.slice(count)) req.resolve(success(req.url)); await after;
+      assert.equal(JSON.stringify(model[dataKey]),snapshot);
+    });
+  }
+  await check('dashboard metrics own freshness and do not revive after destroy',async()=>{
+    const pending=[];const {model}=component('dashboard.html','dashboard',{apiFetch:url=>new Promise(resolve=>pending.push({url,resolve}))});
+    const old=model.loadMetrics(), fresh=model.loadMetrics(); const background=model.loadMetrics(true);assert.equal(pending.length,4);await background;
+    for(const req of pending.slice(2))req.resolve(req.url.endsWith('system')?{ok:true,cpu_pct:17}:{ok:true,points:[{down_mbps:7}]});await fresh;
+    for(const req of pending.slice(0,2))req.resolve({ok:false});await old;
+    assert(!model.metricsErr);assert.equal(model.sys.cpu_pct,17);
+    const after=model.loadMetrics();model.destroy();for(const req of pending.slice(4))req.resolve({ok:false});await after;assert(!model.metricsErr);
+  });
+  for(const ok of [true,false]) await check('dashboard bandwidth '+(ok?'success':'failure')+' owns its original modal',async()=>{
+    let finish,writes=0;const {model}=component('dashboard.html','dashboard',{apiFetch:()=>{writes++;return new Promise(r=>finish=r);}});
+    model.load=async()=>{}; model.openBw({username:'A',profile:'p',bandwidth_limit_mbps:1});
+    const save=model.saveBw();await model.saveBw();assert.equal(writes,1,'Enter/button cannot duplicate a pending write');
+    model.openBw({username:'B',profile:'p',bandwidth_limit_mbps:2});const next=model.bwModal;
+    finish({ok,error:'old failure',message:'saved A'});await save;assert.equal(model.bwModal,next);assert(model.bwModal.show);assert.equal(model.bwModal.username,'B');
+  });
+  await check('client save and edit responses cannot close or replace a newer form',async()=>{
+    let finish,writes=0;const {model,context}=component('client.html','clientPage',{apiFetch:()=>{writes++;return new Promise(r=>finish=r);}});
+    model.refresh=async()=>{}; model.openCreate();model.form.name='A';const save=model.save();await model.save();assert.equal(writes,1);
+    model.openCreate();model.form.name='B';finish({ok:true,name:'A'});await save;assert(model.formOpen);assert.equal(model.form.name,'B');
+    context.apiFetch=()=>new Promise(r=>finish=r);const edit=model.openEdit('A');model.openCreate();model.form.name='B';
+    finish({ok:true,raw:'[qeli]\nserver = fixture\n',revision:'r1'});await edit;assert.equal(model.form.name,'B');
+  });
+  for(const method of ['create','save','saveGroup','saveLimit','doReset']) for(const ok of [true,false]) await check('users '+method+' '+(ok?'success':'failure')+' preserves a newly opened modal',async()=>{
+    let finish,writes=0;const {model}=component('users.html','usersPage',{apiFetch:()=>{writes++;return new Promise(r=>finish=r);}});
+    model.load=async()=>{};model.loadGroups=async()=>{};model.loadUsage=async()=>{};
+    if(method==='saveGroup')model.openGroup();else if(method==='saveLimit'||method==='doReset')model.openUsage('A',{},method==='doReset'?'reset':'limit');else if(method==='save')model.openEdit({username:'A'});else model.openCreate();
+    model.form.username='A';model.form.plainPassword='fixture';model.groupForm.name='A';
+    const save=model[method]();await model[method]();assert.equal(writes,1);
+    model.openCreate();model.form.username='B';const next=model.form;finish({ok,error:'old failure',message:'saved A'});await save;
+    assert.equal(model.modal,'create');assert.equal(model.form,next);assert.equal(model.modalError,'');assert.equal(model.modalSaving,false);
+  });
+  await check('late generated sharing credentials never enter another user modal',async()=>{
+    let finish;const {model}=component('users.html','usersPage',{apiFetch:()=>new Promise(r=>finish=r)});
+    model.openShare({username:'A'});model.share.host='fixture';const request=model.generateShare();
+    model.openShare({username:'B'});finish({ok:true,uri:'qeli://A',qr_svg:'<svg></svg>',reset:true,new_password:'A-fixture'});await request;
+    assert.equal(model.share.user,'B');assert.equal(model.share.uri,'');assert.equal(model.share.newPassword,'');
+  });
+  await check('remaining panel timers/listeners and delayed client-connect reload have cleanup',async()=>{
+    for(const [file,factory] of [['dashboard.html','dashboard'],['users.html','usersPage'],['client.html','clientPage'],['layout.html','app']]){
+      const timers=[],cleared=[],listeners=[],removed=[];let calls=0;
+      const {model,context}=component(file,factory,{setInterval:fn=>{timers.push(fn);return timers.length;},clearInterval:id=>{if(id!=null)cleared.push(id);},setTimeout:fn=>{timers.push(fn);return timers.length;},clearTimeout:id=>{if(id!=null)cleared.push(id);},document:{readyState:'loading',hidden:false,getElementById:()=>null,addEventListener:(type,fn)=>{if(type==='visibilitychange')listeners.push(fn);},removeEventListener:(type,fn)=>removed.push(fn)},apiFetch:async()=>{calls++;return{ok:false,error:'fixture'};}});
+      await model.init();if(factory==='clientPage')await model.connect('fixture');model.destroy();const before=calls;
+      for(const fn of timers)fn();for(const fn of listeners)fn();await Promise.resolve();assert.equal(calls,before);assert.equal(cleared.length,timers.length);assert.equal(removed.length,listeners.length);
+    }
+  });
+
+  await check('pending dashboard/client saves preserve later edits and omit UI flags from API',async()=>{
+    for(const kind of ['dashboard','client']){
+      let finish,sent;const {model}=component(kind+'.html',kind==='client'?'clientPage':'dashboard',{apiFetch:(url,opts)=>{sent=JSON.parse(opts.body);return new Promise(r=>finish=r);}});
+      model.load=async()=>{};model.refresh=async()=>{};
+      if(kind==='client'){model.openCreate();model.form.name='A';}else model.openBw({username:'A',profile:'p',bandwidth_limit_mbps:1});
+      const pending=kind==='client'?model.save():model.saveBw();
+      if(kind==='client')model.form.server='later';else model.bwModal.mbps=2;
+      finish({ok:true,name:'A'});await pending;
+      assert(kind==='client'?model.formOpen:model.bwModal.show);assert(!('saving' in sent));
+    }
+  });
+  for(const method of ['create','save','saveGroup','saveLimit'])await check('users '+method+' keeps edits made during a successful save',async()=>{
+    let finish;const {model}=component('users.html','usersPage',{apiFetch:()=>new Promise(r=>finish=r)});model.load=async()=>{};model.loadUsage=async()=>{};model.loadGroups=async()=>{};
+    let owner;if(method==='saveGroup'){model.openGroup();model.groupForm.name='A';owner=model.groupForm;}else if(method==='saveLimit'){model.openUsage('A',{},'limit');owner=model.usageForm;}else{if(method==='save')model.openEdit({username:'A'});else model.openCreate();model.form.username='A';model.form.plainPassword='fixture';owner=model.form;}
+    const pending=model[method]();owner.later_edit='retained';finish({ok:true});await pending;assert(model.modal);assert.equal(owner.later_edit,'retained');assert(!model.modalSaving);
+  });
+  await check('users usage errors are visible and an obsolete failure cannot clear newer addresses',async()=>{
+    const pending=[];const {model,context}=component('users.html','usersPage',{apiFetch:url=>new Promise(resolve=>pending.push({url,resolve}))});
+    const old=model.loadUsage(),fresh=model.loadUsage();const background=model.loadUsage(true);assert.equal(pending.length,4);await background;
+    for(const req of pending.slice(2))req.resolve(req.url.endsWith('usage')?{ok:true,usage:[{username:'A',online:true}]}:{ok:true,clients:[{username:'A',ip:'10.1.2.3'}]});await fresh;
+    for(const req of pending.slice(0,2))req.resolve({ok:false,error:'obsolete'});await old;
+    assert.equal(model.activeAddressesByUser.A[0],'10.1.2.3');assert.equal(model.readErrors.usage,'');
+    context.apiFetch=async()=>({ok:false,error:'current failure'});await model.loadUsage();assert.match(model.readErrors.usage,/current failure/);assert.equal(Object.keys(model.activeAddressesByUser).length,0);assert.equal(model.usage.length,1);
+  });
+  await check('client import completion and duplicate submits belong to the original import modal',async()=>{
+    let finish,writes=0;const {model}=component('client.html','clientPage',{apiFetch:()=>{writes++;return new Promise(r=>finish=r);}});model.refresh=async()=>{};
+    model.openImport();model.importLink='A';const pending=model.doImport();await model.doImport();assert.equal(writes,1);
+    model.openImport();model.importLink='B';finish({ok:true,name:'A'});await pending;assert(model.importOpen);assert.equal(model.importLink,'B');assert(!model.importSaving);
+  });
+
+  for(const kind of ['dashboard','client','users'])await check(kind+' rejects malformed collection replies without corrupting the snapshot',async()=>{
+    const factory=kind==='client'?'clientPage':kind==='users'?'usersPage':'dashboard';const {model,context}=component(kind+'.html',factory);
+    let healthy=true;context.apiFetch=async url=>url.endsWith('clients')?{ok:true,clients:healthy?[]:'broken'}:url.endsWith('profiles')?{ok:true,profiles:healthy?[]:'broken'}:url.endsWith('users')?{ok:true,users:healthy?[]:'broken'}:url.endsWith('config')?{ok:true,config:{profiles:[]}}:{ok:true,profiles:[],usage:[],groups:{}};
+    await model.load();healthy=false;await model.load();assert(model.loadError);assert(Array.isArray(kind==='dashboard'?model.clients:kind==='client'?model.profiles:model.users));
   });
   console.log(`Panel editor regressions: ${passed} passed`);
 }

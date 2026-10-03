@@ -135,8 +135,8 @@ async function apiFetch(url, opts = {}) {
       </select>
     </div>
     <div class="flex items-center gap-2 px-2 py-1.5">
-      <div class="w-2 h-2 rounded-full flex-shrink-0" :style="serverOk ? 'background:#00e676;box-shadow:0 0 8px #00e676' : 'background:#ff5d6c'"></div>
-      <span class="text-xs" style="color:var(--txt-dim)" x-text="serverOk ? 'Server online' : 'Server offline'"></span>
+      <div class="w-2 h-2 rounded-full flex-shrink-0" :style="!statusLoaded ? 'background:var(--txt-dim)' : serverOk ? 'background:#00e676;box-shadow:0 0 8px #00e676' : 'background:#ff5d6c'"></div>
+      <span class="text-xs" style="color:var(--txt-dim)" x-text="!statusLoaded ? 'Loading…' : statusError ? 'Unavailable' : serverOk ? 'Server online' : 'Server offline'"></span>
     </div>
     <button @click="logout()" class="nav-link w-full" style="cursor:pointer;background:none;border:none;font:inherit">
       <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
@@ -146,6 +146,7 @@ async function apiFetch(url, opts = {}) {
 </aside>
 
 <!-- Main -->
+
 <div class="flex-1 flex flex-col overflow-hidden relative z-10">
   <!-- Topbar — same height as the sidebar brand band (their dividers align). -->
   <header class="flex items-center justify-between px-4 md:px-6 flex-shrink-0 gap-3" style="height:var(--topbar-h);background:var(--chrome-bg);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)">
@@ -212,7 +213,10 @@ async function apiFetch(url, opts = {}) {
        sticky in-page bar can pin flush under the topbar with no gap above it,
        while pages still get their top spacing. -->
   <main class="flex-1 overflow-auto px-4 md:px-6 pb-6">
-    <div id="page-content" class="pt-6">{{content}}</div>
+    <div id="page-content" class="pt-6">
+      <div x-show="statusError" role="alert" class="card p-3 mb-4 text-xs text-red-400" x-text="statusError"></div>
+      {{content}}
+    </div>
   </main>
 </div>
 
@@ -297,7 +301,8 @@ function app() {
     version: '—',
     hostname: '',
     page: '{{page}}',
-    serverOk: true,
+    serverOk: false, statusLoaded: false, statusError: '',
+    destroyed: false, statusSequence: 0, statusPending: 0, statusTimer: null,
     activeInboundSessions: 0,
     toast: { show: false, msg: '', type: 'success', _t: null },
     confirmModal: { show: false, title: '', message: '', paragraphs: [], danger: false, label: 'Confirm', cancelLabel: 'Cancel', _resolve: null },
@@ -312,13 +317,24 @@ function app() {
 
     init() {
       this.fetchStatus();
-      setInterval(() => this.fetchStatus(), 10000);
+      this.statusTimer = setInterval(() => { if (!document.hidden) this.fetchStatus(true); }, 10000);
     },
 
-    async fetchStatus() {
+    destroy() {
+      this.destroyed = true; this.statusSequence++;
+      clearInterval(this.statusTimer); clearTimeout(this.toast._t);
+      this.statusTimer = null;
+      this.confirmResolve(false);
+    },
+    async fetchStatus(background = false) {
+      if (this.destroyed || (background && this.statusPending)) return;
+      const sequence = ++this.statusSequence;
+      this.statusPending++;
       try {
         const d = await apiFetch('api/status');
-        this.serverOk = d.ok;
+        if (this.destroyed || sequence !== this.statusSequence) return;
+        if (!d.ok) throw new Error(d.error || qeliT('Request failed'));
+        this.serverOk = true; this.statusError = ''; this.statusLoaded = true;
         this.activeInboundSessions = d.client_count || 0;
         this.version = d.version || '—';
         if (typeof d.hostname === 'string' && d.hostname) {
@@ -327,7 +343,11 @@ function app() {
         }
         this.installKind = d.install_kind || 'other';
         if (d.update_check) this.checkUpdate(); // opt-in; browser-side; runs once
-      } catch { this.serverOk = false; }
+      } catch (e) {
+        if (!this.destroyed && sequence === this.statusSequence) {
+          this.serverOk = false; this.statusLoaded = true; this.statusError = e.message;
+        }
+      } finally { this.statusPending--; }
     },
 
     // Opt-in, browser-side "check for updates" (default OFF; gated by web.update_check).
@@ -354,6 +374,7 @@ function app() {
           rel = { tag: r.tag_name, url: r.html_url || 'https://github.com/litvinovtd/qeli/releases', deb, sha };
           try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), rel })); } catch {}
         }
+        if (this.destroyed) return;
         if (verNewer(rel.tag, this.version)) {
           this.update = {
             show: true, tag: normVer(rel.tag), url: rel.url,
@@ -421,6 +442,7 @@ function app() {
     },
 
     notify(msg, type = 'success', timeout) {
+      if (this.destroyed) return;
       clearTimeout(this.toast._t);
       // Errors linger longer (5s); an explicit timeout (e.g. a message carrying a command
       // to copy) wins. Success/info stay at 3.5s.
