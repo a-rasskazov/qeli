@@ -4018,6 +4018,9 @@ async fn usage_sweep(state: Arc<ServerState>, mut shutdown: tokio::sync::watch::
     let mut management_notices: HashMap<u64, u8> = HashMap::new();
     while crate::profile_tasks::worker_tick(&mut tick, &mut shutdown).await {
         state.usage.collect();
+        // Recheck immutable packet permissions and reduced device caps as well as
+        // absence/disablement: admission may have finished after the reload scan.
+        control::apply_user_policy_to_sessions(&state).await;
 
         // Admission can finish after a reload's immediate revoke scan. The sweep
         // closes that race by checking current authorization as well as usage/expiry.
@@ -4669,7 +4672,9 @@ async fn reload_on_sighup(state: &Arc<ServerState>) {
     log::info!("SIGHUP: reloaded users database ({} users)", count);
     let revoked = control::apply_user_policy_to_sessions(state).await;
     if revoked > 0 {
-        log::info!("SIGHUP: revoked {revoked} session(s) whose user/profile access was removed");
+        log::info!(
+            "SIGHUP: revoked {revoked} session(s) whose access policy or device cap changed"
+        );
     }
 
     // 2. Rebuild the brute-force tracker ONLY when the thresholds actually change.

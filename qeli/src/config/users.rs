@@ -285,7 +285,11 @@ impl UsersDb {
         change: impl FnOnce(&mut UsersDb) -> anyhow::Result<R>,
     ) -> anyhow::Result<(Self, R)> {
         let path = path.as_ref();
-        let _lock = crate::util::FileLock::acquire(path)?;
+        // Bound cross-process contention so a stalled CLI writer cannot strand
+        // the panel/control handler indefinitely. Timeout occurs before reading
+        // or publishing a candidate and preserves the existing INI.
+        let _lock =
+            crate::util::FileLock::acquire_timeout(path, std::time::Duration::from_secs(5))?;
         // A MISSING file = first write (e.g. `add-client` on a fresh install) → start
         // empty. But a CORRUPT / unreadable / unparseable file must NOT collapse to an
         // empty DB, because the `save()` below would then persist that empty DB over the

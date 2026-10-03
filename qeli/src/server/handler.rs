@@ -4778,6 +4778,44 @@ mod iroute_family_tests {
     }
 }
 
+/// Packet permissions are compiled into a session. A reload must revoke that
+/// session when the effective permissions change, before accepting its old ACL,
+/// delegated source addresses or exit-node defaults indefinitely.
+pub(crate) fn session_access_policy_matches(
+    pcfg: &crate::config::server::ProfileConfig,
+    users_db: &crate::config::users::UsersDb,
+    session: &SessionShared,
+) -> bool {
+    let Some(user) = users_db.find_user(&session.username) else {
+        return false;
+    };
+    let who = crate::util::log_identity(&session.username);
+    let acl = crate::server::acl::DstAcl::compile(
+        &crate::server::acl::effective_allowed_networks(user, &users_db.groups),
+        &who,
+    );
+    if acl != session.dst_acl {
+        return false;
+    }
+    let assigned = crate::server::pool::AssignedAddresses {
+        ipv4: session.client_ipv4,
+        ipv6: session.client_ipv6,
+    };
+    let sources: Vec<_> = assigned
+        .ipv4
+        .map(std::net::IpAddr::V4)
+        .into_iter()
+        .chain(assigned.ipv6.map(std::net::IpAddr::V6))
+        .collect();
+    if crate::server::acl::SrcGuard::new_dual(&sources, &user.client_subnets, &who)
+        != session.src_guard
+    {
+        return false;
+    }
+    let routes = build_routes_json_for_user(pcfg, users_db, &session.username, assigned);
+    exit_access_from_routes_json(&routes) == session.exit_access
+}
+
 fn build_routes_json_for_user(
     pcfg: &crate::config::server::ProfileConfig,
     users_db: &crate::config::users::UsersDb,

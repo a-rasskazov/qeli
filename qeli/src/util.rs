@@ -576,6 +576,24 @@ impl FileLock {
     }
 }
 
+/// Rename succeeded, but directory fsync could not confirm durable publication.
+/// Callers must not report an unchanged file or fabricate a rollback.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "published {path} but cannot sync directory {directory}: {source}; persistence is uncertain"
+)]
+struct PublishedWriteError {
+    path: String,
+    directory: String,
+    source: std::io::Error,
+}
+
+pub fn atomic_write_was_published(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<PublishedWriteError>().is_some())
+}
+
 pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> anyhow::Result<()> {
     write_atomic_inner(path, bytes, false)
 }
@@ -704,12 +722,12 @@ fn write_atomic_with_sync(
                 // The data inode is synced above; the directory entry needs its own
                 // sync. A failure here is an uncertain durable outcome, not a rollback.
                 return sync(&parent).map_err(|e| {
-                    anyhow::anyhow!(
-                        "published {} but cannot sync directory {}: {}; persistence is uncertain",
-                        path.display(),
-                        dir.display(),
-                        e
-                    )
+                    PublishedWriteError {
+                        path: path.display().to_string(),
+                        directory: dir.display().to_string(),
+                        source: e,
+                    }
+                    .into()
                 });
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {

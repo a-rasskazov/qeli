@@ -8,12 +8,12 @@ from pathlib import Path
 def main():
  ap=argparse.ArgumentParser(description=__doc__)
  for k in ('qeli','sha256','artifacts','routes','parent-net','parent-mnt','parent-pid'):ap.add_argument('--'+k,required=True)
- ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage'),required=True)
+ ap.add_argument('--scenario',choices=('basic','runtime','faults','crash','nonroot','users','users-live','users-storage','users-policy','users-durability'),required=True)
  a=ap.parse_args()
  for k in ('net','mnt','pid'):assert os.readlink('/proc/self/ns/'+k)!=getattr(a,'parent_'+k),'private namespace required: '+k
  binary=Path(a.qeli).resolve(strict=True);assert hashlib.sha256(binary.read_bytes()).hexdigest()==a.sha256
  root=Path(a.artifacts);root.mkdir(mode=0o700,parents=True,exist_ok=False);routes=json.loads(Path(a.routes).read_text());checks=[];events=[];observations=[];sup=None;stream=None;complete=False
- cfg=Path('/etc/qeli/server.conf');state=root/'state';state.mkdir(mode=0o700);port=24880;prefix='/audit';tls_mode=False;password='fixture-only #; exact password';cookie='';env=dict(os.environ,STATE_DIRECTORY=str(state),QELI_CONTROL_SOCKET=str(root/'control.sock'))
+ cfg=Path('/etc/qeli/server.conf');state=root/'state';state.mkdir(mode=0o700);port=24880;prefix='/audit';tls_mode=False;fixture_nonroot=False;password='fixture-only #; exact password';cookie='';env=dict(os.environ,STATE_DIRECTORY=str(state),QELI_CONTROL_SOCKET=str(root/'control.sock'))
  def save(finished=False):
   (root/'result.json').write_text(json.dumps(dict(status='PASS' if complete else 'FAIL' if finished else 'IN_PROGRESS',artifact_sha256=a.sha256,checks=checks,observations=observations,check_count=len(checks)),indent=2)+'\n')
  def check(name,ok,detail=None):
@@ -44,7 +44,7 @@ def main():
  def start():
   nonlocal sup,stream
   stream=(root/'server.log').open('a');command=[str(binary),'server','-c',str(cfg)]
-  if a.scenario=='nonroot':command=['setpriv','--reuid=65534','--regid=65534','--clear-groups','--inh-caps=+net_admin,+net_raw','--ambient-caps=+net_admin,+net_raw']+command
+  if a.scenario=='nonroot' or fixture_nonroot:command=['setpriv','--reuid=65534','--regid=65534','--clear-groups','--inh-caps=+net_admin,+net_raw','--ambient-caps=+net_admin,+net_raw']+command
   sup=subprocess.Popen(command,env=env,stdout=stream,stderr=subprocess.STDOUT)
   wait(lambda:req('/login')[0] in (200,303,403),'panel not ready');wait(lambda:':24843' in run(['ss','-lntu']) and Path('/etc/qeli/identity/fixture.key').exists(),'private worker not ready')
  def stop():
@@ -259,6 +259,128 @@ obf.mode = fake-tls
    for target in reversed(mounted):run(['umount',str(target)])
    stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
   assert complete,'Q06 storage/control regressions recorded'
+ elif a.scenario=='users-durability':
+  users_path=Path('/etc/qeli/users.conf');mounted=[]
+  shim_c=r"""
+ #define _GNU_SOURCE
+ #include <dlfcn.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+ static int action(const char *want) { char b[64]={0}; int fd=open("/tmp/q06-storage-fault-action",O_RDONLY);if(fd<0)return 0;ssize_t n=read(fd,b,63);close(fd);return n>0 && !strcmp(b,want); }
+ static void gate(const char *event) {int fd=open("/tmp/q06-storage-fault-event",O_CREAT|O_TRUNC|O_WRONLY,0600);if(fd>=0){write(fd,event,strlen(event));close(fd);}while(access("/tmp/q06-storage-fault-action",F_OK)==0)usleep(10000);}
+ int rename(const char *old,const char *next) { static int(*real)(const char*,const char*);if(!real)real=dlsym(RTLD_NEXT,"rename");int target=!strcmp(next,"/etc/qeli/users.conf");if(target && action("before-rename"))gate("before-rename");int rc=real(old,next);if(rc==0 && target && action("after-rename"))gate("after-rename");return rc; }
+ int fsync(int fd) { static int(*real)(int);if(!real)real=dlsym(RTLD_NEXT,"fsync");struct stat st;char path[64],name[512]={0};snprintf(path,sizeof(path),"/proc/self/fd/%d",fd);ssize_t n=readlink(path,name,511);if(n>=0 && fstat(fd,&st)==0 && S_ISDIR(st.st_mode) && !strcmp(name,"/etc/qeli") && action("dir-fsync")){unlink("/tmp/q06-storage-fault-action");errno=EIO;return -1;}return real(fd); }
+ """
+  shim=Path('/tmp/q06-storage-fault.so');c=Path('/tmp/q06-storage-fault.c');c.write_text(shim_c);run(['gcc','-shared','-fPIC','-O2','-Wall','-Wextra','-Werror','-o',str(shim),str(c),'-ldl']);env['LD_PRELOAD']=str(shim);action=Path('/tmp/q06-storage-fault-action');event=Path('/tmp/q06-storage-fault-event')
+
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());check(method+' '+path+' HTTP response',r[0]==200,r[0]);return r[1]
+  def control(cmd,name,**extra):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(12);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps(dict(cmd=cmd,username=name,**extra))+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536))
+  def reload_worker():
+   old=(root/'server.log').read_text().count('SIGHUP: reloaded users database')
+   m=re.search(r'127\.0\.0\.1:24843\s+.*pid=(\d+)',run(['ss','-lntp']));assert m
+   os.kill(int(m[1]),signal.SIGHUP);wait(lambda:(root/'server.log').read_text().count('SIGHUP: reloaded users database')>old,'worker reload not observed')
+  def probe(name,ok,detail):
+   checks.append(dict(name=name,status='PASS' if ok else 'FAIL',detail=detail));save();print(('PASS ' if ok else 'FAIL ')+name,flush=True)
+  try:
+   start();hashed=api('/api/hash-password','POST',{'password':'fixture-client-password'})['hash']
+   bodies=[{'username':'parallel-'+str(i),'password_hash':hashed,'max_sessions':i+1,'bandwidth':{'limit_mbps':i+1,'burst_mbps':i+3}} for i in range(8)]
+   with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:responses=list(pool.map(lambda b:req('/api/users','POST',b,headers=basic()),bodies))
+   check('eight concurrent creates all succeed',all(r[0]==200 and r[1].get('ok') is True for r in responses),[r[1].get('error') for r in responses])
+   listed=api('/api/users')['users'];check('concurrent creates lose no accounts',all(any(u['username']==b['username'] and u['max_sessions']==b['max_sessions'] and u['bandwidth']==b['bandwidth'] for u in listed) for b in bodies))
+   def mutate(i):return req('/api/users/parallel-0','PUT',{'max_sessions':17} if i==0 else {'bandwidth':{'limit_mbps':21,'burst_mbps':27}},headers=basic())
+   with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:responses=list(pool.map(mutate,range(2)))
+   check('parallel disjoint updates succeed',all(r[0]==200 and r[1].get('ok') is True for r in responses));u=api('/api/users/parallel-0')['user'];check('disjoint edits survive both writers',u['max_sessions']==17 and u['bandwidth']=={'limit_mbps':21,'burst_mbps':27})
+   valid=users_path.read_bytes()
+   for name,data in [('unknown-key',valid+b'\nmisspelled_limit = 7\n'),('bad-value',valid.replace(b'max_sessions = 17',b'max_sessions = garbage')),('bad-utf8',valid+b'\xff')]:
+    assert data!=valid;users_path.write_bytes(data)
+    r=req('/api/users/parallel-0','PUT',{'max_sessions':99},headers=basic());check(name+' refuses exact corrupted INI',r[0]==200 and r[1].get('ok') is False and users_path.read_bytes()==data,{'ok':r[1].get('ok'),'error':r[1].get('error')})
+   users_path.write_bytes(valid);users_path.chmod(0o600)
+   run(['mount','--bind',str(users_path),str(users_path)]);mounted.append(users_path)
+   try:r=api('/api/users/parallel-0','PUT',{'max_sessions':99});check('rename EBUSY refuses without publication',r.get('ok') is False and users_path.read_bytes()==valid,r);check('rename EBUSY leaves no fragments',not list(users_path.parent.glob('.users.conf.qeli-tmp-*')))
+   finally:run(['umount',str(users_path)]);mounted.pop()
+   parent=Path('/etc/qeli');run(['mount','--bind',str(parent),str(parent)]);mounted.append(parent);run(['mount','-o','remount,bind,ro',str(parent)])
+   try:r=api('/api/users/parallel-0','PUT',{'max_sessions':99});check('read-only users storage refuses and preserves bytes',r.get('ok') is False and users_path.read_bytes()==valid,r)
+   finally:run(['umount',str(parent)]);mounted.pop()
+   check('storage recovery succeeds',api('/api/users/parallel-0','PUT',{'max_sessions':18}).get('ok') is True)
+   import fcntl
+   with open(str(users_path)+'.lock','a') as held:
+    fcntl.flock(held,fcntl.LOCK_EX);old=users_path.read_bytes();began=time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+     pending=pool.submit(req,'/api/users/parallel-0','PUT',{'max_sessions':22},basic());time.sleep(6);bounded=pending.done();unchanged=users_path.read_bytes()==old;fcntl.flock(held,fcntl.LOCK_UN);response=pending.result(timeout=20)
+    probe('held lock fails within five seconds without writing',bounded and unchanged and response[1].get('ok') is False,dict(done_after_6s=bounded,unchanged_before_release=unchanged,response=response[1],elapsed=time.monotonic()-began))
+   for label,path,method,body in [
+    ('create','/api/users','POST',{'username':'uncertain','password_hash':hashed}),
+    ('update','/api/users/uncertain','PUT',{'max_sessions':4}),
+    ('disable','/api/users/uncertain/disable','POST',{}),
+    ('enable','/api/users/uncertain/enable','POST',{}),
+    ('bandwidth','/api/users/uncertain/bandwidth','POST',{'limit_mbps':7,'burst_mbps':9}),
+    ('group-upsert','/api/groups/uncertain-template','PUT',{'max_sessions':2}),
+    ('group-delete','/api/groups/uncertain-template','DELETE',None),
+    ('delete','/api/users/uncertain','DELETE',None),
+   ]:
+    old=users_path.read_bytes();action.write_text('dir-fsync');r=api(path,method,body)
+    probe(label+' API reports published durability failure truthfully',r.get('ok') is False and users_path.read_bytes()!=old and 'persistence is uncertain' in r.get('error','') and 'NOT applied' not in r.get('error','') and r.get('published') is True and r.get('reload_requested') is True,r)
+    if label=='create':wait(lambda:control('show-routes','uncertain').get('ok') is True,'published create did not reload worker');check('published failed create is accepted by worker readback',True)
+    if label=='delete':wait(lambda:control('show-routes','uncertain').get('ok') is False,'published delete did not reload worker');check('published failed delete revokes worker auth record',True)
+   for cmd in ('disable-user','enable-user','set-limit','set-bandwidth'):
+    old=users_path.read_bytes();action.write_text('dir-fsync');r=control(cmd,'parallel-0',mbps=8,data_limit_gb=11)
+    probe(cmd+' control distinguishes published failure and refreshes live auth',r.get('ok') is False and users_path.read_bytes()!=old and 'persistence is uncertain' in r.get('error','') and 'NOT ' not in r.get('error','') and 'read back into live auth' in r.get('error',''),r)
+   def worker():
+    m=re.search(r'127\.0\.0\.1:24843\s+.*pid=(\d+)',run(['ss','-lntp']));return int(m[1]) if m else None
+   for phase in ('before-rename','after-rename'):
+    old=users_path.read_bytes();action.write_text(phase);event.unlink(missing_ok=True)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+     pending=pool.submit(req,'/api/users/parallel-0','PUT',{'max_sessions':31 if phase=='before-rename' else 32},basic());wait(lambda:event.exists() and event.read_text()==phase,'users rename crash gate')
+     expected=old if phase=='before-rename' else users_path.read_bytes();check(phase+' complete INI on expected side of rename',expected==old if phase=='before-rename' else b'max_sessions = 32' in expected)
+     fragments=list(users_path.parent.glob('.users.conf.qeli-tmp-*'));check(phase+' temporary files are private',all(x.stat().st_mode&0o777==0o600 for x in fragments))
+     wp=worker();assert wp is not None;os.kill(wp,signal.SIGKILL);sup.kill();sup.wait(timeout=10);stream.close();action.unlink(missing_ok=True)
+     try:pending.result();disconnected=False
+     except (ConnectionError,OSError,http.client.HTTPException):disconnected=True
+     check(phase+' interrupted users request reports no success',disconnected)
+    check(phase+' crash preserves exact complete users INI',users_path.read_bytes()==expected)
+    for p in fragments:p.unlink(missing_ok=True)
+    start();check(phase+' private worker recovers persisted account',control('show-routes','parallel-0').get('ok') is True)
+   old=users_path.read_bytes();action.write_text('dir-fsync');r=api('/api/users/parallel-0','PUT',{'max_sessions':23});published=users_path.read_bytes()!=old
+   probe('post-rename fsync error never claims change NOT applied',r.get('ok') is False and published and 'persistence is uncertain' in r.get('error','') and 'NOT applied' not in r.get('error',''),dict(response=r,published=published))
+   check('post-rename publication is complete INI',b'max_sessions = 23' in users_path.read_bytes());check('post-rename fsync leaves no temporary INI',not list(users_path.parent.glob('.users.conf.qeli-tmp-*')))
+   stop();initial_cfg=cfg.read_text();cfg.write_text(initial_cfg+'\n[user:removed-inline]\npassword_hash = '+hashed+'\nenabled = true\n');cfg.chmod(0o600);start();check('inline user loaded initially',control('show-routes','removed-inline').get('ok') is True)
+   cfg.write_text(initial_cfg);cfg.chmod(0o600);reload_worker();check('inline removal visible in worker before mutation',control('show-routes','removed-inline').get('ok') is False)
+   old=users_path.read_bytes();r=control('enable-user','removed-inline');after=control('show-routes','removed-inline');probe('removed inline account cannot be resurrected by control enable',r.get('ok') is False and users_path.read_bytes()==old and after.get('ok') is False,{'enable':r,'loaded_after':after,'persisted_account':b'[user:removed-inline]' in users_path.read_bytes()})
+   cfg.write_text(initial_cfg+'\n[user:new-inline]\npassword_hash = '+hashed+'\nenabled = true\n');cfg.chmod(0o600);reload_worker();check('new inline user loaded after reload',control('show-routes','new-inline').get('ok') is True)
+   r=control('disable-user','new-inline');probe('new inline account can be disabled by control after reload',r.get('ok') is True and b'[user:new-inline]' in users_path.read_bytes(),r)
+   # Real ENOSPC on an owned private tmpfs, with auth.users_file selected at startup.
+   stop();valid=users_path.read_bytes();store=Path('/etc/qeli/users-store');store.mkdir(mode=0o700);users_path=store/'users.conf';cfg.write_text(cfg.read_text().replace('users_file = /etc/qeli/users.conf','users_file = '+str(users_path)));cfg.chmod(0o600)
+   run(['mount','-t','tmpfs','-o','size=65536,mode=700','tmpfs',str(store)]);mounted.append(store);users_path.write_bytes(valid);users_path.chmod(0o600);start()
+   filler=store/'owned-filler';fd=os.open(filler,os.O_CREAT|os.O_WRONLY,0o600)
+   try:
+    while True:os.write(fd,b'x'*4096)
+   except OSError as error:
+    check('private tmpfs reaches actual ENOSPC',error.errno==28,str(error))
+   finally:os.close(fd)
+   old=users_path.read_bytes();r=api('/api/users/parallel-0','PUT',{'max_sessions':41});check('ENOSPC refuses before publication and preserves exact users INI',r.get('ok') is False and r.get('published') is False and users_path.read_bytes()==old,r);check('ENOSPC removes its temporary INI',not list(store.glob('.users.conf.qeli-tmp-*')))
+   filler.unlink();check('write recovers after ENOSPC',api('/api/users/parallel-0','PUT',{'max_sessions':42}).get('ok') is True);valid=users_path.read_bytes();stop();run(['umount',str(store)]);mounted.pop();users_path.write_bytes(valid);users_path.chmod(0o600)
+   # Root bypasses DAC, so EACCES must use an actual unprivileged private server.
+   for name in ('q06-state','q06-control'):Path('/etc/qeli',name).mkdir(mode=0o700)
+   env['STATE_DIRECTORY']='/etc/qeli/q06-state';env['QELI_CONTROL_SOCKET']='/etc/qeli/q06-control/control.sock'
+   local_binary=Path('/etc/qeli/q06-fixture-qeli');local_binary.write_bytes(binary.read_bytes());local_binary.chmod(0o755);binary=local_binary
+   for p in [root,state,Path('/etc/qeli'),*Path('/etc/qeli').rglob('*')]:os.chown(p,65534,65534)
+   Path('/etc/qeli').chmod(0o700);fixture_nonroot=True;start();store.chmod(0o500);old=users_path.read_bytes()
+   try:r=api('/api/users/parallel-0','PUT',{'max_sessions':43});check('nonroot EACCES refuses and preserves exact users INI',r.get('ok') is False and r.get('published') is False and users_path.read_bytes()==old and 'Permission denied' in r.get('error',''),r);check('EACCES leaves no temporary INI',not list(store.glob('.users.conf.qeli-tmp-*')))
+   finally:store.chmod(0o700)
+   check('nonroot write recovers after EACCES',api('/api/users/parallel-0','PUT',{'max_sessions':44}).get('ok') is True);check('nonroot atomic users file remains private and owned',users_path.stat().st_uid==65534 and users_path.stat().st_mode&0o777==0o600)
+   complete=all(c['status']=='PASS' for c in checks)
+  finally:
+   for target in reversed(mounted):run(['umount',str(target)])
+   stop();save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');check('private namespace network restored',network()==before);save(True)
+  assert complete,'Q06 storage/control regressions recorded'
  elif a.scenario=='users-live':
   clients=[];streams=[];ns='q06-client'
   def api(path,method='GET',body=None):
@@ -313,6 +435,91 @@ obf.mode = fake-tls
    complete=all(x['status']=='PASS' for x in checks)
   finally:
    client_stop();stop();run(['iptables','-D','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP']);subprocess.run(['ip','link','del','q06-srv'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT);run(['ip','netns','del',ns]);save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');after=network();(root/'network.json').write_text(json.dumps(dict(before=before,after=after),indent=2));check('private namespace network restored',after==before,[key for key in before if before[key]!=after[key]]);save(True)
+  assert complete,'live revoke regression recorded'
+ elif a.scenario=='users-policy':
+  clients=[];streams=[];ns='q06-client'
+  def api(path,method='GET',body=None):
+   r=req(path,method,body,headers=basic());assert r[0]==200,(method,path,r[0]);return r[1]
+  def loaded(name):
+   with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
+    c.settimeout(2);c.connect(env['QELI_CONTROL_SOCKET']);c.sendall((json.dumps({'cmd':'show-routes','username':name})+'\n').encode())
+    with c.makefile('rb') as f:return json.loads(f.readline(65536)).get('ok') is True
+  def present(name):return any(x.get('username')==name for x in api('/api/clients').get('clients',[]))
+  def client_stop():
+   for p in clients:
+    if p.poll() is None:
+     p.terminate()
+     try:p.wait(timeout=25)
+     except subprocess.TimeoutExpired:p.kill();p.wait(timeout=5)
+   clients.clear()
+   for f in streams:f.close()
+   streams.clear()
+  try:
+   for cmd in (['ip','netns','add',ns],['ip','link','add','q06-srv','type','veth','peer','name','q06-cli'],['ip','link','set','q06-cli','netns',ns],['ip','addr','add','198.18.0.1/30','dev','q06-srv'],['ip','link','set','q06-srv','up'],['ip','netns','exec',ns,'ip','link','set','lo','up'],['ip','netns','exec',ns,'ip','addr','add','198.18.0.2/30','dev','q06-cli'],['ip','netns','exec',ns,'ip','link','set','q06-cli','up'],['ip','netns','exec',ns,'ip','route','add','default','via','198.18.0.1']):run(cmd)
+   run(['iptables','-A','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP'])
+   for i in range(3):
+    device_ns=ns+'-'+str(i);srv='q6srv'+str(i);cli='q6cli'+str(i);subnet='198.18.'+str(i+1)
+    for cmd in (['ip','netns','add',device_ns],['ip','link','add',srv,'type','veth','peer','name',cli],['ip','link','set',cli,'netns',device_ns],['ip','addr','add',subnet+'.1/30','dev',srv],['ip','link','set',srv,'up'],['ip','netns','exec',device_ns,'ip','link','set','lo','up'],['ip','netns','exec',device_ns,'ip','addr','add',subnet+'.2/30','dev',cli],['ip','netns','exec',device_ns,'ip','link','set',cli,'up'],['ip','netns','exec',device_ns,'ip','route','add','default','via',subnet+'.1']):run(cmd)
+    run(['iptables','-A','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP'])
+   original=cfg.read_text().replace('[auth]','[auth]\nrequire_client_key_proof = false\nbind_static_to_session = false').replace('bind.address = 127.0.0.1','bind.address = 198.18.0.1')
+   usage=Path('/etc/qeli/usage.json');usage.write_text(json.dumps({'live-'+t+'-quota':dict(used_down=1000000000,used_up=0,used_bytes=1000000000,last_seen=1,sessions=0) for t in ('tcp','udp')}));usage.chmod(0o600)
+   for transport in ('tcp','udp'):
+    cfg.write_text(original.replace('bind.transport = tcp','bind.transport = '+transport));cfg.chmod(0o600);start()
+    for action in ('acl','group-acl','own-override','subnets'):
+     name='live-'+transport+'-'+action;body={'username':name,'password':'fixture-client-password','max_sessions':1}
+     if action=='acl':body['allowed_networks']=['10.77.0.0/24','192.0.2.0/24']
+     if action in ('group-acl','own-override'):
+      group='policy-'+transport;check('create ACL group '+transport,api('/api/groups/'+group,'PUT',{'allowed_networks':[]}).get('ok') is True);body.update(group=group)
+      if action=='own-override':body['allowed_networks']=['10.77.0.0/24']
+     if action=='subnets':body['client_subnets']=['172.21.0.0/24']
+     value=api('/api/users','POST',body);check('create '+name,value.get('ok') is True,value)
+     # The API confirms persistence/queued reload; wait for worker auth visibility.
+     wait(lambda:loaded(name),'worker users reload did not complete: '+name)
+     config=root/(name+'.conf');config.write_text('[qeli]\nserver = 198.18.0.1:24843\nproto = '+transport+'\nuser = '+name+'\npass = fixture-client-password\nmode = fake-tls\nbind_static = false\nquic = false\ndev = q06cli\ngateway = false\ndns = off\nkill_switch = false\ntimeout = 8\n[logging]\nlevel = info\n');config.chmod(0o600)
+     client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(name+'-known-hosts')),QELI_DEVICE_ID_FILE=str(root/(name+'-device-id')));log=(root/(name+'.log')).open('w');streams.append(log);proc=subprocess.Popen(['ip','netns','exec',ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT);clients.append(proc)
+     wait(lambda:present(name),'client not authenticated: '+name);wait(lambda:'dev q06cli' in run(['ip','netns','exec',ns,'ip','route','get','10.77.0.1']),'client tunnel route missing: '+name);run(['ip','netns','exec',ns,'ping','-c','1','-W','2','10.77.0.1']);check(name+' has actual tunnel traffic',True)
+     if action=='acl':
+      check(name+' equivalent ACL edit saved',api('/api/users/'+name,'PUT',{'allowed_networks':['192.0.2.0/24','10.77.0.0/24','192.0.2.0/24']}).get('ok') is True);time.sleep(.5)
+      check(name+' equivalent ACL preserves session and packets',present(name) and subprocess.run(['ip','netns','exec',ns,'ping','-c','1','-W','1','10.77.0.1'],stdout=subprocess.DEVNULL).returncode==0)
+      value=api('/api/users/'+name,'PUT',{'allowed_networks':['192.0.2.0/24']})
+     elif action in ('group-acl','own-override'):value=api('/api/groups/'+group,'PUT',{'allowed_networks':['192.0.2.0/24']})
+     else:
+      run(['ip','netns','exec',ns,'ip','addr','add','172.21.0.2/32','dev','q06cli']);run(['ip','netns','exec',ns,'ping','-I','172.21.0.2','-c','1','-W','2','10.77.0.1']);check(name+' delegated source passes before removal',True)
+      value=api('/api/users/'+name,'PUT',{'client_subnets':[]})
+     check(name+' mutation accepted',value.get('ok') is True,value)
+     if action=='own-override':
+      time.sleep(.5);check(name+' own ACL overrides changed group without disconnect',present(name) and subprocess.run(['ip','netns','exec',ns,'ping','-c','1','-W','1','10.77.0.1'],stdout=subprocess.DEVNULL).returncode==0);client_stop();continue
+     end=time.monotonic()+3
+     while time.monotonic()<end and present(name):time.sleep(.1)
+     still=present(name);probe=subprocess.run(['ip','netns','exec',ns,'ping','-c','1','-W','1','10.77.0.1'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=5)
+     ok=not still and probe.returncode!=0;checks.append(dict(name=name+' revokes open session and tunnel packets',status='PASS' if ok else 'FAIL',detail=dict(session_present=still,traffic_passes=probe.returncode==0)));save();print(('PASS ' if ok else 'FAIL ')+name+' live revoke',flush=True)
+     if action=='subnets':
+      gone='172.21.0.0/24' not in run(['ip','-4','route','show']);checks.append(dict(name=name+' removes delegated kernel route',status='PASS' if gone else 'FAIL'));save()
+     client_stop()
+    for inherited in (False,True):
+     name='caps-'+transport+('-group' if inherited else '-user');body={'username':name,'password':'fixture-client-password','max_sessions':3}
+     if inherited:
+      group=name+'-template';check(name+' group seed',api('/api/groups/'+group,'PUT',{'max_sessions':3}).get('ok') is True);body.update(group=group,max_sessions=0)
+     check(name+' user seed',api('/api/users','POST',body).get('ok') is True);wait(lambda:loaded(name),'cap seed reload');ips=[]
+     for i in range(3):
+      device_ns=ns+'-'+str(i);key=name+'-'+str(i);config=root/(key+'.conf');config.write_text('[qeli]\nserver = 198.18.0.1:24843\nproto = '+transport+'\nuser = '+name+'\npass = fixture-client-password\nmode = fake-tls\nbind_static = false\nquic = false\ndev = q06d'+str(i)+'\ngateway = false\ndns = off\nkill_switch = false\ntimeout = 8\n[logging]\nlevel = info\n');config.chmod(0o600)
+      client_env=dict(env,QELI_KNOWN_HOSTS=str(root/(key+'-known-hosts')),QELI_DEVICE_ID_FILE=str(root/(key+'-device-id')));log=(root/(key+'.log')).open('w');streams.append(log);proc=subprocess.Popen(['ip','netns','exec',device_ns,str(binary),'client','-c',str(config)],env=client_env,stdout=log,stderr=subprocess.STDOUT);clients.append(proc)
+      wait(lambda:len([x for x in api('/api/clients')['clients'] if x['username']==name])==i+1,'three device admission')
+      wait(lambda:subprocess.run(['ip','netns','exec',device_ns,'ip','link','show','q06d'+str(i)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0,'client device setup');ips.append(next(x['ip'] for x in api('/api/clients')['clients'] if x['username']==name and x['ip'] not in ips));run(['ip','netns','exec',device_ns,'ping','-I','q06d'+str(i),'-c','1','-W','2','10.77.0.1']);time.sleep(.05)
+     check(name+' has three actual devices',len(set(ips))==3)
+     r=api('/api/groups/'+group,'PUT',{'max_sessions':1}) if inherited else api('/api/users/'+name,'PUT',{'max_sessions':1});check(name+' cap reduction saved',r.get('ok') is True)
+     end=time.monotonic()+3
+     while time.monotonic()<end and len([x for x in api('/api/clients')['clients'] if x['username']==name])!=1:time.sleep(.1)
+     remaining=[x['ip'] for x in api('/api/clients')['clients'] if x['username']==name];ok=remaining==[ips[-1]];checks.append(dict(name=name+' cap immediately keeps newest device',status='PASS' if ok else 'FAIL',detail=dict(ips=ips,remaining=remaining)));save();print(('PASS ' if ok else 'FAIL ')+name+' live cap',flush=True)
+     newest=subprocess.run(['ip','netns','exec',ns+'-2','ping','-I','q06d2','-c','1','-W','1','10.77.0.1'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=5);check(name+' newest device retains tunnel packets',newest.returncode==0,newest.stdout)
+     client_stop()
+    stop()
+   complete=all(x['status']=='PASS' for x in checks)
+  finally:
+   client_stop();stop()
+   for i in range(3):
+    srv='q6srv'+str(i);run(['iptables','-D','INPUT','-i',srv,'-d','10.77.0.1','-j','DROP']);run(['ip','link','del',srv]);run(['ip','netns','del',ns+'-'+str(i)])
+   run(['iptables','-D','INPUT','-i','q06-srv','-d','10.77.0.1','-j','DROP']);subprocess.run(['ip','link','del','q06-srv'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT);run(['ip','netns','del',ns]);save(True);(root/'http-events.json').write_text(json.dumps(events,indent=2)+'\n');after=network();(root/'network.json').write_text(json.dumps(dict(before=before,after=after),indent=2));check('private namespace network restored',after==before,[key for key in before if before[key]!=after[key]]);save(True)
   assert complete,'live revoke regression recorded'
  elif a.scenario=='runtime':
   def api(path,method='GET',body=None):

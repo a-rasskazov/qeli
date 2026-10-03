@@ -51,6 +51,10 @@ fn directory_sync_failure_reports_published_data_and_allows_retry() {
     .unwrap_err();
     assert!(error.to_string().contains("published"));
     assert!(error.to_string().contains("persistence is uncertain"));
+    assert!(atomic_write_was_published(&error));
+    assert!(atomic_write_was_published(
+        &error.context("users transaction")
+    ));
     assert_eq!(std::fs::read(&path).unwrap(), b"new");
     f.no_temporary_files();
     write_atomic_private(&path, b"retry").unwrap();

@@ -49,6 +49,27 @@ fn external_or_inline_user<'a>(
     db.users.iter_mut().find(|user| user.username == username)
 }
 
+/// Keep live auth aligned with a published INI even if its directory sync failed.
+fn users_write_failure(
+    config: &crate::config::server::ServerConfig,
+    users: &mut UsersDb,
+    error: &anyhow::Error,
+) -> String {
+    let mut message = error.to_string();
+    if crate::util::atomic_write_was_published(error) {
+        match crate::server::load_users_db_for_runtime(config) {
+            Ok(fresh) => {
+                *users = fresh;
+                message.push_str("; published users read back into live auth");
+            }
+            Err(readback) => message.push_str(&format!("; readback failed: {readback}")),
+        }
+    } else {
+        message.push_str("; users file change NOT applied");
+    }
+    message
+}
+
 #[derive(Deserialize)]
 struct Request {
     cmd: String,
@@ -204,6 +225,13 @@ async fn handle_control(
 /// stays connected and can't reconnect". The stuck task's own later cleanup is a
 /// no-op (its `by_ip` guard no longer matches). Returns the number kicked.
 async fn kick_user_on_profile(profile: &Arc<ProfileRuntime>, username: &str) -> usize {
+    kick_matching_sessions_on_profile(profile, |session| session.username == username).await
+}
+
+async fn kick_matching_sessions_on_profile(
+    profile: &Arc<ProfileRuntime>,
+    mut should_kick: impl FnMut(&crate::server::handler::SessionShared) -> bool,
+) -> usize {
     // Kicking is an authoritative session/lease transition, just like authentication.
     // Hold admission until every removed session has released its device lease so a
     // same-device reconnect cannot reclaim the lease in the removal->release gap.
@@ -213,7 +241,7 @@ async fn kick_user_on_profile(profile: &Arc<ProfileRuntime>, username: &str) -> 
         let ips: Vec<std::net::IpAddr> = sessions
             .by_ip
             .iter()
-            .filter(|(_, s)| s.username == username)
+            .filter(|(_, s)| should_kick(s))
             .map(|(ip, _)| *ip)
             .collect();
         let mut out = Vec::with_capacity(ips.len());
@@ -257,34 +285,69 @@ async fn kick_user_on_profile(profile: &Arc<ProfileRuntime>, username: &str) -> 
     kicked.len()
 }
 
-/// Apply bandwidth and user removal/disablement/profile restrictions to open sessions.
-/// The existing kick path owns admission, iroutes, ingress revocation and pool release.
+/// Apply current access policy, per-profile device caps and bandwidth to open sessions.
+/// Compiled packet permissions require reconnect when changed. The existing kick
+/// path owns admission, iroutes, ingress revocation and pool release.
 pub(super) async fn apply_user_policy_to_sessions(state: &Arc<ServerState>) -> usize {
     let profiles: Vec<_> = state.profiles.read().await.values().cloned().collect();
     let mut count = 0;
     for profile in profiles {
-        let denied: std::collections::HashSet<String> = {
+        let denied: std::collections::HashSet<u64> = {
+            // Admission takes the users lock too. Acquire admission FIRST so a
+            // queued users writer cannot deadlock this scan against authentication.
+            let _admission_guard = profile.admission.lock().await;
             let users = state.users_db.read().await;
             let sessions = profile.sessions.read().await;
             let mut denied = std::collections::HashSet::new();
+            let mut by_user: std::collections::HashMap<&str, Vec<_>> =
+                std::collections::HashMap::new();
             for session in sessions.by_ip.values() {
-                match users
+                let Some(user) = users
                     .find_user(&session.username)
                     .filter(|user| user.allowed_on_profile(&profile.name))
-                {
-                    Some(user) => session.bandwidth_limit_mbps.store(
-                        user.effective_bandwidth_limit(&users.groups),
-                        std::sync::atomic::Ordering::Relaxed,
-                    ),
-                    None => {
-                        denied.insert(session.username.clone());
-                    }
+                else {
+                    denied.insert(session.session_id);
+                    continue;
+                };
+                session.bandwidth_limit_mbps.store(
+                    user.effective_bandwidth_limit(&users.groups),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                if !crate::server::handler::session_access_policy_matches(
+                    &profile.config,
+                    &users,
+                    session,
+                ) {
+                    denied.insert(session.session_id);
+                    continue;
+                }
+                by_user.entry(&session.username).or_default().push(session);
+            }
+            for (username, mut live) in by_user {
+                let cap = users
+                    .find_user(username)
+                    .expect("authorized user above")
+                    .effective_max_sessions(&users.groups);
+                if cap > 0 && live.len() > cap as usize {
+                    // Match admission: newest devices win. IDs break equal-time ties.
+                    live.sort_unstable_by_key(|session| {
+                        std::cmp::Reverse((session.connected_at, session.session_id))
+                    });
+                    denied.extend(
+                        live.into_iter()
+                            .skip(cap as usize)
+                            .map(|session| session.session_id),
+                    );
                 }
             }
             denied
         };
-        for username in denied {
-            count += kick_user_on_profile(&profile, &username).await;
+        if !denied.is_empty() {
+            // The snapshot cannot kick a replacement session admitted in this gap.
+            count += kick_matching_sessions_on_profile(&profile, |session| {
+                denied.contains(&session.session_id)
+            })
+            .await;
         }
     }
     count
@@ -527,7 +590,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                     }
                     Err(e) => {
                         log::error!("Failed to save users file after disable: {}", e);
-                        (true, Some(e.to_string()))
+                        (true, Some(users_write_failure(&config, &mut users, &e)))
                     }
                 }
             };
@@ -553,8 +616,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                 Some(e) => Response {
                     ok: false,
                     error: Some(format!(
-                        "user '{}' was NOT disabled because the users file update failed; {} \
-                         current session(s) were kicked, but reconnect remains possible ({})",
+                        "disable update for '{}' could not be confirmed; {} current session(s) were kicked ({})",
                         req.username, total_kicked, e
                     )),
                     clients: None,
@@ -606,7 +668,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                     }
                     Err(e) => {
                         log::error!("Failed to save users file after set-limit: {}", e);
-                        (true, Some(e.to_string()))
+                        (true, Some(users_write_failure(&config, &mut users, &e)))
                     }
                 }
             };
@@ -621,10 +683,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
             match save_err {
                 Some(e) => Response {
                     ok: false,
-                    error: Some(format!(
-                        "limit was NOT changed because the users file update failed ({})",
-                        e
-                    )),
+                    error: Some(format!("limit update could not be confirmed ({})", e)),
                     clients: None,
                     message: None,
                 },
@@ -712,8 +771,9 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                         Response {
                             ok: false,
                             error: Some(format!(
-                                "user '{}' was NOT enabled because the users file update failed ({})",
-                                req.username, e
+                                "enable update for '{}' could not be confirmed ({})",
+                                req.username,
+                                users_write_failure(&config, &mut users, &e)
                             )),
                             clients: None,
                             message: None,
@@ -793,7 +853,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                     }
                     Err(e) => {
                         log::error!("Failed to save users file after set-bandwidth: {}", e);
-                        (true, Some(e.to_string()))
+                        (true, Some(users_write_failure(&config, &mut users, &e)))
                     }
                 }
             };
@@ -811,8 +871,7 @@ async fn dispatch(req: Request, state: &Arc<ServerState>) -> Response {
                 Some(e) => Response {
                     ok: false,
                     error: Some(format!(
-                        "bandwidth for {} set to {} Mbps on live session(s), but persisting to \
-                         the users file FAILED ({}) — the change will be lost on restart",
+                        "bandwidth for {} set to {} Mbps on live session(s); users file update could not be confirmed ({})",
                         req.username, req.mbps, e
                     )),
                     clients: None,

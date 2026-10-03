@@ -284,10 +284,44 @@ fn routes_from_json(v: &Value) -> Result<Vec<UserRoute>, String> {
 /// Ask the supervisor to SIGHUP the data-plane worker so it hot-reloads the
 /// users file after a panel-side change (the panel owns its own users_db copy;
 /// the worker is a separate process that re-reads the file on signal).
-async fn reload_worker(state: &Arc<ServerState>) {
+async fn reload_worker(state: &Arc<ServerState>) -> bool {
     if let Some(tx) = &state.worker_tx {
-        let _ = tx.send(crate::server::WorkerCmd::ReloadUsers).await;
+        return tx.send(crate::server::WorkerCmd::ReloadUsers).await.is_ok();
     }
+    false
+}
+
+/// Distinguish a pre-publication refusal from a published but unsynced INI.
+/// Refresh the panel and request worker reload after publication even when the
+/// API returns failure: the file now contains the candidate's permissions.
+async fn users_write_failure(
+    state: &Arc<ServerState>,
+    config: &crate::config::server::ServerConfig,
+    users_file: &str,
+    error: anyhow::Error,
+) -> Value {
+    let published = crate::util::atomic_write_was_published(&error);
+    let mut message = format!(
+        "could not confirm users file update '{}': {}",
+        users_file, error
+    );
+    let mut reload_requested = false;
+    if published {
+        match super::effective_users(config) {
+            Ok(fresh) => *state.users_db.write().await = fresh,
+            Err(readback) => message.push_str(&format!("; readback failed: {readback}")),
+        }
+        reload_requested = reload_worker(state).await;
+        message.push_str("; change published, durability uncertain");
+        message.push_str(if reload_requested {
+            "; worker reload requested"
+        } else {
+            "; worker reload unavailable"
+        });
+    } else {
+        message.push_str(" — change NOT applied");
+    }
+    json!({"ok": false, "error": message, "published": published, "reload_requested": reload_requested})
 }
 
 /// Send a command to the worker's control socket (for live effects on active
@@ -509,10 +543,10 @@ pub async fn create_user(
         }
         Err(e) => {
             log::error!("Failed to save users file after create: {}", e);
-            return Ok(Json(super::err_json(format!(
-                "could not write the users file '{}': {} — change NOT applied",
-                users_file, e
-            ))));
+            drop(users);
+            return Ok(Json(
+                users_write_failure(&state, &config, &users_file, e).await,
+            ));
         }
     };
     if taken {
@@ -794,10 +828,10 @@ pub async fn update_user(
                 }
                 Err(e) => {
                     log::error!("Failed to save users file after update: {}", e);
-                    return Ok(Json(super::err_json(format!(
-                        "could not write the users file '{}': {} — change NOT applied",
-                        users_file, e
-                    ))));
+                    drop(users);
+                    return Ok(Json(
+                        users_write_failure(&state, &config, &users_file, e).await,
+                    ));
                 }
             };
             if !applied {
@@ -860,10 +894,10 @@ pub async fn delete_user(
         }
         Err(e) => {
             log::error!("Failed to save users file after delete: {}", e);
-            return Ok(Json(super::err_json(format!(
-                "could not write the users file '{}': {} — change NOT applied",
-                users_file, e
-            ))));
+            drop(users);
+            return Ok(Json(
+                users_write_failure(&state, &config, &users_file, e).await,
+            ));
         }
     };
     if removed {
@@ -943,10 +977,10 @@ async fn set_user_enabled(
         }
         Err(e) => {
             log::error!("Failed to save users file after set_enabled: {}", e);
-            return Ok(Json(super::err_json(format!(
-                "could not write the users file '{}': {} — change NOT applied",
-                users_file, e
-            ))));
+            drop(users);
+            return Ok(Json(
+                users_write_failure(state, &config, &users_file, e).await,
+            ));
         }
     };
     match found {
@@ -1020,10 +1054,10 @@ pub async fn set_user_bandwidth(
             }
             Err(e) => {
                 log::error!("Failed to save users file after set-bandwidth: {}", e);
-                Err(format!(
-                    "could not write the users file '{}': {} — change NOT applied",
-                    users_file, e
-                ))
+                drop(users);
+                return Ok(Json(
+                    users_write_failure(&state, &config, &users_file, e).await,
+                ));
             }
         }
     };
@@ -1120,9 +1154,8 @@ pub async fn upsert_group(
         Err(error) => return Ok(Json(super::err_json(error))),
     };
     let mut users = state.users_db.write().await;
-    // Snapshot before mutating so a failed write can be undone (see create_user) —
-    // the group no longer lingers in memory after a failed persist, so the message
-    // below is now literally true.
+    // Install the validated candidate only after publication, or read it back
+    // when directory fsync leaves durability uncertain.
     let users_file = config.auth.users_file.clone();
     if let Err(e) = UsersDb::update_locked_checked(&users_file, |db| {
         db.groups.insert(name.clone(), group);
@@ -1131,10 +1164,10 @@ pub async fn upsert_group(
     .map(|(_fresh, effective)| *users = effective)
     {
         log::error!("Failed to save users file after group upsert: {}", e);
-        return Ok(Json(super::err_json(format!(
-            "could not persist the group: {} — change NOT applied",
-            e
-        ))));
+        drop(users);
+        return Ok(Json(
+            users_write_failure(&state, &config, &users_file, e).await,
+        ));
     }
     drop(users);
     reload_worker(&state).await;
@@ -1173,10 +1206,10 @@ pub async fn delete_group(
         }
         Err(e) => {
             log::error!("Failed to save users file after group delete: {}", e);
-            return Ok(Json(super::err_json(format!(
-                "could not write the users file '{}': {} — change NOT applied",
-                users_file, e
-            ))));
+            drop(users);
+            return Ok(Json(
+                users_write_failure(&state, &config, &users_file, e).await,
+            ));
         }
     };
     if !existed {
