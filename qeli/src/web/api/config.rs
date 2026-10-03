@@ -2860,7 +2860,8 @@ mod raw_secret_tests {
             "prefer"
         );
         let page = include_str!("../templates/config.html");
-        assert!(page.contains("fetch('api/config/defaults')"));
+        assert!(page.contains("apiFetch('api/config/defaults')"));
+        assert!(!page.contains("roaming: { enabled: true,"));
         assert!(page.contains("JSON.parse(JSON.stringify(this.defaultProfile))"));
         assert!(!page.contains("base.obfuscation.recordizer.policy = 'prefer'"));
     }
