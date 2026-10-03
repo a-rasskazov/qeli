@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v19 -->
+<!-- normative-sync: full-system-audit-v20 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -413,6 +413,8 @@ Truncation/replay/reorder/slow peers and invalid PQ/proof/password. Permits befo
 teardown; a rejection flush retains its pre-auth slot until I/O release. 13 new regressions,
 969 Rust tests PASS. H2/ProfileTasks/semaphores were exercised on the host; production Linux
 was cross-compiled only. Other section scenarios and live Linux E2E remain open.
+
+**3 October, UDP AUTH/PMTU:** [Q09-F001/F002](../reports/AUDIT-Q09-UDP-AUTH.md) fixed/retested: handshake reservation/cancellation/deadline and PMTU only after non-revoked AuthOK. 2283 units, 16 old/new UDP/QUIC + 35 admission checks and fresh matrix/soak/native PASS; Q09 overall remains IN_PROGRESS.
 
 ### 10. PacketCodec, replay and control framing
 

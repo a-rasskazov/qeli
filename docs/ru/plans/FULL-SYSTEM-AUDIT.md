@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v19 -->
+<!-- normative-sync: full-system-audit-v20 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -418,6 +418,8 @@ Truncation/replay/reorder/slow peer и неверный PQ/proof/password. Permi
 teardown; flush отказа сохраняет pre-auth slot до освобождения I/O. 13 новых регрессий,
 969 Rust tests PASS. H2/ProfileTasks/semaphore проверены на host, production Linux только
 кросс-компилирован. Остальные сценарии раздела и live Linux E2E остаются открытыми.
+
+**3 октября, UDP AUTH/PMTU:** [Q09-F001/F002](../reports/AUDIT-Q09-UDP-AUTH.md) исправлены и проверены: handshake reservation/cancel/deadline, PMTU только после AuthOK без revoked. 2283 units, 16 old/new UDP/QUIC + 35 admission checks, fresh matrix/soak/native PASS; общий Q09 остаётся IN_PROGRESS.
 
 ### 10. PacketCodec, replay и control framing
 

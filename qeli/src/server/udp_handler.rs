@@ -30,8 +30,9 @@ const UDP_UPLOAD_QUEUE_PACKETS: usize = 256;
 /// handshakes per worker. A connectionless listener can't trust the source
 /// address, so a spoofed-source flood would otherwise add one `AwaitingAuth`
 /// entry per fake IP until the handshake-timeout reaper runs (memory DoS). When
-/// the cap is hit, the OLDEST pending handshake is evicted to admit a new one;
-/// authenticated sessions are never affected.
+/// the cap is hit, a random idle half-open entry is evicted. Entries reserved by an
+/// AUTH task and authenticated sessions are preserved; when all slots are reserved,
+/// new handshakes are dropped until a slot becomes available.
 const MAX_PENDING_HANDSHAKES: usize = 1024;
 
 /// Upper bound on CONCURRENT new-handshake crypto (Keypair::generate + ML-KEM
@@ -1079,6 +1080,60 @@ enum UdpSessionState {
     },
 }
 
+/// One AUTH task owns the half-open entry until it finishes or is cancelled.
+/// The flag belongs to this handshake, rather than a source-address-only side map.
+struct UdpAuthLease(Arc<std::sync::atomic::AtomicBool>);
+
+impl UdpAuthLease {
+    fn acquire(active: &Arc<std::sync::atomic::AtomicBool>) -> Option<Self> {
+        active
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .ok()
+            .map(|_| Self(active.clone()))
+    }
+}
+
+impl Drop for UdpAuthLease {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+async fn verify_udp_auth_until(
+    deadline: tokio::time::Instant,
+    verification: impl std::future::Future<Output = anyhow::Result<()>>,
+) -> anyhow::Result<()> {
+    tokio::time::timeout_at(deadline, verification)
+        .await
+        .map_err(|_| anyhow::anyhow!("handshake authentication deadline exceeded"))?
+}
+
+impl UdpSessionState {
+    fn evictable_half_open(&self, auth_active: bool) -> bool {
+        matches!(self, Self::AwaitingAuth) && !auth_active
+    }
+
+    /// Bare carrier probes must not bypass authentication, AuthOK ordering or revocation.
+    fn pmtu_reply(&self, auth_ok_sent: bool, revoked: bool, payload: &[u8]) -> Option<Vec<u8>> {
+        if !matches!(self, Self::Authenticated { .. }) || !auth_ok_sent || revoked {
+            return None;
+        }
+        if let Some((token, size)) = crate::protocol::udp_frag::parse_mtu_probe_v2_request(payload)
+        {
+            return Some(crate::protocol::udp_frag::mtu_probe_v2_ack_datagram(
+                token, size,
+            ));
+        }
+        crate::protocol::udp_frag::parse_mtu_probe_request(payload)
+            .map(|(id, size)| crate::protocol::udp_frag::mtu_probe_ack_datagram(id, size))
+    }
+}
+
 #[cfg(feature = "experimental-roaming")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct UdpRoamingOwner {
@@ -1255,6 +1310,7 @@ struct UdpClient {
     /// and permanently empty for legacy/off sessions.
     rx_recordizer: Option<crate::protocol::recordizer::Reassembler>,
     state: UdpSessionState,
+    auth_active: Arc<std::sync::atomic::AtomicBool>,
     last_activity: std::time::Instant,
     /// Inbound (client->server) byte counter, shared with this client's
     /// `SessionShared` so `list-clients` RECV reflects UDP receives. Set on auth
@@ -1664,15 +1720,6 @@ pub(crate) async fn run_udp_server(
     // the new-session branch; a datagram that can't get a permit is dropped.
     let handshake_permits = Arc::new(Semaphore::new(max_concurrent_udp_handshakes()));
 
-    // Sources with an authentication in flight. The auth path (tarpit sleep + Argon2) is
-    // dispatched off this recv loop — see handle_udp_datagram — because `.await`ing it
-    // inline froze the whole SO_REUSEPORT worker, and with it EVERY established session
-    // hashed to this worker, for the duration of one login (head-of-line blocking DoS).
-    // This set stops a duplicate datagram from the same source launching a SECOND parallel
-    // Argon2 while the first is still running. (H1)
-    let auth_inflight: Arc<tokio::sync::Mutex<std::collections::HashSet<SocketAddr>>> =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
-
     let idle_timeout =
         std::time::Duration::from_secs(pcfg.performance.connection.idle_timeout_secs);
     let handshake_timeout =
@@ -1872,7 +1919,6 @@ pub(crate) async fn run_udp_server(
                     &tun_tx,
                     quic_config,
                     &handshake_permits,
-                    &auth_inflight,
                     &tasks,
                     obfs_key,
                 )
@@ -2056,7 +2102,7 @@ pub(crate) async fn run_udp_server(
                 let expired: Vec<SocketAddr> = {
                     let sessions_guard = sessions.read().await;
                     sessions_guard.iter()
-                        .filter(|(_, c)| match &c.state {
+                        .filter(|(_, c)| !c.auth_active.load(std::sync::atomic::Ordering::Acquire) && match &c.state {
                             UdpSessionState::AwaitingAuth => {
                                 now.duration_since(c.created_at) > handshake_timeout
                             }
@@ -3180,7 +3226,6 @@ async fn handle_udp_datagram(
     tun_tx: &TunIngress,
     quic_config: &QuicMaskingConfig,
     handshake_permits: &Arc<Semaphore>,
-    auth_inflight: &Arc<tokio::sync::Mutex<std::collections::HashSet<SocketAddr>>>,
     tasks: &super::ProfileTasks,
     obfs_key: Option<[u8; 32]>,
 ) {
@@ -3269,60 +3314,34 @@ async fn handle_udp_datagram(
         return;
     }
 
-    // Current client-to-server PMTU probe. Echo the exact 128-bit token and size only for an
-    // authenticated session, preventing a blind source-spoofing attacker from certifying an
-    // oversized uplink budget by guessing the former 16-bit id.
-    if crate::protocol::udp_frag::is_mtu_probe_v2(payload) {
-        if let Some((token, size)) = crate::protocol::udp_frag::parse_mtu_probe_v2_request(payload)
-        {
-            let wrap = {
-                let guard = sessions.read().await;
-                guard.get(&addr).map(|client| {
+    // Carrier probes are handled before PacketCodec, but only a live authenticated peer
+    // whose AuthOK has been sent may receive a reply. Half-open entries are not proof of
+    // return-routability; neither a revoked peer nor an AUTH still being committed is live.
+    if crate::protocol::udp_frag::is_mtu_probe_v2(payload)
+        || crate::protocol::udp_frag::is_mtu_probe(payload)
+    {
+        let packet = {
+            let guard = sessions.read().await;
+            guard.get(&addr).and_then(|client| {
+                let revoked = client
+                    .revoked
+                    .as_ref()
+                    .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
+                let ack = client
+                    .state
+                    .pmtu_reply(client.auth_ok_sent, revoked, payload)?;
+                if client.quic_enabled {
                     let packet_number = client
                         .packet_counter
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    (client.quic_enabled, client.connection_id, packet_number)
-                })
-            };
-            if let Some((quic, cid, packet_number)) = wrap {
-                let ack = crate::protocol::udp_frag::mtu_probe_v2_ack_datagram(token, size);
-                let packet = if quic {
-                    wrap_quic_short(&ack, &cid, packet_number)
+                    Some(wrap_quic_short(&ack, &client.connection_id, packet_number))
                 } else {
-                    ack
-                };
-                let _ = socket.send_to(&packet, addr).await;
-            }
-        }
-        return;
-    }
-
-    // Path-MTU probe (client→server): echo a tiny ACK carrying the same id+size so the
-    // client's probe ladder learns which datagram sizes traverse the path unfragmented.
-    // A probe is NOT an AEAD data packet — echo and STOP before the decrypt below (its
-    // oversized chunk would also be rejected by the reassembler). Only a known session
-    // is echoed (gates it to an authenticated peer); the ACK is QUIC-wrapped with the
-    // session's connection id + next packet number, exactly like the heartbeat reply.
-    if crate::protocol::udp_frag::is_mtu_probe(payload) {
-        if let Some((id, size)) = crate::protocol::udp_frag::parse_mtu_probe_request(payload) {
-            let wrap = {
-                let guard = sessions.read().await;
-                guard.get(&addr).map(|c| {
-                    let pn = c
-                        .packet_counter
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    (c.quic_enabled, c.connection_id, pn)
-                })
-            };
-            if let Some((quic, cid, pn)) = wrap {
-                let ack = crate::protocol::udp_frag::mtu_probe_ack_datagram(id, size);
-                let pkt = if quic {
-                    wrap_quic_short(&ack, &cid, pn)
-                } else {
-                    ack
-                };
-                let _ = socket.send_to(&pkt, addr).await;
-            }
+                    Some(ack)
+                }
+            })
+        };
+        if let Some(packet) = packet {
+            let _ = socket.send_to(&packet, addr).await;
         }
         return;
     }
@@ -3455,7 +3474,12 @@ async fn handle_udp_datagram(
                 .as_ref()
                 .is_some_and(|r| r.load(std::sync::atomic::Ordering::Relaxed));
             if revoked_now {
-                sessions_guard.remove(&addr);
+                if !client
+                    .auth_active
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    sessions_guard.remove(&addr);
+                }
                 drop(sessions_guard);
                 log::debug!(
                     "UDP {}: dropping datagram — session revoked (kick / quota / supersede)",
@@ -3616,6 +3640,11 @@ async fn handle_udp_datagram(
             let path_mtu = client.path_mtu.clone();
             let udp_payload_budget = client.udp_payload_budget.clone();
             let client_info = client.client_info.clone();
+            // Reserve while the directory lock still protects this exact handshake. Reaping
+            // and capacity eviction skip the reservation; cancellation releases it through Drop.
+            let auth_lease = is_awaiting_auth
+                .then(|| UdpAuthLease::acquire(&client.auth_active))
+                .flatten();
             drop(sessions_guard);
 
             if recordizer_active {
@@ -3653,23 +3682,19 @@ async fn handle_udp_datagram(
                 // makes a duplicate/retransmitted AUTH from the same source a no-op instead
                 // of a second parallel Argon2. On completion the guard is cleared; the auth
                 // itself installs the session under the sessions lock as before.
-                let already_running = {
-                    let mut inflight = auth_inflight.lock().await;
-                    !inflight.insert(addr)
-                };
-                if already_running {
+                let Some(auth_lease) = auth_lease else {
                     return;
-                }
+                };
                 let server_state = server_state.clone();
                 let profile = profile.clone();
                 let sessions = sessions.clone();
                 let socket = socket.clone();
                 let quic_config = quic_config.clone();
-                let auth_inflight = auth_inflight.clone();
                 let auth_tun_tx = tun_tx.clone();
                 let raw = payload.to_vec();
                 let auth_tasks = tasks.clone();
                 tasks.spawn(async move {
+                    let _auth_lease = auth_lease;
                     handle_udp_auth(
                         &server_state,
                         &profile,
@@ -3684,7 +3709,6 @@ async fn handle_udp_datagram(
                         auth_tasks,
                     )
                     .await;
-                    auth_inflight.lock().await.remove(&addr);
                 });
             } else if crate::protocol::ctrl::is_ctrl(&plaintext) {
                 // In-tunnel control frame, not a packet: authenticated by the AEAD above and
@@ -3873,7 +3897,9 @@ async fn handle_udp_datagram(
                 let mut victim: Option<SocketAddr> = None;
                 let mut seen: u64 = 0;
                 for (a, c) in sessions_guard.iter() {
-                    if matches!(c.state, UdpSessionState::AwaitingAuth) {
+                    if c.state.evictable_half_open(
+                        c.auth_active.load(std::sync::atomic::Ordering::Acquire),
+                    ) {
                         seen += 1;
                         // Reservoir sample of size 1: replace the pick with probability
                         // 1/seen (`random % seen == 0`, i.e. a multiple of `seen`).
@@ -3889,6 +3915,10 @@ async fn handle_udp_datagram(
                         profile.name,
                         stale_addr
                     );
+                } else {
+                    // Every slot is reserved by an AUTH task. Do not exceed the cap or
+                    // replace a handshake beneath a verifier; the new client can retry.
+                    return;
                 }
             }
             sessions_guard.insert(addr, client);
@@ -3977,35 +4007,46 @@ async fn handle_udp_auth(
     // Pull the channel-binding material captured during the handshake so the
     // shared verifier can check the server-key proof, then run the identical
     // auth policy as TCP (key-proof, brute-force, user lookup, Argon2, profile).
-    let (static_shared, ephemeral_shared, transcript_hash) = {
+    let (static_shared, ephemeral_shared, transcript_hash, created_at) = {
         let g = sessions.read().await;
-        match g
-            .get(&addr)
-            .map(|c| (c.static_shared, c.ephemeral_shared, c.transcript_hash))
-        {
+        match g.get(&addr).map(|c| {
+            (
+                c.static_shared,
+                c.ephemeral_shared,
+                c.transcript_hash,
+                c.created_at,
+            )
+        }) {
             Some(m) => m,
             None => return,
         }
     };
-    if let Err(e) = handler::verify_client_auth(
-        server_state,
-        profile,
-        addr,
-        "UDP",
-        &client_key_proof,
-        &username,
-        &password,
-        &static_shared,
-        &ephemeral_shared,
-        &transcript_hash,
+    // Tarpit and Argon2-gate waiting use the original handshake deadline, not a fresh
+    // timeout for each retransmission. This bounds a reserved half-open AUTH entry.
+    let deadline = tokio::time::Instant::from_std(created_at)
+        + std::time::Duration::from_secs(pcfg.performance.connection.handshake_timeout_secs);
+    let verification = verify_udp_auth_until(
+        deadline,
+        handler::verify_client_auth(
+            server_state,
+            profile,
+            addr,
+            "UDP",
+            &client_key_proof,
+            &username,
+            &password,
+            &static_shared,
+            &ephemeral_shared,
+            &transcript_hash,
+        ),
     )
-    .await
-    {
+    .await;
+    if let Err(error) = verification {
         log::debug!(
             "UDP auth rejected for {} on profile '{}': {}",
             addr,
             profile.name,
-            e
+            error
         );
         sessions.write().await.remove(&addr);
         return;
@@ -5517,6 +5558,7 @@ async fn handle_new_udp_client(
             data_reassembler: crate::protocol::data_frag::DataReassembler::new(),
             rx_recordizer: None,
             state: UdpSessionState::AwaitingAuth,
+            auth_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             src_guard: None,
             exit_access: crate::server::ExitAccess::default(),
             revoked: None,
@@ -5593,6 +5635,111 @@ mod tests {
     };
     use crate::protocol::udp_frag;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn udp_auth_reservation_survives_waits_and_releases_on_cancellation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let active = std::sync::Arc::new(AtomicBool::new(false));
+        let lease = super::UdpAuthLease::acquire(&active).unwrap();
+        assert!(super::UdpAuthLease::acquire(&active).is_none());
+        assert!(!super::UdpSessionState::AwaitingAuth
+            .evictable_half_open(active.load(Ordering::Acquire)));
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _lease = lease;
+            ready_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(!active.load(Ordering::Acquire));
+        assert!(super::UdpSessionState::AwaitingAuth.evictable_half_open(false));
+        assert!(super::UdpAuthLease::acquire(&active).is_some());
+    }
+
+    #[tokio::test]
+    async fn udp_auth_deadline_cancels_queued_verification_without_restarting_the_clock() {
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let lease = super::UdpAuthLease::acquire(&active).unwrap();
+        let verification = async move {
+            let _lease = lease;
+            std::future::pending::<anyhow::Result<()>>().await
+        };
+        let deadline = tokio::time::Instant::now() - Duration::from_millis(1);
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            super::verify_udp_auth_until(deadline, verification),
+        )
+        .await
+        .expect("expired original deadline must not grant a fresh handshake window");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("authentication deadline"));
+        assert!(super::UdpAuthLease::acquire(&active).is_some());
+        assert!(super::verify_udp_auth_until(
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            async { Ok(()) }
+        )
+        .await
+        .is_ok());
+    }
+
+    #[test]
+    fn udp_auth_reservation_releases_when_spawn_future_is_rejected() {
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let lease = super::UdpAuthLease::acquire(&active).unwrap();
+        let future = async move {
+            let _lease = lease;
+        };
+        drop(future);
+        assert!(super::UdpAuthLease::acquire(&active).is_some());
+        let authenticated = super::UdpSessionState::Authenticated {
+            session_id: 8,
+            device_key: "reservation-test".into(),
+            client_ip: "10.8.0.2".parse().unwrap(),
+        };
+        for active in [false, true] {
+            assert!(!authenticated.evictable_half_open(active));
+        }
+    }
+
+    #[test]
+    fn udp_pmtu_carrier_replies_require_completed_live_authentication() {
+        use super::UdpSessionState;
+        let pending = UdpSessionState::AwaitingAuth;
+        let authenticated = UdpSessionState::Authenticated {
+            session_id: 7,
+            device_key: "probe-test".into(),
+            client_ip: "10.8.0.2".parse().unwrap(),
+        };
+        let token = 0x0123456789abcdef_fedcba9876543210u128;
+        let current = udp_frag::mtu_probe_v2_datagram(token, 1400).unwrap();
+        let legacy = udp_frag::mtu_probe_datagram(0xBEEF, 1200).unwrap();
+        for probe in [&current, &legacy] {
+            // In the old receive path, an AwaitingAuth entry alone received these ACKs.
+            for auth_ok_sent in [false, true] {
+                assert!(pending.pmtu_reply(auth_ok_sent, false, probe).is_none());
+            }
+            assert!(authenticated.pmtu_reply(false, false, probe).is_none());
+            assert!(authenticated.pmtu_reply(true, true, probe).is_none());
+        }
+        let ack = authenticated.pmtu_reply(true, false, &current).unwrap();
+        assert_eq!(udp_frag::parse_mtu_probe_v2_ack(&ack), Some((token, 1400)));
+        let ack = authenticated.pmtu_reply(true, false, &legacy).unwrap();
+        assert_eq!(udp_frag::parse_mtu_probe_ack(&ack), Some((0xBEEF, 1200)));
+        let mut malformed = current.clone();
+        malformed.pop();
+        for payload in [
+            &malformed[..],
+            b"PacketCodec record",
+            &current[..5],
+            &legacy[..5],
+        ] {
+            assert!(authenticated.pmtu_reply(true, false, payload).is_none());
+        }
+    }
 
     #[cfg(feature = "experimental-roaming")]
     fn encrypted_path_control(

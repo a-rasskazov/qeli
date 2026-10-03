@@ -359,3 +359,4 @@
 - [Q07: backup, restore и history](reports/AUDIT-Q07-BACKUP-RESTORE.md)
 
 - [Q08: криптография и хранение ключей](reports/AUDIT-Q08-CRYPTO-KEYS.md)
+- [Q09: владение UDP AUTH и PMTU до авторизации](reports/AUDIT-Q09-UDP-AUTH.md)
