@@ -90,3 +90,44 @@ INI-транзакции и обновления live users. Reload меняет
 и семантика ошибки после опубликованной записи. Также остаются live ACL/groups,
 несколько устройств и legacy burst. Наличие этих проверок не означает закрытие Q06.
 [Свидетельства второго пакета](../../../release/certification/evidence/q06-users-storage-20261003.json).
+
+## Третий пакет: live-права и отказы публикации INI
+
+**PASS; общий Q06 остаётся IN_PROGRESS.** Release `25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c`.
+
+Пять дефектов подтверждены на прежнем release: 12 отрицательных live checks и два
+файловых отказа. Все соответствующие случаи проходят после исправления.
+
+| ID | Ошибка | Исправление |
+| --- | --- | --- |
+| Q06-F007 | Сужение собственного или группового ACL оставляло прежние права сессии. | Изменение эффективных пакетных разрешений отзывает сессию. Порядок и дубли правил не влияют; собственный ACL перекрывает группу. |
+| Q06-F008 | Удалённые client_subnets продолжали разрешать источник и удерживали iroute. | Отзыв через admission освобождает ingress, lease и маршруты старой сессии. |
+| Q06-F009 | Снижение max_sessions не уменьшало число активных устройств. | На каждом профиле остаются самые новые устройства в пределах эффективного лимита; teardown проверяет session_id и не захватывает заменившую сессию. |
+| Q06-F010 | Занятый users lock удерживал запрос без предела. | FileLock ограничен пятью секундами; отказ происходит до чтения/публикации кандидата. |
+| Q06-F011 | После rename и отказа directory fsync ответ ложно обещал change NOT applied. | Типизированная ошибка публикации; API/control перечитывают INI. API запрашивает worker reload и отдельно сообщает published/reload_requested, сохраняя ok=false. |
+
+315 Q06 checks PASS: 72 storage/durability, 67 policy, 119 API и 57 live.
+Реальные TCP/UDP-пакеты проверяют ACL, делегированный source и три устройства;
+снижение собственного/группового cap оставляет самое новое. Эквивалентный ACL и
+изменение группы при собственном ACL сохраняют соединение. Проверены все восемь
+API mutation paths и четыре control writers при fsync-отказе, readback worker,
+реальные ENOSPC/EACCES, восстановление записи и crash до/после rename.
+
+2265 Linux units PASS, 60 ignored; full/minimal Clippy и rustfmt PASS.
+Свежие 18/327 release matrix, 100 TCP + 100 QUIC / 33 soak и 27 Q05 config-crash
+checks PASS. Native A/B, ABI и provenance проверены заново; библиотеки обновлены
+в canonical и клиентских копиях. Сеть, PID/start и рабочие binaries обеих лаб
+сохранены. Прежнее отклонение firewall .10 остаётся исторически не атрибутированным.
+
+Legacy test_user_reload.py/test_l3_user_limits.py теперь запускают только
+изолированные пакеты с обязательными binary/SHA/output. Они не останавливают
+общие службы. Новый L3 driver проверяет live metadata и cap, не заявляя throughput
+benchmark. CONFIG/PANEL описывают burst_mbps как сохраняемое поле совместимости
+без отдельного enforcement; прежнее обещание burst-запаса в CONFIG исправлено.
+
+Файловые отказы и конкурентные writers закрыты в плане Q06. Остаются измерение
+bandwidth, дополнительные admission-сценарии same-device/fixed-IP/profile и
+отображение legacy burst в панели. Physical qualification и новый benchmark
+не заявляются.
+
+[Свидетельства третьего пакета](../../../release/certification/evidence/q06-users-policy-durability-20261003.json).

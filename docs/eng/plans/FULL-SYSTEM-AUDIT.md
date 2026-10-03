@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v12 -->
+<!-- normative-sync: full-system-audit-v13 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -326,7 +326,7 @@ Inline + users_file, duplicate precedence, missing groups, invalid types versus 
 
 - [ ] Review and dead code.
 - [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
+- [x] Failures and concurrency.
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
@@ -335,6 +335,15 @@ Inline + users_file, duplicate precedence, missing groups, invalid types versus 
 **3 October, first batch:** five confirmed defects fixed in API, inline overrides, routes, live revoke and bandwidth writers. 119 API + 57 TCP/UDP checks PASS; fresh Linux units/lint and 293/75 HTTP regressions PASS. Q06 remains open for filesystem/concurrency and additional policies. [Report](../reports/AUDIT-Q06-USERS-ACCESS.md).
 
 **3 October, second batch:** Q06-F006 removes startup inline users/groups from control mutations after SIGHUP. 23 new storage/control checks, repeated 119 API + 57 live, 2264 Linux units and fresh release/native qualification PASS. Concurrency and read-only/rename/corrupt INI covered; crash/lock/final-fsync, ACL and devices remain open. [Report](../reports/AUDIT-Q06-USERS-ACCESS.md#second-batch-ini-storage-and-inline-auth-after-sighup).
+
+**3 October, third batch:** fixed live user/group ACL, delegated sources, reduced
+device caps, unbounded lock waits and false refusal after INI publication.
+315 Q06 checks (72 storage/durability, 67 policy, 119 API, 57 live) and 2265 Linux
+units PASS. Real ENOSPC/EACCES, crashes before/after rename and API/control writers
+covered. Destructive legacy drivers replaced by isolated batches. Storage faults
+and concurrent writers are closed; overall Q06 remains IN_PROGRESS for bandwidth
+measurement and remaining admission/access-issuance scenarios.
+[Report](../reports/AUDIT-Q06-USERS-ACCESS.md#third-batch-live-permissions-and-ini-publication-failures).
 
 ### 07. Backup, restore and history
 

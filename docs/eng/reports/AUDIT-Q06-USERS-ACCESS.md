@@ -92,3 +92,44 @@ Storage coverage is still partial: ENOSPC/EACCES, lock timeout, crash/durability
 and errors after published writes remain. Live ACL/groups, multiple devices and
 legacy burst remain as well. These checks do not close Q06.
 [Second batch evidence](../../../release/certification/evidence/q06-users-storage-20261003.json).
+
+## Third batch: live permissions and INI publication failures
+
+**PASS; overall Q06 remains IN_PROGRESS.** Release `25a052afd351324b9fc2924035aac7cb998155d54ff6865a19a6448b99367e5c`.
+
+Five defects reproduced on the previous release: 12 failing live checks and two
+storage failures. Corresponding cases now pass.
+
+| ID | Defect | Fix |
+| --- | --- | --- |
+| Q06-F007 | Narrowed user/group ACL retained old session permissions. | Revoke sessions whose effective packet permissions change. Rule order/duplicates do not matter; own ACL overrides group. |
+| Q06-F008 | Removed client_subnets retained source permission and iroute. | Admission-owned teardown releases old ingress, leases and routes. |
+| Q06-F009 | Reduced max_sessions retained excess devices. | Keep newest devices per profile within effective cap; session-ID checks protect replacement sessions. |
+| Q06-F010 | Held users lock stranded requests indefinitely. | Five-second FileLock contention budget before reading/publishing a candidate. |
+| Q06-F011 | Rename plus directory fsync failure falsely reported change NOT applied. | Typed publication error; API/control read back INI. API requests worker reload and reports published/reload_requested while retaining ok=false. |
+
+315 Q06 checks PASS: 72 storage/durability, 67 policy, 119 API and 57 live.
+Real TCP/UDP packets cover ACL, delegated sources and three devices; lowering
+user/group caps retains the newest. Equivalent ACL and group edits under an own
+ACL preserve the session. All eight API mutation paths and four control writers
+cover fsync failure, worker readback, actual ENOSPC/EACCES, recovery and crashes
+before/after rename.
+
+2265 Linux units PASS, 60 ignored; full/minimal Clippy and rustfmt PASS. Fresh
+18/327 matrix, 100 TCP + 100 QUIC / 33 soak and 27 Q05 config-crash checks PASS.
+Fresh native A/B, ABI and provenance; canonical and client-consumed libraries
+updated. Both labs retained network, service PID/start and working binaries.
+The earlier .10 firewall deviation remains historically unattributed.
+
+Legacy test_user_reload.py/test_l3_user_limits.py now launch isolated batches
+requiring binary/SHA/output and never stop shared services. The L3 driver checks
+live metadata and caps without claiming throughput measurement. CONFIG/PANEL
+describe burst_mbps as a stored compatibility field without separate enforcement;
+the former CONFIG burst-allowance promise has been corrected.
+
+Storage failures and concurrent writers are closed in Q06. Remaining: actual
+bandwidth measurement, same-device/fixed-IP/profile admission lifecycle and
+panel presentation of legacy burst. No new benchmark or physical qualification
+is claimed.
+
+[Third batch evidence](../../../release/certification/evidence/q06-users-policy-durability-20261003.json).

@@ -966,7 +966,7 @@ applies new listener settings and retains sessions with healthy persistent keys.
 
 ### Users API and live access
 
-<!-- normative-sync: panel-user-mutations-v1 -->
+<!-- normative-sync: panel-user-mutations-v2 -->
 
 User/group/limit mutation bodies must be objects; wrong types cannot become Unlimited or a successful no-op. `enabled` is boolean, `bandwidth` an object, password/hash strings, route gateway string/null. Configurations are saved only as INI.
 
@@ -978,3 +978,17 @@ After accepted SIGHUP, enable-user, disable-user, set-limit and set-bandwidth us
 current inline users/groups. Removed inline accounts cannot return from the startup
 snapshot; accounts added by reload can be managed without restarting the worker.
 Rejected reload preserves the previous accepted auth configuration.
+
+Changing effective user/group ACL, `client_subnets` or exit-default permission also
+ends open sessions carrying old permissions. Reconnect to receive the new policy.
+Rule order and duplicates do not affect sessions; a user ACL overrides its group.
+Lowering `max_sessions` retains the newest devices on each profile and disconnects
+older excess sessions. Bandwidth changes apply without disconnecting. `burst_mbps`
+is a stored compatibility field with no separate data-plane burst control.
+
+Waiting for the users-file lock is bounded to five seconds. Failure before `rename`
+preserves old bytes. If rename has published INI but directory fsync fails, the API
+returns an error with `published=true` and uncertain durability, reads back users
+and attempts to queue worker reload. `reload_requested` reports queue success,
+not application acknowledgement. Inspect saved INI and live client state before
+retrying. Control commands also read back published users and never promise rollback.

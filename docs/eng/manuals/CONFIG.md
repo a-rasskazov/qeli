@@ -1285,6 +1285,15 @@ from the **pinned** key (`key` in `[qeli]`), and the server verifies it with its
 private key. A client without the key (or with a wrong one) is rejected
 (`AUTH DENIED … server key not pinned by client`). Works on TCP and UDP.
 
+The device cap is counted separately on each profile. After accepted reload, lowering
+the effective user/group `max_sessions` immediately retains the newest sessions
+within the cap and disconnects older ones. `0` without a group cap remains unlimited.
+Changing effective `allowed_networks`, `client_subnets` or exit-default permission
+ends sessions carrying the old packet permissions; reconnect to use the new policy.
+Reordering or duplicating the same ACL rules does not disconnect clients. A user ACL
+continues to override its group ACL.
+
+
 The order (by design, safe): the client first **authenticates the server** (checks
 the static key against the pinned one) and only then sends the login/password —
 otherwise a MITM could intercept the credentials. So "sending the key after
@@ -1487,7 +1496,7 @@ The file is flat-INI, written atomically by `add-client` and the web panel. Full
 | `client_subnet` | `[]` | repeatable (or comma-separated) subnet/address **behind** this client that the server routes INBOUND into this client's tunnel (OpenVPN `iroute`); server-side inbound registration only — see §"Routing networks behind nodes WITHOUT NAT" |
 | `allowed_networks` | `[]` (any) | destination ACL — CIDRs/IPs the user is allowed to reach; empty = anywhere |
 | `bandwidth.limit_mbps` | `0` | per-user rate cap in Mbit/s (`0` = unlimited or from the group), applied independently to concurrent upload and download; multipath streams share their direction's cap |
-| `bandwidth.burst_mbps` | `0` | per-user burst allowance in Mbit/s above the sustained limit |
+| `bandwidth.burst_mbps` | `0` | legacy compatibility field: stored in INI; no separate burst limit is enforced |
 | `data_limit_gb` | `0` | lifetime data cap in GB (`0` = unlimited), counted on **download only** (server→client, `used_down`); upload is tracked separately (`used_up`) but does NOT count against the cap. Enforced at auth and by the usage sweep (over-quota live sessions are disconnected). Consumption is tracked in the `usage.json` sidecar |
 | `expire_at` | — | account expiry as a Unix timestamp (seconds); absent = never expires. Past it the user is rejected at auth and disconnected by the sweep |
 | `metadata.<key>` | — | free-form string annotations (repeatable, one per `<key>`); stored as-is, not interpreted by the server |

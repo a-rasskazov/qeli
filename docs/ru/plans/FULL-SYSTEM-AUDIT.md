@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v12 -->
+<!-- normative-sync: full-system-audit-v13 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -331,7 +331,7 @@ Inline + users_file, duplicates/precedence, missing group, неверные ти
 
 - [ ] Review и мёртвый код.
 - [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
+- [x] Отказы и конкуренция.
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
@@ -340,6 +340,15 @@ Inline + users_file, duplicates/precedence, missing group, неверные ти
 **3 октября, первый пакет:** исправлены пять подтверждённых проблем API, inline override, routes, live revoke и bandwidth writers. 119 API + 57 TCP/UDP checks PASS; свежие Linux units/lint и 293/75 HTTP regressions PASS. Q06 остаётся открытым для filesystem/concurrency и дополнительных политик. [Отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md).
 
 **3 октября, второй пакет:** Q06-F006 устраняет стартовые inline users/groups в контрольных командах после SIGHUP. 23 новых storage/control checks, повторные 119 API + 57 live, 2264 Linux units и свежая release/native квалификация PASS. Конкуренция и read-only/rename/corrupt INI проверены; crash/lock/final-fsync, ACL и устройства ещё открыты. [Отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md#второй-пакет-ini-хранилище-и-inline-auth-после-sighup).
+
+**3 октября, третий пакет:** исправлены live ACL/group, делегированные источники,
+уменьшение лимита устройств, неограниченное ожидание lock и ложный отказ после
+публикации INI. 315 checks Q06 (72 storage/durability, 67 policy, 119 API, 57 live)
+и 2265 Linux units PASS. Реальные ENOSPC/EACCES, crash до/после rename и все API/control
+writers проверены. Опасные legacy drivers заменены изолированными пакетами.
+Файловые отказы и конкурентные писатели закрыты; Q06 остаётся IN_PROGRESS для
+измерения bandwidth и оставшихся сценариев admission/выдачи доступа.
+[Отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md#третий-пакет-live-права-и-отказы-публикации-ini).
 
 ### 07. Backup, restore и history
 
