@@ -1,6 +1,6 @@
 # Q09: владение UDP AUTH и PMTU до авторизации
 
-<!-- normative-sync: audit-q09-udp-auth-v3 -->
+<!-- normative-sync: audit-q09-udp-auth-v4 -->
 
 Дата: **3 октября 2026**. Код: `616cb54b`. Пакет исправлений проверен;
 полный раздел Q09 остаётся **IN_PROGRESS**. [Evidence](../../../release/certification/evidence/q09-udp-auth-20261003.json).
@@ -41,3 +41,5 @@
 TCP deadlines/saturation и полный ClientHello/JOIN проверены следующим [пакетом Q09-F003–F005](AUDIT-Q09-TCP-PARSER.md). Остались UDP anti-amplification, replay/reorder, неверные PQ/proof/password и capabilities/downgrade, а также итоговый review. Общий Q09 остаётся IN_PROGRESS; обязательные проверки этого UDP-пакета выполнены. Физические платформы и прежние оговорки Q08 сохраняются.
 
 **Последующее состояние:** UDP publication, fragments, expiry и deadline проверены [Q09-F006–F009](AUDIT-Q09-UDP-CONTRACTS.md). Актуальный остаток и ограничения перечислены там; исходные числа этого отчёта относятся к своему пакету.
+
+**Итог Q09:** дополнительные decrypted proof/capabilities, конкуренция и воспроизводимый TCP KICK/EOF закрыты в [финальном отчёте](AUDIT-Q09-FINAL.md). Q09 DONE; исходные результаты и ограничения этого этапа остаются историческими.

@@ -1,6 +1,6 @@
 # Q09: TCP authentication and complete ClientHello parsing
 
-<!-- normative-sync: audit-q09-tcp-parser-v2 -->
+<!-- normative-sync: audit-q09-tcp-parser-v3 -->
 
 Date: **3 October 2026**. Core code: `cef54120`. Q09-F003–F005 batch qualified;
 Q09 overall remains **IN_PROGRESS**. [Evidence](../../../release/certification/evidence/q09-tcp-parser-20261003.json).
@@ -46,3 +46,5 @@ Remaining Q09: UDP anti-amplification, replay/reordering, invalid PQ/proof/passw
 capabilities/downgrade and final section review. This batch has no pending checks.
 
 **Subsequent state:** UDP publication, fragments, expiry and deadline qualified by [Q09-F006–F009](AUDIT-Q09-UDP-CONTRACTS.md). That report records the current remainder and limits; original counts here belong to this historical batch.
+
+**Q09 final state:** additional decrypted proof/capability, contention and reproducible TCP KICK/EOF coverage is closed in [the final report](AUDIT-Q09-FINAL.md). Q09 DONE; this batch retains its original historical results and limits.

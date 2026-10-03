@@ -1023,6 +1023,15 @@ forwarding cleanup, reports terminal failure and does not reconnect. `post_down`
 `core_stop_failed` / `core_stop` has priority). A simultaneous stop signal does not hide the
 cleanup failure. If the server also sent a terminal kick, its cause remains in the error.
 
+<!-- normative-sync: manual-terminal-policy-v1 -->
+
+A received authenticated `KICK` with `reconnect_allowed=false` prevents automatic
+reconnect even if the TCP stream closes simultaneously or the platform cannot accept
+the event. Ordinary EOF without KICK follows reconnect settings. If an old client
+reconnects after being superseded, update its native core: [Q09-F010/F011](../reports/AUDIT-Q09-FINAL.md).
+An unread or lost packet is not treated as received by this rule.
+
+
 A fallback guard may retry cleanup, but its later success does not erase the original fault
 or automatically release the kill-switch. Review the first error for each resource and verify
 current DNS, route and interface state before administrator recovery. The retained record is

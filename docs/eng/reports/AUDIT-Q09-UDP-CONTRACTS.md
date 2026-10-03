@@ -1,6 +1,6 @@
 # Q09: UDP handshake, admission publication and cleanup
 
-<!-- normative-sync: audit-q09-udp-contracts-v1 -->
+<!-- normative-sync: audit-q09-udp-contracts-v2 -->
 
 Date: **3 October 2026**. Core: `a3029951`; fixture: `f36c4887`.
 Q09-F006–F009 batch qualified; Q09 overall remains **IN_PROGRESS**.
@@ -51,3 +51,5 @@ Raw results: `audit-debt-20260924/q09-udp-contracts-20261003` beside the worktre
 This batch's fix checks are complete. Remaining Q09: final review, additional forged
 client-proof/capability and contention cases, and investigation of the initial TCP
 terminal-loss observation. A single successful rerun does not close the section.
+
+**Q09 final state:** additional decrypted proof/capability, contention and reproducible TCP KICK/EOF coverage is closed in [the final report](AUDIT-Q09-FINAL.md). Q09 DONE; this batch retains its original historical results and limits.

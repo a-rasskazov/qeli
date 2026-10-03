@@ -1,6 +1,6 @@
 # Q09: UDP handshake, публикация admission и очистка
 
-<!-- normative-sync: audit-q09-udp-contracts-v1 -->
+<!-- normative-sync: audit-q09-udp-contracts-v2 -->
 
 Дата: **3 октября 2026**. Основной код: `a3029951`, fixture: `f36c4887`.
 Пакет Q09-F006–F009 проверен; весь Q09 остаётся **IN_PROGRESS**.
@@ -52,3 +52,5 @@ TCP/parser остаётся исторической. Физические Mac/r
 Проверки исправлений этого пакета выполнены. Остаток Q09: итоговый review, дополнительные
 поддельные client-proof/capabilities и contention-сценарии, уточнение первого TCP
 terminal-loss наблюдения. План не объявлен завершённым по одному удачному повтору.
+
+**Итог Q09:** дополнительные decrypted proof/capabilities, конкуренция и воспроизводимый TCP KICK/EOF закрыты в [финальном отчёте](AUDIT-Q09-FINAL.md). Q09 DONE; исходные результаты и ограничения этого этапа остаются историческими.

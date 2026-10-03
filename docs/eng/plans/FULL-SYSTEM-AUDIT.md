@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v22 -->
+<!-- normative-sync: full-system-audit-v23 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -148,7 +148,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 06 | Users, groups and provisioning | H01, H04, H09–H10 | PASS |
 | 07 | Backup, restore and history | H03–H04, H08, H10 | PASS |
 | 08 | Cryptography, identity and keys | H01, H04, H08 | DONE |
-| 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | IN_PROGRESS |
+| 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | TODO |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | IN_PROGRESS |
 | 12 | Transports and wire camouflage | H02, H07–H08 | TODO |
@@ -394,19 +394,19 @@ X25519/ML-KEM/HKDF/AEAD KAT and negative vectors; static binding, proof before c
 
 ### 09. Handshake and TCP/UDP pre-auth
 
-**Source:** `qeli/src/server/handler.rs`, `qeli/src/server/udp_handler.rs`, `qeli/src/protocol/capabilities.rs`.
+**Source:** `qeli/src/server/handler.rs`, `qeli/src/server/udp_handler.rs`, `qeli/src/protocol/capabilities.rs`, `qeli/src/client/mod.rs`.
 
 Truncation/replay/reorder/slow peers and invalid PQ/proof/password. Permits before spawn, pending caps, anti-amplification, tarpit and cancellation/deadlines. One login must not block UDP reception; failures release resources without unauthorized downgrade.
 
 **Existing harness/fixtures:** `qeli/fuzz/fuzz_targets/clienthello.rs`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE.**
 
 **Server H2 and pre-auth, 23 September 2026:**
 [Q14-F022/F023](../reports/AUDIT-Q14-H2-TASKS.md): the profile joins nested H2 tasks before
@@ -419,6 +419,8 @@ was cross-compiled only. Other section scenarios and live Linux E2E remain open.
 **3 October, TCP/parser:** [Q09-F003–F005](../reports/AUDIT-Q09-TCP-PARSER.md): original AUTH deadline, AUTH OK rollback, strict complete ClientHello and JOIN. 2290 units, 8 real baseline/fixed TCP checks and 256-slot saturation, bounded ASan/libFuzzer, fresh matrix/soak/native PASS. UDP anti-amplification/replay/reordering and negative auth/capabilities contracts remain; Q09 overall IN_PROGRESS.
 
 **3 October, UDP contracts:** [Q09-F006–F009](../reports/AUDIT-Q09-UDP-CONTRACTS.md): publication/revocation, direction/bounds, reaper revalidation and admission/AuthOK deadline+rollback. 2294 units, 74 live UDP/QUIC +16 PMTU +35 admission, fresh matrix/soak/native PASS. Original failures and lab limits retained. Remaining: final review, forged client-proof/capability/contention cases and initial TCP terminal-loss investigation; Q09 IN_PROGRESS.
+
+**3 October, Q09 completion:** [Q09-F010/F011 and final review](../reports/AUDIT-Q09-FINAL.md): KICK survives EOF, pipeline drain and platform delivery errors.2301 units;8 live baseline/fixed +66 decrypted proof/capability/concurrent +35 admission checks;fresh18/327 matrix,100 TCP+100 QUIC/33 soak and four native A/B PASS. All required Q09 fix checks closed; evidence limits explicitly retained. Q10 is next.
 
 ### 10. PacketCodec, replay and control framing
 

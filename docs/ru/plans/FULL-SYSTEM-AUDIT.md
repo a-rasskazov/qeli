@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v22 -->
+<!-- normative-sync: full-system-audit-v23 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -153,7 +153,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | PASS |
 | 07 | Backup, restore и history | H03–H04, H08, H10 | PASS |
 | 08 | Криптография, identity и ключи | H01, H04, H08 | DONE |
-| 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | IN_PROGRESS |
+| 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | DONE |
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | TODO |
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | IN_PROGRESS |
 | 12 | Транспорты и wire-маскировка | H02, H07–H08 | TODO |
@@ -399,19 +399,19 @@ X25519/ML-KEM/HKDF/AEAD KAT и negative vectors; static binding, proof до cred
 
 ### 09. Handshake и pre-auth TCP/UDP
 
-**Код:** `qeli/src/server/handler.rs`, `qeli/src/server/udp_handler.rs`, `qeli/src/protocol/capabilities.rs`.
+**Код:** `qeli/src/server/handler.rs`, `qeli/src/server/udp_handler.rs`, `qeli/src/protocol/capabilities.rs`, `qeli/src/client/mod.rs`.
 
 Truncation/replay/reorder/slow peer и неверный PQ/proof/password. Permits до spawn, pending caps, anti-amplification, tarpit, deadlines/cancel. Один login не блокирует UDP recv-loop; каждый отказ освобождает ресурсы, downgrade только по контракту.
 
 **Имеющаяся обвязка/fixtures:** `qeli/fuzz/fuzz_targets/clienthello.rs`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE.**
 
 **Серверный H2 и pre-auth, 23 сентября 2026:**
 [Q14-F022/F023](../reports/AUDIT-Q14-H2-TASKS.md): профиль ждёт вложенные H2-задачи перед
@@ -424,6 +424,8 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 **3 октября, TCP/parser:** [Q09-F003–F005](../reports/AUDIT-Q09-TCP-PARSER.md): исходный AUTH-дедлайн, откат AUTH OK, строгий полный ClientHello и JOIN. 2290 units, 8 TCP checks с реальным baseline/fixed и насыщением 256 слотов, bounded ASan/libFuzzer, fresh matrix/soak/native PASS. Остались UDP anti-amplification/replay/reorder и негативные auth/capabilities контракты; общий Q09 IN_PROGRESS.
 
 **3 октября, UDP contracts:** [Q09-F006–F009](../reports/AUDIT-Q09-UDP-CONTRACTS.md): publication/revocation, direction/bounds, reaper revalidation и admission/AuthOK deadline+rollback. 2294 units, 74 live UDP/QUIC +16 PMTU +35 admission, fresh matrix/soak/native PASS. Исходные failures и ограничения лабы сохранены. Остаток: final review, forged client-proof/capabilities/contention и уточнение первого TCP terminal-loss; Q09 IN_PROGRESS.
+
+**3 октября, завершение Q09:** [Q09-F010/F011 и итоговый review](../reports/AUDIT-Q09-FINAL.md): KICK сохраняется при EOF, pipeline drain и ошибке platform delivery. 2301 units;8 live baseline/fixed +66 decrypted proof/capabilities/concurrent +35 admission checks; fresh18/327 matrix,100 TCP+100 QUIC/33 soak и четыре native A/B PASS. Все обязательные проверки исправлений Q09 закрыты; ограничения evidence явно сохранены. Следующий раздел — Q10.
 
 ### 10. PacketCodec, replay и control framing
 

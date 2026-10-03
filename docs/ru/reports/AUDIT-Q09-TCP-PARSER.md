@@ -1,6 +1,6 @@
 # Q09: TCP-аутентификация и полный разбор ClientHello
 
-<!-- normative-sync: audit-q09-tcp-parser-v2 -->
+<!-- normative-sync: audit-q09-tcp-parser-v3 -->
 
 Дата: **3 октября 2026**. Основной код: `cef54120`. Пакет Q09-F003–F005 проверен;
 общий Q09 остаётся **IN_PROGRESS**. [Evidence](../../../release/certification/evidence/q09-tcp-parser-20261003.json).
@@ -46,3 +46,5 @@ SYN backlog; окончательный прогон PASS, исходные жу
 capabilities/downgrade и итоговый review раздела. Проверки этого пакета закрыты.
 
 **Последующее состояние:** UDP publication, fragments, expiry и deadline проверены [Q09-F006–F009](AUDIT-Q09-UDP-CONTRACTS.md). Актуальный остаток и ограничения перечислены там; исходные числа этого отчёта относятся к своему пакету.
+
+**Итог Q09:** дополнительные decrypted proof/capabilities, конкуренция и воспроизводимый TCP KICK/EOF закрыты в [финальном отчёте](AUDIT-Q09-FINAL.md). Q09 DONE; исходные результаты и ограничения этого этапа остаются историческими.

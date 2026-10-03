@@ -2499,6 +2499,77 @@ struct ServerKickError {
     reconnect_allowed: bool,
 }
 
+// A received terminal policy must outlive socket EOF and platform-event delivery errors.
+fn management_result(
+    event: crate::protocol::control_v2::ManagementEvent,
+    delivered: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if let crate::protocol::control_v2::ManagementEvent::Kick(kick) = event {
+        if delivered.is_err() {
+            log::warn!("Could not publish terminal management event to the platform");
+        }
+        Err(ServerKickError {
+            message: kick.message,
+            reconnect_allowed: kick.reconnect_allowed,
+        }
+        .into())
+    } else {
+        delivered
+    }
+}
+
+fn apply_server_management(
+    core: &mut dyn ClientPlatform,
+    event: crate::protocol::control_v2::ManagementEvent,
+) -> anyhow::Result<()> {
+    let delivered = core.management_event(&event);
+    management_result(event, delivered)
+}
+
+enum TcpLifecycleEvent {
+    Management(Option<crate::protocol::control_v2::ManagementEvent>),
+    Disconnected,
+}
+
+async fn next_tcp_lifecycle_event(
+    management: &mut tokio::sync::watch::Receiver<
+        Option<crate::protocol::control_v2::ManagementEvent>,
+    >,
+    dead: &mut mpsc::Receiver<()>,
+) -> TcpLifecycleEvent {
+    tokio::select! {
+        biased;
+        changed = management.changed() => {
+            if changed.is_err() {
+                TcpLifecycleEvent::Disconnected
+            } else {
+                TcpLifecycleEvent::Management(management.borrow_and_update().clone())
+            }
+        }
+        _ = dead.recv() => TcpLifecycleEvent::Disconnected,
+    }
+}
+
+fn finish_pending_management(
+    core: &mut dyn ClientPlatform,
+    receiver: &tokio::sync::watch::Receiver<Option<crate::protocol::control_v2::ManagementEvent>>,
+    result: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if result
+        .as_ref()
+        .is_err_and(|error| error.downcast_ref::<ServerKickError>().is_some())
+    {
+        return result;
+    }
+    // Producers have been joined: this snapshot cannot be replaced during teardown.
+    let event = receiver.borrow().clone();
+    if let Some(event @ crate::protocol::control_v2::ManagementEvent::Kick(_)) = event {
+        apply_server_management(core, event)
+    } else {
+        result
+    }
+}
+
 #[cfg(test)]
 mod terminal_cleanup_tests {
     use super::ServerKickError;
@@ -2523,6 +2594,67 @@ mod terminal_cleanup_tests {
         assert!(message.contains("profile disabled"));
         assert!(message.contains("DNS revert failed"));
         assert!(message.contains("route delete failed"));
+    }
+}
+
+#[cfg(test)]
+mod terminal_lifecycle_tests {
+    use super::*;
+    use crate::protocol::control_v2::{Kick, KickReason, ManagementEvent};
+
+    fn kick() -> ManagementEvent {
+        ManagementEvent::Kick(Kick {
+            reason: KickReason::Administrative,
+            message: "Session replaced".into(),
+            reconnect_allowed: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn received_kick_wins_when_eof_is_also_ready() {
+        let (sender, mut receiver) = tokio::sync::watch::channel(None);
+        let (dead_tx, mut dead_rx) = mpsc::channel(1);
+        sender.send(Some(kick())).unwrap();
+        dead_tx.send(()).await.unwrap();
+        let TcpLifecycleEvent::Management(Some(event)) =
+            next_tcp_lifecycle_event(&mut receiver, &mut dead_rx).await
+        else {
+            panic!("EOF discarded a received terminal policy")
+        };
+        let error = management_result(event, Ok(())).unwrap_err();
+        assert!(
+            !error
+                .downcast_ref::<ServerKickError>()
+                .unwrap()
+                .reconnect_allowed
+        );
+        assert!(matches!(
+            next_tcp_lifecycle_event(&mut receiver, &mut dead_rx).await,
+            TcpLifecycleEvent::Disconnected
+        ));
+    }
+
+    #[tokio::test]
+    async fn ordinary_eof_does_not_invent_a_terminal_policy() {
+        let (_sender, mut receiver) = tokio::sync::watch::channel(None);
+        let (dead_tx, mut dead_rx) = mpsc::channel(1);
+        dead_tx.send(()).await.unwrap();
+        assert!(matches!(
+            next_tcp_lifecycle_event(&mut receiver, &mut dead_rx).await,
+            TcpLifecycleEvent::Disconnected
+        ));
+    }
+
+    #[test]
+    fn platform_delivery_failure_cannot_enable_reconnect_after_kick() {
+        let error =
+            management_result(kick(), Err(anyhow::anyhow!("event queue full"))).unwrap_err();
+        assert!(
+            !error
+                .downcast_ref::<ServerKickError>()
+                .unwrap()
+                .reconnect_allowed
+        );
     }
 }
 
@@ -4972,8 +5104,8 @@ where
     };
     let base = tokio::time::Instant::now();
     let last_rx = Arc::new(AtomicU64::new(0));
-    // This stream counts itself as live; its first dying task (reader/writer)
-    // decrements and, only if it was the last, signals a full-tunnel teardown.
+    // The reader owns the live-count transition after draining received records.
+    // A stopped writer requests reader shutdown without racing queued terminal policy.
     let previous_live = live.fetch_add(1, Ordering::AcqRel);
     if let Some(active_slots) = &active_slots {
         mark_tcp_slot_started(active_slots, logical_slot_id);
@@ -5037,8 +5169,11 @@ where
             Pipe(mpsc::Sender<PooledBuffer>),
         }
 
+        let mut pipeline_drained = None;
         let mut sink = if cfg.pipeline_rx {
             let (rec_tx, mut rec_rx) = mpsc::channel::<PooledBuffer>(1024);
+            let (drained_tx, drained_rx) = tokio::sync::oneshot::channel();
+            pipeline_drained = Some(drained_rx);
             let mut inner_rx_codec = rx;
             let inner_tun = tun_write_tx;
             let inner_total_rx = total_rx.clone();
@@ -5084,6 +5219,7 @@ where
                         Err(e) => log::debug!("Decrypt error: {}", e),
                     }
                 }
+                let _ = drained_tx.send(());
             });
             RxSink::Pipe(rec_tx)
         } else {
@@ -5098,7 +5234,12 @@ where
         tasks.spawn(async move {
             let mut unsupported_downlink_drops = 0u64;
             loop {
-                let mut record = match record_pool.acquire().await {
+                let acquired = tokio::select! {
+                    biased;
+                    _ = stream_stop_rx.changed() => break,
+                    record = record_pool.acquire() => record,
+                };
+                let mut record = match acquired {
                     Some(record) => record,
                     None => break,
                 };
@@ -5167,9 +5308,13 @@ where
                     }
                 }
             }
-            // Stream lost (read side): tear down the whole tunnel only if this was
-            // the last live stream; otherwise the tunnel keeps running on the rest.
-            // Dropping `sink` here (its `Pipe` sender, if any) ends the inner task.
+            // Close the bounded FIFO and join its finite, non-blocking decrypt drain
+            // before EOF can tear down the actor. Otherwise a final KICK can be aborted
+            // while still queued. Generation cancellation still aborts both tasks.
+            drop(sink);
+            if let Some(drained) = pipeline_drained {
+                let _ = drained.await;
+            }
             let _ = stream_stop_tx.send(true);
             mark_tcp_stream_stopped(
                 logical_slot_id,
@@ -5185,11 +5330,6 @@ where
     // Writer + heartbeat: outgoing plaintext → encrypt → socket.
     {
         let mut tx = tx_codec;
-        let dead_tx = dead_tx.clone();
-        let stream_dead = stream_dead.clone();
-        let live = live.clone();
-        let active_slots = active_slots.clone();
-        let last_live_lost_at = last_live_lost_at.clone();
         let stream_stop_tx = stream_stop_tx.clone();
         let mut stream_stop_rx = stream_stop_tx.subscribe();
         tasks.spawn(async move {
@@ -5472,17 +5612,9 @@ where
                     else => break,
                 }
             }
-            // Stream lost (write side): tear down the whole tunnel only if this was
-            // the last live stream; otherwise keep running on the remaining streams.
+            // The reader reports loss after processing all already-received records.
+            // Wake it even when it is waiting for a recycled TUN buffer.
             let _ = stream_stop_tx.send(true);
-            mark_tcp_stream_stopped(
-                logical_slot_id,
-                &stream_dead,
-                &live,
-                &dead_tx,
-                active_slots.as_ref(),
-                last_live_lost_at.as_ref(),
-            );
         });
     }
 
@@ -6594,23 +6726,16 @@ where
         tokio::select! {
             biased;
 
-            _ = dead_rx.recv() => { break; }
-
-            changed = management_rx.changed() => {
-                if changed.is_err() { break; }
-                let event = management_rx.borrow_and_update().clone();
-                if let Some(event) = event {
-                    if let Err(error) = core.management_event(&event) {
-                        result = Err(error);
-                        break;
+            event = next_tcp_lifecycle_event(&mut management_rx, &mut dead_rx) => {
+                match event {
+                    TcpLifecycleEvent::Disconnected => break,
+                    TcpLifecycleEvent::Management(Some(event)) => {
+                        if let Err(error) = apply_server_management(core, event) {
+                            result = Err(error);
+                            break;
+                        }
                     }
-                    if let crate::protocol::control_v2::ManagementEvent::Kick(kick) = event {
-                        result = Err(ServerKickError {
-                            message: kick.message,
-                            reconnect_allowed: kick.reconnect_allowed,
-                        }.into());
-                        break;
-                    }
+                    TcpLifecycleEvent::Management(None) => {}
                 }
             }
 
@@ -6676,6 +6801,7 @@ where
     // Seal admission before aborting producers and streams together. Await every task
     // (including Linux path workers) before restoring DNS or releasing the TUN.
     connection_tasks.finish().await;
+    let result = finish_pending_management(core, &management_rx, result);
     let pump_shutdown = async move {
         drop(tun_write_tx);
         tun_pump.shutdown().await;
@@ -10537,15 +10663,8 @@ pub(crate) async fn run_udp_tunnel(
                 if changed.is_err() { break; }
                 let event = management_rx.borrow_and_update().clone();
                 if let Some(event) = event {
-                    if let Err(error) = core.management_event(&event) {
+                    if let Err(error) = apply_server_management(core, event) {
                         result = Err(error);
-                        break;
-                    }
-                    if let crate::protocol::control_v2::ManagementEvent::Kick(kick) = event {
-                        result = Err(ServerKickError {
-                            message: kick.message,
-                            reconnect_allowed: kick.reconnect_allowed,
-                        }.into());
                         break;
                     }
                 }
@@ -12305,6 +12424,7 @@ pub(crate) async fn run_udp_tunnel(
     // platform candidate. No background task may publish a later path or keep receiving.
     connection_tasks.finish().await;
     udp_receive_task.finish().await;
+    result = finish_pending_management(core, &management_rx, result);
     #[cfg(all(feature = "experimental-roaming", any(unix, windows)))]
     if let Some(candidate) = live_udp_candidate.take() {
         let prepared = candidate.prepared().clone();
@@ -13220,7 +13340,7 @@ mod device_id_tests {
 }
 
 // The host fixture uses the same stream pumps as every native client, with an in-memory TUN.
-#[cfg(all(test, any(target_os = "windows", target_os = "ios")))]
+#[cfg(test)]
 mod tcp_task_shutdown_tests {
     use super::*;
     use std::pin::Pin;
@@ -13244,9 +13364,9 @@ mod tcp_task_shutdown_tests {
         }
     }
 
-    async fn stopped_stream(pipeline_rx: bool) {
+    async fn stopped_stream(pipeline_rx: bool, final_kick: bool) {
         let mut tasks = crate::transport_core::tasks::TaskGroup::default();
-        let (socket, mut peer) = tokio::io::duplex(128);
+        let (socket, mut peer) = tokio::io::duplex(1024 * 1024);
         let (read, write) = tokio::io::split(socket);
         let (started, ready) = tokio::sync::oneshot::channel();
         let read = ObservedRead {
@@ -13254,13 +13374,13 @@ mod tcp_task_shutdown_tests {
             started: Some(started),
         };
         let (to_tun, from_stream) = std::sync::mpsc::sync_channel(2);
-        let pool = crate::transport_core::buffer_pool::BufferPool::new(4, 2048).unwrap();
+        let pool = crate::transport_core::buffer_pool::BufferPool::new(300, 2048).unwrap();
         let tun = TunWriter::from_parts(to_tun, pool);
-        let (dead, _) = mpsc::channel(1);
+        let (dead, mut dead_rx) = mpsc::channel(1);
         let shaping = crate::protocol::ShapingConfig::default();
         let cover_budget =
             crate::protocol::Shaper::shared_budget(&shaping, std::time::Instant::now());
-        let (management_tx, _) = tokio::sync::watch::channel(None);
+        let (management_tx, management_rx) = tokio::sync::watch::channel(None);
         let sender = spawn_stream(
             read,
             write,
@@ -13296,7 +13416,7 @@ mod tcp_task_shutdown_tests {
                 recordizer: None,
                 cover_budget,
                 pipeline_rx,
-                management_v1: false,
+                management_v1: final_kick,
                 management_reassembler: Arc::new(std::sync::Mutex::new(
                     crate::protocol::control_v2::Reassembler::new(),
                 )),
@@ -13307,6 +13427,39 @@ mod tcp_task_shutdown_tests {
             .await
             .unwrap()
             .unwrap();
+        if final_kick {
+            use crate::protocol::control_v2::{Kick, KickReason, ManagementEvent};
+            use tokio::io::AsyncWriteExt;
+            let event = ManagementEvent::Kick(Kick {
+                reason: KickReason::Administrative,
+                message: "Session replaced".into(),
+                reconnect_allowed: false,
+            });
+            let mut encoder = PacketCodec::new_raw([1; 32]);
+            // A full scheduling quantum of queued records forces Stage A/B interleaving.
+            for _ in 0..256 {
+                peer.write_all(&encoder.encrypt_packet(&[], &[]).unwrap())
+                    .await
+                    .unwrap();
+            }
+            let frame = crate::protocol::control_v2::management_frames(&event, 1)
+                .unwrap()
+                .pop()
+                .unwrap();
+            peer.write_all(&encoder.encrypt_packet(&frame, &[]).unwrap())
+                .await
+                .unwrap();
+            peer.shutdown().await.unwrap();
+            tokio::time::timeout(Duration::from_secs(5), dead_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                *management_rx.borrow(),
+                Some(event),
+                "EOF overtook the decrypt drain"
+            );
+        }
         tokio::time::timeout(Duration::from_secs(5), tasks.finish())
             .await
             .unwrap();
@@ -13318,24 +13471,37 @@ mod tcp_task_shutdown_tests {
             ),
             "reader/pipeline still owns TUN"
         );
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(5), peer.read(&mut [0; 1]))
-                .await
-                .unwrap()
-                .unwrap(),
-            0,
-            "socket halves still alive"
-        );
+        let mut remaining = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), peer.read_to_end(&mut remaining))
+            .await
+            .unwrap()
+            .unwrap();
+        if !final_kick {
+            assert!(
+                remaining.is_empty(),
+                "unexpected output without terminal traffic"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn inline_kick_is_published_before_eof() {
+        stopped_stream(false, true).await;
+    }
+
+    #[tokio::test]
+    async fn pipelined_kick_is_published_before_eof() {
+        stopped_stream(true, true).await;
     }
 
     #[tokio::test]
     async fn shutdown_releases_inline_stream_socket_queues_and_tun() {
-        stopped_stream(false).await;
+        stopped_stream(false, false).await;
     }
 
     #[tokio::test]
     async fn shutdown_releases_pipeline_stream_socket_queues_and_tun() {
-        stopped_stream(true).await;
+        stopped_stream(true, false).await;
     }
 }
 

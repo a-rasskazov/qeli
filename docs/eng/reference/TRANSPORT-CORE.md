@@ -83,6 +83,14 @@ migration remains open. [Report](../reports/AUDIT-Q25-SYSTEM-COMMANDS.md).
 
 ---
 
+<!-- normative-sync: core-terminal-policy-v1 -->
+
+Authenticated `KICK` retains `reconnect_allowed` across simultaneous TCP EOF, TUN
+stop and platform-event delivery failure. The pipeline processes its finite already-read
+record queue before stream-loss notification. This cannot guarantee unread/lost byte
+delivery or event presentation by a failing UI. Ordinary EOF without KICK keeps normal
+reconnect policy. [Validation](../reports/AUDIT-Q09-FINAL.md).
+
 ## 1. The verdict: what justifies this, and what does not
 
 **Justified by implementation divergence. Not justified by speed.**

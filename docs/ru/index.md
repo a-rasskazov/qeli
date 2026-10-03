@@ -362,3 +362,4 @@
 - [Q09: владение UDP AUTH и PMTU до авторизации](reports/AUDIT-Q09-UDP-AUTH.md)
 - [Q09: TCP-аутентификация и ClientHello](reports/AUDIT-Q09-TCP-PARSER.md)
 - [Q09: UDP handshake и admission](reports/AUDIT-Q09-UDP-CONTRACTS.md)
+- [Q09: итоговый аудит и сохранение KICK](reports/AUDIT-Q09-FINAL.md)

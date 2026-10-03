@@ -173,6 +173,10 @@ pub(crate) struct TunWriter {
 }
 
 impl TunWriter {
+    #[cfg(test)]
+    pub(crate) fn from_parts(to_tun: std_mpsc::SyncSender<PooledBuffer>, pool: BufferPool) -> Self {
+        Self { to_tun, pool }
+    }
     pub(crate) async fn acquire(&self) -> Option<PooledBuffer> {
         self.pool.acquire().await
     }
