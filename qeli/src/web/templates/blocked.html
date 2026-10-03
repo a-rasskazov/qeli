@@ -77,13 +77,15 @@
     </button>
   </div>
 
+  <div x-show="error" role="alert" class="text-xs text-red-400 mb-3" x-text="error"></div>
+
   <!-- VPN auth journal -->
   <div class="mb-6">
     <div class="flex items-center justify-between mb-2">
       <h3 class="text-sm font-semibold text-white">VPN authentication <span class="text-xs font-normal text-slate-500" x-text="'(' + blocked.vpn.length + ')'"></span></h3>
       <button class="btn btn-danger btn-sm" @click="clearAll('vpn')" x-show="blocked.vpn.length > 0">Clear all</button>
     </div>
-    <div x-show="!loading && blocked.vpn.length === 0" class="card text-center text-slate-600 text-sm py-10">
+    <div x-show="loaded && !loading && !error && blocked.vpn.length === 0" class="card text-center text-slate-600 text-sm py-10">
       No blocked IPs.
     </div>
     <div class="card overflow-hidden" x-show="blocked.vpn.length > 0">
@@ -121,7 +123,7 @@
       <h3 class="text-sm font-semibold text-white">Panel login <span class="text-xs font-normal text-slate-500" x-text="'(' + blocked.panel.length + ')'"></span></h3>
       <button class="btn btn-danger btn-sm" @click="clearAll('panel')" x-show="blocked.panel.length > 0">Clear all</button>
     </div>
-    <div x-show="!loading && blocked.panel.length === 0" class="card text-center text-slate-600 text-sm py-10">
+    <div x-show="loaded && !loading && !error && blocked.panel.length === 0" class="card text-center text-slate-600 text-sm py-10">
       No blocked IPs.
     </div>
     <div class="card overflow-hidden" x-show="blocked.panel.length > 0">
@@ -161,6 +163,13 @@ function blockedPage() {
   return {
     blocked: { vpn: [], panel: [] },
     loading: false,
+    loaded: false,
+    error: '',
+    loadSequence: 0,
+    pendingLoads: 0,
+    destroyed: false,
+    refreshTimer: null,
+    countdownTimer: null,
     saving: null,
     policy: { vpn: defPolicy(), panel: defPolicy() },
     policyRevision: '',
@@ -182,29 +191,47 @@ function blockedPage() {
     // Background polls pass silent=true so the refresh spinner / empty-state
     // don't flicker every 5s; the manual Refresh button still shows progress.
     async load(silent = false) {
+      if (this.destroyed || (silent && this.pendingLoads)) return;
+      const sequence = ++this.loadSequence;
+      this.pendingLoads++;
       if (!silent) this.loading = true;
       try {
         const d = await apiFetch('api/blocked');
-        const b = (d.ok && d.blocked) ? d.blocked : {};
-        this.blocked = { vpn: b.vpn || [], panel: b.panel || [] };
+        if (this.destroyed || sequence !== this.loadSequence) return;
+        if (!d.ok || !d.blocked) throw new Error(d.error || this.t('Request failed'));
+        this.blocked = { vpn: d.blocked.vpn || [], panel: d.blocked.panel || [] };
+        this.loaded = true;
+        this.error = '';
       } catch (e) {
-        if (!silent) this.blocked = { vpn: [], panel: [] };
+        if (!this.destroyed && sequence === this.loadSequence) this.error = e.message;
+      } finally {
+        this.pendingLoads--;
+        if (sequence === this.loadSequence) this.loading = false;
       }
-      if (!silent) this.loading = false;
     },
 
-    // Auto-refresh so a live (transient) lockout is actually visible: re-poll the
-    // server every 5s (authoritative), and tick the countdown down every 1s in
-    // between so "Unblock in" ticks and expired rows drop off without waiting.
     startAuto() {
-      setInterval(() => { if (!document.hidden) this.load(true); }, 5000);
-      setInterval(() => this.tick(), 1000);
+      if (this.destroyed) return;
+      clearInterval(this.refreshTimer);
+      clearInterval(this.countdownTimer);
+      this.refreshTimer = setInterval(() => { if (!document.hidden) this.load(true); }, 5000);
+      this.countdownTimer = setInterval(() => this.tick(), 1000);
+    },
+
+    destroy() {
+      this.destroyed = true;
+      this.loadSequence++;
+      this.loading = false;
+      clearInterval(this.refreshTimer);
+      clearInterval(this.countdownTimer);
+      this.refreshTimer = this.countdownTimer = null;
     },
 
     tick() {
-      const dec = (arr) => (arr || [])
-        .map(b => ({ ...b, unblock_in_secs: (b.unblock_in_secs || 0) - 1 }))
-        .filter(b => b.unblock_in_secs > 0);
+      if (this.destroyed || this.error || document.hidden) return;
+      // Countdown is an estimate. Only an authoritative GET may remove a row;
+      // a delayed/failed poll must not turn an old snapshot into an empty journal.
+      const dec = arr => arr.map(b => ({ ...b, unblock_in_secs: Math.max(0, (b.unblock_in_secs || 0) - 1) }));
       this.blocked = { vpn: dec(this.blocked.vpn), panel: dec(this.blocked.panel) };
     },
 
@@ -214,13 +241,14 @@ function blockedPage() {
     },
 
     async loadPolicy() {
-      if (this.policyLoading || this.savingPolicy) return;
+      if (this.destroyed || this.policyLoading || this.savingPolicy) return;
       this.policyLoading = true;
       this.policyLoaded = false;
       this.policyRevision = '';
       this.policyMsg = '';
       try {
         const d = await apiFetch('api/blocked/settings');
+        if (this.destroyed) return;
         if (d.ok && d.settings && d.revision) {
           this.policyRevision = d.revision;
           this.policyLoaded = true;

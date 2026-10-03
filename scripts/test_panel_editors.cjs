@@ -233,6 +233,81 @@ async function main() {
     defaults = { ok: false, error: 'second read failed' }; await model.load();
     assert.equal(model.defaultProfile, null); model.addProfile(); assert.equal(model.cfg.profiles.length, 0);
   });
+
+  for (const [file, factory, method, success, dataKey] of [
+    ['logs.html', 'logsPage', 'load', { ok: true, lines: ['INFO fresh'], path: '/fresh' }, 'lines'],
+    ['transport.html', 'transportHealthPage', 'refresh', { ok: true, profiles: [{ name: 'fresh' }], worker_ok: true }, 'profiles'],
+    ['blocked.html', 'blockedPage', 'load', { ok: true, blocked: { vpn: [{ ip: 'fresh', unblock_in_secs: 8 }], panel: [] } }, 'blocked'],
+  ]) {
+    await check(factory + ' ignores obsolete responses and bounds background polls', async () => {
+      const pending = [];
+      const { model } = component(file, factory, {
+        URLSearchParams, apiFetch: () => new Promise(resolve => pending.push(resolve)),
+      });
+      const old = model[method](); const fresh = model[method]();
+      const background = model[method](true); assert.equal(pending.length, 2, 'a busy background poll must not start another request'); await background;
+      pending[0]({ ok: false, error: 'obsolete failure' }); await old;
+      assert(model.loading, 'obsolete completion must not clear current spinner');
+      pending[1](success); await fresh; assert(!model.loading);
+      assert.equal(model.error, '');
+      const snapshot = JSON.stringify(model[dataKey]);
+      const older = model[method](); const newer = model[method]();
+      pending[3](success); await newer;
+      pending[2]({ ok: true, lines: ['INFO obsolete'], profiles: [{ name: 'obsolete' }], blocked: { vpn: [], panel: [] } }); await older;
+      assert.equal(JSON.stringify(model[dataKey]), snapshot);
+    });
+    await check(factory + ' preserves data on failure and suppresses writes after destroy', async () => {
+      let finish; const cleared = [];
+      const { model, context, html } = component(file, factory, {
+        URLSearchParams, clearInterval: id => { if (id != null) cleared.push(id); }, apiFetch: async () => success,
+      });
+      await model[method](); const snapshot = JSON.stringify(model[dataKey]);
+      context.apiFetch = async () => ({ ok: false, error: 'fixture unavailable' });
+      await model[method](true); assert.match(model.error, /fixture unavailable/);
+      assert.equal(JSON.stringify(model[dataKey]), snapshot);
+      assert(html.includes('role="alert"'), 'load errors must be visible independently of filtered data');
+      context.apiFetch = () => new Promise(resolve => { finish = resolve; });
+      const pending = model[method](); model.destroy();
+      finish({ ok: true, lines: ['INFO after destroy'], profiles: [], blocked: { vpn: [], panel: [] } }); await pending;
+      assert.equal(JSON.stringify(model[dataKey]), snapshot);
+      assert(!model.loading); assert.equal(model.pendingLoads, 0);
+    });
+  }
+  await check('log errors are not log entries and cannot disappear under level/search filters', async () => {
+    const { model, context, html } = component('logs.html', 'logsPage', {
+      URLSearchParams, apiFetch: async () => ({ ok: true, lines: ['ERROR retained'] }),
+    });
+    await model.load(); model.selectedLevels = ['ERROR']; model.search = 'retained'; model.applyFilter();
+    context.apiFetch = async () => ({ ok: false, error: 'Session expired' });
+    await model.load(); assert.equal(model.filtered.length, 1); assert.match(model.error, /Session expired/);
+    assert(html.includes('loaded && !loading && !error && filtered.length === 0'));
+  });
+  await check('blocked countdown cannot turn a stale snapshot into authoritative empty state', async () => {
+    const { model, context, html } = component('blocked.html', 'blockedPage', {
+      apiFetch: async () => ({ ok: true, blocked: { vpn: [{ ip: 'fixture', unblock_in_secs: 1 }], panel: [] } }),
+    });
+    await model.load(); model.tick(); model.tick();
+    assert.equal(model.blocked.vpn.length, 1); assert.equal(model.blocked.vpn[0].unblock_in_secs, 0);
+    context.apiFetch = async () => ({ ok: false, error: 'fixture unavailable' });
+    await model.load(true); model.tick(); assert.equal(model.blocked.vpn.length, 1);
+    assert(html.includes('loaded && !loading && !error && blocked.vpn.length === 0'));
+    context.apiFetch = async () => ({ ok: true, blocked: { vpn: [], panel: [] } });
+    await model.load(); assert.equal(model.blocked.vpn.length, 0); assert.equal(model.error, '');
+  });
+  await check('polling timers are cleared and cannot start work after destroy', async () => {
+    for (const [file, factory] of [['logs.html','logsPage'], ['blocked.html','blockedPage'], ['transport.html','transportHealthPage']]) {
+      const callbacks = [], cleared = []; let calls = 0;
+      const { model } = component(file, factory, {
+        URLSearchParams, setInterval: fn => { callbacks.push(fn); return callbacks.length; },
+        clearInterval: id => { if (id != null) cleared.push(id); }, apiFetch: async () => { calls++; return { ok: true, lines: [], blocked: {}, profiles: [] }; },
+      });
+      model.loadPolicy = async () => {}; model.scrollBottom = () => {};
+      if (factory === 'logsPage') { model.autoRefresh = true; model.handleAutoRefresh(); } else await model.init();
+      model.destroy(); const before = calls;
+      for (const fn of callbacks) fn(); await Promise.resolve();
+      assert.equal(calls, before); assert.equal(cleared.length, callbacks.length);
+    }
+  });
   console.log(`Panel editor regressions: ${passed} passed`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

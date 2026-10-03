@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "kind": "qeli-q03-refresh-panel",
+  "status": "UI_PASS_RELEASE_CHECKS_PENDING",
+  "executed_at": "2026-10-03T01:06:43.289970+00:00",
+  "scope": [
+    "logs",
+    "blocked journals",
+    "transport health"
+  ],
+  "js_groups_passed": 37,
+  "new_js_groups": 9,
+  "browser": {
+    "status": "PASS",
+    "browser": "154.0.4258.48",
+    "execution": "Actual Edge and repository UI/assets with loopback fixture APIs; no backend/auth/network runtime claim",
+    "scenarios": [
+      {
+        "page": "logs",
+        "language": "en",
+        "mobile": false,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "blocked",
+        "language": "en",
+        "mobile": false,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "transport",
+        "language": "en",
+        "mobile": false,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "logs",
+        "language": "en",
+        "mobile": true,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "blocked",
+        "language": "en",
+        "mobile": true,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "transport",
+        "language": "en",
+        "mobile": true,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "logs",
+        "language": "ru",
+        "mobile": false,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "blocked",
+        "language": "ru",
+        "mobile": false,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "transport",
+        "language": "ru",
+        "mobile": false,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "logs",
+        "language": "ru",
+        "mobile": true,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "blocked",
+        "language": "ru",
+        "mobile": true,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      },
+      {
+        "page": "transport",
+        "language": "ru",
+        "mobile": true,
+        "initial_error_visible": true,
+        "keyboard_retry": true,
+        "background_failure_preserves_data": true,
+        "latest_response_wins": true,
+        "background_request_bounded": true,
+        "page_errors": []
+      }
+    ]
+  },
+  "baseline_failure": "node-before.log: background poll started a third request over two pending reads",
+  "browser_fixture_correction": "First run observed state before DOM update; wait for role=alert visibility added, product source unchanged.",
+  "rust_native_reuse": {
+    "source_commit": "5700063f4cfd34a72692763f5f32abcc5cf218c1",
+    "native_digest": "4114e360940dd1dbffabcb70068a914445a1a7310af2606da692acd8cbbf8a8f",
+    "unit_groups_passed": 2257,
+    "prior_evidence": "release/certification/evidence/q03-panel-load-20261003.json",
+    "reason": "Only embedded HTML/JS changed; all Rust/manifests/native recipes match qualified commit. No new unit or native execution claimed."
+  },
+  "limitations": [
+    "UI API fixtures do not certify backend auth/persistence",
+    "Existing narrow mobile logs search input awaits responsive pass",
+    "No HTTP cancellation or network-timeout change"
+  ],
+  "raw_root": "C:\\Users\\litvi\\OneDrive\\Documents\\qeli\\audit-debt-20260924\\q03-refresh-20261003",
+  "raw_sha256": {
+    "blocked-en-desktop.png": "8d341a962c64e6d427dbd0e9cf10b576de238eb656bf68512fe2b5dfe52ba257",
+    "blocked-en-mobile.png": "2b2f908011e8b6f4689fdab37866370d38554ccd59828978042aec556761f378",
+    "blocked-ru-desktop.png": "6e4537041984a85a6620037cc1437219a359b2ebefeac42b194b82c185b19e0a",
+    "blocked-ru-mobile.png": "057bfd69f22e204476d8df2b84add5567dd96db02cf706a545f181b6a8b9dd5d",
+    "browser-results.json": "064a4e1c4ad1bf009a644542f813c472eb1dbcd49ffb62aa52b132f62fe3f349",
+    "browser.cjs": "3637f69670cb7a05afc291ba8ebaae30e54b5f731defc09598e146cba8bf61c2",
+    "linux-build-driver.log": "643f29e7847355870be7d3bd636797b5849fd323026c395ae6d77916b3b86bce",
+    "logs-en-desktop.png": "45f8be7ecdb94211e99d8014c53441ac390b9cabfed978f91d34b37444606186",
+    "logs-en-mobile.png": "196914d1c4133eedb06920e413a78230b6b9952d33dd72592ce4abe719889bfc",
+    "logs-ru-desktop.png": "b4a2174d07c72168b2f4f35f44ce08f21bfe6409f392c1da9261667fc035869b",
+    "logs-ru-mobile.png": "6482eca0d416144783d6efdafe6d0e5fcc3a09838facb9c47fbc5e8e8f623e83",
+    "node-after.log": "ef5efc3c053c5119e45272c98e5a66bb29aae22890680344f5e80a9a3b66cedc",
+    "node-before.log": "99074fb19bb59ff623c7dbf5cf5603da84d949abdf69de885952eac3d57ffe25",
+    "transport-en-desktop.png": "c6bd0645e4baa46a6f1f7282b52b071104810048a2466fd164341c6fb262abfa",
+    "transport-en-mobile.png": "d27c03328ed87d52d39e0d786213e5ece40cf6d780611457a165cf0c2bac4aaa",
+    "transport-ru-desktop.png": "0b589e883a5546d379bfb3b57baa680eea60d7a151ab095230ee6cee00328016",
+    "transport-ru-mobile.png": "e59dce34f61772388b9da695deea41c25821cc369d3c1890107daa9b4f97b7e6"
+  }
+}

@@ -2,7 +2,8 @@
 
 Date: 3 October 2026. Status: **IN_PROGRESS**.
 
-This pass fixes two defects on configuration and blocked-address pages.
+The first pass fixed configuration/policy load defects; the next pass covers
+refresh behavior on logs, transport and blocked-journal pages.
 Section 03 still needs the other pages, late responses, background refresh errors,
 modals and additional keyboard/mobile paths.
 
@@ -58,3 +59,45 @@ The first Android native attempt refused insufficient disk space. Only the priva
 [Certification](../../../release/certification/0.8.2.json) binds the new release; prior D15 candidate/benchmark records retain their original SHA. Overall Q03 remains IN_PROGRESS.
 
 Desktop publishing initially refused a source-identity change during A/B; the original FAILED is retained. Composite qualification rechecked actual A/B hashes/exports and the sole formatter-equivalent server-only diff; no additional compilation is claimed by that reconciliation. The original build driver fmt_reused_from label is too broad: 286 Rust files are unchanged and the two changed test files were checked separately, as recorded by fmt_qualification.
+
+## Q03-F003 — Late responses overwrote newer state
+
+Logs, transport and blocked journals allowed a timer/manual request to overlap
+another read. Old responses overwrote newer data and cleared a newer spinner.
+The pre-fix regression reproduced a third background read over two pending reads.
+
+Fixed: request sequence owns both data and spinner. Background polls skip pending
+work; manual reload after a changed log limit or an unblock keeps priority. Late
+responses after destroy cannot update journal/transport state. Timers are cleared.
+This does not cancel an HTTP request already sent or guarantee a network timeout.
+
+## Q03-F004 — Failures looked like empty journals or disappeared under filters
+
+A blocked-journal GET returning `{ok:false}` cleared both tables and displayed
+“No blocked IPs”. A logs error became a line without a severity, hidden by an ERROR
+or search filter. A failed read does not establish that records are absent.
+
+Fixed: independent role=alert errors, last successful snapshot preserved and empty
+state gated on a successful load without a current error. Log errors are not log
+entries. The blocked countdown never removes rows; only a successful GET confirms
+removal. Countdown freezes on failure; retained data is the last received snapshot,
+and remaining time is an estimate.
+
+## Journal and transport refresh checks
+
+37 JS groups PASS, including nine new groups: reverse response order, old failure
+while a newer read is pending, spinner ownership, bounded background polling,
+snapshot preservation, filter-independent errors, countdown and timer/destroy cleanup.
+12 Edge scenarios PASS: RU/EN × desktop/mobile × logs/blocked/transport, actual
+repository templates/assets and loopback fixture APIs. Initial failure, keyboard
+Enter retry, background failure and reverse responses covered; no JS/resource errors.
+Two RU mobile screenshots inspected. The first browser run required waiting for DOM
+visibility after reactive state in the fixture; product code did not change for that
+adjustment. A narrow mobile log search field remains a responsive-review candidate;
+this does not declare the whole page complete.
+
+Rust, native recipes and library bytes are unchanged. Prior 2257 units and native
+A/B are explicitly reused, without a new-execution claim. Fresh release build/checks
+for this UI pass are recorded separately in
+[evidence](../../../release/certification/evidence/q03-refresh-20261003.json).
+Dashboard, users, client and remaining page/modal scenarios still belong to Q03.
