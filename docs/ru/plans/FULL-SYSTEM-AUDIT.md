@@ -294,6 +294,8 @@ Node не заменяет настоящий браузер. Остались �
 fixtures; auth/транзакции сервера этим не подтверждаются. Раздел остаётся IN_PROGRESS
 до проверки всех страниц и оставшихся отказов/конкуренции.
 
+**Пакеты UI 3 октября:** 90 JS-групп PASS; последний пакет добавил 12 Edge-сценариев Quick Start/notifications/login (RU/EN × desktop/mobile). Исправлены подтверждённый IP mode, загрузка/ревизии уведомлений, повторный вход, общий CSP scope переводов и программный aria-checked. [Подробный отчёт и evidence](../reports/AUDIT-Q03-PANEL-STATE.md#q03-f008--quick-start-подтверждённые-параметры-и-сохранённый-результат). Q03 остаётся IN_PROGRESS: config draft/revision/identity races и общие focus/dirty-navigation проверки.
+
 ### 04. Web auth и защита API
 
 **Код:** `qeli/src/web/auth.rs`, `qeli/src/web/mod.rs`, `qeli/src/web/api`.

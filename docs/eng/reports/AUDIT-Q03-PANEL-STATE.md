@@ -2,10 +2,10 @@
 
 Date: 3 October 2026. Status: **IN_PROGRESS**.
 
-The first pass fixed configuration/policy load defects; the next pass covers
-refresh behavior on logs, transport and blocked-journal pages.
-Section 03 still needs the other pages, late responses, background refresh errors,
-modals and additional keyboard/mobile paths.
+Batches covered lockout policy, canonical defaults, logs, transport, dashboard,
+client connections, users, layout, Quick Start, notifications and login.
+Q03 remains incomplete: config draft/revision/identity races and shared focus
+and navigation with unsaved changes still need verification.
 
 ## Q03-F001 — Unloaded policy looked available for saving
 
@@ -233,3 +233,5 @@ Fresh build and common checks are recorded in
 [evidence](../../../release/certification/evidence/q03-actions-20261003.json).
 Q03 remains IN_PROGRESS: config draft/revision/identity races and shared
 focus/dirty-navigation checks require the next pass.
+
+Q03-F008/F009/F010/F011: fresh release SHA `91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57`; 18 isolated scenarios / 327 checks, aggregate leak and 100 TCP + 100 QUIC / 33 checks PASS. All 322 input SHAs verified; .11 snapshots, working service PID/start time and binary preserved. Certification 20/20 refreshed for this artifact. Previous unchanged-Rust budget evidence is explicitly retained as reuse, not re-executed. Physical rows and previous benchmarks were not requalified.
