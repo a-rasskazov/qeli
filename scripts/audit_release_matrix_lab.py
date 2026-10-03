@@ -95,8 +95,14 @@ def main():
     if not password:
         parser.error('QELI_LAB_PASS required')
     root = Path(__file__).resolve().parent.parent
-    if subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=root).strip():
-        parser.error('commit tracked changes before executing the release matrix')
+    # The CLI release and executable fixtures must come from committed inputs.
+    # Independent native builds update provenance while this matrix runs; those
+    # records and prose do not compile into the SHA-verified Linux executable.
+    if subprocess.check_output(
+        ['git', 'status', '--porcelain', '--untracked-files=no', '--',
+         'qeli', 'conformance', 'scripts'], cwd=root
+    ).strip():
+        parser.error('commit compilation and fixture inputs before executing the release matrix')
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     lab = connect_lab(args.host, 'root', password)
     stamp = dt.datetime.now(dt.timezone.utc)
