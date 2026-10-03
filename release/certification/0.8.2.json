@@ -1,227 +1,227 @@
 {
   "schema_version": 1,
   "release_version": "0.8.2",
-  "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
+  "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
   "cases": [
     {
       "id": "linux.outer4.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer4.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer6.inner4.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer6.inner6.tcp.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer4.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer4.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer6.inner4.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer6.inner6.udp-fake-tls.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer4.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer4.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer6.inner4.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.outer6.inner6.udp-quic.full",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.dual.tcp.split",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.dual.udp.split",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.dns.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.mtu.1280-pmtu-ptb",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.leak.ipv4-ipv6",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.tap.ndp-ra",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.legacy-peer",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "executed_at": "2026-10-03T02:35:55.389278+00:00",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "executed_at": "2026-10-03T03:22:11.002292+00:00",
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "linux.roaming-flap-soak",
       "kind": "automated",
       "status": "passed",
-      "evidence": "release/certification/evidence/q03-actions-20261003.json",
-      "source_digest": "1484609fde198221c164d6acccaafb47d82c098ce85aa1c1c7d259b7518ba4ee",
-      "artifact_sha256": "91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57",
-      "executed_at": "2026-10-03T02:39:54.246694+00:00",
+      "evidence": "release/certification/evidence/q03-config-20261003.json",
+      "source_digest": "4c071747f2121e3b7014f69461e33d3631f4348dc7b8a6b2a38a2a7dc31f3220",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
+      "executed_at": "2026-10-03T03:25:39.927983+00:00",
       "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
-      "acceptance_basis": "Fresh release with Quick Start/notifications/login/CSP fixes: 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP+100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B explicitly reused, not re-executed."
+      "acceptance_basis": "Q03 final config/state/focus fixes: fresh release, 18 isolated namespace cases, aggregate leak and same-artifact 100 TCP + 100 QUIC soak. Exact build inputs retained; unchanged Rust units/native A/B/budget explicitly reused."
     },
     {
       "id": "android.wifi-to-cellular",
@@ -354,7 +354,7 @@
     "status": "complete",
     "automated_cases_passed": 20,
     "functional_matrix": "18 PASS / 327 assertions; 100 TCP + 100 QUIC / 33 checks",
-    "lab_integrity": "Fresh isolated runs preserve full .11 snapshots, running service identity and working binary; private release build only.",
+    "lab_integrity": "Fresh isolated runs preserve full .11 snapshots, running service identity and working binary; private release only.",
     "scope": "Current committed candidate; user uncommitted changes are outside this certificate. Physical checks and canary remain advisory and are not reported as passed."
   }
 }

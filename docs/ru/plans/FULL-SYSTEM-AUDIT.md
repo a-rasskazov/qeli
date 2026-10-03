@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v7 -->
+<!-- normative-sync: full-system-audit-v8 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -147,7 +147,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 |---|---|---|---|
 | 01 | Серверный INI и схема | H01, H04, H08–H10 | PASS |
 | 02 | Клиентские парсеры и qeli:// | H04, H06, H08–H10 | PASS |
-| 03 | Панель: UI и состояние | H02, H09–H11 | IN_PROGRESS |
+| 03 | Панель: UI и состояние | H02, H09–H11 | PASS |
 | 04 | Web auth и защита API | H01–H03, H08–H09 | TODO |
 | 05 | Транзакции конфигурации и restart | H08–H10 | IN_PROGRESS |
 | 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | TODO |
@@ -275,26 +275,15 @@ PASS относится к конфигурационному контракту
 
 **Имеющаяся обвязка/fixtures:** `scripts/check_panel.py`, `scripts/test_panel_editors.cjs`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код: все 11 шаблонов / 10 page wrappers; общий Form/INI lifecycle, Rust defaults/Quick Start.
+- [x] Штатные, граничные и негативные сценарии: 116 групп реальных JS-компонентов; секреты, даты, квоты, ревизии и Form/INI.
+- [x] Отказы и конкуренция: error/retry всех страниц, старые ответы, владельцы модальных окон и черновиков, повторные отправки, destroy и отмена.
+- [x] Доступная интеграция: все страницы в Edge RU/EN, desktop/mobile и клавиатура; общий фокус и настоящий beforeunload. API fixtures подтверждают UI, а не backend protection/persistence.
+- [x] Q03-F001–F015 исправлены и проверены; baseline-воспроизведения, raw logs/captures, свежая release-матрица и soak того же артефакта.
 
-**Статус: IN_PROGRESS.**
+**Статус: PASS в области UI/state панели.**
 
-**Начало 3 октября:** статика 11 шаблонов / 1153 RU строк и 25 групп реальных
-JS-компонентов прошли. [Evidence](../../../release/certification/evidence/q03-initial-20261003.json).
-Node не заменяет настоящий браузер. Остались обзор всех страниц и browser RU/EN,
-клавиатура, мобильный экран, загрузка/error/retry; общий PASS не выставлен.
-
-**Продолжение 3 октября:** [политика/defaults](../reports/AUDIT-Q03-PANEL-STATE.md):
-исправлены два UI-дефекта; 28 групп Node и 8 настоящих Edge-сценариев
-(RU/EN, desktop/mobile, retry, клавиатура) прошли. API браузерного стенда — локальные
-fixtures; auth/транзакции сервера этим не подтверждаются. Раздел остаётся IN_PROGRESS
-до проверки всех страниц и оставшихся отказов/конкуренции.
-
-**Пакеты UI 3 октября:** 90 JS-групп PASS; последний пакет добавил 12 Edge-сценариев Quick Start/notifications/login (RU/EN × desktop/mobile). Исправлены подтверждённый IP mode, загрузка/ревизии уведомлений, повторный вход, общий CSP scope переводов и программный aria-checked. [Подробный отчёт и evidence](../reports/AUDIT-Q03-PANEL-STATE.md#q03-f008--quick-start-подтверждённые-параметры-и-сохранённый-результат). Q03 остаётся IN_PROGRESS: config draft/revision/identity races и общие focus/dirty-navigation проверки.
+**Завершение 3 октября:** [Подробный отчёт](../reports/AUDIT-Q03-PANEL-STATE.md) и [итоговое evidence](../../../release/certification/evidence/q03-config-20261003.json). Итоговый пакет: 26 новых JS-групп (всего 116), четыре Config Edge-сценария, черновик/ревизия, одна запись, владельцы identity/hash/history/remove, Cancel/Tab/Shift+Tab/Escape/возврат фокуса и переход с правками. Свежий release: 18 изолированных сценариев / 327 checks, aggregate leak и 100 TCP + 100 QUIC / 33 checks PASS. Неизменные Rust/native/budget результаты явно используются как reuse. Пользовательский live-users WIP сохранён отдельно; physical qualification и новые benchmarks не заявляются. Backend auth, транзакции и восстановление остаются обязательствами Q04/Q05/Q07.
 
 ### 04. Web auth и защита API
 

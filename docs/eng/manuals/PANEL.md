@@ -491,6 +491,34 @@ If this fails, the running process stays up; correct the configuration and retry
 - **Inside a container** systemctl is unavailable; if the change does NOT touch the panel
   socket the panel falls back to the worker restart on its own and says so.
 
+
+<!-- normative-sync: panel-editor-state-v1 -->
+
+### Config editor operation and confirmation
+
+Save reviews the current draft and writes it with the revision that draft was
+loaded from. Repeated clicks cannot start another action while a confirmation,
+write or restart is pending. Edits made after the review opens remain unsaved
+if they differ from the submitted draft. Apply & Restart stops if saving is
+cancelled, fails or leaves newer edits unsaved. An unconfirmed full restart
+keeps the indication that panel socket changes still need a full restart.
+
+Reload and Form/INI switching request confirmation before discarding a dirty
+draft. Leaving the page uses the browser's unsaved-changes warning. Failed
+reads show an error and require a successful reload before saving; they do not
+make initial defaults eligible for a write. If new-profile defaults alone are
+unavailable, the loaded configuration stays editable, while Add remains disabled.
+
+Identity and History show read failures with Reload. A failed refresh retains
+the previous snapshot. A late reply cannot replace a newer opened history window
+or update a destroyed editor. Restoring history uses the current config revision;
+it reloads the restored configuration and does not restart automatically.
+
+The shared confirmation dialog initially focuses Cancel, keeps Tab and Shift+Tab
+inside the dialog, supports Escape and returns focus to the initiating control
+when that control remains available. Closing a nested restore confirmation leaves
+History open.
+
 ### Raw INI config editor
 
 The `INI` view on the Config page (`GET`/`PUT /api/config/raw`) shows the config **file

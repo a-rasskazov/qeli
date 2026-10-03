@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v7 -->
+<!-- normative-sync: full-system-audit-v8 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -142,7 +142,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 |---|---|---|---|
 | 01 | Server INI and schema | H01, H04, H08–H10 | PASS |
 | 02 | Client parsers and qeli:// | H04, H06, H08–H10 | PASS |
-| 03 | Panel UI and state | H02, H09–H11 | IN_PROGRESS |
+| 03 | Panel UI and state | H02, H09–H11 | PASS |
 | 04 | Web auth and API protection | H01–H03, H08–H09 | TODO |
 | 05 | Config transactions and restart | H08–H10 | IN_PROGRESS |
 | 06 | Users, groups and provisioning | H01, H04, H09–H10 | TODO |
@@ -270,22 +270,15 @@ Loading/error/retry, dirty state, delayed replies, concurrent edits, Form/INI, d
 
 **Existing harness/fixtures:** `scripts/check_panel.py`, `scripts/test_panel_editors.cjs`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code: all 11 templates / 10 page wrappers; common Form/INI lifecycle and Rust defaults/Quick Start.
+- [x] Positive, boundary and negative scenarios: 116 actual JS groups; secrets, dates, quotas, revisions and Form/INI.
+- [x] Failures and concurrency: all-page error/retry, stale replies, modal/draft ownership, duplicate submission, destroy and cancellation.
+- [x] Available integration: every page in Edge RU/EN, desktop/mobile and keyboard; shared focus and native beforeunload. API fixtures qualify UI, not backend protection/persistence.
+- [x] Q03-F001–F015 fixed/retested; baseline reproductions, raw logs/captures, fresh release matrix and same-artifact soak.
 
-**Status: IN_PROGRESS.**
+**Status: PASS for panel UI/state.**
 
-**Started on 3 October:** static checks of 11 templates / 1153 RU strings and 25
-actual JS-component groups passed. [Evidence](../../../release/certification/evidence/q03-initial-20261003.json).
-Node does not replace a real browser. All-page review and browser RU/EN,
-keyboard/mobile, loading/error/retry checks remain; no overall PASS.
-
-**3 October follow-up:** [policy/defaults review](../reports/AUDIT-Q03-PANEL-STATE.md): two UI defects fixed, 28 Node groups and 8 real Edge scenarios (RU/EN, desktop/mobile, retry and keyboard) passed. Browser APIs are local fixtures; no server authentication/transaction claim. Section 03 remains IN_PROGRESS until all pages and remaining failure/concurrency paths are reviewed.
-
-**UI batches on October 3:** 90 JS groups passed; the latest batch added 12 Quick Start/notifications/login Edge scenarios (RU/EN × desktop/mobile). Fixed confirmed IP mode, notification loading/revisions, duplicate login, shared CSP translation scope and programmatic aria-checked. [Detailed report and evidence](../reports/AUDIT-Q03-PANEL-STATE.md#q03-f008--quick-start-confirmed-inputs-and-saved-result). Q03 remains IN_PROGRESS: config draft/revision/identity races and shared focus/dirty-navigation checks.
+**3 October completion:** [Detailed report](../reports/AUDIT-Q03-PANEL-STATE.md) and [final evidence](../../../release/certification/evidence/q03-config-20261003.json). Final batch: 26 new JS groups (116 total), four Config Edge scenarios, reviewed draft/revision, single write, identity/hash/history/remove ownership, Cancel/Tab/Shift+Tab/Escape/focus return and dirty navigation. Fresh release: 18 isolated cases / 327 checks, aggregate leak and 100 TCP + 100 QUIC / 33 checks PASS. Unchanged Rust/native/budget evidence is explicit reuse. User live-users WIP is preserved separately; physical qualification and new benchmarks are not claimed. Q04/Q05/Q07 retain backend auth, transaction and restore obligations.
 
 ### 04. Web auth and API protection
 

@@ -1,11 +1,11 @@
 # Q03 — Panel state and load failures
 
-Date: 3 October 2026. Status: **IN_PROGRESS**.
+Date: 3 October 2026. Status: **PASS for Q03 panel UI/state**.
 
 Batches covered lockout policy, canonical defaults, logs, transport, dashboard,
 client connections, users, layout, Quick Start, notifications and login.
-Q03 remains incomplete: config draft/revision/identity races and shared focus
-and navigation with unsaved changes still need verification.
+The final config/focus/dirty-navigation batch below closes all five Q03 criteria.
+Earlier IN_PROGRESS notes describe their respective intermediate batches.
 
 ## Q03-F001 — Unloaded policy looked available for saving
 
@@ -235,3 +235,78 @@ Q03 remains IN_PROGRESS: config draft/revision/identity races and shared
 focus/dirty-navigation checks require the next pass.
 
 Q03-F008/F009/F010/F011: fresh release SHA `91d0b877a4eede2e644b6cf1548fffce9901dbe20810d1bd70b2612531585d57`; 18 isolated scenarios / 327 checks, aggregate leak and 100 TCP + 100 QUIC / 33 checks PASS. All 322 input SHAs verified; .11 snapshots, working service PID/start time and binary preserved. Certification 20/20 refreshed for this artifact. Previous unchanged-Rust budget evidence is explicitly retained as reuse, not re-executed. Physical rows and previous benchmarks were not requalified.
+
+## Q03-F012 — Config reads, review and revision ownership (P2)
+
+Form and INI had separate lifecycle implementations. Pending reads could discard
+a newer draft; Save did not reserve the confirmation phase, and the write read
+expected_revision after the confirmation. Two pending reviews could both write.
+
+Both views now use common read/write paths. One action owns confirmation, write
+and restart. Reads require a valid configuration and nonempty revision, publish
+a staged snapshot, and preserve newer edits on failure. Canonical defaults failures
+are independent. Save captures the draft/revision before review; a changed owner
+or revision cancels the write. Successful replies without a revision require reload.
+The submitted snapshot becomes the baseline; newer same-owner edits remain dirty.
+Cancelled/failed saves and newer drafts prevent Apply & Restart. Only a confirmed
+full restart clears the panel-socket restart requirement. Destroy removes the
+exact beforeunload handler and invalidates outstanding reads.
+
+## Q03-F013 — Identity and password-hash results (P2)
+
+Identity reads swallowed failures. Older replies could replace newer keys; key
+rotation allowed repeated confirmations. A pending hash erased a newly typed
+password and installed a hash for the old plaintext.
+
+Identity has visible failure/retry, retains the last snapshot and accepts only
+the latest read. Only explicit public fields are retained. Rotation reserves its
+action before confirmation and requires the same key owner. Hashing captures the
+exact password and config owner; a changed password retains the new plaintext
+and rejects the old result. Clipboard failures are visible.
+
+## Q03-F014 — History and profile removal ownership (P2)
+
+An old History GET could overwrite a reopened window. Restore used a later
+revision and reloaded over new edits. Remove used the original array index even
+if another profile moved into that position.
+
+History sequence/error/retry belongs to its open window. Restore reserves review,
+captures revision and refuses changed drafts. New edits during a successful POST
+remain visible and require reload, since disk and draft then differ. A clean
+restore reloads canonically without automatic restart. Remove retains the profile
+object and its reviewed contents, then locates its current index. Closing a child
+confirmation with Escape leaves History open.
+
+## Q03-F015 — Shared confirmation focus (P2)
+
+The shared dialog did not move or trap focus and did not restore it afterwards.
+It now declares a named modal dialog, initially focuses Cancel, cycles visible
+enabled controls with Tab/Shift+Tab, redirects escaped focus, and restores the
+initiating control after the caller clears busy state. Replacement prompts cancel
+the previous resolver and retain the original focus owner.
+
+## Completion checks — 3 October
+
+Ten independent baseline reproductions are retained for a81bf03e. 116 actual JS
+component groups passed, including 26 new groups. Four real Edge scenarios cover
+Config RU/EN × desktop/mobile with the actual CSP: error/retry, public keys,
+confirmed draft/revision and single PUT, later edits, Form/INI discard cancellation,
+History retry/restore/nested Escape, modal geometry and native beforeunload
+dismiss/accept. RU mobile confirmation/editor captures were visually inspected.
+
+The initial Node destroy fixture incorrectly borrowed a function from a separate
+VM; it was corrected and microtask waits were bounded. Browser fixtures were fixed
+to use CSP-compatible function predicates, the correct dangerous-action selector
+and a DOM-render wait. These failures do not establish product defects; raw logs
+are retained. No real key rotation, login, external delivery or service restart occurred.
+
+All eleven templates and their ten page wrappers were reviewed across the Q03
+batches. Duplicate Form/INI lifecycle paths and the obsolete profile-default
+fallback were removed; Quick Start metadata now belongs to Rust. Existing tests
+retain exact secret/date/quota behavior. Coverage is panel UI/state; backend auth,
+CSRF, persistence and transaction failure injection belong to Q04/Q05/Q07.
+User live-users WIP remains separate from the committed-tree qualification.
+
+The final browser run uses the production nonce CSP. Secret fixtures follow the real API: Form omits the admin hash; INI retains <unchanged> through a reviewed save. After dismissed navigation the draft remains editable and Save enabled. Desktop RU/mobile EN captures were also visually checked.
+
+Q03 final qualification: release SHA `f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199`; 18 isolated scenarios / 327 checks, aggregate leak and 100 TCP + 100 QUIC / 33 checks PASS. All 322 source input hashes verified; complete .11 host snapshots, running service identity and working binary preserved. Certification 20/20 refreshed on the same artifact. Unchanged Rust unit/native/budget results are reuse only. Physical rows and old benchmarks unchanged. [Final evidence](../../../release/certification/evidence/q03-config-20261003.json).
