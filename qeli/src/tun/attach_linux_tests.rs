@@ -216,7 +216,7 @@ fn inherited_sysfs_same_name_different_index_is_rejected() -> io::Result<()> {
         let private = unsafe {
             libc::mount(
                 std::ptr::null(),
-                b"/\0".as_ptr().cast(),
+                c"/".as_ptr(),
                 std::ptr::null(),
                 (libc::MS_PRIVATE | libc::MS_REC) as _,
                 std::ptr::null(),
@@ -227,9 +227,9 @@ fn inherited_sysfs_same_name_different_index_is_rejected() -> io::Result<()> {
         }
         let mounted = unsafe {
             libc::mount(
-                b"sysfs\0".as_ptr().cast(),
-                b"/sys\0".as_ptr().cast(),
-                b"sysfs\0".as_ptr().cast(),
+                c"sysfs".as_ptr(),
+                c"/sys".as_ptr(),
+                c"sysfs".as_ptr(),
                 0,
                 std::ptr::null(),
             )

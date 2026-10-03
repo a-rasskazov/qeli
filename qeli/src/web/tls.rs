@@ -355,11 +355,13 @@ mod tests {
         let key = dir.join("key.pem");
         std::fs::write(&cert, b"not a certificate").unwrap();
         std::fs::write(&key, b"not a private key").unwrap();
-        let mut web = WebConfig::default();
-        web.enabled = true;
-        web.tls = true;
-        web.tls_cert = cert.to_str().unwrap().into();
-        web.tls_key = key.to_str().unwrap().into();
+        let web = WebConfig {
+            enabled: true,
+            tls: true,
+            tls_cert: cert.to_str().unwrap().into(),
+            tls_key: key.to_str().unwrap().into(),
+            ..Default::default()
+        };
         let error = check_config_files(&web).unwrap_err();
         assert!(error.to_string().contains("no certificates"), "{error}");
         assert_eq!(std::fs::read(&cert).unwrap(), b"not a certificate");
@@ -382,11 +384,13 @@ mod tests {
         .unwrap();
         let cert_before = std::fs::read(&cert).unwrap();
         let key_before = std::fs::read(&key).unwrap();
-        let mut web = WebConfig::default();
-        web.enabled = true;
-        web.tls = true;
-        web.tls_cert = cert.to_str().unwrap().into();
-        web.tls_key = key.to_str().unwrap().into();
+        let web = WebConfig {
+            enabled: true,
+            tls: true,
+            tls_cert: cert.to_str().unwrap().into(),
+            tls_key: key.to_str().unwrap().into(),
+            ..Default::default()
+        };
         check_config_files(&web).unwrap();
         assert_eq!(std::fs::read(&cert).unwrap(), cert_before);
         assert_eq!(std::fs::read(&key).unwrap(), key_before);

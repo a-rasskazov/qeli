@@ -9162,8 +9162,10 @@ pool.cidr = 10.{net}.0.0/24
         ));
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("server.conf");
-        let mut startup = ServerConfig::default();
-        startup.web = serde_json::from_str("{}").unwrap();
+        let mut startup = ServerConfig {
+            web: serde_json::from_str("{}").unwrap(),
+            ..Default::default()
+        };
         startup.profiles.push(ProfileConfig::baseline());
         startup.web.enabled = true;
         startup.web.bind = "127.0.0.1".into();
