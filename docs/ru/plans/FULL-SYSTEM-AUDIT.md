@@ -288,6 +288,12 @@ JS-компонентов прошли. [Evidence](../../../release/certificatio
 Node не заменяет настоящий браузер. Остались обзор всех страниц и browser RU/EN,
 клавиатура, мобильный экран, загрузка/error/retry; общий PASS не выставлен.
 
+**Продолжение 3 октября:** [политика/defaults](../reports/AUDIT-Q03-PANEL-STATE.md):
+исправлены два UI-дефекта; 28 групп Node и 8 настоящих Edge-сценариев
+(RU/EN, desktop/mobile, retry, клавиатура) прошли. API браузерного стенда — локальные
+fixtures; auth/транзакции сервера этим не подтверждаются. Раздел остаётся IN_PROGRESS
+до проверки всех страниц и оставшихся отказов/конкуренции.
+
 ### 04. Web auth и защита API
 
 **Код:** `qeli/src/web/auth.rs`, `qeli/src/web/mod.rs`, `qeli/src/web/api`.

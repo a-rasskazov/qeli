@@ -30,5 +30,6 @@
     "All-page UI/caller review",
     "Real browser RU/EN, keyboard/mobile and error/retry scenarios"
   ],
-  "scope": "Static template/i18n/CSP and actual JS component logic; Node is not browser E2E"
+  "scope": "Static template/i18n/CSP and actual JS component logic; Node is not browser E2E",
+  "follow_up": "release/certification/evidence/q03-panel-load-20261003.json"
 }

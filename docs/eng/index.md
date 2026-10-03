@@ -61,6 +61,7 @@ Current analyses and measured results. Dated, frozen reports live in the archive
 | Document | What it covers |
 |---|---|
 | [AUDIT-Q02-CLIENT-PARSERS.md](reports/AUDIT-Q02-CLIENT-PARSERS.md) | INI/URI and editors: 19 findings, common corpus, Rust/C#/Kotlin tests and Swift limits |
+| [AUDIT-Q03-PANEL-STATE.md](reports/AUDIT-Q03-PANEL-STATE.md) | Panel policy/defaults loading, real browser RU/EN and qualification limits |
 | [AUDIT-Q19-Q22-NETWORK-PLAN.md](reports/AUDIT-Q19-Q22-NETWORK-PLAN.md) | Shared DNS plan, legacy/v2 and CIDR exclusions: fixes, regressions and verification limits |
 | [AUDIT-Q19-DNS-PROXY.md](reports/AUDIT-Q19-DNS-PROXY.md) | Server DNS: CNAME/NODATA, compressed names, TCP failover and loopback network tests |
 | [AUDIT-Q19-DNS-CACHE.md](reports/AUDIT-Q19-DNS-CACHE.md) | DNS cache byte budget, TSIG/SIG(0) relay and request validation |

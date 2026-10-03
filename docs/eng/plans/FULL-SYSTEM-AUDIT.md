@@ -283,6 +283,8 @@ actual JS-component groups passed. [Evidence](../../../release/certification/evi
 Node does not replace a real browser. All-page review and browser RU/EN,
 keyboard/mobile, loading/error/retry checks remain; no overall PASS.
 
+**3 October follow-up:** [policy/defaults review](../reports/AUDIT-Q03-PANEL-STATE.md): two UI defects fixed, 28 Node groups and 8 real Edge scenarios (RU/EN, desktop/mobile, retry and keyboard) passed. Browser APIs are local fixtures; no server authentication/transaction claim. Section 03 remains IN_PROGRESS until all pages and remaining failure/concurrency paths are reviewed.
+
 ### 04. Web auth and API protection
 
 **Source:** `qeli/src/web/auth.rs`, `qeli/src/web/mod.rs`, `qeli/src/web/api`.
