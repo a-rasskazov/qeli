@@ -18,6 +18,7 @@ function component(file, factory, overrides = {}) {
   vm.createContext(context);
   for (const match of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) new vm.Script(match[1]).runInContext(context);
   if (file === 'layout.html') context.apiFetch = overrides.apiFetch || (async () => ({ok:true}));
+  if (file === 'quickstart.html') context.window.location ||= {hostname:'fixture'};
   const model = context[factory]();
   model.$dispatch = (...args) => events.push(args);
   return { model, context, events, html };
@@ -167,28 +168,28 @@ async function main() {
     let finish, writes = 0;
     const { model } = component('notifications.html', 'notificationsPage', {
       apiFetch: async (url, opts) => {
-        if (opts) { writes++; return { ok: true }; }
+        if (opts?.method) { writes++; return { ok: true, revision: 'r2', config: { telegram_token_set: true } }; }
         return new Promise(resolve => { finish = resolve; });
       },
     });
     const loading = model.init();
     await model.save(); await model.testChan('telegram'); assert.equal(writes, 0);
     assert(!model.loaded); assert(model.loading);
-    finish({ ok: true, config: { telegram_enabled: true, telegram_token_set: true, telegram_chat_id: 'fixture' } });
+    finish({ ok: true, revision: 'r1', config: { telegram_enabled: true, telegram_token_set: true, telegram_chat_id: 'fixture' } });
     await loading; assert(model.loaded); assert(!model.loading);
     await model.save(); assert.equal(writes, 1);
   });
   await check('failed notification load blocks writes and a successful save retains newer token edits', async () => {
     let writes = 0;
     const { model, context } = component('notifications.html', 'notificationsPage', {
-      apiFetch: async (url, opts) => { if (opts) writes++; return { ok: false, error: 'fixture' }; },
+      apiFetch: async (url, opts) => { if (opts?.method) writes++; return { ok: false, error: 'fixture' }; },
     });
     await model.init(); await model.save(); assert.equal(writes, 0); assert(model.loadFailed);
-    model.loaded = true; model.loadFailed = false; model.cfg.telegram_token = 'submitted-fixture';
+    model.loaded = true; model.revision = 'r1'; model.loadFailed = false; model.cfg.telegram_token = 'submitted-fixture';
     let finish;
     context.apiFetch = async () => new Promise(resolve => { finish = resolve; });
     const save = model.save(); model.cfg.telegram_token = 'later-fixture';
-    finish({ ok: true, config: { telegram_token_set: true } }); await save;
+    finish({ ok: true, revision: 'r2', config: { telegram_token_set: true } }); await save;
     assert.equal(model.cfg.telegram_token, 'later-fixture');
   });
   await check('lockout policy cannot write before load, after failure, or during another save', async () => {
@@ -421,6 +422,121 @@ async function main() {
     let healthy=true;context.apiFetch=async url=>url.endsWith('clients')?{ok:true,clients:healthy?[]:'broken'}:url.endsWith('profiles')?{ok:true,profiles:healthy?[]:'broken'}:url.endsWith('users')?{ok:true,users:healthy?[]:'broken'}:url.endsWith('config')?{ok:true,config:{profiles:[]}}:{ok:true,profiles:[],usage:[],groups:{}};
     await model.load();healthy=false;await model.load();assert(model.loadError);assert(Array.isArray(kind==='dashboard'?model.clients:kind==='client'?model.profiles:model.users));
   });
+
+  await check('shared layout exposes translations to CSP Alpine child expressions',async()=>{
+    const {model}=component('layout.html','app',{window:{qeliT:s=>'translated '+s,qeliTf:(s,...v)=>s+v.join('/')}});assert.equal(model.qeliT('fixture'),'translated fixture');assert.equal(model.qeliTf('{}',1,2),'{}1/2');
+  });
+  const quickReply = () => ({ok:true,config:{profiles:[]},revision:'r1'});
+  const builtReply = id => ({ok:true,profile:{name:id,bind:{port:8447,transport:'tcp'}}});
+  await check('quickstart captures IP mode before reading and confirming, with one build/restart',async()=>{
+    let read,confirm,writes=0,restarts=0,sent,prompt;
+    const {model}=component('quickstart.html','quickstartPage',{
+      apiFetch:(url,opts)=>opts?.method ? (writes++,sent=JSON.parse(opts.body),Promise.resolve(builtReply('plain'))) : new Promise(r=>read=r),
+      qeliConfirm:(title,text)=>{prompt=text;return new Promise(r=>confirm=r);},restartServer:async()=>{restarts++;return true;},
+    });
+    model.ipMode='ipv4';const pending=model.quickStart(model.modes.find(m=>m.id==='plain'));
+    model.ipMode='dual';await model.quickStart(model.modes[0]);read(quickReply());
+    while(!confirm)await Promise.resolve();assert.match(prompt,/ipv4$/);model.ipMode='ipv6';confirm(true);await pending;
+    assert.equal(sent.ip_mode,'ipv4');assert.equal(sent.expected_revision,'r1');assert.equal(writes,1);assert.equal(restarts,1);assert.equal(model.qs.busy,null);
+    assert.equal(model.qs.done.ok,true);
+  });
+  for(const reply of [null,{ok:false,error:'fixture read failed'},{ok:true,config:null,revision:'r1'},{ok:true,config:{profiles:{}},revision:'r1'},{ok:true,config:{profiles:[null]},revision:'r1'},{ok:true,config:{profiles:[]}}])await check('quickstart invalid config/revision releases busy and never builds: '+JSON.stringify(reply),async()=>{
+    let writes=0;const {model,events}=component('quickstart.html','quickstartPage',{apiFetch:async(url,opts)=>{if(opts?.method)writes++;return reply;}});
+    await model.quickStart(model.modes[0]);assert.equal(model.qs.busy,null);assert.equal(writes,0);assert.equal(events[0][1].type,'error');
+  });
+  await check('quickstart cancellation, stale revision and malformed build never restart',async()=>{
+    for(const variant of ['cancel','conflict','bad build']){
+      let writes=0,restarts=0;const {model}=component('quickstart.html','quickstartPage',{
+        apiFetch:async(url,opts)=>opts?.method?(writes++,variant==='conflict'?{ok:false,kind:'config_conflict',error:'stale'}:{ok:true,profile:null}):quickReply(),
+        qeliConfirm:async()=>variant!=='cancel',restartServer:async()=>{restarts++;return true;},
+      });
+      await model.quickStart(model.modes[0]);assert.equal(writes,variant==='cancel'?0:1);assert.equal(restarts,0);assert.equal(model.qs.busy,null);
+    }
+  });
+  await check('quickstart checks existing manual bind and permits opposite transport',async()=>{
+    let writes=0;const {model,context}=component('quickstart.html','quickstartPage');
+    const profiles=[{name:'plain',bind:{port:9443,transport:'udp'}},{name:'other',bind:{port:9443,transport:'udp'}}];
+    context.apiFetch=async(url,opts)=>opts?.method?(writes++,builtReply('plain')):{ok:true,revision:'r1',config:{profiles}};
+    context.restartServer=async()=>true;await model.quickStart(model.modes.find(m=>m.id==='plain'));assert.equal(model.portClash.port,9443);assert.equal(writes,0);
+    profiles[1].bind.transport='tcp';await model.quickStart(model.modes.find(m=>m.id==='plain'));assert.equal(writes,1);assert.equal(model.portClash,null);
+    assert(model.modes.every(m=>Object.keys(m).every(k=>['id','name','transport','port','tag','flag','desc'].includes(k))));
+  });
+  await check('quickstart restart failure retains saved/unconfirmed result and clipboard failures are visible',async()=>{
+    for(const failure of [false,'throw']){
+      const {model,context,events}=component('quickstart.html','quickstartPage',{apiFetch:async(url,opts)=>opts?.method?builtReply('plain'):quickReply(),restartServer:async()=>{if(failure==='throw')throw Error('rejected');return false;},navigator:{}});
+      await model.quickStart(model.modes.find(m=>m.id==='plain'));assert.equal(model.qs.done.ok,false);assert.equal(events.at(-1)[1].type,'warn');
+      await model.copy('fixture');assert.equal(events.at(-1)[1].msg,'Copy failed');
+      context.navigator.clipboard={writeText:async()=>{throw Error('permission');}};await model.copy('fixture');assert.equal(events.at(-1)[1].msg,'Copy failed');
+      context.navigator.clipboard={writeText:async()=>{}};await model.copy('fixture');assert.equal(events.at(-1)[1].msg,'Copied');
+    }
+  });
+  await check('destroyed quickstart stops after read, confirmation or build without restart',async()=>{
+    for(const stop of ['read','confirm','build']){
+      let finish,writes=0,restarts=0;const {model}=component('quickstart.html','quickstartPage',{
+        apiFetch:async(url,opts)=>opts?.method?(writes++,stop==='build'?new Promise(r=>finish=()=>r(builtReply('plain'))):builtReply('plain')):stop==='read'?new Promise(r=>finish=()=>r(quickReply())):quickReply(),
+        qeliConfirm:async()=>stop==='confirm'?new Promise(r=>finish=()=>r(true)):true,restartServer:async()=>{restarts++;return true;},
+      });
+      const pending=model.quickStart(model.modes.find(m=>m.id==='plain'));while(!finish)await Promise.resolve();model.destroy();finish();await pending;
+      assert.equal(restarts,0);assert.equal(writes,stop==='build'?1:0);assert.equal(model.qs.done,null);assert.equal(model.qs.busy,null);
+    }
+  });
+  const notifyReply = revision => ({ok:true,revision,config:{server_name:'fixture',telegram_enabled:true,telegram_token_set:true,telegram_token_hint:'…last',telegram_chat_id:'123',webhook_enabled:true,webhook_url:'https://fixture.invalid'}});
+  await check('notification missing revision/malformed config blocks edits, writes and tests; retry is atomic',async()=>{
+    const {model,context}=component('notifications.html','notificationsPage');let writes=0;
+    for(const reply of [{ok:true,config:{}}, {ok:true,config:[],revision:'r1'}, {ok:true,config:null,revision:'r1'}, {ok:false,error:'fixture read failed'}]){
+      context.apiFetch=async(url,opts)=>{if(opts?.method)writes++;return reply;};await model.init();model.toggle('telegram_enabled');await model.save();await model.testChan('telegram');assert(model.loadFailed);assert(!model.canEdit());assert.equal(writes,0);assert.equal(model.cfg.server_name,'');
+    }
+    context.apiFetch=async()=>notifyReply('r1');await model.init();assert(model.canEdit());assert.equal(model.cfg.telegram_token,'');assert.equal(model.tokenHint,'…last');
+  });
+  await check('notification duplicate load and reload while saving are suppressed; pending drafts survive',async()=>{
+    let finish,reads=0;const {model,context}=component('notifications.html','notificationsPage',{apiFetch:()=>{reads++;return new Promise(r=>finish=r);}});
+    const pending=model.init();await model.init();model.cfg.telegram_token='new draft';finish(notifyReply('r1'));await pending;assert.equal(reads,1);assert(model.loadFailed);assert.equal(model.cfg.telegram_token,'new draft');
+    context.apiFetch=async()=>notifyReply('r1');await model.init();assert(model.canEdit());assert.equal(model.cfg.telegram_token,'new draft');
+    let writes=0;context.apiFetch=()=>{writes++;return new Promise(r=>finish=r);};const save=model.save();await model.init();await model.save();await model.testChan('telegram');assert.equal(writes,1);model.cfg.telegram_token='newer';finish(notifyReply('r2'));await save;assert.equal(model.cfg.telegram_token,'newer');assert.equal(model.revision,'r2');
+  });
+  await check('notification stale or missing save revision preserves draft and requires reload',async()=>{
+    for(const reply of [{ok:false,kind:'config_conflict',error:'stale fixture'},{ok:true,config:{telegram_token_set:true}}]){
+      const {model,context}=component('notifications.html','notificationsPage',{apiFetch:async()=>notifyReply('r1')});await model.init();model.cfg.telegram_token='draft';let writes=0;context.apiFetch=async()=>{writes++;return reply;};await model.save();await model.save();assert.equal(writes,1);assert(model.loadFailed);assert.equal(model.cfg.telegram_token,'draft');assert.equal(model.revision,'r1');
+    }
+  });
+  await check('notification tests remain independent, reject duplicates and hide results for edited credentials',async()=>{
+    const {model,context,events}=component('notifications.html','notificationsPage',{apiFetch:async()=>notifyReply('r1')});await model.init();events.length=0;
+    const pending=[];context.apiFetch=(url,opts)=>new Promise(resolve=>pending.push({body:JSON.parse(opts.body),resolve}));
+    const tg=model.testChan('telegram'),wh=model.testChan('webhook');await model.testChan('telegram');await model.save();await model.init();assert.equal(pending.length,2);
+    model.cfg.telegram_chat_id='456';pending[0].resolve({ok:true,result:{ok:true,status:200}});pending[1].resolve({ok:true,result:{ok:false,error:'fixture delivery refused'}});await Promise.all([tg,wh]);
+    assert.equal(model.resultFor('telegram'),null);assert.equal(model.resultFor('webhook').ok,false);assert.equal(events.length,1);assert.equal(events[0][1].type,'error');assert(!model.testingTg&&!model.testingWh);
+    context.apiFetch=async()=>{throw Error('network fixture');};await model.testChan('telegram');assert.equal(model.resultFor('telegram').ok,false);assert.equal(events.at(-1)[1].type,'error');
+    context.apiFetch=async()=>({ok:true});await model.testChan('webhook');assert.equal(model.resultFor('webhook').ok,false);
+  });
+  await check('notification destroyed during load/save/test never mutates returned UI state',async()=>{
+    for(const op of ['init','save','testChan']){
+      const {model,context,events}=component('notifications.html','notificationsPage',{apiFetch:async()=>notifyReply('r1')});await model.init();events.length=0;let finish;context.apiFetch=()=>new Promise(r=>finish=r);
+      const pending=model[op]('telegram');model.destroy();finish(op==='testChan'?{ok:true,result:{ok:true}}:notifyReply('r2'));await pending;
+      assert.equal(events.length,0);assert.equal(model.revision,'r1');assert.equal(model.resultTg,null);
+    }
+  });
+  function loginFixture(fetch) {
+    const els={};let handler;for(const id of ['loginForm','err','btn','btnText','btnSpin','username','password'])els[id]={value:'',style:{},disabled:false,classList:{add(){},remove(){}}};
+    els.loginForm.addEventListener=(event,fn)=>handler=fn;const context={document:{getElementById:id=>els[id]},window:{location:{href:'login'}},fetch};vm.createContext(context);
+    const html=fs.readFileSync(path.join(templates,'login.html'),'utf8');for(const m of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))vm.runInContext(m[1],context);
+    return {els,context,submit:()=>handler({preventDefault(){}})};
+  }
+  await check('login Enter/repeated submit sends once, preserves exact password and retries after failure',async()=>{
+    let finish,writes=0,sent;const f=loginFixture((url,opts)=>{writes++;sent=JSON.parse(opts.body);return new Promise(r=>finish=r);});f.els.username.value=' admin ';f.els.password.value='  exact#;pass  ';
+    const pending=f.submit();await f.submit();assert.equal(writes,1);assert.equal(sent.username,'admin');assert.equal(sent.password,'  exact#;pass  ');assert(f.els.btn.disabled);
+    finish({ok:false,json:async()=>({ok:false,error:'fixture refused'})});await pending;assert.equal(f.els.err.textContent,'fixture refused');assert(!f.els.btn.disabled);
+    const retry=f.submit();finish({ok:true,json:async()=>({ok:true})});await retry;await f.submit();assert.equal(writes,2);assert.equal(f.context.window.location.href,'.');assert(f.els.btn.disabled);
+  });
+  await check('login malformed responses and network failures never redirect or leave busy',async()=>{
+    for(const response of [null,{}, {ok:'true'}]){
+      const f=loginFixture(async()=>({ok:true,json:async()=>response}));f.els.username.value='a';f.els.password.value='b';await f.submit();assert.equal(f.els.err.textContent,'Sign in failed');assert(!f.els.btn.disabled);assert.equal(f.context.window.location.href,'login');
+    }
+    for(const broken of ['json','network']){
+      const f=loginFixture(async()=>{if(broken==='network')throw Error('fixture offline');return{ok:true,json:async()=>{throw Error('fixture invalid JSON');}};});f.els.username.value='a';f.els.password.value='b';await f.submit();assert(!f.els.btn.disabled);assert.equal(f.context.window.location.href,'login');
+    }
+    let writes=0;const f=loginFixture(async()=>{writes++;});await f.submit();assert.equal(writes,0);assert.equal(f.els.err.textContent,'Enter a username and password');
+  });
+
   console.log(`Panel editor regressions: ${passed} passed`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

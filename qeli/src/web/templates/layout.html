@@ -311,6 +311,10 @@ function app() {
     installKind: 'other',
     _updChecked: false,
 
+    // CSP Alpine resolves helpers through the component scope, not window globals.
+    qeliT(text) { return window.qeliT(text); },
+    qeliTf(text, ...values) { return window.qeliTf(text, ...values); },
+
     get pageTitle() {
       return { dashboard: 'Dashboard', transport: 'Transport health', quickstart: 'Quick start', users: 'Users', config: 'Configuration', client: 'Client connections', logs: 'Logs', blocked: 'Blocked IPs', notifications: 'Notifications' }[this.page] || 'Qeli';
     },
@@ -624,9 +628,10 @@ async function fullRestartServer(maxWaitMs = 40000) {
   const syncChecked = (el) => el.setAttribute('aria-checked', isOn(el) ? 'true' : 'false');
 
   function upgrade(root) {
-    (root instanceof Element ? root : document)
-      .querySelectorAll('.toggle-wrap:not([data-a11y])')
-      .forEach((el) => {
+    const scope = root instanceof Element ? root : document;
+    const switches = Array.from(scope.querySelectorAll('.toggle-wrap:not([data-a11y])'));
+    if (root instanceof Element && root.matches('.toggle-wrap:not([data-a11y])')) switches.unshift(root);
+    switches.forEach((el) => {
         el.setAttribute('data-a11y', '1');
         el.setAttribute('role', 'switch');
         if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
@@ -644,13 +649,18 @@ async function fullRestartServer(maxWaitMs = 40000) {
 
   const start = () => {
     upgrade(document);
-    // Only new nodes need upgrading; aria-checked is re-synced by the click handler
-    // above (watching every class mutation would fire constantly under Alpine).
+    // Initial API loads and programmatic edits also repaint toggles. Watch only
+    // class mutations on their .toggle child; aria updates cannot retrigger this observer.
     new MutationObserver((muts) => {
       for (const m of muts) {
-        m.addedNodes.forEach((n) => { if (n.nodeType === 1) upgrade(n); });
+        if (m.type === 'attributes' && m.target.matches('.toggle')) {
+          const el = m.target.closest('.toggle-wrap');
+          if (el) syncChecked(el);
+        } else if (m.type === 'childList') {
+          m.addedNodes.forEach((n) => { if (n.nodeType === 1) upgrade(n); });
+        }
       }
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();

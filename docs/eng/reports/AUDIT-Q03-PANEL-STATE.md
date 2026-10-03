@@ -165,3 +165,71 @@ Q03 remains IN_PROGRESS: notifications/quickstart/login and additional config
 keyboard/secret/revision scenarios still need completion.
 
 Q03-F005/F006/F007 fresh release SHA `dadbee830fb8e48279dbd83173dbc8db34b7e5bd4cc77df447a9c53885dc9b21`: 18 isolated cases / 327 checks, aggregate leak, 100 TCP + 100 QUIC / 33 checks and bounded shutdown/recovery PASS. Eight pre-fix UI reproductions are preserved separately. Four additional Edge scenarios passed against merged WIP; live-users changes remain uncommitted. Complete snapshots, .11 service PID/start time and its working binary were preserved. Certification 20/20 is refreshed for this artifact; physical rows and older benchmark records are not requalified.
+
+## Q03-F008 — Quick Start: confirmed inputs and saved result
+
+IP mode was reread after GET and confirmation, so confirmed ipv4 could become
+ipv6 in POST. Invalid config.profiles threw outside finally and left busy set.
+A restart rejection lost the result of an already saved profile. Copy silently
+did nothing without Clipboard API.
+
+IP mode is captured before the first await; the selector is disabled while busy.
+One finally covers the whole flow. Configuration, revision and returned profile
+are checked before restarting. Collision checks retain existing manual binds
+and distinguish TCP/UDP. Cancel, stale revision and destroy stop later actions.
+Saved profiles remain visible with restart unconfirmed on a rejected or timed-out
+restart. Copy reports failure. Result actions wrap on mobile; visual inspection
+found Close outside the left edge, and every action's bounds are now checked.
+Unused idx/obfMode/reality/padding/heartbeat/shaping/multipath/fronting/quic/AWG
+metadata was removed from all ten cards. Rust builds profiles; JS retains only
+display and port-collision metadata.
+
+## Q03-F009 — Notifications: revision, draft and test ownership
+
+Fields were editable before GET. init overlapped reads, missing revisions allowed
+write attempts, load errors lacked inline retry, and old successful delivery tests
+were displayed against already edited chat IDs or URLs.
+
+Fieldsets disable editing until a successful load and on failure; disabled channels
+also block keyboard editing. Toggles respect availability. init is serialized
+with reads/writes/tests and applies a successful snapshot atomically. Pending
+load edits survive; retry retains an unsaved write-only token. Writes require a
+revision; stale revisions and incomplete successful save replies require reload
+and preserve the draft. A newer token typed during PUT remains after completion.
+Channel tests remain independent with duplicate suppression; results are shown
+only for submitted credentials. Nested delivery failure remains an error.
+Destroy suppresses late state updates and toasts. No external messages were sent.
+
+## Q03-F010 — Login: duplicate submission and malformed responses
+
+The submit handler lacked a pending guard and could send twice. JSON null was
+reported as a network error. One request now stays pending; failures/malformed
+replies allow retry, while successful login remains disabled until navigation.
+Username trimming is retained; passwords including spaces, # and ; are sent
+exactly. The error has role=alert. These frontend fixtures do not requalify
+backend auth, rate limits or CSRF.
+
+## Q03-F011 — Shared layout: CSP translations and switch state
+
+Edge reported Undefined variable: qeliT/qeliTf in the Quick Start result.
+CSP Alpine resolves helpers through component scope, so window globals were
+insufficient. The shared app exposes translators to its descendants. The observer
+now syncs aria-checked when a .toggle class changes programmatically, including
+GET initialization. A .toggle-wrap added as a root node also receives its role,
+tabindex and keyboard handler. Attribute observation is limited to class;
+aria-checked updates cannot retrigger it.
+
+## Action-batch checks
+
+Eight defects reproduced on original 92509216. 90 JS groups passed (19 new over
+71); 12 Edge scenarios passed: three pages × RU/EN × desktop/mobile. Checked
+error/retry, Enter/Space/Escape, exact passwords, pending edits, independent
+channels, confirmed IP mode, saved/unconfirmed results and mobile actions.
+Actual templates/assets run with loopback API fixtures; no real sends, login or
+restart occurred. The first browser run found the CSP defect; the first new JS
+fixture was corrected to provide window.location.hostname, present in a browser.
+
+Fresh build and common checks are recorded in
+[evidence](../../../release/certification/evidence/q03-actions-20261003.json).
+Q03 remains IN_PROGRESS: config draft/revision/identity races and shared
+focus/dirty-navigation checks require the next pass.

@@ -1,0 +1,145 @@
+{
+  "status": "UI_PASS_RELEASE_CHECKS_PENDING",
+  "recorded_at": "2026-10-03T02:33:51.346108+00:00",
+  "base_commit": "92509216ed484336dc407c5ae91a23b6ca8635cb",
+  "scope": [
+    "Quick Start confirmed intent / malformed reads / restart result / clipboard / mobile actions",
+    "Notifications loaded revision / serialized operations / late test ownership / write-only token",
+    "Login single pending submit / exact password / malformed replies",
+    "Shared CSP translation scope / initial and programmatic switch ARIA"
+  ],
+  "baseline": {
+    "status": "PASS_DEFECT_REPRODUCTION",
+    "source_commit": "92509216ed484336dc407c5ae91a23b6ca8635cb",
+    "results": [
+      {
+        "name": "IP mode changes after confirmation opens",
+        "reproduced": true
+      },
+      {
+        "name": "Malformed config leaves launch busy",
+        "reproduced": true
+      },
+      {
+        "name": "Restart rejection loses saved profile result",
+        "reproduced": true
+      },
+      {
+        "name": "Missing clipboard produces no feedback",
+        "reproduced": true
+      },
+      {
+        "name": "Notifications accept missing revision and attempt a write",
+        "reproduced": true
+      },
+      {
+        "name": "Notification init duplicates pending reads",
+        "reproduced": true
+      },
+      {
+        "name": "Old notification test declares edited destination successful",
+        "reproduced": true
+      },
+      {
+        "name": "Repeated login submit sends twice",
+        "reproduced": true
+      }
+    ]
+  },
+  "node_groups_passed": 90,
+  "browser": {
+    "status": "PASS",
+    "browser": "154.0.4258.48",
+    "execution": "Actual repository HTML/assets with loopback APIs; no external messages or real restart/login",
+    "scenarios": [
+      {
+        "page": "notifications",
+        "language": "en",
+        "mobile": false,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "quickstart",
+        "language": "en",
+        "mobile": false,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "login",
+        "language": "en",
+        "mobile": false,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "notifications",
+        "language": "en",
+        "mobile": true,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "quickstart",
+        "language": "en",
+        "mobile": true,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "login",
+        "language": "en",
+        "mobile": true,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "notifications",
+        "language": "ru",
+        "mobile": false,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "quickstart",
+        "language": "ru",
+        "mobile": false,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "login",
+        "language": "ru",
+        "mobile": false,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "notifications",
+        "language": "ru",
+        "mobile": true,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "quickstart",
+        "language": "ru",
+        "mobile": true,
+        "status": "PASS",
+        "page_errors": []
+      },
+      {
+        "page": "login",
+        "language": "ru",
+        "mobile": true,
+        "status": "PASS",
+        "page_errors": []
+      }
+    ]
+  },
+  "rust_native_reuse": "No changes in Rust/manifests/native recipes; previous 2257 unit tests and native A/B retained, not re-executed. UI tests execute actual embedded scripts and real Edge. Backend login/rate/CSRF evidence is not represented by browser fixture tests.",
+  "debt_scope": "Q03 still IN_PROGRESS: config draft/revision/identity races and shared focus/dirty navigation remain. Physical excluded stands unchanged.",
+  "raw_directory": "audit-debt-20260924/q03-actions-20261003",
+  "previous_evidence": "release/certification/evidence/q03-remaining-20261003.json"
+}
