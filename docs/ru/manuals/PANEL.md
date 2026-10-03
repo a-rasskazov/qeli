@@ -954,3 +954,20 @@ session generation и очищает cookie. Ошибка сохранения �
 При исправных persistent session key/generation результат отзыва переживает restart.
 Авторизованная страница входа перенаправляет прямо на канонический корень панели.
 TOTP для входа в web-панель не реализован; VPN TOTP — отдельный механизм.
+
+### Ошибка сохранения и подтверждение restart
+
+<!-- normative-sync: panel-transaction-outcomes-v1 -->
+
+Form/INI/Quick Start/history требуют свежий `expected_revision`. Сохранение сначала
+публикует приватный rollback snapshot, затем заменяет INI; оно само не перезапускает
+worker. После ошибки `published ... persistence is uncertain` файл мог уже измениться:
+прочитайте новую ревизию и проверьте INI перед повтором; не считайте ошибку откатом.
+Новый пароль и allowlist применяются live, смена пароля отзывает прежние cookie.
+Bind/port/base_path/TLS требуют полного рестарта; до него работают startup значения.
+
+`worker restarting` подтверждает отправку команды, готовность проверяйте через status.
+Full restart также отвечает до замены supervisor. Если команда отклонена или исход
+неопределён, status показывает предупреждение; проверьте unit/journal перед повтором.
+После корректного полного рестарта новые listener settings действуют, сессия
+сохраняется при исправном persistent session key.

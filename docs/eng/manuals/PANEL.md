@@ -946,3 +946,19 @@ generation and clears the browser cookie. Persistence failure returns an explici
 healthy persistent key/generation files, revocation survives restart. An authenticated
 login page redirects directly to the canonical panel root. Web-panel TOTP is not
 implemented; VPN TOTP is a separate mechanism.
+
+### Save failures and restart confirmation
+
+<!-- normative-sync: panel-transaction-outcomes-v1 -->
+
+Form/INI/Quick Start/history require a fresh `expected_revision`. Save publishes a
+private rollback snapshot before replacing INI; it does not restart the worker.
+An error containing `published ... persistence is uncertain` may follow publication:
+read the new revision and inspect INI before retrying; an error does not prove rollback.
+New password/allowlist settings apply live; password changes revoke previous cookies.
+Bind/port/base_path/TLS require full restart; startup values remain active until then.
+
+`worker restarting` confirms command dispatch; use status to check readiness. Full
+restart also responds before replacing the supervisor. Rejection/uncertainty appears
+in status warnings; inspect unit/journal before retrying. A successful full restart
+applies new listener settings and retains sessions with healthy persistent keys.

@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v9 -->
+<!-- normative-sync: full-system-audit-v10 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -144,7 +144,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 02 | Client parsers and qeli:// | H04, H06, H08–H10 | PASS |
 | 03 | Panel UI and state | H02, H09–H11 | PASS |
 | 04 | Web auth and API protection | H01–H03, H08–H09 | PASS |
-| 05 | Config transactions and restart | H08–H10 | IN_PROGRESS |
+| 05 | Config transactions and restart | H08–H10 | PASS |
 | 06 | Users, groups and provisioning | H01, H04, H09–H10 | TODO |
 | 07 | Backup, restore and history | H03–H04, H08, H10 | TODO |
 | 08 | Cryptography, identity and keys | H01, H04, H08 | TODO |
@@ -306,20 +306,15 @@ Common validation/preflight for Form/INI/API/history/Quick Start/worker/full res
 
 **Existing harness/fixtures:** `scripts/test_web_reload.py`, `scripts/test_panel_editors.cjs`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: PASS.**
 
-**Preflight, 23 September 2026:** [Q05-F001](../reports/AUDIT-Q05-PREFLIGHT.md):
-four host-state probes share the bounded runner (15 seconds, 16 MiB per output stream).
-IPv4 fail-open and independent partial IPv6 observations are preserved. The host suite
-includes 4 new tests and 20 existing preflight tests; 1097 Rust tests and 21 production-adapter
-scenarios PASS. Linux HTTP/restart/restore, transaction-wide deadlines and synchronous
-waiting in async handlers remain open.
+**3 October completion:** 6 batches / 352 actual HTTP/systemd checks PASS: Form/INI/history, 8 concurrent writers, all 10 Quick Start modes, live password/allowlist, worker replacement, detached restart failures, ENOSPC/read-only/EACCES, SIGKILL before/after rename and fsync uncertainty; actual full restart of an owned transient unit. Q05-F009 replaces the live-service test with an isolated launcher. Unchanged Linux 2261 / Clippy / native / matrix / soak explicitly reused; all 322 compilation inputs match. Power loss and uncoordinated external root writes are not certified; backup/restore remains Q07. [Report](../reports/AUDIT-Q05-HTTP-TRANSACTIONS.md), [evidence](../../../release/certification/evidence/q05-transactions-20261003.json).
 
 ### 06. Users, groups and provisioning
 

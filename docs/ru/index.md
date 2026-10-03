@@ -351,3 +351,5 @@
 - [Q25-F204: ресурсный churn Linux worker](reports/AUDIT-Q25-WORKER-RESOURCE-CHURN.md)
 
 - [Q04: авторизация панели и границы API](reports/AUDIT-Q04-WEB-AUTH.md)
+
+- [Q05: конфигурационные транзакции и restart](reports/AUDIT-Q05-HTTP-TRANSACTIONS.md)

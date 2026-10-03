@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v9 -->
+<!-- normative-sync: full-system-audit-v10 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -149,7 +149,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 02 | Клиентские парсеры и qeli:// | H04, H06, H08–H10 | PASS |
 | 03 | Панель: UI и состояние | H02, H09–H11 | PASS |
 | 04 | Web auth и защита API | H01–H03, H08–H09 | PASS |
-| 05 | Транзакции конфигурации и restart | H08–H10 | IN_PROGRESS |
+| 05 | Транзакции конфигурации и restart | H08–H10 | PASS |
 | 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | TODO |
 | 07 | Backup, restore и history | H03–H04, H08, H10 | TODO |
 | 08 | Криптография, identity и ключи | H01, H04, H08 | TODO |
@@ -311,20 +311,15 @@ PASS относится к конфигурационному контракту
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_web_reload.py`, `scripts/test_panel_editors.cjs`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: PASS.**
 
-**Preflight, 23 сентября 2026:** [Q05-F001](../reports/AUDIT-Q05-PREFLIGHT.md):
-четыре host-state probe используют общий runner (15 секунд, по 16 МиБ stdout/stderr).
-Fail-open IPv4 и независимый частичный IPv6 snapshot сохранены. 4 новых теста и
-20 существующих preflight-тестов включены в host-прогон; 1097 Rust tests и 21
-production-adapter сценарий PASS. Linux HTTP/restart/restore, общий срок транзакции
-и синхронное ожидание в async handlers остаются открытыми.
+**3 октября, завершение:** 6 пакетов / 352 реальных HTTP/systemd checks PASS: Form/INI/history, 8 concurrent writers, все 10 Quick Start modes, live password/allowlist, worker replacement, detached restart failures, ENOSPC/read-only/EACCES, SIGKILL до/после rename и fsync uncertainty; настоящий full restart собственного transient unit. Q05-F009: старый live-service тест заменён изолированным launcher. Unchanged Linux 2261 / Clippy / native / matrix / soak явно reused; все 322 compilation inputs совпадают. Power loss и несогласованные внешние root writes не сертифицированы; backup/restore остаётся Q07. [Report](../reports/AUDIT-Q05-HTTP-TRANSACTIONS.md), [evidence](../../../release/certification/evidence/q05-transactions-20261003.json).
 
 ### 06. Пользователи, группы и выдача доступа
 
