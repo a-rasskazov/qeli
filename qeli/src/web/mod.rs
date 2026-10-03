@@ -140,7 +140,12 @@ async fn base_path_rewrite(
             if let Ok(s) = loc.to_str() {
                 let already = s == prefix || s.starts_with(&format!("{prefix}/"));
                 if s.starts_with('/') && !already {
-                    if let Ok(v) = HeaderValue::from_str(&format!("{prefix}{s}")) {
+                    let rooted = if s == "/" {
+                        prefix.clone()
+                    } else {
+                        format!("{prefix}{s}")
+                    };
+                    if let Ok(v) = HeaderValue::from_str(&rooted) {
                         parts.headers.insert(header::LOCATION, v);
                     }
                 }

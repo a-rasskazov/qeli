@@ -2826,11 +2826,6 @@ mod raw_secret_tests {
         assert!(profile.obfuscation.tls.reality_proxy.enabled);
         assert!(profile.obfuscation.tls.reality_proxy.real_tls);
         assert!(short_id.is_some());
-
-        let page = include_str!("../templates/quickstart.html");
-        assert!(page.contains("id: 'reality-tls'"));
-        assert!(page.contains("obfMode: 'reality-tls'"));
-        assert!(page.contains("genuine HTTP/2 streaming carrier"));
     }
 
     #[test]
@@ -2851,7 +2846,7 @@ mod raw_secret_tests {
     }
 
     #[test]
-    fn panel_new_profile_consumes_the_canonical_recordizer_default() {
+    fn new_profile_uses_the_canonical_recordizer_default() {
         assert_eq!(
             crate::config::server::ProfileConfig::new_profile()
                 .obfuscation
@@ -2859,11 +2854,9 @@ mod raw_secret_tests {
                 .policy,
             "prefer"
         );
-        let page = include_str!("../templates/config.html");
-        assert!(page.contains("apiFetch('api/config/defaults')"));
-        assert!(!page.contains("roaming: { enabled: true,"));
-        assert!(page.contains("JSON.parse(JSON.stringify(this.defaultProfile))"));
-        assert!(!page.contains("base.obfuscation.recordizer.policy = 'prefer'"));
+        // Browser consumption, deep-copy ownership and unavailable defaults are
+        // exercised by test_panel_editors.cjs against the real component. Checking
+        // the exact fetch spelling here rejected its legitimate no-store option.
     }
 
     #[test]

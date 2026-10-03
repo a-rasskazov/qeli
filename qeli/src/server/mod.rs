@@ -731,9 +731,9 @@ pub struct ProfileRuntime {
 /// Verification is CPU- and memory-bound, so permitting more than the core count buys no
 /// throughput; queueing the remainder costs a legitimate client nothing noticeable and
 /// denies the attacker the memory blow-up. Note this bounds RESOURCE use, not the number
-/// of guesses: a burst can still get up to `permits` verifications in flight before the
-/// first failures land in the tracker, so brute-force protection overshoots by at most
-/// that much.
+/// of guesses. Web auth rechecks lockout at job admission and records the result
+/// inside the blocking job before returning its permit (including cancelled waiters).
+/// Only already admitted web jobs may finish after a source becomes locked.
 pub fn argon2_gate() -> &'static tokio::sync::Semaphore {
     static GATE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
     GATE.get_or_init(|| {
