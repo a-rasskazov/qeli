@@ -1,0 +1,1647 @@
+{
+  "status": "IN_PROGRESS_Q04_FIX_QUALIFICATION",
+  "executed_at": "2026-10-03T04:14:53.030408+00:00",
+  "baseline": {
+    "status": "PASS",
+    "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
+    "binary": "/var/tmp/qeli-d15-linux-build-20261003/release/qeli",
+    "source_commit": "78e73b180edc3b71f72073911cc0cf21b568b8e4",
+    "executed_at": "2026-10-03T03:54:25.046089+00:00",
+    "fixtures": {
+      "audit_web_auth_boundary.py": "b2a34eca6f025592653e3ef0ff321f4654b51228ce160eb02fea843cb5b60f4f",
+      "routes.json": "676511b4d3dddc7395d439222cb12f33d4367972aabe75d68343b30269390429",
+      "isolated.sh": "c44cb9ea31635fa82fff6fd8f33d5c1b47a18b89affce188dd128aefa4cdd7b5",
+      "case.sh": "508ace03c0d4af6b19b36c58a121125937a634c0c5d9597eaf7c5081258b4291"
+    },
+    "remote": "/var/tmp/qeli-q04-web-20261003-baseline-r4",
+    "build_reused_from": "q03-config-20261003: all 322 compilation input hashes unchanged",
+    "host_before": {
+      "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.11/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+      "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:574a/64 \nvpn0             UNKNOWN        fe80::168e:68ea:8cd6:caa/64",
+      "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.11 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.11 dev ens18 table local proto kernel scope host src 10.66.116.11 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.11 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+      "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::168e:68ea:8cd6:caa dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:574a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+      "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -p tcp -m tcp --tcp-flags SYN,RST SYN -m comment --comment \"qeli-nat:reality-tls\" -j TCPMSS --set-mss 1240\n-A FORWARD -i vpn0 -p tcp -m tcp --tcp-flags SYN,RST SYN -m comment --comment \"qeli-nat:reality-tls\" -j TCPMSS --set-mss 1240\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.9.0.0/24 -o ens18 -m comment --comment \"qeli-nat:reality-tls\" -j MASQUERADE\nCOMMIT",
+      "firewall6": "*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall4_legacy": "*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall6_legacy": "",
+      "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n\n\tchain POSTROUTING {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\tip saddr 10.9.0.0/24 oifname \"ens18\"  counter packets COUNTER bytes COUNTER masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t\tiifname \"vpn0\" oifname \"ens18\"  counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"ens18\" oifname \"vpn0\" ct state related,established  counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}\ntable ip mangle {\n\tchain FORWARD {\n\t\ttype filter hook forward priority mangle; policy accept;\n\t\toifname \"vpn0\" tcp flags & (syn | rst) == syn  counter packets COUNTER bytes COUNTER tcp option maxseg size set 1240\n\t\tiifname \"vpn0\" tcp flags & (syn | rst) == syn  counter packets COUNTER bytes COUNTER tcp option maxseg size set 1240\n\t}\n}\n# Warning: table ip nat is managed by iptables-nft, do not touch!\n# Warning: table ip filter is managed by iptables-nft, do not touch!\n# Warning: table ip mangle is managed by iptables-nft, do not touch!",
+      "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=845,fd=11))",
+      "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+      "named_namespaces": ""
+    },
+    "service_before": "MainPID=777\nExecMainStartTimestampMonotonic=3583132\nActiveState=active",
+    "working_artifact_before": "a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0",
+    "environment": "Linux 6.12.105+deb13-amd64 x86_64 GNU/Linux",
+    "command": "timeout --signal=TERM --kill-after=10 900 unshare --net --mount --pid --fork --kill-child=KILL --mount-proc bash /var/tmp/qeli-q04-web-20261003-baseline-r4/isolated.sh /var/tmp/qeli-q04-web-20261003-baseline-r4/isolated 'net:[4026531840]' 'mnt:[4026531841]' 'pid:[4026531836]' /var/tmp/qeli-q04-web-20261003-baseline-r4/case.sh",
+    "exit_code": 0,
+    "case_result": {
+      "status": "PASS",
+      "artifact_sha256": "f5c4bd0a36ba23dd2ba27ec638b5960b19414281f10fec59122f2f009eced199",
+      "checks": [
+        {
+          "name": "first forged cookie denied; lazy signer initialization only",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "anonymous denies GET /api/status",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/clients",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/system",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/metrics",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/transport/health",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/usage",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/usage/fixture/limit",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/usage/fixture/reset",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/clients/fixture/kick",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/clients/fixture/bandwidth",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/blocked",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/blocked/127.0.0.9/unblock",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/blocked/clear",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/blocked/settings",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/blocked/settings",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/config",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies PUT /api/config",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/config/defaults",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/config/raw",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies PUT /api/config/raw",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/config/history",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/config/history/fixture/restore",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/users",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/users",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies PUT /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies DELETE /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/users/fixture/enable",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/users/fixture/disable",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/users/fixture/bandwidth",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/groups",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies PUT /api/groups/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies DELETE /api/groups/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/logout",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/notify",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies PUT /api/notify",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/notify/test",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/server/restart",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/server/full-restart",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/backup",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/restore",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/identity",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/identity/fixture/rotate",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/hash-password",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/logs",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/share",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/client/profiles",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/client/profiles",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/client/import",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies GET /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies DELETE /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/client/profiles/fixture/connect",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous denies POST /api/client/profiles/fixture/disconnect",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "anonymous leaves config/identity/session files and supervisor unchanged",
+          "status": "PASS",
+          "detail": {
+            "before_files": {
+              "usage.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "users.conf": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "server.conf": "d2375da5262124904cf8bf4b499969a8a93893692ebacd1e01b9e57b67de2d9b",
+              "identity/fixture.key": "0a59cb5930e26a25dadd6dea7132d8ada19ddf24ca97b1df000a444fa26da33c"
+            },
+            "after_files": {
+              "usage.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "users.conf": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "server.conf": "d2375da5262124904cf8bf4b499969a8a93893692ebacd1e01b9e57b67de2d9b",
+              "identity/fixture.key": "0a59cb5930e26a25dadd6dea7132d8ada19ddf24ca97b1df000a444fa26da33c"
+            },
+            "before_session": {
+              "session.key": "d04a644eba9d918d0b2c966f7bb48056e2c786953259c7208f920c01152042bc"
+            },
+            "after_session": {
+              "session.key": "d04a644eba9d918d0b2c966f7bb48056e2c786953259c7208f920c01152042bc"
+            }
+          }
+        },
+        {
+          "name": "forged cookie denies GET /api/status",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/clients",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/system",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/metrics",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/transport/health",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/usage",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/usage/fixture/limit",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/usage/fixture/reset",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/clients/fixture/kick",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/clients/fixture/bandwidth",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/blocked",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/blocked/127.0.0.9/unblock",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/blocked/clear",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/blocked/settings",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/blocked/settings",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/config",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies PUT /api/config",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/config/defaults",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/config/raw",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies PUT /api/config/raw",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/config/history",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/config/history/fixture/restore",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/users",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/users",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies PUT /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies DELETE /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/users/fixture/enable",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/users/fixture/disable",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/users/fixture/bandwidth",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/groups",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies PUT /api/groups/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies DELETE /api/groups/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/logout",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/notify",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies PUT /api/notify",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/notify/test",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/server/restart",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/server/full-restart",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/backup",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/restore",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/identity",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/identity/fixture/rotate",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/hash-password",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/logs",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/share",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/client/profiles",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/client/profiles",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/client/import",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies GET /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies DELETE /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/client/profiles/fixture/connect",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie denies POST /api/client/profiles/fixture/disconnect",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "forged cookie leaves config/identity/session files and supervisor unchanged",
+          "status": "PASS",
+          "detail": {
+            "before_files": {
+              "usage.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "users.conf": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "server.conf": "d2375da5262124904cf8bf4b499969a8a93893692ebacd1e01b9e57b67de2d9b",
+              "identity/fixture.key": "0a59cb5930e26a25dadd6dea7132d8ada19ddf24ca97b1df000a444fa26da33c"
+            },
+            "after_files": {
+              "usage.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "users.conf": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "server.conf": "d2375da5262124904cf8bf4b499969a8a93893692ebacd1e01b9e57b67de2d9b",
+              "identity/fixture.key": "0a59cb5930e26a25dadd6dea7132d8ada19ddf24ca97b1df000a444fa26da33c"
+            },
+            "before_session": {
+              "session.key": "d04a644eba9d918d0b2c966f7bb48056e2c786953259c7208f920c01152042bc"
+            },
+            "after_session": {
+              "session.key": "d04a644eba9d918d0b2c966f7bb48056e2c786953259c7208f920c01152042bc"
+            }
+          }
+        },
+        {
+          "name": "malformed Basic denies GET /api/status",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/clients",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/system",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/metrics",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/transport/health",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/usage",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/usage/fixture/limit",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/usage/fixture/reset",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/clients/fixture/kick",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/clients/fixture/bandwidth",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/blocked",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/blocked/127.0.0.9/unblock",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/blocked/clear",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/blocked/settings",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/blocked/settings",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/config",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies PUT /api/config",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/config/defaults",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/config/raw",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies PUT /api/config/raw",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/config/history",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/config/history/fixture/restore",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/users",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/users",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies PUT /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies DELETE /api/users/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/users/fixture/enable",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/users/fixture/disable",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/users/fixture/bandwidth",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/groups",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies PUT /api/groups/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies DELETE /api/groups/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/logout",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/notify",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies PUT /api/notify",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/notify/test",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/server/restart",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/server/full-restart",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/backup",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/restore",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/identity",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/identity/fixture/rotate",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/hash-password",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/logs",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/share",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/client/profiles",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/client/profiles",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/client/import",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies GET /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies DELETE /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/client/profiles/fixture/connect",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic denies POST /api/client/profiles/fixture/disconnect",
+          "status": "PASS",
+          "detail": 401
+        },
+        {
+          "name": "malformed Basic leaves config/identity/session files and supervisor unchanged",
+          "status": "PASS",
+          "detail": {
+            "before_files": {
+              "usage.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "users.conf": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "server.conf": "d2375da5262124904cf8bf4b499969a8a93893692ebacd1e01b9e57b67de2d9b",
+              "identity/fixture.key": "0a59cb5930e26a25dadd6dea7132d8ada19ddf24ca97b1df000a444fa26da33c"
+            },
+            "after_files": {
+              "usage.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "users.conf": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "server.conf": "d2375da5262124904cf8bf4b499969a8a93893692ebacd1e01b9e57b67de2d9b",
+              "identity/fixture.key": "0a59cb5930e26a25dadd6dea7132d8ada19ddf24ca97b1df000a444fa26da33c"
+            },
+            "before_session": {
+              "session.key": "d04a644eba9d918d0b2c966f7bb48056e2c786953259c7208f920c01152042bc"
+            },
+            "after_session": {
+              "session.key": "d04a644eba9d918d0b2c966f7bb48056e2c786953259c7208f920c01152042bc"
+            }
+          }
+        },
+        {
+          "name": "anonymous probes do not lock out admin",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "cookie HttpOnly/Strict/root path/TTL",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "token expiry matches configured TTL",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic ",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML ",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /users",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /users",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /config",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /config",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /client",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /client",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /transport",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /transport",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /logs",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /logs",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /blocked",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /blocked",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /notifications",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /notifications",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "HTML ignores Basic /quickstart",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/login"
+          }
+        },
+        {
+          "name": "cookie opens HTML /quickstart",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "authenticated login redirects within panel mount",
+          "status": "PASS",
+          "detail": {
+            "status": 303,
+            "location": "/audit/"
+          }
+        },
+        {
+          "name": "trailing slash redirects canonically",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "unprefixed panel is not mounted",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSP fresh nonce stamps every inline script",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "security headers and no-store protect responses",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "assets public and cache policy separate",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/usage/fixture/limit",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/usage/fixture/reset",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/clients/fixture/kick",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/clients/fixture/bandwidth",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/blocked/127.0.0.9/unblock",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/blocked/clear",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/blocked/settings",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects PUT /api/config",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/config/quickstart/fake-tls",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects PUT /api/config/raw",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/config/history/fixture/restore",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/users",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects PUT /api/users/fixture",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects DELETE /api/users/fixture",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/users/fixture/enable",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/users/fixture/disable",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/users/fixture/bandwidth",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects PUT /api/groups/fixture",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects DELETE /api/groups/fixture",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/login",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/logout",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects PUT /api/notify",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/notify/test",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/server/restart",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/server/full-restart",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/restore",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/identity/fixture/rotate",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/hash-password",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/share",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/client/profiles",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/client/import",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects DELETE /api/client/profiles/fixture",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/client/profiles/fixture/connect",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects POST /api/client/profiles/fixture/disconnect",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejection leaves persistent config and identity unchanged",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects origin null",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects origin https://panel.fixture.invalid.evil",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects origin https://extra.fixture.invalid:9444",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects origin https://evil@panel.fixture.invalid",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "CSRF rejects origin http://localhost:3000",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowed origin http://127.0.0.1:24880",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowed origin https://panel.fixture.invalid",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowed origin https://extra.fixture.invalid:9443",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowed origin http://ssh.fixture.invalid:19000",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "Referer accepted when Origin absent",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "Origin takes precedence over good Referer",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "cookie CLI request without Origin supported",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "Basic API succeeds",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "Basic CLI mutator without Origin supported",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "Basic also subject to CSRF",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "oversized login rejected before authentication",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "hash empty/oversize/invalid fields rejected",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "oversized authorized API body bounded",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "signed invalid/expired payload rejected 1790999673",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "signed invalid/expired payload rejected bad",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "signed invalid/expired payload rejected -1",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "signed invalid/expired payload rejected 99999999999999999999999",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "trusted HTTPS forwarding sets Secure",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "untrusted HTTPS forwarding ignored",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "forwarded prefix trust 127.0.0.1 /front/",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "forwarded prefix trust 127.0.0.2 /audit/",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "forwarded prefix trust 127.0.0.1 /audit/",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "count failure at real proxy-chain client 0",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "count failure at real proxy-chain client 1",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "count failure at real proxy-chain client 2",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "real client locked via login and Basic",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "another real client not globally locked",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "expired lockout recovers correct credentials",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "parallel login batch stays responsive and resource bounded",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "persisted cookie survives private supervisor restart",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "logout durable revocation and browser clear",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "revoked cookie remains rejected after restart",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "logout persistence failure is explicit",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "failed revocation does not falsely promise old-token invalidation",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "logout retry succeeds after repair",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "corrupt generation fails closed on restart",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "corrupt generation preserved for operator repair",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowlist rejects actual untrusted chain /login",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowlisted chain reaches /login",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "untrusted peer cannot forge allowlist /login",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowlist rejects actual untrusted chain /assets/app.css",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowlisted chain reaches /assets/app.css",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "untrusted peer cannot forge allowlist /assets/app.css",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowlist rejects actual untrusted chain /api/status",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "allowlisted chain reaches /api/status",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "untrusted peer cannot forge allowlist /api/status",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "explicit passwordless API opens",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "passwordless mutator retains CSRF",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "damaged persistent key rejects old cookie and is not overwritten",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "key fallback permits explicit new login",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "native TLS emits Secure cookie and HSTS",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "TLS cookie authenticates private API",
+          "status": "PASS",
+          "detail": null
+        },
+        {
+          "name": "private server network cleanup restored",
+          "status": "PASS",
+          "detail": null
+        }
+      ],
+      "observations": [
+        {
+          "name": "authenticated login redirect",
+          "status_code": 303,
+          "location": "/audit/"
+        },
+        {
+          "name": "Basic scheme basic",
+          "status_code": 401
+        },
+        {
+          "name": "Basic scheme bAsIc",
+          "status_code": 401
+        },
+        {
+          "name": "24 queued login attempts from one IP",
+          "codes": [
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401,
+            401
+          ],
+          "unauthorized": 24,
+          "rate_limited": 0,
+          "supervisor_peak_rss_kib": 107420,
+          "argon2_capacity": 2
+        }
+      ],
+      "check_count": 289
+    },
+    "host_after": {
+      "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.11/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+      "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:574a/64 \nvpn0             UNKNOWN        fe80::168e:68ea:8cd6:caa/64",
+      "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.11 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.11 dev ens18 table local proto kernel scope host src 10.66.116.11 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.11 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+      "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::168e:68ea:8cd6:caa dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:574a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+      "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -p tcp -m tcp --tcp-flags SYN,RST SYN -m comment --comment \"qeli-nat:reality-tls\" -j TCPMSS --set-mss 1240\n-A FORWARD -i vpn0 -p tcp -m tcp --tcp-flags SYN,RST SYN -m comment --comment \"qeli-nat:reality-tls\" -j TCPMSS --set-mss 1240\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.9.0.0/24 -o ens18 -m comment --comment \"qeli-nat:reality-tls\" -j MASQUERADE\nCOMMIT",
+      "firewall6": "*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall4_legacy": "*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall6_legacy": "",
+      "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n\n\tchain POSTROUTING {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\tip saddr 10.9.0.0/24 oifname \"ens18\"  counter packets COUNTER bytes COUNTER masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t\tiifname \"vpn0\" oifname \"ens18\"  counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"ens18\" oifname \"vpn0\" ct state related,established  counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}\ntable ip mangle {\n\tchain FORWARD {\n\t\ttype filter hook forward priority mangle; policy accept;\n\t\toifname \"vpn0\" tcp flags & (syn | rst) == syn  counter packets COUNTER bytes COUNTER tcp option maxseg size set 1240\n\t\tiifname \"vpn0\" tcp flags & (syn | rst) == syn  counter packets COUNTER bytes COUNTER tcp option maxseg size set 1240\n\t}\n}\n# Warning: table ip nat is managed by iptables-nft, do not touch!\n# Warning: table ip filter is managed by iptables-nft, do not touch!\n# Warning: table ip mangle is managed by iptables-nft, do not touch!",
+      "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=845,fd=11))",
+      "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+      "named_namespaces": ""
+    },
+    "service_after": "MainPID=777\nExecMainStartTimestampMonotonic=3583132\nActiveState=active",
+    "working_artifact_after": "a526c03bf0bae927828e91f11ac5d751c3a82e560a7f12ada3a6ab6b410cedb0",
+    "host_restored": true,
+    "finished_at": "2026-10-03T03:54:46.174526+00:00"
+  },
+  "scope": "web auth boundaries only; positive persistence/control mutations remain Q05/Q07",
+  "raw_root": "C:\\Users\\litvi\\OneDrive\\Documents\\qeli\\audit-debt-20260924\\q04-web-20261003",
+  "fresh_js_groups": 116,
+  "fresh_js_log_sha256": "c41f79fa19aff846d4e53f19a3ab87f429f57d905415216f2b347b78652f8bc3"
+}

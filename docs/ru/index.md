@@ -349,3 +349,5 @@
 - [Q25-F202: воспроизводимые native cores и Android runtime](reports/AUDIT-Q25-NATIVE-REBUILD.md)
 - [Q25-F203: Android Private DNS, VPN-трафик и смена Wi-Fi](reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md)
 - [Q25-F204: ресурсный churn Linux worker](reports/AUDIT-Q25-WORKER-RESOURCE-CHURN.md)
+
+- [Q04: авторизация панели и границы API](reports/AUDIT-Q04-WEB-AUTH.md)

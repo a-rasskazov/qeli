@@ -349,3 +349,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25-F202: reproducible native cores and Android runtime](reports/AUDIT-Q25-NATIVE-REBUILD.md)
 - [Q25-F203: Android Private DNS, VPN traffic and Wi-Fi change](reports/AUDIT-Q25-ANDROID-NETWORK-IDENTITY.md)
 - [Q25-F204: Linux worker resource churn](reports/AUDIT-Q25-WORKER-RESOURCE-CHURN.md)
+
+- [Q04: panel authentication and API boundaries](reports/AUDIT-Q04-WEB-AUTH.md)

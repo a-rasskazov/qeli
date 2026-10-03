@@ -914,3 +914,35 @@ History applies eligible web fields live; archive restoration requires an explic
 restart. These boundaries are checked by the shared
 [runtime scenario](../../../scripts/audit_panel_config_lifecycle.py) and recorded
 in the [D07 register](../plans/AUDIT-DEBT.md).
+
+## API authentication and attempt limits
+
+<!-- normative-sync: panel-web-auth-v1 -->
+
+Panel pages use the `qeli_session` cookie. HTTP Basic is supported for `/api/*`;
+its scheme is case-insensitive (`Basic`, `basic`, `bAsIc`). The username is compared
+exactly; password spaces and colons are preserved. Service JSON API payloads do not
+change INI as the sole configuration-file format.
+
+`[web] brute_force.*` governs admin login and API Basic independently of the VPN
+policy under `[auth] brute_force.*`. Hard lockout applies to the client IP; behind
+a configured trusted proxy the validated X-Forwarded-For chain supplies that IP.
+Ordinary probes without credentials or with an invalid/expired cookie do not count
+as password attempts. The admin username never receives a global hard lockout.
+
+Password verification shares an Argon2 semaphore (2–8 jobs based on available
+CPU count). After queueing, the IP is checked again: a locked source receives 429
+before hashing. Already admitted jobs may complete; their results are recorded
+before permit return even when the HTTP client cancels its request.
+
+CSRF applies to mutating API requests, including login and Basic. Origin takes
+precedence over Referer; allowed host/port are compared. CLI calls without either
+header are supported. `trusted_proxies` also controls trust in forwarded HTTPS
+and prefixes; a direct caller cannot impersonate a proxy.
+
+Logout revokes all previously issued admin sessions through persistent session
+generation and clears the browser cookie. Persistence failure returns an explicit
+500: browser cookie removal does not prove successful token revocation. With
+healthy persistent key/generation files, revocation survives restart. An authenticated
+login page redirects directly to the canonical panel root. Web-panel TOTP is not
+implemented; VPN TOTP is a separate mechanism.
