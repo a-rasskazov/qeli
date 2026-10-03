@@ -58,7 +58,7 @@ async function main() {
   await check('failed load is visible and blocks writes', async () => {
     let writes = 0;
     const { model, events } = component('config.html', 'configPage', {
-      apiFetch: async (url, opts) => { if (opts) writes++; return { ok: false, error: 'fixture read failed' }; },
+      apiFetch: async (url, opts) => { if (opts?.method) writes++; return { ok: false, error: 'fixture read failed' }; },
     });
     model.loadIdentity = () => {};
     await model.load(); assert.equal(model.loaded, false); assert.match(model.loadError, /fixture read failed/);
@@ -76,7 +76,7 @@ async function main() {
     let start, resolve, sent;
     const started = new Promise(r => { start = r; });
     const { model, context } = component('config.html', 'configPage');
-    model.loaded = true; model.dirty = true; model.revision = 'r1';
+    model.loaded = true; model.dirty = true; model.revision = 'r1'; model.view = raw ? 'raw' : 'form';
     model.cfg = { profiles: [], logging: { level: 'debug' } };
     model._original = JSON.stringify({ profiles: [], logging: { level: 'info' } });
     model.rawOriginal = 'old'; model.rawText = 'sent';
@@ -97,12 +97,12 @@ async function main() {
       fullRestartServer: async () => ({ ok: false, kind: 'no_systemd', container: true, error: 'full restart required' }),
       restartServer: async () => { workers++; return true; },
     });
-    model.loaded = true; model.view = 'raw'; model.rawOriginal = 'old'; model.rawText = 'new'; model.dirty = true;
+    model.loaded = true; model.revision = 'r1'; model.view = 'raw'; model.rawOriginal = 'old'; model.rawText = 'new'; model.dirty = true;
     await model.applyRestart(); assert.equal(workers, 0); assert(events.some(e => e[1].type === 'error'));
   });
   await check('failed INI reload remains explicit', async () => {
     const { model } = component('config.html', 'configPage', { apiFetch: async () => ({ ok: false, error: 'unavailable' }) });
-    model.loaded = true; await model.loadRaw(); assert(!model.loaded); assert.equal(model.loadError, 'unavailable');
+    model.loaded = true; await model.loadRaw(); assert(!model.loaded); assert.match(model.loadError, /unavailable/);
   });
   const keys = ['gateway', 'quic', 'awg', 'autostart', 'route_local', 'allow_ipv4_leak', 'allow_ipv6_leak'];
   for (const literal of ['on', 'YES', 'True', '1', '"ON"']) await check('client INI accepts true spelling ' + literal, () => {
@@ -217,7 +217,7 @@ async function main() {
     let writes = 0;
     const { model } = component('blocked.html', 'blockedPage', {
       apiFetch: async (url, opts) => {
-        if (opts) writes++;
+        if (opts?.method) writes++;
         return { ok: true, settings: { vpn: { max_attempts: 7 } } };
       },
     });
@@ -235,7 +235,7 @@ async function main() {
     defaults = { ok: true, profile: { bind: {}, tun: { ip_mode: 'ipv4' }, pool: {}, dns: {}, extension: { retained: true } } };
     await model.load(); model.addProfile(); assert.equal(model.cfg.profiles.length, 1);
     assert(model.cfg.profiles[0].extension.retained); assert(!model.defaultsError);
-    defaults = { ok: false, error: 'second read failed' }; await model.load();
+    defaults = { ok: false, error: 'second read failed' }; await model.reloadCurrent();
     assert.equal(model.defaultProfile, null); model.addProfile(); assert.equal(model.cfg.profiles.length, 0);
   });
 
@@ -476,7 +476,7 @@ async function main() {
         apiFetch:async(url,opts)=>opts?.method?(writes++,stop==='build'?new Promise(r=>finish=()=>r(builtReply('plain'))):builtReply('plain')):stop==='read'?new Promise(r=>finish=()=>r(quickReply())):quickReply(),
         qeliConfirm:async()=>stop==='confirm'?new Promise(r=>finish=()=>r(true)):true,restartServer:async()=>{restarts++;return true;},
       });
-      const pending=model.quickStart(model.modes.find(m=>m.id==='plain'));while(!finish)await Promise.resolve();model.destroy();finish();await pending;
+      const pending=model.quickStart(model.modes.find(m=>m.id==='plain'));for(let n=0;n<100&&!finish;n++)await Promise.resolve();assert(finish,'fixture request did not start');model.destroy();finish();await pending;
       assert.equal(restarts,0);assert.equal(writes,stop==='build'?1:0);assert.equal(model.qs.done,null);assert.equal(model.qs.busy,null);
     }
   });
@@ -535,6 +535,123 @@ async function main() {
       const f=loginFixture(async()=>{if(broken==='network')throw Error('fixture offline');return{ok:true,json:async()=>{throw Error('fixture invalid JSON');}};});f.els.username.value='a';f.els.password.value='b';await f.submit();assert(!f.els.btn.disabled);assert.equal(f.context.window.location.href,'login');
     }
     let writes=0;const f=loginFixture(async()=>{writes++;});await f.submit();assert.equal(writes,0);assert.equal(f.els.err.textContent,'Enter a username and password');
+  });
+
+
+  function readyEditor(raw=false, overrides={}) {
+    const result=component('config.html','configPage',overrides),m=result.model;
+    m.loaded=true;m.revision='r1';m.view=raw?'raw':'form';m.cfg={profiles:[],auth:{brute_force:{}},web:{brute_force:{}},logging:{level:'info'}};
+    m._original=JSON.stringify(m.cfg);m.rawOriginal='original';m.rawText='original';result.identityRead=m.loadIdentity;m.loadIdentity=()=>{};return result;
+  }
+  const configRead=(revision='r1',level='info')=>({ok:true,revision,config:{profiles:[],logging:{level}}});
+  await check('config serializes form/raw reads and rejects unconfirmed dirty reloads',async()=>{
+    const pending=[];const {model,context}=readyEditor(false,{apiFetch:url=>new Promise(resolve=>pending.push({url,resolve}))});
+    const read=model.load();await model.loadRaw();await model.load();assert.equal(pending.length,2);
+    pending.find(r=>r.url.endsWith('defaults')).resolve({ok:false,error:'fixture defaults'});pending.find(r=>r.url.endsWith('config')).resolve(configRead());await read;
+    assert(model.loaded);assert(!model.loading);assert(model.defaultsError);const cfg=JSON.stringify(model.cfg);model.cfg.logging.level='debug';model.dirty=true;
+    await model.load();await model.loadRaw();assert.equal(pending.length,2);assert.notEqual(JSON.stringify(model.cfg),cfg);
+    context.qeliConfirm=async()=>false;await model.reloadCurrent();assert.equal(pending.length,2);assert(model.dirty);
+  });
+  for(const kind of ['form','raw'])await check('config '+kind+' load preserves pending edits and rejects malformed/revisionless replies',async()=>{
+    const {model,context}=readyEditor(kind==='raw');let finish;context.apiFetch=url=>url.endsWith('defaults')?Promise.resolve({ok:false}):new Promise(r=>finish=r);
+    const p=kind==='raw'?model.loadRaw():model.load();if(kind==='raw')model.rawText='later draft';else model.cfg.logging.level='later';model.dirty=true;
+    finish(kind==='raw'?{ok:true,revision:'r2',raw:'disk'}:configRead('r2','disk'));await p;assert(!model.loaded);assert(model.loadError);assert(model.dirty);assert.equal(kind==='raw'?model.rawText:model.cfg.logging.level,kind==='raw'?'later draft':'later');
+    model.dirty=false;
+    for(const reply of [null,{ok:true,config:null,raw:null,revision:'r1'},{ok:true,config:{profiles:[null]},raw:1,revision:'r1'},{ok:true,config:{profiles:[]},raw:'disk'}]){
+      context.apiFetch=async url=>url.endsWith('defaults')?{ok:false}:reply;await(kind==='raw'?model.loadRaw():model.load());assert(!model.loaded);assert(model.loadError);assert.equal(model.revision,'r1');
+    }
+  });
+  await check('default endpoint rejection remains independent of successful config read',async()=>{
+    const {model}=readyEditor(false,{apiFetch:async url=>{if(url.endsWith('defaults'))throw Error('fixture defaults offline');return configRead();}});
+    await model.load();assert(model.loaded);assert.equal(model.defaultProfile,null);assert(model.defaultsError);
+  });
+  for(const operation of ['switch','reload'])await check('config '+operation+' confirmation retains newer drafts and excludes competing actions',async()=>{
+    let confirm,reads=0;const {model}=readyEditor(false,{qeliConfirm:()=>new Promise(r=>confirm=r),apiFetch:async()=>{reads++;return configRead();}});model.cfg.logging.level='debug';model.dirty=true;
+    const p=operation==='switch'?model.switchView('raw'):model.reloadCurrent();await model.switchView('raw');await model.save();await model.applyRestart();assert.equal(reads,0);assert.equal(model.action,'view');
+    model.cfg.logging.level='later';confirm(true);await p;assert.equal(model.view,'form');assert.equal(model.cfg.logging.level,'later');assert.equal(reads,0);assert(model.dirty);assert.equal(model.action,null);
+  });
+  for(const raw of [false,true])await check('config '+(raw?'INI':'form')+' save reserves review and writes captured revision/draft once',async()=>{
+    let confirm,reply,writes=0,sent;const {model}=readyEditor(raw,{qeliConfirm:()=>new Promise(r=>confirm=r),apiFetch:(url,opts)=>{writes++;sent=JSON.parse(opts.body);return new Promise(r=>reply=r);}});
+    if(raw)model.rawText='reviewed';else model.cfg.logging.level='reviewed';model.dirty=true;
+    const p=raw?model.saveRaw():model.save();await(raw?model.saveRaw():model.save());await model.applyRestart();await model.reloadCurrent();assert.equal(writes,0);assert.equal(model.action,'save');
+    if(raw)model.rawText='newer';else model.cfg.logging.level='newer';confirm(true);for(let n=0;n<100&&!reply;n++)await Promise.resolve();assert(reply,'fixture request did not start');assert.equal(writes,1);assert.equal(sent.expected_revision,'r1');assert.equal(raw?sent.raw:sent.config.logging.level,'reviewed');
+    reply({ok:true,revision:'r2'});await p;assert(model.dirty);assert.equal(model.revision,'r2');assert.equal(raw?model.rawOriginal:JSON.parse(model._original).logging.level,'reviewed');assert.equal(model.action,null);
+  });
+  for(const raw of [false,true])await check('config '+(raw?'INI':'form')+' save aborts a changed review owner and fails closed on missing returned revision',async()=>{
+    let confirm,writes=0;const {model,context}=readyEditor(raw,{qeliConfirm:()=>new Promise(r=>confirm=r),apiFetch:async()=>{writes++;return{ok:true,revision:'r3'};}});
+    if(raw)model.rawText='draft';else model.cfg.logging.level='draft';model.dirty=true;const p=raw?model.saveRaw():model.save();model.revision='r2';confirm(true);await p;assert.equal(writes,0);assert.equal(model.revision,'r2');assert(model.dirty);
+    context.qeliConfirm=async()=>true;context.apiFetch=async()=>{writes++;return{ok:true};};await(raw?model.saveRaw():model.save());assert(!model.loaded);assert(model.loadError);assert(model.dirty);assert.equal(model.revision,'r2');
+  });
+  await check('apply restart cancellation/failure/new draft never starts restart and uncertainty retains socket requirement',async()=>{
+    for(const mode of ['cancel','fail','new draft']){
+      let restarts=0;const {model}=readyEditor(false,{qeliConfirm:async()=>mode!=='cancel',apiFetch:async()=>{if(mode==='new draft')model.cfg.logging.level='later';return mode==='fail'?{ok:false,error:'fixture refused'}:{ok:true,revision:'r2'};},fullRestartServer:async()=>{restarts++;return{ok:true,cameBack:true};}});
+      model.cfg.logging.level='draft';model.dirty=true;await model.applyRestart();assert.equal(restarts,0);assert.equal(model.action,null);assert(!model.restarting);
+    }
+    let finish,calls=0;const {model}=readyEditor(false,{fullRestartServer:()=>{calls++;return new Promise(r=>finish=r);}});model.needsFullRestart=true;const p=model.applyRestart();await model.applyRestart();assert.equal(calls,1);finish({ok:true,cameBack:false});await p;assert(model.needsFullRestart);
+  });
+  await check('identity read failures retain keys, newest response wins and only public fields are retained',async()=>{
+    const {model,context}=component('config.html','configPage');const pending=[];context.apiFetch=()=>new Promise(r=>pending.push(r));
+    const old=model.loadIdentity(),fresh=model.loadIdentity();pending[1]({ok:true,profiles:[{name:'fresh',public_key:'a'.repeat(64),private_key:'must not be retained'}]});await fresh;pending[0]({ok:false,error:'obsolete'});await old;
+    assert.equal(model.identity[0].name,'fresh');assert(!('private_key'in model.identity[0]));assert.equal(model.identityError,'');assert(!model.identityLoading);
+    context.apiFetch=async()=>({ok:false,error:'current failure'});await model.loadIdentity();assert.match(model.identityError,/current failure/);assert.equal(model.identity[0].name,'fresh');
+    context.apiFetch=async()=>({ok:true,profiles:[null]});await model.loadIdentity();assert(model.identityError);assert.equal(model.identity[0].name,'fresh');
+    context.apiFetch=async()=>({ok:true,profiles:[]});await model.loadIdentity();assert(model.identityLoaded);assert.equal(model.identityError,'');assert.equal(model.identity.length,0);
+  });
+  await check('identity rotation reserves confirmation, prevents duplicates and aborts replaced key owner',async()=>{
+    let confirm,writes=0;const {model,context}=readyEditor(false,{qeliConfirm:()=>new Promise(r=>confirm=r),apiFetch:async(url,opts)=>{if(opts?.method)writes++;return{ok:true,profiles:[]};}});model.identity=[{name:'A',public_key:'a'.repeat(64)}];
+    const p=model.rotateIdentity('A');await model.rotateIdentity('A');await model.save();model.identity=[{name:'A',public_key:'b'.repeat(64)}];confirm(true);await p;assert.equal(writes,0);assert.equal(model.action,null);
+    model.loadIdentity=async()=>true;context.qeliConfirm=async()=>true;let finish;context.apiFetch=()=>{writes++;return new Promise(r=>finish=r);};const rotate=model.rotateIdentity('A');for(let n=0;n<100&&!finish;n++)await Promise.resolve();assert(finish,'fixture request did not start');await model.rotateIdentity('A');assert.equal(writes,1);finish({ok:true});await rotate;assert.equal(model.identityRotating,null);
+  });
+  await check('password hash preserves newer plaintext and config ownership, and suppresses duplicate requests',async()=>{
+    let finish,writes=0,sent;const {model,context}=readyEditor(false,{apiFetch:(url,opts)=>{writes++;sent=JSON.parse(opts.body);return new Promise(r=>finish=r);}});model.adminPw='  original#;  ';
+    const p=model.hashAdminPw();await model.hashAdminPw();await model.save();assert.equal(writes,1);assert.equal(sent.password,'  original#;  ');model.adminPw='newer';finish({ok:true,hash:'old hash'});await p;
+    assert.equal(model.adminPw,'newer');assert.equal(model.cfg.web.password_hash,undefined);assert.equal(model.adminPwStatus,'err');assert(!model.adminPwHashing);
+    context.apiFetch=async()=>({ok:true,hash:'new hash'});await model.hashAdminPw();assert.equal(model.cfg.web.password_hash,'new hash');assert.equal(model.adminPw,'');assert(model.dirty);
+  });
+  await check('history late replies cannot replace a newly opened modal; failures preserve snapshot and block restore',async()=>{
+    const pending=[];const {model,context}=readyEditor(false,{apiFetch:()=>new Promise(r=>pending.push(r))});
+    const old=model.openHistory();model.closeHistory();const fresh=model.openHistory();pending[1]({ok:true,entries:[{id:'new',revision:'r0',created:1,bytes:1}]});await fresh;pending[0]({ok:true,entries:[{id:'old',revision:'r0'}]});await old;
+    assert.equal(model.history[0].id,'new');assert(model.historyLoaded);assert(!model.historyLoading);context.apiFetch=async()=>({ok:false,error:'history offline'});await model.openHistory();assert(model.historyError);assert.equal(model.history[0].id,'new');assert.equal(await model.restoreHistory(model.history[0]),false);
+  });
+  await check('history restore captures revision, serializes review, retains later edits and never restarts',async()=>{
+    for(const when of ['review','POST']){
+      let confirm,reply,writes=0,sent;const {model}=readyEditor(false,{qeliConfirm:()=>new Promise(r=>confirm=r),apiFetch:(url,opts)=>{writes++;sent=JSON.parse(opts.body);return new Promise(r=>reply=r);}});const entry={id:'snapshot',revision:'r0',created:1};model.history=[entry];model.historyOpen=true;
+      const p=model.restoreHistory(entry);await model.restoreHistory(entry);model.closeHistory();assert(model.historyOpen);assert.equal(model.action,'restore');
+      if(when==='review'){model.cfg.logging.level='later';model.dirty=true;}confirm(true);if(when==='POST'){for(let n=0;n<100&&!reply;n++)await Promise.resolve();assert(reply,'fixture request did not start');model.cfg.logging.level='later';model.dirty=true;reply({ok:true,revision:'r2'});}await p;
+      assert.equal(writes,when==='review'?0:1);if(sent)assert.equal(sent.expected_revision,'r1');assert.equal(model.cfg.logging.level,'later');assert(model.dirty);assert.equal(model.action,null);assert.equal(model.historyRestoring,null);
+      if(when==='POST')assert(!model.loaded);
+    }
+  });
+  await check('history clean restore refreshes canonical config and preserves restart requirement',async()=>{
+    const {model,context}=readyEditor(false);const entry={id:'snapshot',revision:'r0',created:1};model.history=[entry];model.historyOpen=true;
+    context.apiFetch=async(url,opts)=>opts?.method?{ok:true,revision:'r2'}:url.endsWith('defaults')?{ok:false}:{...configRead('r2','restored'),needs_full_restart:true};
+    assert.equal(await model.restoreHistory(entry),true);assert.equal(model.cfg.logging.level,'restored');assert.equal(model.revision,'r2');assert(model.needsFullRestart);assert(!model.historyOpen);
+  });
+  await check('remove confirmation retains profile identity after index shifts and aborts changed contents',async()=>{
+    for(const changed of [false,true]){
+      let confirm;const {model}=readyEditor(false,{qeliConfirm:()=>new Promise(r=>confirm=r)});const target={name:'A'},other={name:'B'};model.cfg.profiles=[target,other];const p=model.removeProfile(0);
+      model.cfg.profiles.unshift({name:'inserted'});if(changed)target.name='edited';confirm(true);await p;assert.equal(model.cfg.profiles.includes(target),changed);assert(model.cfg.profiles.includes(other));assert.equal(model.action,null);
+    }
+  });
+  for(const operation of ['read','identity','history','save','hash','restart'])await check('config destroy suppresses late '+operation+' effects',async()=>{
+    let finish;const {model,context,events,identityRead}=readyEditor(false,{window:{removeEventListener(){}}});
+    if(operation==='identity')model.loadIdentity=identityRead;
+    context.apiFetch=url=>url.endsWith('defaults')?Promise.resolve({ok:false}):new Promise(r=>finish=r);context.fullRestartServer=()=>new Promise(r=>finish=r);
+    let p;if(operation==='read')p=model.load();else if(operation==='identity')p=model.loadIdentity();else if(operation==='history')p=model.openHistory();else if(operation==='save'){model.cfg.logging.level='draft';model.dirty=true;p=model.save();}else if(operation==='hash'){model.adminPw='fixture';p=model.hashAdminPw();}else p=model.applyRestart();
+    for(let n=0;n<100&&!finish;n++)await Promise.resolve();assert(finish,'fixture request did not start');model.destroy();finish(operation==='restart'?{ok:true,cameBack:true}:operation==='identity'?{ok:true,profiles:[{name:'late'}]}:operation==='history'?{ok:true,entries:[]}:{...configRead('r2','late'),hash:'late'});await p;
+    assert.equal(model.revision,'r1');assert.equal(events.length,0);assert.equal(model.cfg.web.password_hash,undefined);assert.equal(model.identity.length,0);assert.equal(model.history.length,0);
+  });
+  await check('config beforeunload protects only dirty drafts and unregisters the exact handler',async()=>{
+    let added,removed;const {model}=readyEditor(false,{window:{addEventListener:(e,f)=>added=f,removeEventListener:(e,f)=>removed=f}});model.load=()=>{};model.init();let prevented=0;const event={preventDefault(){prevented++;}};
+    added(event);assert.equal(prevented,0);model.dirty=true;added(event);assert.equal(prevented,1);assert.equal(event.returnValue,'');model.destroy();assert.equal(removed,added);assert.equal(model._beforeUnload,null);
+  });
+  await check('shared confirmation focuses cancel, traps both tab directions and restores original focus once',async()=>{
+    const frames=[],nodes={};let active;const make=id=>nodes[id]={id,disabled:false,isConnected:true,getClientRects:()=>[1],getAttribute:()=>null,focus(){active=this;}};const origin=make('origin'),close=make('close'),cancel=make('qeli-confirm-cancel'),apply=make('apply');active=origin;
+    const dialog=make('qeli-confirm-dialog');dialog.querySelectorAll=()=>[close,cancel,apply];dialog.contains=el=>[dialog,close,cancel,apply].includes(el);const document={readyState:'loading',addEventListener(){},getElementById:id=>nodes[id],get activeElement(){return active;}};
+    const {model}=component('layout.html','app',{document,requestAnimationFrame:f=>frames.push(f)});model.$nextTick=f=>f();let answer;
+    model.onConfirmRequest({title:'fixture',message:'fixture',resolve:v=>answer=v});assert.equal(active,cancel);let prevented=0;model.confirmTab({shiftKey:true,preventDefault(){prevented++;}});assert.equal(active,close);model.confirmTab({shiftKey:true,preventDefault(){}});assert.equal(active,apply);model.confirmTab({shiftKey:false,preventDefault(){}});assert.equal(active,close);assert.equal(prevented,1);
+    origin.focus();model.confirmFocusIn({target:origin});assert.equal(active,cancel);model.confirmResolve(false);assert.equal(answer,false);frames.splice(0).forEach(f=>f());assert.equal(active,origin);
+    const answers=[];model.onConfirmRequest({resolve:v=>answers.push(['old',v])});model.onConfirmRequest({resolve:v=>answers.push(['new',v])});model.confirmResolve(true);frames.splice(0).forEach(f=>f());assert.deepEqual(answers,[['old',false],['new',true]]);assert.equal(active,origin);
   });
 
   console.log(`Panel editor regressions: ${passed} passed`);

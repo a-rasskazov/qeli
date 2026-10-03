@@ -50,6 +50,7 @@ async function apiFetch(url, opts = {}) {
 </head>
 <body class="flex h-screen overflow-hidden" x-data="app" @notify.window="notify($event.detail.msg, $event.detail.type, $event.detail.timeout)"
   @qeli-confirm.window="onConfirmRequest($event.detail)"
+  @focusin.window="confirmFocusIn($event)"
       @keydown.escape.window="sidebarOpen = false">
 
 <div class="bg-grid"></div>
@@ -248,9 +249,9 @@ async function apiFetch(url, opts = {}) {
        buttons floated against the body with nothing dividing them.
        Borders use var(--line) rather than the hard-coded #21314e the older modals carry —
        that literal is a dark-theme navy and is simply wrong under data-theme=light. -->
-  <div class="modal" @click.stop style="max-width:440px">
+  <div class="modal" id="qeli-confirm-dialog" @click.stop @keydown.tab="confirmTab($event)" style="max-width:440px" role="dialog" aria-modal="true" aria-labelledby="qeli-confirm-title" tabindex="-1">
     <div class="flex items-start justify-between gap-4 px-6 pt-5 pb-4" style="border-bottom:1px solid var(--line)">
-      <h3 class="text-base font-semibold text-white leading-snug" x-text="confirmModal.title"></h3>
+      <h3 id="qeli-confirm-title" class="text-base font-semibold text-white leading-snug" x-text="confirmModal.title"></h3>
       <button class="flex-shrink-0 -mr-1 -mt-0.5 text-slate-500 hover:text-white" @click="confirmResolve(false)" aria-label="Close">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
@@ -264,7 +265,7 @@ async function apiFetch(url, opts = {}) {
       </template>
     </div>
     <div class="flex gap-2 justify-end px-6 pt-4 pb-5" style="border-top:1px solid var(--line)">
-      <button class="btn btn-ghost" @click="confirmResolve(false)" x-text="confirmModal.cancelLabel"></button>
+      <button id="qeli-confirm-cancel" class="btn btn-ghost" @click="confirmResolve(false)" x-text="confirmModal.cancelLabel"></button>
       <button class="btn" :class="confirmModal.danger ? 'btn-danger' : 'btn-primary'"
               @click="confirmResolve(true)" x-text="confirmModal.label"></button>
     </div>
@@ -309,6 +310,7 @@ function app() {
     sidebarOpen: false,   // drawer state; only meaningful below the md breakpoint
     update: { show: false, tag: '', url: '', cmd: '' },
     installKind: 'other',
+    confirmSequence: 0, confirmOrigin: null,
     _updChecked: false,
 
     // CSP Alpine resolves helpers through the component scope, not window globals.
@@ -325,7 +327,7 @@ function app() {
     },
 
     destroy() {
-      this.destroyed = true; this.statusSequence++;
+      this.destroyed = true; this.statusSequence++; this.confirmSequence++;
       clearInterval(this.statusTimer); clearTimeout(this.toast._t);
       this.statusTimer = null;
       this.confirmResolve(false);
@@ -456,27 +458,49 @@ function app() {
 
     // Driven by the global qeliConfirm() above via the `qeli-confirm` window event.
     onConfirmRequest(d) {
-      // A dialog already open means a second request arrived before the first was answered.
-      // Reject the older one rather than dropping its resolver on the floor: an awaiting
-      // caller that never settles would hang its handler (and any cleanup in a finally).
+      if (this.destroyed) { d.resolve(false); return; }
+      const wasOpen = this.confirmModal.show;
+      const origin = document.activeElement;
       if (this.confirmModal._resolve) this.confirmModal._resolve(false);
-      // Split on blank lines into paragraphs; the template spaces them evenly. Falls back
-      // to the whole message so a caller that passes no blank line still renders.
-      const paragraphs = String(d.message || '')
-        .split(/\n\s*\n/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      this.confirmModal = {
-        show: true, title: d.title, message: d.message,
-        paragraphs: paragraphs.length ? paragraphs : [String(d.message || '')],
-        danger: d.danger, label: d.label, cancelLabel: d.cancelLabel, _resolve: d.resolve,
-      };
+      if (!wasOpen) this.confirmOrigin = origin;
+      const sequence = ++this.confirmSequence;
+      const paragraphs = String(d.message || '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+      this.confirmModal = { show:true,title:d.title,message:d.message,
+        paragraphs:paragraphs.length?paragraphs:[String(d.message || '')],
+        danger:d.danger,label:d.label,cancelLabel:d.cancelLabel,_resolve:d.resolve };
+      const focus = () => { if (!this.destroyed && sequence === this.confirmSequence && this.confirmModal.show) this.focusConfirm(); };
+      if (typeof this.$nextTick === 'function') this.$nextTick(focus);
+      else if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focus);
+    },
+    focusConfirm() {
+      const dialog = document.getElementById('qeli-confirm-dialog');
+      const cancel = document.getElementById('qeli-confirm-cancel');
+      if (dialog && this.confirmModal.show) (cancel || dialog).focus();
+    },
+    confirmFocusIn(event) {
+      const dialog = document.getElementById('qeli-confirm-dialog');
+      if (this.confirmModal.show && dialog && !dialog.contains(event.target)) this.focusConfirm();
+    },
+    confirmTab(event) {
+      if (!this.confirmModal.show) return;
+      const dialog = document.getElementById('qeli-confirm-dialog');
+      if (!dialog) return;
+      const controls = Array.from(dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]'))
+        .filter(el => !el.disabled && el.getAttribute('tabindex') !== '-1' && el.getClientRects().length);
+      event.preventDefault();
+      if (!controls.length) { dialog.focus(); return; }
+      const index = controls.indexOf(document.activeElement);
+      const next = event.shiftKey ? (index <= 0 ? controls.length-1 : index-1) : (index+1)%controls.length;
+      controls[next].focus();
     },
     confirmResolve(ok) {
-      const r = this.confirmModal._resolve;
-      this.confirmModal.show = false;
-      this.confirmModal._resolve = null;
-      if (r) r(ok);
+      const resolve = this.confirmModal._resolve, origin = this.confirmOrigin, sequence = this.confirmSequence;
+      this.confirmModal.show = false; this.confirmModal._resolve = null; this.confirmOrigin = null;
+      if (resolve) resolve(ok);
+      // The caller clears its busy state in a microtask; restore focus afterwards.
+      if (!this.destroyed && origin && typeof requestAnimationFrame === 'function') requestAnimationFrame(() => {
+        if (!this.destroyed && sequence === this.confirmSequence && !this.confirmModal.show && origin.isConnected && !origin.disabled && origin.getClientRects().length) origin.focus();
+      });
     },
 
     async logout() {

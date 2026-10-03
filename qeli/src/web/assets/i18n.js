@@ -1142,6 +1142,7 @@
       'A client tunnel session ended (TCP clean close). Off by default.': 'Туннельная сессия клиента завершилась (чистое TCP-закрытие). По умолчанию выкл.',
       'Send test': 'Отправить тест',
       'Test result': 'Результат теста',
+      'Password changed while hashing. Run Hash again.': 'Пароль изменён во время хеширования. Нажмите «Hash» повторно.',
       'Invalid configuration response': 'Некорректный ответ конфигурации',
       'Settings revision unavailable. Reload before saving.': 'Ревизия настроек недоступна. Обновите данные перед сохранением.',
       'Settings changed while loading. Retry to reload.': 'Настройки изменены во время загрузки. Повторите загрузку.',
