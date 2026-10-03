@@ -962,3 +962,14 @@ Bind/port/base_path/TLS require full restart; startup values remain active until
 restart also responds before replacing the supervisor. Rejection/uncertainty appears
 in status warnings; inspect unit/journal before retrying. A successful full restart
 applies new listener settings and retains sessions with healthy persistent keys.
+
+
+### Users API and live access
+
+<!-- normative-sync: panel-user-mutations-v1 -->
+
+User/group/limit mutation bodies must be objects; wrong types cannot become Unlimited or a successful no-op. `enabled` is boolean, `bandwidth` an object, password/hash strings, route gateway string/null. Configurations are saved only as INI.
+
+A file entry overrides its namesake inline definition. Deleting this override is refused: it would restore inline access or previous group limits. Use Disable or remove the inline definition in server.conf.
+
+After successful Users reload in the worker, removed/disabled users and entries forbidding the current profile lose open TCP/UDP sessions. Effective bandwidth, including group inheritance, applies to live sessions. API success confirms persistence and queued reload; new authentication readiness may follow later. Periodic sweep rechecks rights, quota and expiry. `burst_mbps` remains a stored legacy field; separate burst enforcement is unconfirmed.

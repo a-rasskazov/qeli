@@ -353,3 +353,5 @@
 - [Q04: авторизация панели и границы API](reports/AUDIT-Q04-WEB-AUTH.md)
 
 - [Q05: конфигурационные транзакции и restart](reports/AUDIT-Q05-HTTP-TRANSACTIONS.md)
+
+- [Q06: пользователи и отзыв доступа](reports/AUDIT-Q06-USERS-ACCESS.md)

@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v10 -->
+<!-- normative-sync: full-system-audit-v11 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -145,7 +145,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 03 | Panel UI and state | H02, H09–H11 | PASS |
 | 04 | Web auth and API protection | H01–H03, H08–H09 | PASS |
 | 05 | Config transactions and restart | H08–H10 | PASS |
-| 06 | Users, groups and provisioning | H01, H04, H09–H10 | TODO |
+| 06 | Users, groups and provisioning | H01, H04, H09–H10 | IN_PROGRESS |
 | 07 | Backup, restore and history | H03–H04, H08, H10 | TODO |
 | 08 | Cryptography, identity and keys | H01, H04, H08 | TODO |
 | 09 | Handshake and TCP/UDP pre-auth | H01, H04, H08 | IN_PROGRESS |
@@ -330,7 +330,9 @@ Inline + users_file, duplicate precedence, missing groups, invalid types versus 
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
+
+**3 October, first batch:** five confirmed defects fixed in API, inline overrides, routes, live revoke and bandwidth writers. 119 API + 57 TCP/UDP checks PASS; fresh Linux units/lint and 293/75 HTTP regressions PASS. Q06 remains open for filesystem/concurrency and additional policies. [Report](../reports/AUDIT-Q06-USERS-ACCESS.md).
 
 ### 07. Backup, restore and history
 

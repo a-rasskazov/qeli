@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v10 -->
+<!-- normative-sync: full-system-audit-v11 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -150,7 +150,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 03 | Панель: UI и состояние | H02, H09–H11 | PASS |
 | 04 | Web auth и защита API | H01–H03, H08–H09 | PASS |
 | 05 | Транзакции конфигурации и restart | H08–H10 | PASS |
-| 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | TODO |
+| 06 | Пользователи, группы и выдача доступа | H01, H04, H09–H10 | IN_PROGRESS |
 | 07 | Backup, restore и history | H03–H04, H08, H10 | TODO |
 | 08 | Криптография, identity и ключи | H01, H04, H08 | TODO |
 | 09 | Handshake и pre-auth TCP/UDP | H01, H04, H08 | IN_PROGRESS |
@@ -335,7 +335,9 @@ Inline + users_file, duplicates/precedence, missing group, неверные ти
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
+
+**3 октября, первый пакет:** исправлены пять подтверждённых проблем API, inline override, routes, live revoke и bandwidth writers. 119 API + 57 TCP/UDP checks PASS; свежие Linux units/lint и 293/75 HTTP regressions PASS. Q06 остаётся открытым для filesystem/concurrency и дополнительных политик. [Отчёт](../reports/AUDIT-Q06-USERS-ACCESS.md).
 
 ### 07. Backup, restore и history
 

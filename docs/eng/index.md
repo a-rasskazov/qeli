@@ -353,3 +353,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q04: panel authentication and API boundaries](reports/AUDIT-Q04-WEB-AUTH.md)
 
 - [Q05: configuration transactions and restart](reports/AUDIT-Q05-HTTP-TRANSACTIONS.md)
+
+- [Q06: users and access revocation](reports/AUDIT-Q06-USERS-ACCESS.md)
