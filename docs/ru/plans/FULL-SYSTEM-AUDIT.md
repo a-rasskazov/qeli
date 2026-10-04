@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v35 -->
+<!-- normative-sync: full-system-audit-v36 -->
 
-**Актуальный итог 4 октября: 17/37 разделов DONE/PASS (45,9%), осталось 20. Q17 завершён; далее Q18.**
+**Актуальный итог 4 октября: 18/37 разделов DONE/PASS (48,6%), осталось 19. Q18 завершён; далее Q19.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -164,7 +164,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | PASS |
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | PASS |
 | 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | PASS |
-| 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | IN_PROGRESS |
+| 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | PASS |
 | 19 | DNS сервера и клиентов | H01–H02, H05–H06 | IN_PROGRESS |
 | 20 | DHCP и lease lifecycle | H02, H05 | TODO |
 | 21 | TUN/TAP, IP, MTU/PMTU и фрагментация | H06, H08 | IN_PROGRESS |
@@ -884,19 +884,21 @@ identity журнала, реальный Linux runtime и полный PASS р�
 
 ### 18. IPv6 off/manual/route/nat66 и NDP
 
+**4 октября, Q18 DONE/PASS:** Q18-F001/F002 исправлены; baseline → fix на настоящих NS/NA. 184 новых NDP checks и 446 checks матрицы/переходов; 2376 unit PASS, Clippy и четыре native A/B target PASS. [Итог и границы](../reports/AUDIT-Q18-IPV6-NDP.md). Исторические открытые статусы ниже относятся к прежним снимкам.
+
 **Код:** `qeli/src/server/nat.rs`, `qeli/src/server/ndp_proxy.rs`, `qeli/src/config/server.rs`.
 
-Все 4×3 egress/NDP комбинации и все переходы режимов для ipv4/dual/ipv6. Linux E2E: off блокирует transit; manual не добавляет IPv6 firewall/DNS/sysctl; route сохраняет source; nat66 маскирует. RA, exact cleanup, NS validation, live-session ownership/revoke, required failure, DNS 53/5353, независимый IPv4.
+Все 4×3 egress/NDP комбинации для ipv4/dual/ipv6; все 16 переходов через stop/restart на dual, отдельная квалификация IPv6-only сохраняет исходную область. Linux E2E: off блокирует transit; manual не добавляет IPv6 firewall/DNS/sysctl; route сохраняет source; nat66 маскирует. RA, exact cleanup, NS validation, live-session ownership/revoke, required failure, DNS 53/5353, независимый IPv4.
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_panel_ipv6_e2e.py`, `scripts/run_ipv6_release_matrix.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Очистка NAT, 23 сентября 2026:**
 [Q14-F024/F025](../reports/AUDIT-Q14-NAT-CLEANUP.md): конечный проход по снимку правил,

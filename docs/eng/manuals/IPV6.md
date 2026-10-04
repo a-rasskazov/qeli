@@ -250,8 +250,16 @@ MAC only when the target currently belongs to a live session:
 - an address inside a non-default IPv6 `client_subnet` registered by a connected router or
   site-to-site client.
 
-The answer stops immediately on revoke/disconnect. `/0`, link-local, multicast, invalid
-checksum/hop-limit, and unrelated targets are ignored. To expose a network behind one client:
+After registry removal on revoke/disconnect, the proxy no longer authorizes new answers.
+An answer already built or queued before removal may still leave the socket. `/0`, link-local,
+multicast, invalid checksum/hop-limit, and unrelated targets are ignored. DAD with source `::`
+requires the target solicited-node multicast destination; a unicast DAD is discarded.
+
+Responses are limited to 256 per source MAC and 4096 globally per one-second window.
+An unowned target does not consume these response budgets. Rate-limit warnings appear
+at most once per window; responses resume in the next window.
+
+To expose a network behind one client:
 
 ```ini
 [user:branch-router]

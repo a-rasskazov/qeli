@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v35 -->
+<!-- normative-sync: full-system-audit-v36 -->
 
-**Current total, 4 October: 17/37 sections DONE/PASS (45.9%), 20 remaining. Q17 complete; next Q18.**
+**Current total, 4 October: 18/37 sections DONE/PASS (48.6%), 19 remaining. Q18 complete; next Q19.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -159,7 +159,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | PASS |
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | PASS |
 | 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | PASS |
-| 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | IN_PROGRESS |
+| 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | PASS |
 | 19 | Server and client DNS | H01–H02, H05–H06 | IN_PROGRESS |
 | 20 | DHCP and lease lifecycle | H02, H05 | TODO |
 | 21 | TUN/TAP, IP, MTU/PMTU and fragmentation | H06, H08 | IN_PROGRESS |
@@ -875,19 +875,21 @@ namespace identity after object destruction and full section PASS remain open.
 
 ### 18. IPv6 off/manual/route/nat66 and NDP
 
+**4 October, Q18 DONE/PASS:** Q18-F001/F002 fixed; real NS/NA baseline → fix. 184 fresh NDP checks and 446 matrix/transition checks; 2376 unit PASS, Clippy and four native A/B targets PASS. [Results and limits](../reports/AUDIT-Q18-IPV6-NDP.md). Historical open statuses below refer to earlier snapshots.
+
 **Source:** `qeli/src/server/nat.rs`, `qeli/src/server/ndp_proxy.rs`, `qeli/src/config/server.rs`.
 
-All 4×3 egress/NDP combinations and every transition for ipv4/dual/ipv6. Linux E2E: off blocks transit; manual adds no IPv6 firewall/DNS/sysctl; route preserves sources; nat66 masquerades. Test RA, exact cleanup, NS validation, session ownership/revoke, required failure, DNS 53/5353 and independent IPv4.
+All 4×3 egress/NDP combinations for ipv4/dual/ipv6; all 16 stop/restart transitions on dual, with separate retained IPv6-only qualification in its original scope. Linux E2E: off blocks transit; manual adds no IPv6 firewall/DNS/sysctl; route preserves sources; nat66 masquerades. Test RA, exact cleanup, NS validation, session ownership/revoke, required failure, DNS 53/5353 and independent IPv4.
 
 **Existing harness/fixtures:** `scripts/test_panel_ipv6_e2e.py`, `scripts/run_ipv6_release_matrix.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **NAT cleanup, 23 September 2026:**
 [Q14-F024/F025](../reports/AUDIT-Q14-NAT-CLEANUP.md): finite snapshot deletion,

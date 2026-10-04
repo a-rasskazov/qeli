@@ -24,6 +24,7 @@ def main():
     for name in ('qeli', 'sha256', 'artifacts', 'parent-net', 'parent-mnt', 'parent-pid'):
         ap.add_argument('--' + name, required=True)
     ap.add_argument('--backend', choices=('nft', 'legacy'), required=True)
+    ap.add_argument('--transitions',action='store_true',help='Check all 36 mode/NDP/address-family configurations and 16 stop/restart mode transitions')
     ap.add_argument('--firewalld', help='read-only extracted private runtime; enables mixed backends and packet policy probes')
     ap.add_argument('--ipv4', choices=('nft', 'legacy'))
     ap.add_argument('--ipv6', choices=('nft', 'legacy'))
@@ -275,6 +276,34 @@ obf.mode = fake-tls
         for tcp in (False, True):
             query(1, 'manual-only', True, tcp, 1)
         halt('manual-stop')
+        if args.transitions:
+            for family in ('ipv4','dual','ipv6'):
+                for mode in modes:
+                    for ndp in ('off','auto','required'):
+                        text=base+profile(0,mode).replace('tun.ip_mode = dual','tun.ip_mode = '+family).replace('dns.enabled = true','dns.enabled = false')
+                        old_ndp='required' if mode in ('manual','route') else 'off'
+                        text=text.replace('routing.ipv6.ndp_proxy = '+old_ndp,'routing.ipv6.ndp_proxy = '+ndp)
+                        if family=='ipv6':text=text.replace('routing.nat.enabled = true','routing.nat.enabled = false')
+                        (root/f'config-{family}-{mode}-{ndp}.ini').write_text(text)
+                        cfg.write_text(text);cfg.chmod(0o600)
+                        accepted=(family!='ipv4' and (ndp=='off' or mode in ('manual','route'))) or (family=='ipv4' and mode=='off' and ndp=='off')
+                        result=run([str(binary),'check-config','-c',str(cfg)],check=False)
+                        record(f'configuration {family}/{mode}/{ndp}',(result.returncode==0)==accepted,result.stdout+result.stderr if (result.returncode==0)!=accepted else None)
+            for previous_mode in modes:
+                for next_mode in modes:
+                    # Routing changes require restart, not live SIGHUP. Keep one
+                    # profile name, TUN, identity, listener and pool for every transition.
+                    for step,mode in enumerate((previous_mode,next_mode)):
+                        text=(base+profile(0,mode)).replace('[profile:'+mode+']','[profile:transition]').replace('/etc/qeli/'+mode+'.key','/etc/qeli/transition.key')
+                        label=f'transition-{previous_mode}-{next_mode}-{step}'
+                        launch(text,label,[(0,mode)])
+                        active=snapshot();v6=active['rules']['v6']
+                        if mode=='manual':ok=v6==before['rules']['v6'] and active['sysctls']['ipv6/conf/all/forwarding']==before['sysctls']['ipv6/conf/all/forwarding']
+                        elif mode=='off':ok=sum('qeli-nat:transition' in line and 'FORWARD' in line and '-j DROP' in line for line in v6.splitlines())==2
+                        elif mode=='route':ok='qeli-nat:transition' in v6 and 'MASQUERADE' not in v6 and active['sysctls']['ipv6/conf/all/forwarding']=='1'
+                        else:ok='qeli-nat:transition' in v6 and 'MASQUERADE' in v6 and active['sysctls']['ipv6/conf/all/forwarding']=='1'
+                        record(label+' mode boundary',ok)
+                        halt(label)
         cfg.write_text(base + profile(1, 'manual', 'missing0'))
         previous_up = (root / 'up-manual').read_text()
         with (root / 'required-ndp-refusal.log').open('w') as log:

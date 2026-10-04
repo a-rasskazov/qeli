@@ -405,6 +405,11 @@ fn parse_solicitation(frame: &[u8]) -> Option<Solicitation> {
         return None;
     }
     let dad = source_ip.is_unspecified();
+    // RFC 4861 section 7.1.1: source :: is valid only for DAD addressed to
+    // the target's solicited-node multicast group, never a unicast destination.
+    if dad && destination_ip != solicited_node_multicast(target) {
+        return None;
+    }
     let mut options = &icmp[24..];
     while !options.is_empty() {
         if options.len() < 2 {
@@ -530,6 +535,7 @@ struct NdpRateLimiter {
     global: u32,
     by_mac: HashMap<[u8; 6], u32>,
     warning_pending: bool,
+    warning_reported: bool,
 }
 
 impl NdpRateLimiter {
@@ -539,6 +545,7 @@ impl NdpRateLimiter {
             global: 0,
             by_mac: HashMap::new(),
             warning_pending: false,
+            warning_reported: false,
         }
     }
 
@@ -548,6 +555,7 @@ impl NdpRateLimiter {
             self.global = 0;
             self.by_mac.clear();
             self.warning_pending = false;
+            self.warning_reported = false;
         }
         if self.global >= GLOBAL_RESPONSES_PER_WINDOW {
             self.warning_pending = true;
@@ -568,7 +576,13 @@ impl NdpRateLimiter {
     }
 
     fn take_warning(&mut self) -> bool {
-        std::mem::take(&mut self.warning_pending)
+        let pending = std::mem::take(&mut self.warning_pending);
+        if pending && !self.warning_reported {
+            self.warning_reported = true;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -717,6 +731,43 @@ mod tests {
             icmpv6_checksum(target, "ff02::1".parse().unwrap(), &ipv6[40..72]),
             0
         );
+    }
+
+    #[test]
+    fn dad_with_a_unicast_destination_is_discarded() {
+        let target: Ipv6Addr = "2001:db8:100::42".parse().unwrap();
+        let valid = solicitation(Ipv6Addr::UNSPECIFIED, target, false);
+        assert!(parse_solicitation(&valid).is_some());
+        for destination in [target, "2001:db8:ffff::1".parse().unwrap()] {
+            let mut invalid = valid.clone();
+            invalid[38..54].copy_from_slice(&destination.octets());
+            invalid[56..58].fill(0);
+            let checksum = icmpv6_checksum(Ipv6Addr::UNSPECIFIED, destination, &invalid[54..]);
+            invalid[56..58].copy_from_slice(&checksum.to_be_bytes());
+            assert_eq!(
+                icmpv6_checksum(Ipv6Addr::UNSPECIFIED, destination, &invalid[54..]),
+                0
+            );
+            assert!(parse_solicitation(&invalid).is_none());
+        }
+    }
+
+    #[test]
+    fn rate_limit_warning_is_emitted_once_per_window() {
+        let start = Instant::now();
+        let mac = [0x02, 1, 2, 3, 4, 5];
+        let mut limiter = NdpRateLimiter::new(start);
+        for window in [start, start + RATE_WINDOW] {
+            for _ in 0..RESPONSES_PER_MAC_PER_WINDOW {
+                assert!(limiter.allow(mac, window));
+                assert!(!limiter.take_warning());
+            }
+            for rejected in 0..512 {
+                assert!(!limiter.allow(mac, window));
+                assert_eq!(limiter.take_warning(), rejected == 0);
+                assert!(!limiter.take_warning());
+            }
+        }
     }
 
     #[test]

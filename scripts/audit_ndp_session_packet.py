@@ -31,12 +31,13 @@ def probe(args):
     source = ipaddress.IPv6Address('fd46:2::1')
     target = ipaddress.IPv6Address(args.target)
     mac = link_mac('up0')
-    dad = args.kind in ('dad', 'dad-slla')
+    dad = args.kind in ('dad', 'dad-slla', 'dad-unicast')
     if dad:
         destination, dmac = solicited_node(target)
         body = struct.pack('!BBHI16s', 135, 0, 0, 0, target.packed)
         if args.kind == 'dad-slla':
             body += bytes((1, 1)) + mac
+        if args.kind == 'dad-unicast':destination=target;dmac=bytes.fromhex(args.proxy_mac.replace(':',''))
         frame = ethernet_ipv6(mac, dmac, ipaddress.IPv6Address('::'), destination, body)
     else:
         frame = neighbor_solicitation(mac, source, target)
@@ -82,6 +83,34 @@ def probe(args):
     Path(args.output).write_text(json.dumps(output, indent=2)+'\n')
     assert bool(responses) == (args.expect == 'yes'), output
     print(json.dumps(dict(target=str(target), kind=args.kind, responses=len(responses))))
+
+
+def rate_probe(args):
+    target=ipaddress.IPv6Address(args.target);mac=link_mac('up0')
+    frame=neighbor_solicitation(mac,ipaddress.IPv6Address('fd46:2::1'),target)
+    responses=[];sent=0
+    with socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(ETH_P_IPV6)) as packet:
+        packet.bind(('up0',0));packet.setsockopt(263,1,struct.pack('IHH8s',socket.if_nametoindex('up0'),2,0,b'\0'*8));packet.setblocking(False)
+        # First request after idle resets the proxy window; the bounded burst then
+        # stays inside that same window. Preserve raw counts rather than throughput claims.
+        time.sleep(1.1);started=time.monotonic()
+        while sent<513:
+            packet.send(frame);sent+=1
+            try:
+                while True:
+                    reply=packet.recv(4096)
+                    if len(reply)>=78 and reply[6:12]==bytes.fromhex(args.proxy_mac.replace(':','')) and reply[54]==136 and reply[62:78]==target.packed:responses.append(reply.hex())
+            except BlockingIOError:pass
+        send_duration=time.monotonic()-started
+        end=started+.7
+        while time.monotonic()<end:
+            try:
+                reply=packet.recv(4096)
+                if len(reply)>=78 and reply[6:12]==bytes.fromhex(args.proxy_mac.replace(':','')) and reply[54]==136 and reply[62:78]==target.packed:responses.append(reply.hex())
+            except BlockingIOError:time.sleep(.001)
+    result=dict(sent=sent,responses=responses,send_duration=send_duration)
+    Path(args.output).write_text(json.dumps(result,indent=2)+'\n')
+    assert send_duration<.5 and 1<=len(responses)<=256,result
 
 
 def main(args):
@@ -203,6 +232,7 @@ tun.mtu = 1400
 tun.queues = 1
 pool.ipv6.cidr = fd86::/64
 routing.nat.enabled = false
+routing.client_to_client = {'true' if args.extended else 'false'}
 routing.ipv6.mode = {args.mode}
 routing.ipv6.interface = wan0
 routing.ipv6.ndp_proxy = required
@@ -216,7 +246,7 @@ obf.heartbeat.jitter_ms = 0
 perf.connection.idle_timeout_secs = 3
 ''');cfg.chmod(0o600)
         run([str(binary),'add-client','ndp-user','--password-stdin','--profiles','ndp','--static-ipv6','fd86::2','-c',str(cfg)],input='ndp-fixture-pass\n')
-        with users.open('a') as f:f.write('\nclient_subnet = fd87::/64\n')
+        with users.open('a') as f:f.write('\nclient_subnet = fd87::/64'+(', ::/0' if args.extended else '')+'\n')
         run([str(binary),'check-config','-c',str(cfg)])
         state=root/'state';state.mkdir(mode=0o700)
         worker=spawn('qns',['env','STATE_DIRECTORY='+str(state),'QELI_CONTROL_SOCKET='+str(root/'control.sock'),str(binary),'_worker','-c',str(cfg)],'server')
@@ -229,12 +259,12 @@ perf.connection.idle_timeout_secs = 3
             result=json.loads(output.read_text())
             record(label,result['sent']==3 and bool(result['responses'])==(expect=='yes'),dict(target=target,responses=len(result['responses'])))
 
-        def control():
+        def control(request=None):
             with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as sock:
-                sock.settimeout(3);sock.connect(str(root/'control.sock'));sock.sendall(b'{"cmd":"list-clients"}\n');data=b''
+                sock.settimeout(3);sock.connect(str(root/'control.sock'));sock.sendall((json.dumps(request or {'cmd':'list-clients'})+'\n').encode());data=b''
                 while b'\n' not in data:
                     part=sock.recv(65536);assert part;data+=part
-            reply=json.loads(data.split(b'\n')[0]);assert reply['ok'];return reply['clients']
+            reply=json.loads(data.split(b'\n')[0]);assert reply['ok'];return reply if request else reply['clients']
 
         packet('upstream kernel NDP positive control','fd46:2::2','yes','kernel')
         packet('unconnected reserved lease has no NA','fd86::2','no')
@@ -267,6 +297,17 @@ level = info
         packet('free pool address has no proxy NA','fd86::99','no')
         packet('unowned external prefix has no proxy NA','fd88::42','no')
         packet('active DAD gets unsolicited all-nodes NA','fd86::2','yes','dad')
+        if args.extended:
+            packet('DAD unicast destination baseline-fix','fd86::2','yes' if args.baseline else 'no','dad-unicast')
+            previous=(root/'server.log').read_text().count('NDP proxy rate limit reached')
+            output=root/'rate-probe.json'
+            ns('qnr',['python3',str(Path(__file__).resolve()),'rate','--target','fd86::2','--proxy-mac',proxy_mac,'--output',str(output)])
+            rate=json.loads(output.read_text())
+            record('per-MAC packet response cap enforced',1<=len(rate['responses'])<=256,dict(sent=rate['sent'],responses=len(rate['responses']),duration=rate['send_duration']))
+            warnings=(root/'server.log').read_text().count('NDP proxy rate limit reached')-previous
+            record('rate warnings baseline/fix',warnings>1 if args.baseline else warnings==1,dict(warnings=warnings))
+            time.sleep(1.1)
+            packet('NDP responds again after rate-window reset','fd86::2','yes')
         for kind in ('bad-hop','bad-checksum','dad-slla'):
             packet('malformed-'+kind+' rejected','fd86::2','no',kind)
         for target in ('fd86::2','fd87::42'):
@@ -285,12 +326,41 @@ level = info
         client=connect('client-reconnect')
         packet('reconnected exact lease resumes NA','fd86::2','yes')
         packet('reconnected delegated prefix resumes NA','fd87::42','yes')
+        if args.extended and not args.baseline:
+            client.send_signal(signal.SIGSTOP)
+            try:
+                reply=control({'cmd':'kick','username':'ndp-user'})
+                record('administrator kick removes live session',reply['ok'] and control()==[])
+                packet('admin-revoked lease stops NA','fd86::2','no')
+                packet('admin-revoked prefix stops NA','fd87::42','no')
+                record('admin revoke removes delegated route','fd87::/64 dev vpns' not in ns('qns',['ip','-6','route','show']).stdout)
+            finally:
+                client.kill();client.wait(timeout=5);children.remove(client)
+            client=connect('client-after-kick')
+            packet('new authenticated owner resumes NA','fd86::2','yes')
         record('reconnected client normal stop',stop(client)==0)
         record('worker normal stop',stop(worker)==0)
         after=network();(root/'network-after.json').write_text(json.dumps(after,indent=2))
         record('worker restores foreign firewall routes links and sysctl',after==before)
         record('worker retires socket and sysctl journal',not (root/'control.sock').exists() and not (state/'sysctls.state').exists())
         packet('stopped responder has no lease NA','fd86::2','no')
+        if args.extended and not args.baseline:
+            worker=spawn('qns',['env','STATE_DIRECTORY='+str(state),'QELI_CONTROL_SOCKET='+str(root/'control.sock'),str(binary),'_worker','-c',str(cfg)],'server-crash')
+            until(lambda:'session-aware IPv6 NDP proxy active' in (root/'server-crash.log').read_text())
+            client=connect('client-crash')
+            packet('proxy responds before worker SIGKILL','fd86::2','yes')
+            client.send_signal(signal.SIGSTOP)
+            worker.kill();worker.wait(timeout=5);children.remove(worker)
+            client.kill();client.wait(timeout=5);children.remove(client)
+            packet('SIGKILL closes proxy lease responder','fd86::2','no')
+            packet('SIGKILL closes proxy delegated responder','fd87::42','no')
+            old_wan=next(x for x in json.loads(before['links']) if x['ifname']=='wan0')
+            new_wan=json.loads(ns('qns',['ip','-j','link','show','wan0']).stdout)[0]
+            record('SIGKILL releases socket multicast membership',old_wan['flags']==new_wan['flags'])
+            (root/'network-crash.json').write_text(json.dumps(network(),indent=2))
+            # SIGKILL firewall/sysctl recovery has separate evidence and explicit
+            # lost-witness manual boundaries. Do not label this as clean restore.
+
         completed=True
     finally:
         for child in children:
@@ -313,6 +383,11 @@ if __name__=='__main__':
     rp.add_argument('--backend',choices=('nft','legacy'),required=True)
     rp.add_argument('--mode',choices=('route','manual'),required=True)
     rp.add_argument('--transport',choices=('tcp','udp'),required=True)
+    rp.add_argument('--extended',action='store_true')
+    rp.add_argument('--baseline',action='store_true',help='Reproduce invalid DAD replies and repeated rate warnings')
+    rate=sub.add_parser('rate')
+    for name in ('target','proxy-mac','output'):rate.add_argument('--'+name,required=True)
     args=ap.parse_args()
     if args.command=='probe':probe(args)
+    elif args.command=='rate':rate_probe(args)
     else:main(args)
