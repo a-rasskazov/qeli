@@ -380,4 +380,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q21: TUN/TAP, IP and MTU/PMTU — complete](reports/AUDIT-Q21-PACKETS-FINAL.md)
 - [Q22: transport core, FFI/JNI and memory — complete](reports/AUDIT-Q22-CORE-FFI-FINAL.md)
 - [Q23: roaming, resume and CONTROL_V2 — complete](reports/AUDIT-Q23-ROAMING-FINAL.md)
-- [Q24: multipath and shared budgets — fix qualification](reports/AUDIT-Q24-BONDING.md)
+- [Q24: multipath and shared budgets — DONE/PASS](reports/AUDIT-Q24-BONDING.md)

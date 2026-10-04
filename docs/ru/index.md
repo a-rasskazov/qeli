@@ -380,4 +380,4 @@
 - [Q21: TUN/TAP, IP и MTU/PMTU — завершено](reports/AUDIT-Q21-PACKETS-FINAL.md)
 - [Q22: transport core, FFI/JNI и память — завершено](reports/AUDIT-Q22-CORE-FFI-FINAL.md)
 - [Q23: роуминг, resume и CONTROL_V2 — завершено](reports/AUDIT-Q23-ROAMING-FINAL.md)
-- [Q24: multipath и общий бюджет — проверка исправления](reports/AUDIT-Q24-BONDING.md)
+- [Q24: multipath и общий бюджет — DONE/PASS](reports/AUDIT-Q24-BONDING.md)

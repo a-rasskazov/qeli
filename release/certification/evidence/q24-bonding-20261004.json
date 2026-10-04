@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
-  "status": "IN_PROGRESS_Q24_FIX_AND_CORE_GATES_QUALIFIED_AVD_REPEAT_OPEN",
-  "updated_at": "2026-10-04T16:58:34.488227+00:00",
+  "status": "PASS_Q24",
+  "completed_at": "2026-10-04T18:50:51.315149+00:00",
   "artifact_sha256": "e4b103affffbb58b155430234e6116d46230f037b58dbda60c3348555d98673b",
   "core_commit": "bf6ee9dede3197f013f37257222af2ea9acacae6",
+  "native_source_digest": "e58d42a850e10873d92a4c6888dfafb1af7d88ba8ed26e09bf8ee79f036b179d",
   "fixes": [
-    "Q24-F001 P2: stalled carrier exhausted common TUN/wire pool; bonded snapshots release native TUN before queueing; client/server queues share bounded capacity."
+    "Q24-F001 P2: stalled carrier held the shared native TUN/wire pool and starved every flow; one bounded bonded snapshot pool releases native TUN packets before queueing; client/server queues receive bounded shares with spare capacity for other carriers/resume candidate."
   ],
   "linux_qualification": {
     "started_at": "2026-10-04T13:10:41.932743+00:00",
@@ -430,7 +431,8 @@
   "unit": {
     "passed": 2407,
     "ignored": 60,
-    "new": 2
+    "new": 2,
+    "feature": "transport-core-ffi"
   },
   "runtime": {
     "schema_version": 1,
@@ -1075,53 +1077,6 @@
       "named_namespaces": ""
     },
     "host_restored": false
-  },
-  "runtime_assessment": {
-    "status": "PASS_CURRENT_CORE_11_CASES",
-    "checks_passed": 264,
-    "raw_host_restored": false,
-    "accepted_ambient_delta": [
-      "firewall4"
-    ],
-    "artifact_source_commit": "bf6ee9dede3197f013f37257222af2ea9acacae6",
-    "compiled_input_count": 347,
-    "metrics": {
-      "q24.fixed.handover": {},
-      "q24.adaptive.handover": {},
-      "q24.fixed.resume": {},
-      "q24.adaptive.resume": {},
-      "q24.fixed.grace-expiry": {},
-      "q24.single.bonding.fake-tls": {
-        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=7.777372; configured_mbps=8; inner_flows=8",
-        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.758644; configured_mbps=8; inner_flows=8"
-      },
-      "q24.fixed.bonding.fake-tls": {
-        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=7.077944; configured_mbps=8; inner_flows=8",
-        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=6.466312; configured_mbps=8; inner_flows=8",
-        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.747618; configured_mbps=8; inner_flows=8"
-      },
-      "q24.adaptive.bonding.fake-tls": {
-        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=6.728714; configured_mbps=8; inner_flows=8",
-        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=7.776984; configured_mbps=8; inner_flows=8",
-        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.545991; configured_mbps=8; inner_flows=8"
-      },
-      "q24.fixed.bonding.plain": {
-        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=6.990780; configured_mbps=8; inner_flows=8",
-        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=7.689286; configured_mbps=8; inner_flows=8",
-        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.410878; configured_mbps=8; inner_flows=8"
-      },
-      "q24.fixed.bonding.reality-tls": {
-        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=6.903672; configured_mbps=8; inner_flows=8",
-        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=7.253157; configured_mbps=8; inner_flows=8",
-        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.675685; configured_mbps=8; inner_flows=8"
-      },
-      "q24.fixed.bonding.obfs-ws": {
-        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=7.252715; configured_mbps=8; inner_flows=8",
-        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=6.728436; configured_mbps=8; inner_flows=8",
-        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.447056; configured_mbps=8; inner_flows=8"
-      }
-    },
-    "scope": "Raw host_restored remains false when the exact accepted three ambient legacy rules differ; no other host difference accepted."
   },
   "starvation_assessments": {
     "baseline": {
@@ -1932,52 +1887,59 @@
       "scope": "Only the exact three accepted Q25-A125 ambient legacy lines may differ; raw snapshots/status untouched."
     }
   },
+  "runtime_assessment": {
+    "status": "PASS_CURRENT_CORE_11_CASES",
+    "checks_passed": 264,
+    "raw_host_restored": false,
+    "accepted_ambient_delta": [
+      "firewall4"
+    ],
+    "artifact_source_commit": "bf6ee9dede3197f013f37257222af2ea9acacae6",
+    "compiled_input_count": 347,
+    "metrics": {
+      "q24.fixed.handover": {},
+      "q24.adaptive.handover": {},
+      "q24.fixed.resume": {},
+      "q24.adaptive.resume": {},
+      "q24.fixed.grace-expiry": {},
+      "q24.single.bonding.fake-tls": {
+        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=7.777372; configured_mbps=8; inner_flows=8",
+        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.758644; configured_mbps=8; inner_flows=8"
+      },
+      "q24.fixed.bonding.fake-tls": {
+        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=7.077944; configured_mbps=8; inner_flows=8",
+        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=6.466312; configured_mbps=8; inner_flows=8",
+        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.747618; configured_mbps=8; inner_flows=8"
+      },
+      "q24.adaptive.bonding.fake-tls": {
+        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=6.728714; configured_mbps=8; inner_flows=8",
+        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=7.776984; configured_mbps=8; inner_flows=8",
+        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.545991; configured_mbps=8; inner_flows=8"
+      },
+      "q24.fixed.bonding.plain": {
+        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=6.990780; configured_mbps=8; inner_flows=8",
+        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=7.689286; configured_mbps=8; inner_flows=8",
+        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.410878; configured_mbps=8; inner_flows=8"
+      },
+      "q24.fixed.bonding.reality-tls": {
+        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=6.903672; configured_mbps=8; inner_flows=8",
+        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=7.253157; configured_mbps=8; inner_flows=8",
+        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.675685; configured_mbps=8; inner_flows=8"
+      },
+      "q24.fixed.bonding.obfs-ws": {
+        "bonding-download-baseline-rate.log": "receiver_goodput_mbps=7.252715; configured_mbps=8; inner_flows=8",
+        "bonding-download-impaired-rate.log": "receiver_goodput_mbps=6.728436; configured_mbps=8; inner_flows=8",
+        "bonding-upload-baseline-rate.log": "receiver_goodput_mbps=7.447056; configured_mbps=8; inner_flows=8"
+      }
+    },
+    "scope": "Raw host_restored remains false when the exact accepted three ambient legacy rules differ; no other host difference accepted."
+  },
   "native": {
     "desktop": {
-      "result": {
-        "kind": "desktop",
-        "started_at": "2026-10-04T14:30:41.934331+00:00",
-        "host": "10.66.116.10",
-        "fallback_scope": "Android A/B moved to .10; pinned recipe plus single job/bounded pass; .11 unavailable",
-        "source_commit": "0548fe0447ff31276e0448c03caf59be678e8bdf",
-        "host_before": {
-          "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
-          "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
-          "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
-          "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
-          "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
-          "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
-          "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
-          "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
-          "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
-          "named_namespaces": ""
-        },
-        "service_before": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
-        "working_before": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87",
-        "exit_code": 0,
-        "status": "PASS",
-        "build_log_sha256": "efd007449dcb3a73e9d1d20a400d1ffe409ae56c5a089a9ca59d44b43ba1086a",
-        "host_after": {
-          "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
-          "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
-          "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
-          "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
-          "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
-          "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
-          "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
-          "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
-          "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
-          "named_namespaces": ""
-        },
-        "service_after": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
-        "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87",
-        "host_restored": true,
-        "finished_at": "2026-10-04T14:53:56.907669+00:00"
-      },
+      "host": "10.66.116.10",
+      "result_sha256": "12d4b76a6746a5e2fbdb3fcad9d892c81ed22ba252ea5a4d288d34f64d160b46",
+      "host_restored": true,
+      "accepted_legacy_delta": [],
       "record": {
         "artifacts": {
           "native-libs/macos-universal/libqeli.dylib": {
@@ -2019,53 +1981,12 @@
       }
     },
     "android": {
-      "result": {
-        "kind": "android",
-        "started_at": "2026-10-04T14:54:58.476392+00:00",
-        "host": "10.66.116.10",
-        "fallback_scope": "Android A/B moved to .10; pinned recipe plus single job/bounded pass; .11 unavailable",
-        "source_commit": "0548fe0447ff31276e0448c03caf59be678e8bdf",
-        "host_before": {
-          "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
-          "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
-          "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
-          "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
-          "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
-          "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
-          "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
-          "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
-          "named_namespaces": ""
-        },
-        "service_before": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
-        "working_before": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87",
-        "exit_code": 0,
-        "status": "PASS",
-        "build_log_sha256": "78eda68aae1cc55ae19cfb6f02640c942020b62facc64a8eef3cc1611e64e3c2",
-        "host_after": {
-          "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
-          "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
-          "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
-          "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
-          "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
-          "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
-          "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
-          "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
-          "named_namespaces": ""
-        },
-        "service_after": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
-        "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87",
-        "host_restored": false,
-        "finished_at": "2026-10-04T15:11:18.399196+00:00",
-        "accepted_legacy_delta": [
-          "firewall4_legacy"
-        ]
-      },
+      "host": "10.66.116.10",
+      "result_sha256": "e4907c436542af7a4d79ef516daf91e64fb31473f39e33a04ad47bda8170332a",
+      "host_restored": false,
+      "accepted_legacy_delta": [
+        "firewall4_legacy"
+      ],
       "record": {
         "artifacts": {
           "native-libs/android/arm64-v8a/libqeli.so": {
@@ -2200,6 +2121,331 @@
     ],
     "scope": "Windows packaged C ABI and real localhost handshake cancellation; no Wintun or OS network mutation."
   },
+  "android_jni": {
+    "started_at": "2026-10-04T18:46:07.637647+00:00",
+    "source_commit": "b190eaff3a9c4624245f840c3f2921b7b01dffe2",
+    "host_before": {
+      "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+      "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
+      "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+      "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+      "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
+      "listener": "LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:((\"qeli\",pid=901,fd=10))",
+      "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+      "named_namespaces": ""
+    },
+    "service_before": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+    "working_before": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+    "audit_android_client_abi.java_sha256": "4326e879c863986e0b61c4b19e9f4c48f91abc38446371af2f76e8ccf25ddb4e",
+    "libqeli.so_sha256": "125f9022c4af0dc8e3bc4cda29608fd26781eaed4acae64257c232609364d57b",
+    "runner.py_sha256": "11492fb6647f32a9bb601503433dd069df9c5d7a0ee93fb0721136010e1df897",
+    "exit_code": 0,
+    "runtime": {
+      "started_at": 1791139602.2776659,
+      "library_sha256": "125f9022c4af0dc8e3bc4cda29608fd26781eaed4acae64257c232609364d57b",
+      "java_sha256": "4326e879c863986e0b61c4b19e9f4c48f91abc38446371af2f76e8ccf25ddb4e",
+      "scope": "Read-only repeat of fully initialized owned AVD",
+      "userdata_before": {
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791130779521087844,
+          "sha256": "86f4c8d6b6e5fd95086ffe9909d0d99115661e01ed8832901ff94850069f2243"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 196704,
+          "mtime_ns": 1791130779957086802,
+          "sha256": "40a5d9b6f16370e831c5239e3f37d509cc3c3e5a34dd3b7171a08f83d8a0e3b1"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "owned_userdata_before": {
+        "encryptionkey.img": {
+          "size": 18874368,
+          "mtime_ns": 1791138383108639530,
+          "sha256": "522bd0b6a2c92e37de465059bb9487bb9597a9aae032b469a8ebe0b38146d8c3"
+        },
+        "encryptionkey.img.qcow2": {
+          "size": 1966080,
+          "mtime_ns": 1791138525056180690,
+          "sha256": "d50ea4bf0127183b6d2c653b4ddd784cece11d2cca931a767e51f5affe359ffe"
+        },
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791138383088639596,
+          "sha256": "52d07146ea01275df7927407a6e98b10a17e0e8752f47901c27b1dc2f675f9c6"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 785973248,
+          "mtime_ns": 1791138525080180614,
+          "sha256": "26fe3604560f0cfc9decc1928b9bdb4fdbfcab7ab19aa4770d2de8adb5c8ccd5"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "emulator_command": [
+        "/var/tmp/qeli-q24-jni-sdk-20261004/emulator/emulator",
+        "-avd",
+        "qeli-q24-initialized",
+        "-port",
+        "5562",
+        "-no-snapshot-load",
+        "-no-snapshot-save",
+        "-no-window",
+        "-no-audio",
+        "-no-boot-anim",
+        "-gpu",
+        "swiftshader",
+        "-memory",
+        "1024",
+        "-cores",
+        "1",
+        "-partition-size",
+        "1024",
+        "-show-kernel",
+        "-read-only"
+      ],
+      "boot_seconds": 47.45226450095652,
+      "links_before": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00\n2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/ether da:7b:61:b0:5f:06 brd ff:ff:ff:ff:ff:ff\n3: ifb0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether 9a:54:33:b6:b8:db brd ff:ff:ff:ff:ff:ff\n4: ifb1: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether 52:30:40:ad:54:77 brd ff:ff:ff:ff:ff:ff\n5: tunl0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n6: gre0@NONE: <NOARP> mtu 1476 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre 0.0.0.0 brd 0.0.0.0\n7: gretap0@NONE: <BROADCAST,MULTICAST> mtu 1462 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n8: erspan0@NONE: <BROADCAST,MULTICAST> mtu 1450 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n9: ip_vti0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n10: ip6_vti0@NONE: <NOARP> mtu 1364 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n11: sit0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/sit 0.0.0.0 brd 0.0.0.0\n12: ip6tnl0@NONE: <NOARP> mtu 1452 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n13: ip6gre0@NONE: <NOARP> mtu 1448 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre6 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00 brd 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\n14: hwsim0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ieee802.11/radiotap 12:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n15: eth0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff\n16: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc mq state DOWN mode DORMANT group default qlen 1000\\    link/ether 02:15:ba:00:00:00 brd ff:ff:ff:ff:ff:ff\n",
+      "packages_before": "",
+      "exit_code": 0,
+      "checks": 23,
+      "status": "PASS",
+      "facts": {
+        "ro.build.version.sdk": "34",
+        "ro.build.version.release": "14",
+        "ro.product.cpu.abi": "x86_64"
+      },
+      "links_after": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00\n2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/ether da:7b:61:b0:5f:06 brd ff:ff:ff:ff:ff:ff\n3: ifb0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether 9a:54:33:b6:b8:db brd ff:ff:ff:ff:ff:ff\n4: ifb1: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether 52:30:40:ad:54:77 brd ff:ff:ff:ff:ff:ff\n5: tunl0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n6: gre0@NONE: <NOARP> mtu 1476 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre 0.0.0.0 brd 0.0.0.0\n7: gretap0@NONE: <BROADCAST,MULTICAST> mtu 1462 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n8: erspan0@NONE: <BROADCAST,MULTICAST> mtu 1450 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n9: ip_vti0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n10: ip6_vti0@NONE: <NOARP> mtu 1364 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n11: sit0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/sit 0.0.0.0 brd 0.0.0.0\n12: ip6tnl0@NONE: <NOARP> mtu 1452 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n13: ip6gre0@NONE: <NOARP> mtu 1448 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre6 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00 brd 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\n14: hwsim0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ieee802.11/radiotap 12:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n15: eth0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff\n16: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc mq state DOWN mode DORMANT group default qlen 1000\\    link/ether 02:15:ba:00:00:00 brd ff:ff:ff:ff:ff:ff\n",
+      "packages_after": "",
+      "owned_userdata_after": {
+        "encryptionkey.img": {
+          "size": 18874368,
+          "mtime_ns": 1791138383108639530,
+          "sha256": "522bd0b6a2c92e37de465059bb9487bb9597a9aae032b469a8ebe0b38146d8c3"
+        },
+        "encryptionkey.img.qcow2": {
+          "size": 1966080,
+          "mtime_ns": 1791138525056180690,
+          "sha256": "d50ea4bf0127183b6d2c653b4ddd784cece11d2cca931a767e51f5affe359ffe"
+        },
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791138383088639596,
+          "sha256": "52d07146ea01275df7927407a6e98b10a17e0e8752f47901c27b1dc2f675f9c6"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 785973248,
+          "mtime_ns": 1791138525080180614,
+          "sha256": "26fe3604560f0cfc9decc1928b9bdb4fdbfcab7ab19aa4770d2de8adb5c8ccd5"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "owned_userdata_preserved": true,
+      "userdata_after": {
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791130779521087844,
+          "sha256": "86f4c8d6b6e5fd95086ffe9909d0d99115661e01ed8832901ff94850069f2243"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 196704,
+          "mtime_ns": 1791130779957086802,
+          "sha256": "40a5d9b6f16370e831c5239e3f37d509cc3c3e5a34dd3b7171a08f83d8a0e3b1"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "userdata_preserved": true
+    },
+    "status": "PASS",
+    "host_after": {
+      "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+      "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
+      "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+      "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+      "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
+      "listener": "LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:((\"qeli\",pid=901,fd=10))",
+      "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+      "named_namespaces": ""
+    },
+    "service_after": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+    "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+    "host_restored": true
+  },
+  "android_avd_initialization": {
+    "started_at": "2026-10-04T18:25:45.824269+00:00",
+    "source_commit": "bf043a38360dc79ce9f085c27e4efe312ffe7749",
+    "host_before": {
+      "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+      "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
+      "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+      "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+      "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
+      "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
+      "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+      "named_namespaces": ""
+    },
+    "service_before": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+    "working_before": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+    "audit_android_client_abi.java_sha256": "4326e879c863986e0b61c4b19e9f4c48f91abc38446371af2f76e8ccf25ddb4e",
+    "libqeli.so_sha256": "125f9022c4af0dc8e3bc4cda29608fd26781eaed4acae64257c232609364d57b",
+    "runner.py_sha256": "dc6e140ced3b014ad402b2cb10f424ce067a0ef7c2095a95a385fc5ff1adbaa0",
+    "exit_code": 0,
+    "runtime": {
+      "started_at": 1791138379.4234936,
+      "library_sha256": "125f9022c4af0dc8e3bc4cda29608fd26781eaed4acae64257c232609364d57b",
+      "java_sha256": "4326e879c863986e0b61c4b19e9f4c48f91abc38446371af2f76e8ccf25ddb4e",
+      "scope": "New owned AVD writable initialization only",
+      "userdata_before": {
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791130779521087844,
+          "sha256": "86f4c8d6b6e5fd95086ffe9909d0d99115661e01ed8832901ff94850069f2243"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 196704,
+          "mtime_ns": 1791130779957086802,
+          "sha256": "40a5d9b6f16370e831c5239e3f37d509cc3c3e5a34dd3b7171a08f83d8a0e3b1"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "owned_userdata_before": {
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "emulator_command": [
+        "/var/tmp/qeli-q24-jni-sdk-20261004/emulator/emulator",
+        "-avd",
+        "qeli-q24-initialized",
+        "-port",
+        "5562",
+        "-no-snapshot-load",
+        "-no-snapshot-save",
+        "-no-window",
+        "-no-audio",
+        "-no-boot-anim",
+        "-gpu",
+        "swiftshader",
+        "-memory",
+        "1024",
+        "-cores",
+        "1",
+        "-partition-size",
+        "1024",
+        "-show-kernel"
+      ],
+      "boot_seconds": 127.36775843298528,
+      "links_before": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00\n2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/ether 4a:7b:16:5e:d2:ae brd ff:ff:ff:ff:ff:ff\n3: ifb0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether be:7f:a5:2d:6d:58 brd ff:ff:ff:ff:ff:ff\n4: ifb1: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether ce:ff:97:46:04:6a brd ff:ff:ff:ff:ff:ff\n5: tunl0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n6: gre0@NONE: <NOARP> mtu 1476 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre 0.0.0.0 brd 0.0.0.0\n7: gretap0@NONE: <BROADCAST,MULTICAST> mtu 1462 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n8: erspan0@NONE: <BROADCAST,MULTICAST> mtu 1450 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n9: ip_vti0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n10: ip6_vti0@NONE: <NOARP> mtu 1364 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n11: sit0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/sit 0.0.0.0 brd 0.0.0.0\n12: ip6tnl0@NONE: <NOARP> mtu 1452 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n13: ip6gre0@NONE: <NOARP> mtu 1448 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre6 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00 brd 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\n14: hwsim0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ieee802.11/radiotap 12:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n15: eth0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff\n16: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc mq state DOWN mode DORMANT group default qlen 1000\\    link/ether 02:15:ba:00:00:00 brd ff:ff:ff:ff:ff:ff\n",
+      "packages_before": "",
+      "exit_code": 0,
+      "checks": 23,
+      "status": "PASS",
+      "facts": {
+        "ro.build.version.sdk": "34",
+        "ro.build.version.release": "14",
+        "ro.product.cpu.abi": "x86_64"
+      },
+      "links_after": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00\n2: dummy0: <BROADCAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/ether 4a:7b:16:5e:d2:ae brd ff:ff:ff:ff:ff:ff\n3: ifb0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether be:7f:a5:2d:6d:58 brd ff:ff:ff:ff:ff:ff\n4: ifb1: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 32\\    link/ether ce:ff:97:46:04:6a brd ff:ff:ff:ff:ff:ff\n5: tunl0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n6: gre0@NONE: <NOARP> mtu 1476 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre 0.0.0.0 brd 0.0.0.0\n7: gretap0@NONE: <BROADCAST,MULTICAST> mtu 1462 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n8: erspan0@NONE: <BROADCAST,MULTICAST> mtu 1450 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n9: ip_vti0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ipip 0.0.0.0 brd 0.0.0.0\n10: ip6_vti0@NONE: <NOARP> mtu 1364 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n11: sit0@NONE: <NOARP> mtu 1480 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/sit 0.0.0.0 brd 0.0.0.0\n12: ip6tnl0@NONE: <NOARP> mtu 1452 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/tunnel6 :: brd ::\n13: ip6gre0@NONE: <NOARP> mtu 1448 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/gre6 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00 brd 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\n14: hwsim0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ieee802.11/radiotap 12:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff\n15: eth0: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\\    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff\n16: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc mq state DOWN mode DORMANT group default qlen 1000\\    link/ether 02:15:ba:00:00:00 brd ff:ff:ff:ff:ff:ff\n",
+      "packages_after": "",
+      "owned_userdata_after": {
+        "encryptionkey.img": {
+          "size": 18874368,
+          "mtime_ns": 1791138383108639530,
+          "sha256": "522bd0b6a2c92e37de465059bb9487bb9597a9aae032b469a8ebe0b38146d8c3"
+        },
+        "encryptionkey.img.qcow2": {
+          "size": 1966080,
+          "mtime_ns": 1791138525056180690,
+          "sha256": "d50ea4bf0127183b6d2c653b4ddd784cece11d2cca931a767e51f5affe359ffe"
+        },
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791138383088639596,
+          "sha256": "52d07146ea01275df7927407a6e98b10a17e0e8752f47901c27b1dc2f675f9c6"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 785973248,
+          "mtime_ns": 1791138525080180614,
+          "sha256": "26fe3604560f0cfc9decc1928b9bdb4fdbfcab7ab19aa4770d2de8adb5c8ccd5"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "owned_userdata_preserved": false,
+      "userdata_after": {
+        "userdata-qemu.img": {
+          "size": 6488064,
+          "mtime_ns": 1791130779521087844,
+          "sha256": "86f4c8d6b6e5fd95086ffe9909d0d99115661e01ed8832901ff94850069f2243"
+        },
+        "userdata-qemu.img.qcow2": {
+          "size": 196704,
+          "mtime_ns": 1791130779957086802,
+          "sha256": "40a5d9b6f16370e831c5239e3f37d509cc3c3e5a34dd3b7171a08f83d8a0e3b1"
+        },
+        "userdata.img": {
+          "size": 1048576,
+          "mtime_ns": 1791122249000000000,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      },
+      "userdata_preserved": true
+    },
+    "status": "PASS",
+    "host_after": {
+      "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+      "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
+      "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+      "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+      "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+      "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+      "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
+      "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
+      "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+      "named_namespaces": ""
+    },
+    "service_after": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+    "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+    "host_restored": false
+  },
   "android_jni_initial": {
     "started_at": "2026-10-04T16:19:15.475617+00:00",
     "source_commit": "0548fe0447ff31276e0448c03caf59be678e8bdf",
@@ -2304,18 +2550,7 @@
     "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
     "host_restored": true
   },
-  "android_jni_initial_assessment": {
-    "status": "PASS_INITIAL_JNI_23_PRIVATE_AVD_INITIALIZATION_REQUIRES_FINAL_READ_ONLY_RERUN",
-    "actual_jni_checks": 23,
-    "original_userdata_preserved": true,
-    "created_userdata_files": [
-      "userdata-qemu.img",
-      "userdata-qemu.img.qcow2"
-    ],
-    "scope": "Raw exit1/userdata_preserved=false retained. First private AVD boot initialized two base image files; no original user data changed. Final initialized-AVD execution required separately.",
-    "runtime_preparation": "Private libpulse and eight missing dependency libraries extracted within SDK; emulator37.2.12 enforced 6GiB userdata/2560MiB RAM. Unreferenced compiler caches cleared preserving all active mappings/working binary; duplicate bootstrap ZIP removed."
-  },
-  "android_avd_repeat": {
+  "android_avd_previous_timeouts": {
     "jni-r6": {
       "started_at": "2026-10-04T16:27:06.984918+00:00",
       "source_commit": "0548fe0447ff31276e0448c03caf59be678e8bdf",
@@ -2519,7 +2754,141 @@
       "service_after": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
       "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
       "host_restored": false
+    },
+    "jni-kernel": {
+      "started_at": "2026-10-04T18:19:36.159133+00:00",
+      "source_commit": "bf043a38360dc79ce9f085c27e4efe312ffe7749",
+      "host_before": {
+        "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+        "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
+        "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+        "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+        "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+        "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+        "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+        "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+        "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
+        "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
+        "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+        "named_namespaces": ""
+      },
+      "service_before": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+      "working_before": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+      "audit_android_client_abi.java_sha256": "4326e879c863986e0b61c4b19e9f4c48f91abc38446371af2f76e8ccf25ddb4e",
+      "libqeli.so_sha256": "125f9022c4af0dc8e3bc4cda29608fd26781eaed4acae64257c232609364d57b",
+      "runner.py_sha256": "60264ccc7d74b9bf0f11aa65e8c48b1fcaf26da0027e11d26b6cb36c4d06307b",
+      "exit_code": 1,
+      "runtime": {
+        "started_at": 1791138008.6144686,
+        "library_sha256": "125f9022c4af0dc8e3bc4cda29608fd26781eaed4acae64257c232609364d57b",
+        "java_sha256": "4326e879c863986e0b61c4b19e9f4c48f91abc38446371af2f76e8ccf25ddb4e",
+        "userdata_before": {
+          "userdata-qemu.img": {
+            "size": 6488064,
+            "mtime_ns": 1791130779521087844,
+            "sha256": "86f4c8d6b6e5fd95086ffe9909d0d99115661e01ed8832901ff94850069f2243"
+          },
+          "userdata-qemu.img.qcow2": {
+            "size": 196704,
+            "mtime_ns": 1791130779957086802,
+            "sha256": "40a5d9b6f16370e831c5239e3f37d509cc3c3e5a34dd3b7171a08f83d8a0e3b1"
+          },
+          "userdata.img": {
+            "size": 1048576,
+            "mtime_ns": 1791122249000000000,
+            "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+          }
+        },
+        "emulator_command": [
+          "/var/tmp/qeli-q24-jni-sdk-20261004/emulator/emulator",
+          "-avd",
+          "qeli-q24",
+          "-port",
+          "5562",
+          "-read-only",
+          "-no-snapshot-load",
+          "-no-snapshot-save",
+          "-no-window",
+          "-no-audio",
+          "-no-boot-anim",
+          "-gpu",
+          "swiftshader",
+          "-memory",
+          "1024",
+          "-cores",
+          "2",
+          "-partition-size",
+          "1024",
+          "-show-kernel"
+        ],
+        "userdata_after": {
+          "userdata-qemu.img": {
+            "size": 6488064,
+            "mtime_ns": 1791130779521087844,
+            "sha256": "86f4c8d6b6e5fd95086ffe9909d0d99115661e01ed8832901ff94850069f2243"
+          },
+          "userdata-qemu.img.qcow2": {
+            "size": 196704,
+            "mtime_ns": 1791130779957086802,
+            "sha256": "40a5d9b6f16370e831c5239e3f37d509cc3c3e5a34dd3b7171a08f83d8a0e3b1"
+          },
+          "userdata.img": {
+            "size": 1048576,
+            "mtime_ns": 1791122249000000000,
+            "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+          }
+        },
+        "userdata_preserved": true
+      },
+      "host_after": {
+        "addresses4": "lo               UNKNOWN        127.0.0.1/8 \nens18            UP             10.66.116.10/24 \nvpn0             UNKNOWN        10.9.0.1/24",
+        "addresses6": "lo               UNKNOWN        ::1/128 \nens18            UP             fe80::be24:11ff:fef1:572a/64 \nvpn0             UNKNOWN        fe80::1750:6d0e:8fba:4e3a/64",
+        "routes4": "default via 10.66.116.1 dev ens18 onlink \n10.9.0.0/24 dev vpn0 proto kernel scope link src 10.9.0.1 \n10.66.116.0/24 dev ens18 proto kernel scope link src 10.66.116.10 \nlocal 10.9.0.1 dev vpn0 table local proto kernel scope host src 10.9.0.1 \nbroadcast 10.9.0.255 dev vpn0 table local proto kernel scope link src 10.9.0.1 \nlocal 10.66.116.10 dev ens18 table local proto kernel scope host src 10.66.116.10 \nbroadcast 10.66.116.255 dev ens18 table local proto kernel scope link src 10.66.116.10 \nlocal 127.0.0.0/8 dev lo table local proto kernel scope host src 127.0.0.1 \nlocal 127.0.0.1 dev lo table local proto kernel scope host src 127.0.0.1 \nbroadcast 127.255.255.255 dev lo table local proto kernel scope link src 127.0.0.1",
+        "routes6": "fe80::/64 dev ens18 proto kernel metric 256 pref medium\nfe80::/64 dev vpn0 proto kernel metric 256 pref medium\nlocal ::1 dev lo table local proto kernel metric 0 pref medium\nlocal fe80::1750:6d0e:8fba:4e3a dev vpn0 table local proto kernel metric 0 pref medium\nlocal fe80::be24:11ff:fef1:572a dev ens18 table local proto kernel metric 0 pref medium\nmulticast ff00::/8 dev ens18 table local proto kernel metric 256 pref medium\nmulticast ff00::/8 dev vpn0 table local proto kernel metric 256 pref medium",
+        "firewall4": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+        "firewall6": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+        "firewall4_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n-A FORWARD -o vpn0 -m state --state RELATED,ESTABLISHED -j ACCEPT\n-A FORWARD -i vpn0 -j ACCEPT\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\n-A POSTROUTING -s 10.8.0.0/24 -o ens18 -j MASQUERADE\nCOMMIT",
+        "firewall6_legacy": "*mangle\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT\n*filter\n:INPUT ACCEPT [COUNTERS]\n:FORWARD ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\nCOMMIT\n*nat\n:PREROUTING ACCEPT [COUNTERS]\n:INPUT ACCEPT [COUNTERS]\n:OUTPUT ACCEPT [COUNTERS]\n:POSTROUTING ACCEPT [COUNTERS]\nCOMMIT",
+        "nft": "table ip nat {\n\tchain postrouting {\n\t\ttype nat hook postrouting priority srcnat; policy accept;\n\t\toifname \"ens18\" ip saddr 10.8.0.0/24 masquerade\n\t}\n}\ntable ip filter {\n\tchain forward {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-reply counter packets COUNTER bytes COUNTER accept\n\t\ticmp type destination-unreachable counter packets COUNTER bytes COUNTER accept\n\t\ticmp type time-exceeded counter packets COUNTER bytes COUNTER accept\n\t\ticmp type echo-request counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 80 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 443 counter packets COUNTER bytes COUNTER accept\n\t\ttcp dport 8080 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 95.214.10.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 89.108.81.177 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 185.217.198.87 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.66.0.0/16 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 192.168.50.0/24 counter packets COUNTER bytes COUNTER accept\n\t\tip saddr 10.8.0.0/24 counter packets COUNTER bytes COUNTER accept\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t\tct state established,related counter packets COUNTER bytes COUNTER accept\n\t\tiifname \"vpn0\" accept\n\t\toifname \"vpn0\" ct state established,related accept\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t\toifname \"lo\" counter packets COUNTER bytes COUNTER accept\n\t}\n}\ntable ip6 filter {\n\tchain INPUT {\n\t\ttype filter hook input priority filter; policy accept;\n\t}\n\n\tchain OUTPUT {\n\t\ttype filter hook output priority filter; policy accept;\n\t}\n\n\tchain FORWARD {\n\t\ttype filter hook forward priority filter; policy accept;\n\t}\n}",
+        "listener": "LISTEN 0      128          0.0.0.0:443       0.0.0.0:*    users:((\"qeli\",pid=901,fd=10))",
+        "resolver_sha256": "d9fcf7783d7b0b51869ef66ed4febbf50f514057108278e330b1e84d8aeb33e0  /etc/resolv.conf",
+        "named_namespaces": ""
+      },
+      "service_after": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+      "working_after": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+      "host_restored": true
     }
+  },
+  "android_avd_assessment": {
+    "status": "PASS_INITIALIZED_AVD_STRICT_READONLY_JNI_AND_HOST_STATE",
+    "checked_at": "2026-10-04T18:50:33.992990+00:00",
+    "final_result_sha256": "822f420bd936ae8c9bca2bdea6446fc7e9cd97a3f663f1de285c773c425647ef",
+    "actual_jni_checks": 23,
+    "boot_seconds": 47.45226450095652,
+    "outer_wrapper_exit_code": 0,
+    "raw_host_restored": true,
+    "host_snapshots_identical": true,
+    "working_service_and_binary_preserved": true,
+    "original_avd_userdata_preserved": true,
+    "initialized_userdata_and_encryption_preserved": true,
+    "snapshot_padding_fix": {
+      "status": "PASS_REAL_R2_FALSE_POSITIVE_RESOLVED_ALL_FIELDS_RETAINED",
+      "raw_r2_sha256": "fd5de8999cc07006411120cbb77be7419852ea0519689b59b7db48cb002a93cc",
+      "raw_host_restored": false,
+      "normalized_host_snapshots_equal": true,
+      "rejects_changed_pid_fd_port_state_and_malformed": true,
+      "scope": "ss display padding only; quoted process metadata preserved. No firewall normalization, ignoring rules or Q24 closure."
+    },
+    "prior_failed_runs_preserved": [
+      "jni-r5",
+      "jni-r6",
+      "jni-r7",
+      "jni-kernel",
+      "jni-readonly",
+      "jni-readonly-r2",
+      "jni-readonly-r3"
+    ],
+    "scope": "Incomplete read-only AVD template produced /data/misc encryption-policy failure before Qeli loaded. A separate newly owned AVD was fully initialized, then read-only repeated boot/JNI works with exact userdata/encryption preservation. Listener comparison removes only column padding and preserves all six fields/process metadata; changed PID,descriptor,address/port,state and malformed rows fail. No firewall rules are normalized/ignored in the final JNI run: complete snapshots match and strict wrapper exits0. Prior raw exceptions/false fields remain."
   },
   "header": {
     "header_sha256": "f26726abc8123f6351dbed1ab6f699b0b2fbb465a2e2ae7d8c4714b0f32fa027",
@@ -2537,25 +2906,46 @@
     ],
     "status": "PASS"
   },
+  "service_integrity": {
+    "status": "PASS_LAB10_ACTIVE_SERVICE_AND_BINARY_PRESERVED",
+    "executed_at": "2026-10-04T14:20:34.765364+00:00",
+    "host": "10.66.116.10",
+    "service": "MainPID=745\nExecMainStartTimestampMonotonic=3929887\nActiveState=active",
+    "active_binary": "51eb787fb8486f50e24fd2a1194a2780c9d8d3da80e238c8c97dbcce8cd13f87  /opt/qeli-src/target/debug/qeli",
+    "candidate_binary": "e4b103affffbb58b155430234e6116d46230f037b58dbda60c3348555d98673b  /var/tmp/qeli-q24-linux10-release-20261004/qeli",
+    "resources": "total        used        free      shared  buff/cache   available\nMem:            1973         284          85           0        1752        1688\nSwap:           2044          29        2015",
+    "scope": "Read-only check; no build, restart, deployment, host firewall or route changes."
+  },
   "plan": {
-    "done": 23,
+    "done": 24,
     "total": 37,
-    "percent": 62.2,
-    "remaining": 14,
-    "next": "Q24 finish initialized-AVD validation; Q25 follows"
+    "percent": 64.9,
+    "remaining": 13,
+    "next": "Q25 Linux CLI and network recovery"
   },
   "limits": [
-    "Actual JNI23 succeeded on new library. Raw overall rc1/userdata_preserved=false retained because first boot created two base files; original seed unchanged. Initialized-AVD repeat boot timed out at240/480seconds. Q24 remains open; no initialized-AVD PASS claimed.",
-    "Lab .11 still has no SSH banner; final state unverified. Android fallback .10 has2GiB RAM/2GiB swap, SDK emulator37.2.12 forces2560MiB guest RAM and6GiB userdata.",
-    "Only exact three known ambient legacy firewall lines may differ; raw snapshot booleans retained.",
-    "No new peak-throughput benchmark, physical Wi-Fi/LTE/NAT64/installed-app E2E or user-excluded Mac/iOS/router/Windows VM network runtime.",
-    "60 ignored tests remain excluded; no deployment/push."
+    "Historical peak throughput numbers were not rerun; 8 Mbps shared-cap qualification is not a peak-throughput benchmark.",
+    "Raw aggregate_leak_passed remains false: these Q24 fixtures do not run the full dedicated leak matrix. Exact snapshot differences can contain only the three previously accepted ambient legacy rules; raw host_restored fields remain unchanged.",
+    "Initial fixed resume fixture assumed 1/1; corrected to negotiated width. Persistent-loss REALITY-TLS iperf control timeout was replaced by bounded18-second loss; original failure remains recorded, not proven production regression.",
+    "Old baseline16PASS/3FAIL includes two starvation assertions and downlink recovery timeout; fixed19/19PASS. Flood probes show14healthy download flows/11healthy upload flows while pinned blocked flows can drop. No no-loss guarantee.",
+    "Mac/iOS/router/Windows VM network runtime are user exclusions. Cross-builds and actual Windows ABI/Android JNI are fresh; installed-app and physical Wi-Fi/LTE/sleep-wake/NAT64 are not rerun.",
+    "Lab .11 TCP/22 still provides no SSH banner; final .11 health/service state is unverified. All fresh heavy jobs moved sequentially to .10 with one compiler job.",
+    "60 ignored tests remain excluded. No new INI field, wire or public ABI; single-streamTCP/UDP path unchanged. Snapshot allocation adds at most4MiB per bonded client; carrier/TLS/kernel memory remains per-stream.",
+    "Read-only template was not fully initialized: kernel reported /data/misc encryption policy failure before loading Qeli. A separate newly owned AVD was initialized normally (23 JNI checks), then read-only cold boot passed another23 checks with userdata/encryption files unchanged. Original AVD userdata was preserved throughout; all initial raw failures remain. Initialization wrapper raw host_restored=false reflects only exact accepted three legacy rules; not rewritten.",
+    "Working service/executable preserved; no push/deploy."
   ],
   "raw_root": "C:\\Users\\litvi\\OneDrive\\Documents\\qeli\\audit-debt-20260924\\q24-bonding-20261004",
   "raw_sha256": {
+    "avd-cleanup.json": "eae6faeae47b7a7e6fb32b7b930497fecf3003bcd212317754831f2b583ca546",
+    "avd-diagnostics.json": "6b58645b8829310abc82af76c70cdc3a9f9561abc45096b5f43f59c2af3981f8",
+    "avd-initialize-live.log": "51108546257a4f9c62b5f3393d9b2f0501941d8a069bd1fe488657ef109ab1b9",
+    "avd-kernel-live.log": "c6be09e256739324eac7c6ccab03a9121e0bd9bc2d39985137eebfbdefeb7291",
+    "avd-kernel-pressure.json": "f82441998ec7bd929afb60a119b54466fc5f312a18b6eb602cc25a5bd32fc58e",
+    "checkpoint-commit.json": "0c872b5c0f7d5e68a01f215dd65b277d5be5df24739829c83953538e90c7cb9b",
     "disk-preparation.json": "3795d0022c8f154f2b27d6b713e10a2e5e047a5dca2274f74a31446537fc0fe1",
     "header.json": "b9e9258c1bd626c24cd1056350cefb8d91a67bedef2784cf0a42d5449f61cf30",
     "inactive-cache-cleanup.json": "d2ff0608b146d2c73b81879228c871b3e7ba73fa2c5ae18a02008e6f1212da82",
+    "jni-avd-assessment.json": "a268a50474b0a274b1b5f0c0377d808eb683ae8c5db72b0bc1b8a1439e7ecd3a",
     "jni-environment.json": "5cd64fe56a33a75c76a8bfa2a6e75ee6b34b89af63f50dee60e72eb92a557c76",
     "jni-initialization-assessment.json": "2e4712d06f1e459fcb6c1eecc0f36b9a9f9a9555157054e509874d2a251db80e",
     "lab11-banner.json": "dd58bdaddb2668b2b257805336911bd6681548d57ff4c44316a5d7676782e9f4",
@@ -2566,6 +2956,10 @@
     "sdk-runtime-dependencies.json": "9e303d95dc47d3efe394ca5c504b4ffecbf901563e4227d33484521fb51f06a0",
     "sdk-runtime-dependencies.log": "8c77f4194e84999704364b6b076303766d7afc28c333dd811be8d69fdb99bacd",
     "service-integrity.json": "cb87d047a64452e46b8e4882c318787b0200e000e3ddcabe0e394b6b9d8c0d67",
+    "snapshot-comparison.json": "bbf76e6ebdaa579bc5df888d2ce083f60ae4077e8c67fc0bbc0c0ca435dd0a52",
+    "validation---check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation-check_docs.log": "202495b26cf5a72a542b48bf73b18858a20884905ecaaab397525a0c0acfde58",
+    "validation-check_panel.log": "35e77e0e8a25f305a31ea550a789c4896a74fe2b6f6cf2387bcd9f564567873f",
     "windows.json": "7a51a6ede34c4f3afecc953b4097a9f13d9dc21f4ff4578af51be9b075254854",
     "android/build.log": "78eda68aae1cc55ae19cfb6f02640c942020b62facc64a8eef3cc1611e64e3c2",
     "android/result.json": "e4907c436542af7a4d79ef516daf91e64fb31473f39e33a04ad47bda8170332a",
@@ -2575,6 +2969,10 @@
     "desktop-r2/result.json": "12d4b76a6746a5e2fbdb3fcad9d892c81ed22ba252ea5a4d288d34f64d160b46",
     "jni/result.json": "dd0695be766491bd6e22070742eee5a5d468189ed22ee8505f6405ae4454abe1",
     "jni/runtime.log": "93525a5c0bc24d8ec72e31cf38a54919a5b2e97e7c6164a7209a00885e59f5a6",
+    "jni-initialize/result.json": "a4a26b35f073d7d1d650495cc314812505cc409a997d08fe65db8d226a64faa5",
+    "jni-initialize/runtime.log": "9a35d9564cd01d519d1822b8e30d916aa1925b66516d4bdf97dd566d61126a7a",
+    "jni-kernel/result.json": "a2c857a004ac30ddfcf25c00f5020765be25e711607495dec3874ec0f2805483",
+    "jni-kernel/runtime.log": "ba76d6b944a28c737caaffa56caf4dc16702473333f3f12695dbc8ad63567405",
     "jni-r2/result.json": "a11e27a6ff4b5fbf37e1115c7b449bc9b76d4d1081fd6db63abc84e9ff72325d",
     "jni-r2/runtime.log": "a1d21f04ffc2faf32367a2b1b7793534a0dae92961782343431999df929adbb0",
     "jni-r3/result.json": "8ba553c8c4389ba488112c93e39b22501cf0ba19f983b48ea4d58a8e40126903",
@@ -2587,6 +2985,14 @@
     "jni-r6/runtime.log": "281441de5acdcf4c49ddb6da5f9bba48a616ea1a01caaedd3fe98fa6d84fc6a9",
     "jni-r7/result.json": "beaccbd7a8262d88cd63378e72f4b8b1cf29cc3e34c0e40951d532be252d7eac",
     "jni-r7/runtime.log": "e0754de9cd7500f42661f245f60adc5a0aa30b9f01c889468b3fd2933f9e45bf",
+    "jni-readonly/result.json": "2066b2adde5fef77ba649d00e5aca1ae7328eb540a59509d6c1a4541fcf8d893",
+    "jni-readonly/runtime.log": "a1060ad2ee8dc707582877e3796723e44e84c7b20fa76cbbbe769618b2eb4703",
+    "jni-readonly-r2/result.json": "fd5de8999cc07006411120cbb77be7419852ea0519689b59b7db48cb002a93cc",
+    "jni-readonly-r2/runtime.log": "4e647e27139388f4a195a97ba2dd3192c47e76368f564b37d5515d933a48d5f2",
+    "jni-readonly-r3/result.json": "03a1ae1f4021b43db8b803f2cd1c0111f63732d5a321e2be5b436cfbb5f177f9",
+    "jni-readonly-r3/runtime.log": "a09c45f5bb3938541c2e39dfe9dd6e3ea105df51724a5aba24d9dd189fd0f3c4",
+    "jni-readonly-r4/result.json": "822f420bd936ae8c9bca2bdea6446fc7e9cd97a3f663f1de285c773c425647ef",
+    "jni-readonly-r4/runtime.log": "f617d2d79d56715b82c391f4e52fe1c02a67e31d4e627b07a83012080b2f29a3",
     "jni-sdk/avd.log": "470b7c4f7c01cb34014cc4e0f19c8131ff1c5d4473fae13258652a584d9f5281",
     "jni-sdk/download.log": "e47fb07447eb1df7769db78a8af69d35160755015b3aef8906c45da426d8ddfa",
     "jni-sdk/inventory.log": "bd53053695f0a1180b3df96caeab070271d6ef9243b095d165aa1000579dfcda",
@@ -2812,6 +3218,25 @@
     "runtime/q24.adaptive.handover/tmp/qeli-roaming-netns-tPXWEa/iperf-server.log": "b89e2d011122a707f855b2a03b0f3a936afe5fab12dd3cf11bf89ee6ff1c28b5",
     "runtime/q24.adaptive.handover/tmp/qeli-roaming-netns-tPXWEa/ping.log": "4dd6252c22fff31ce8a89130e3fd0fed49504a471f7baa70cce073cd37acff83",
     "runtime/q24.adaptive.handover/tmp/qeli-roaming-netns-tPXWEa/server.log": "336252cd9c78bb381eceebdce8109d5a93221dce0949f16e288b4540a2211794",
+    "jni-readonly-r4/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jni-readonly-r4/artifacts/emulator.log": "c28e7f957c047f9812e9c18e7dd462b152cf2ad85d64b6edcaa6bb9bd75b444c",
+    "jni-readonly-r4/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
+    "jni-readonly-r4/artifacts/jni.log": "f67b8bf4831a860ca6127fc6d02ea052b0ecdf2568e8a2a64b7bd5ec20c0bb24",
+    "jni-readonly-r4/artifacts/result.json": "ba457ac71dcec52803415b777bed295de84c17e09f0b250827d7f594b53e4d59",
+    "jni-readonly-r3/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jni-readonly-r3/artifacts/emulator.log": "1273d42f1728ff624f9d792dca710c38f5702929f0be16b32187e87d2d5d3de0",
+    "jni-readonly-r3/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
+    "jni-readonly-r3/artifacts/jni.log": "f67b8bf4831a860ca6127fc6d02ea052b0ecdf2568e8a2a64b7bd5ec20c0bb24",
+    "jni-readonly-r3/artifacts/result.json": "295c3c0faeffdb800c02fa101acd6303e8227d68eedbecaef58bcfa230c0af74",
+    "jni-readonly-r2/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jni-readonly-r2/artifacts/emulator.log": "28bbc4c7025c429bfca6c7d8a190bb9ae5ae7aab6eebfb43d3d8cc1be3895992",
+    "jni-readonly-r2/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
+    "jni-readonly-r2/artifacts/jni.log": "f67b8bf4831a860ca6127fc6d02ea052b0ecdf2568e8a2a64b7bd5ec20c0bb24",
+    "jni-readonly-r2/artifacts/result.json": "f619d7057da0705d5f057bf926c8a0ccf40cd33a8195bd4dde1b2453e007a712",
+    "jni-readonly/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jni-readonly/artifacts/emulator.log": "8f306b20b9074bb2459b88394626453f308cfaefe08feca1342eb7fb02b116b3",
+    "jni-readonly/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
+    "jni-readonly/artifacts/result.json": "5bccc94a1a9bcaf6ee4019e68db5dc536e007708e674db5c77f6e7df2c1ae716",
     "jni-r7/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "jni-r7/artifacts/emulator.log": "19737a50f05901e84dff1f5ab251840d32677f6c05f386a5cf614b7ac38d87bb",
     "jni-r7/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
@@ -2837,6 +3262,16 @@
     "jni-r2/artifacts/emulator.log": "34c8d4bec4ba4ff8b38ff3e36553686aa8a5cb84e00d6e10651b3863f8c72e67",
     "jni-r2/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
     "jni-r2/artifacts/result.json": "e2a9debe16c1d7b862460ad8d0810aaffd70936359fcc79b5d29d6bed57bd70a",
+    "jni-kernel/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jni-kernel/artifacts/emulator.log": "daaa0cc0cd2146eb4f24e4617b272d56ef1916432dc0e30bac5ade64551b716b",
+    "jni-kernel/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
+    "jni-kernel/artifacts/result.json": "1bcc4122d1cd98d0fc62641ff922e7abebf222ddb0dafada82e9765bb69cf53d",
+    "jni-initialize/artifacts/avd-create.log": "40b5e3ee342e7a5a3e1643a14f28c0685584fbd6e6fe18138e42017185aad27e",
+    "jni-initialize/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "jni-initialize/artifacts/emulator.log": "8cdfbb3c84f86bc7d695d7f1538dc55fe10ff2fac3fb8b04c842e6e71b7d0c80",
+    "jni-initialize/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",
+    "jni-initialize/artifacts/jni.log": "f67b8bf4831a860ca6127fc6d02ea052b0ecdf2568e8a2a64b7bd5ec20c0bb24",
+    "jni-initialize/artifacts/result.json": "eb17b287c060459853398354d88afda3e9a89a5cd7de1995058772ed5c162010",
     "jni/artifacts/d8.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "jni/artifacts/emulator.log": "38d0612a6e5d94add09180fc28071d6cb04d11378e0e618edfe79f8b22d19d99",
     "jni/artifacts/javac.log": "1ea034f4dc1fb08054e9217ce3b9ab05ef1793f931ad7346e38747537c84a63a",

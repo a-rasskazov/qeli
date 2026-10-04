@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v42 -->
+<!-- normative-sync: full-system-audit-v43 -->
 
-**Текущий итог, 4 октября: 23/37 разделов DONE/PASS (62,2%), осталось 14. Q23 завершён; далее Q24.**
+**Текущий итог, 4 октября: 24/37 разделов DONE/PASS (64,9%), осталось 13. Q24 завершён; далее Q25.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -170,7 +170,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 21 | TUN/TAP, IP, MTU/PMTU и фрагментация | H06, H08 | IN_PROGRESS |
 | 22 | Transport core, FFI/JNI и память | H06, H08 | IN_PROGRESS |
 | 23 | Роуминг, resume и CONTROL_V2 | H06, H08 | IN_PROGRESS |
-| 24 | Multipath, bonding и общий бюджет | H04, H06, H08 | IN_PROGRESS |
+| 24 | Multipath, bonding и общий бюджет | H04, H06, H08 | DONE/PASS |
 | 25 | Linux CLI и восстановление сети | H01, H04, H08 | IN_PROGRESS |
 | 26 | Общий C# и managed/native граница | H04, H06, H08 | TODO |
 | 27 | Windows: GUI, служба и драйверы | H01, H04, H08 | IN_PROGRESS |
@@ -1468,18 +1468,18 @@ JOIN proof, stream caps, asymmetric RTT/loss, отказ одного/всех �
 
 **Имеющаяся обвязка/fixtures:** `scripts/roaming_netns_e2e.sh`, `scripts/roaming_tcp_bonding_netns_case.sh`, `scripts/roaming_tcp_starvation_netns_case.sh`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
-**4 октября — Q24-F001:** [отчёт](../reports/AUDIT-Q24-BONDING.md). Воспроизведена
-остановка всех потоков при заполнении общего пула одним blocked carrier. Исправлены
-общий клиентский snapshot pool и доли очередей с обеих сторон; финальная
-квалификация ещё идёт. Q24 и общий итог 23/37 пока не закрываются.
+**4 октября — Q24 завершён:** [отчёт](../reports/AUDIT-Q24-BONDING.md). Q24-F001
+устраняет starvation общего пула с обеих сторон. 2407 units/60 ignored, строгий
+Clippy, release, 12 Linux сценариев/283 проверки, 4 native A/B, 22 Windows ABI
+и 23 JNI проверки PASS. Исторический throughput не повторялся. Итог: 24/37 (64,9%); далее Q25.
 
 
 **Владение задачами TCP и Linux path monitor, 23 сентября 2026:**

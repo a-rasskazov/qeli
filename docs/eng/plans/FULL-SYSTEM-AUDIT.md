@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v42 -->
+<!-- normative-sync: full-system-audit-v43 -->
 
-**Current total, 4 October: 23/37 sections DONE/PASS (62.2%), 14 remaining. Q23 complete; next Q24.**
+**Current total, 4 October: 24/37 sections DONE/PASS (64.9%), 13 remaining. Q24 complete; next Q25.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -165,7 +165,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 21 | TUN/TAP, IP, MTU/PMTU and fragmentation | H06, H08 | IN_PROGRESS |
 | 22 | Transport core, FFI/JNI and memory | H06, H08 | IN_PROGRESS |
 | 23 | Roaming, resume and CONTROL_V2 | H06, H08 | IN_PROGRESS |
-| 24 | Multipath, bonding and shared budgets | H04, H06, H08 | IN_PROGRESS |
+| 24 | Multipath, bonding and shared budgets | H04, H06, H08 | DONE/PASS |
 | 25 | Linux CLI and network recovery | H01, H04, H08 | IN_PROGRESS |
 | 26 | Shared C# and managed/native boundary | H04, H06, H08 | TODO |
 | 27 | Windows GUI, service and drivers | H01, H04, H08 | IN_PROGRESS |
@@ -1457,18 +1457,18 @@ JOIN proof, stream caps, asymmetric RTT/loss, one/all path failures and ordering
 
 **Existing harness/fixtures:** `scripts/roaming_netns_e2e.sh`, `scripts/roaming_tcp_bonding_netns_case.sh`, `scripts/roaming_tcp_starvation_netns_case.sh`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
-**4 October — Q24-F001:** [report](../reports/AUDIT-Q24-BONDING.md). Reproduced
-all-flow starvation when one blocked carrier retained the shared pool. Fixed the
-common client snapshot pool and queue shares on both peers; final qualification
-is still running. Q24 remains open; overall completion stays 23/37.
+**4 October — Q24 complete:** [report](../reports/AUDIT-Q24-BONDING.md). Q24-F001
+fixes shared-pool starvation on both peers. 2407 units/60 ignored, strict Clippy,
+release, 12 Linux scenarios/283 checks, 4 native A/B, 22 Windows ABI and 23 JNI
+checks PASS. Historical throughput is not rerun. Overall: 24/37 (64.9%); next Q25.
 
 
 **TCP and Linux path-monitor ownership, 23 September 2026:**

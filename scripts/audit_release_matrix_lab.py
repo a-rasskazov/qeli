@@ -42,6 +42,19 @@ exec bash "$@"
 '''
 
 
+def normalize_listener(output):
+    # ss aligns columns using every current listener, including temporary emulator
+    # ports. Preserve all six fields (and quoted process metadata) while removing
+    # only inter-column padding; malformed rows must fail instead of disappearing.
+    rows = []
+    for line in output.splitlines():
+        fields = line.split(None, 5)
+        if len(fields) != 6:
+            raise ValueError('invalid listener snapshot row')
+        rows.append(' '.join(fields[:5]) + ' ' + fields[5].strip())
+    return '\n'.join(rows)
+
+
 def snapshot(lab):
     result = {name: lab.checked(command, name, timeout=30) for name, command in {
         'addresses4': 'ip -br -4 addr', 'addresses6': 'ip -br -6 addr',
@@ -56,6 +69,7 @@ def snapshot(lab):
         result[key] = re.sub(r'\[\d+:\d+\]', '[COUNTERS]', '\n'.join(
             line for line in result[key].splitlines() if not line.startswith('#')))
     result['nft'] = re.sub(r'counter packets \d+ bytes \d+', 'counter packets COUNTER bytes COUNTER', result['nft'])
+    result['listener'] = normalize_listener(result['listener'])
     return result
 
 
