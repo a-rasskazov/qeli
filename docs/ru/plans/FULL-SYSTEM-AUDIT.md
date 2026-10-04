@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v37 -->
+<!-- normative-sync: full-system-audit-v38 -->
 
-**Актуальный итог 4 октября: 19/37 разделов DONE/PASS (51,4%), осталось 18. Q19 завершён; далее Q20.**
+**Текущий итог, 4 октября: 20/37 разделов DONE/PASS (54,1%), осталось 17. Q20 завершён; далее Q21.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -166,7 +166,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | PASS |
 | 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | PASS |
 | 19 | DNS сервера и клиентов | H01–H02, H05–H06 | PASS |
-| 20 | DHCP и lease lifecycle | H02, H05 | TODO |
+| 20 | DHCP и lease lifecycle | H02, H05 | PASS |
 | 21 | TUN/TAP, IP, MTU/PMTU и фрагментация | H06, H08 | IN_PROGRESS |
 | 22 | Transport core, FFI/JNI и память | H06, H08 | IN_PROGRESS |
 | 23 | Роуминг, resume и CONTROL_V2 | H06, H08 | IN_PROGRESS |
@@ -1112,13 +1112,15 @@ DISCOVER/OFFER/REQUEST/ACK/NAK/RELEASE, bad requested_ip, duplicate xid/MAC, exp
 
 **Имеющаяся обвязка/fixtures:** `qeli/tests/config_examples.rs`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: DONE/PASS.**
+
+**4 октября, Q20 завершён:** [отчёт DHCP](../reports/AUDIT-Q20-DHCP-FINAL.md). Пять исправлений;2383 Linux unit PASS/60 ignored;35 смысловых DHCP-проверок и60 запросов заполнения лимита,13 свежих VPN smoke checks;четыре native A/B target. TAP injection проверяет настоящий worker DHCP, а не VPN AUTH/device E2E. Воспроизведены старые malformed OFFER и64-DNS admission;INI-границы описаны.
 
 ### 21. TUN/TAP, IP, MTU/PMTU и фрагментация
 

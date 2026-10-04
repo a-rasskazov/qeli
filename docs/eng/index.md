@@ -375,3 +375,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q17: IPv4 NAT, forwarding and sysctls — complete](reports/AUDIT-Q17-IPV4-NETWORK.md)
 - [Q18: IPv6 and NDP — complete](reports/AUDIT-Q18-IPV6-NDP.md)
 - [Q19: server and client DNS — complete](reports/AUDIT-Q19-DNS-FINAL.md)
+
+- [Q20: DHCP and lease lifecycle — complete](reports/AUDIT-Q20-DHCP-FINAL.md)

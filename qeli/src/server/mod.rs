@@ -3212,6 +3212,18 @@ pub fn validate_profiles(config: &ServerConfig) -> anyhow::Result<()> {
         // the profile's pool, its mask, gateway and DNS servers. Same class of exposure,
         // same treatment. (Audit 2026-08-04.)
         if p.dhcp.enabled {
+            // Option 6 has a one-byte payload length; the proxy advertises one address,
+            // while direct push DNS must fit entirely in a single supported option.
+            if !p.dns.enabled
+                && p.dns
+                    .push_servers
+                    .iter()
+                    .filter(|value| value.trim().parse::<std::net::Ipv4Addr>().is_ok())
+                    .count()
+                    > 63
+            {
+                anyhow::bail!("profile '{}': DHCP supports at most 63 IPv4 dns.push_servers when dns.enabled = false", p.name);
+            }
             let _ = dhcp_bind_addr(p)?;
         }
     }
@@ -8213,6 +8225,27 @@ pool.cidr = 10.{net}.0.0/24
                 "{label}: rejected for the wrong reason: {err}"
             );
         }
+    }
+
+    #[test]
+    fn dhcp_direct_dns_limit_is_checked_before_worker_start() {
+        let mut config = crate::config::parse_server_config(
+            "[web]\nenabled = false\n[profile:dhcp]\nbind.port = 26443\ntun.address = 10.9.0.1\npool.cidr = 10.9.0.0/24\ndhcp.enabled = true\ndns.enabled = false\n",
+        ).unwrap();
+        config.profiles[0].dns.push_servers =
+            (1..=63).map(|suffix| format!("10.9.0.{suffix}")).collect();
+        validate_profiles(&config).unwrap();
+        config.profiles[0].dns.push_servers.push("10.9.0.64".into());
+        assert!(validate_profiles(&config)
+            .unwrap_err()
+            .to_string()
+            .contains("at most 63"));
+        config.profiles[0].dns.enabled = true;
+        // The local DNS proxy advertises only the gateway, independent of push count.
+        validate_profiles(&config).unwrap();
+        config.profiles[0].dns.enabled = false;
+        config.profiles[0].dhcp.enabled = false;
+        validate_profiles(&config).unwrap();
     }
 
     #[test]

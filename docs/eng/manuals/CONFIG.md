@@ -3316,6 +3316,27 @@ omits the DNS option. There is no hidden fallback to public `1.1.1.1`/`8.8.8.8`.
 > failure that presented as "it connects but no traffic flows". The values must also be plain
 > IPv4 addresses, with no CIDR prefix.
 
+
+<!-- normative-sync: dhcp-wire-boundaries-q20-v1 -->
+
+DHCPv4 identifies Ethernet clients by the complete six-byte `chaddr`. Invalid
+BOOTREQUEST hardware fields, truncated options, missing END and duplicate or
+incorrectly sized message-type/requested-address/server-ID options are rejected
+before address allocation. Option 52 can select `file`/`sname` option fields;
+those fields undergo the same complete validation. An OFFER reserves an address
+for 30 seconds; REQUEST promotes it to `dhcp.lease_time_secs`. RELEASE requires
+the owning MAC and address, and DECLINE quarantines that address for 600 seconds.
+The shared pool prevents DHCP from taking an active VPN session's address.
+Leases are process-local and are not persisted across profile restart.
+
+With `dhcp.enabled = true` and `dns.enabled = false`, at most **63 IPv4 entries**
+in `dns.push_servers` fit the supported single DNS option. A larger list is
+rejected by `check-config`, not silently truncated. When the DNS proxy is enabled,
+DHCP advertises the profile's IPv4 gateway instead. This restriction does not
+apply to DHCP-disabled profiles. Lease timers use T1=1/2 and T2=3/4 of the lease,
+including large `u32` lifetimes. This DHCP service is separate from the address
+assigned to an authenticated VPN session; enabling it does not replace AUTH.
+
 ## Performance tuning (`perf.*`, `tun.tx_queue_len`)
 
 All per-profile. Values depend on the link/load — see the general note in "Profile

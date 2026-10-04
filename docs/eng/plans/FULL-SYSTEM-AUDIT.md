@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v37 -->
+<!-- normative-sync: full-system-audit-v38 -->
 
-**Current total, 4 October: 19/37 sections DONE/PASS (51.4%), 18 remaining. Q19 complete; next Q20.**
+**Current total, 4 October: 20/37 sections DONE/PASS (54.1%), 17 remaining. Q20 complete; next Q21.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -161,7 +161,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | PASS |
 | 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | PASS |
 | 19 | Server and client DNS | H01–H02, H05–H06 | PASS |
-| 20 | DHCP and lease lifecycle | H02, H05 | TODO |
+| 20 | DHCP and lease lifecycle | H02, H05 | PASS |
 | 21 | TUN/TAP, IP, MTU/PMTU and fragmentation | H06, H08 | IN_PROGRESS |
 | 22 | Transport core, FFI/JNI and memory | H06, H08 | IN_PROGRESS |
 | 23 | Roaming, resume and CONTROL_V2 | H06, H08 | IN_PROGRESS |
@@ -1101,13 +1101,15 @@ DISCOVER/OFFER/REQUEST/ACK/NAK/RELEASE, invalid requested_ip, duplicate xid/MAC,
 
 **Existing harness/fixtures:** `qeli/tests/config_examples.rs`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: DONE/PASS.**
+
+**4 October, Q20 complete:** [DHCP report](../reports/AUDIT-Q20-DHCP-FINAL.md). Five fixes;2383 Linux unit PASS/60 ignored;35 semantic DHCP checks plus60 rate primers,13 fresh VPN smoke checks;four native A/B targets. TAP injection verifies actual worker DHCP, not VPN AUTH or device E2E. Old malformed OFFER and64-DNS admission reproduced;INI boundaries documented.
 
 ### 21. TUN/TAP, IP, MTU/PMTU and fragmentation
 
