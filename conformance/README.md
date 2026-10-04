@@ -6,7 +6,9 @@ still independently testable. Every duplicated primitive is a chance to disagree
 failure mode is **silent**: the tunnel may still "work" while one path does something weaker
 or different.
 
-Each file's `platforms` list names the implementations that actually consume it.
+Generated cross-language fixtures use `platforms` to name their required consumers.
+The legacy hand-written `qeli-links.json` instead uses `cases`/`reject`, and
+`config-boundary.json` uses `base`/`cases`; neither currently has a `platforms` list.
 
 ## Why this is not paranoia
 
@@ -95,8 +97,8 @@ remains INI. Known answers are neither an external security audit nor side-chann
 }
 ```
 
-**`platforms` is load-bearing.** It lists the implementations *required* to pass the file.
-Each consumer asserts its own name is present — so a renamed primitive or a moved file
+**`platforms` is load-bearing for generated cross-language fixtures.** It lists the implementations *required* to pass the file.
+Their consumers assert their own name is present — so a renamed primitive or a moved file
 makes the test **fail**, instead of leaving it green having verified nothing. A green test
 that checked nothing is the precise failure these fixtures exist to prevent.
 
@@ -171,3 +173,27 @@ class-init, and the default framework stubs throw "not mocked". Without that lin
 codec — the most safety-critical code in the app — is untestable off-device, which is
 precisely why Android had no `PacketCodec` test at all and why the M6 fix went missing
 there unnoticed.
+
+## Shared managed/native lifecycle checks
+
+`QeliConformance selftest` also exercises the production C# adapter through the actual
+host native library: 32 create/start/event/stats/stop/free generations, invalidated
+handles and refusal of a fabricated plan acknowledgement without a pending plan.
+Observer failures are injected separately into log, status, drop and completion
+notifications. Packet-pump fixtures verify read failure/early exit, cancellation and
+ownership retained until all worker tasks have stopped, including the actual 8 second
+Stop timeout and a later successful cleanup retry. Reflection verifies that
+managed wire codecs and BouncyCastle are excluded from the production QeliShared
+assembly. Release-metadata fixtures check the 1 MiB body limit and cancellation after
+headers; the optional public HTTP check has a single 10 second deadline.
+
+These are ABI/lifecycle and fake-TUN checks; they do not install routes/firewall rules,
+exercise a live desktop VPN connection, or replace platform integration tests. The
+Rust core and native artifacts are unchanged by these managed checks. Mandatory-fixture
+mode is verified by running an isolated copy without fixtures and by an empty config
+boundary corpus: both must fail, without a successful SKIP gate.
+
+Desktop route-reader fixtures also cover mixed line endings, the 65,536 UTF-16-unit line
+boundary, cancellation before newline, and Unicode comment batches constrained before
+serialization. The existing 14,113-route CIDR/OpenVPN equivalence, merging and cancellation
+checks still exercise the shared native route parser.

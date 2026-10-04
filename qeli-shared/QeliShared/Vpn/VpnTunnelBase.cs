@@ -11,8 +11,8 @@ namespace Qeli.Shared.Vpn;
 
 
 /// <summary>
-/// Shared Windows/macOS lifecycle and platform adapter for the ABI 1.15 Rust transport,
-/// using the stable ABI 1.11 compatibility floor.
+/// Shared Windows/macOS lifecycle and platform adapter for the Rust transport,
+/// requiring ABI 1.16 for the shared configuration service.
 /// Rust owns carrier sockets, handshake, crypto and packet loops; this class applies the
 /// authenticated NetworkPlan, creates the platform Wintun interface or transfers a Unix TUN
 /// descriptor, and raises events for the UI.
@@ -26,8 +26,28 @@ public abstract class VpnTunnelBase
     /// Error status is published from inside that task, so observers that derive controls
     /// from <see cref="IsRunning"/> need this second edge after IsCompleted becomes true.</summary>
     public event Action? RunCompleted;
-    protected void Log(string m) => LogLine?.Invoke(m);
-    private void Status(VpnStatus s, string? extra = null) => StatusChanged?.Invoke(s, extra);
+    // UI notifications are observational. One disposed window or failing subscriber
+    // must not abort transport cleanup or prevent the remaining observers from updating.
+    protected void Log(string m) => NotifyObservers(LogLine, observer => observer(m));
+    private void Status(VpnStatus s, string? extra = null) =>
+        NotifyObservers(StatusChanged, observer => observer(s, extra));
+    internal void NotifyConnectionDropped(string reason) =>
+        NotifyObservers(ConnectionDropped, observer => observer(reason));
+    internal void NotifyRunCompleted() => NotifyObservers(RunCompleted, observer => observer());
+
+    private static void NotifyObservers<T>(T? observers, Action<T> notify) where T : Delegate
+    {
+        if (observers is null) return;
+        foreach (T observer in observers.GetInvocationList())
+        {
+            try { notify(observer); }
+            catch (Exception error)
+            {
+                // Do not report through LogLine: its subscriber may be the failing observer.
+                System.Diagnostics.Debug.WriteLine($"Tunnel observer failed: {error.Message}");
+            }
+        }
+    }
 
     private CancellationTokenSource? _cts;
     private Task? _runTask;
@@ -249,11 +269,7 @@ public abstract class VpnTunnelBase
             var runTask = Task.Run(() => ConnectWithRetry(config, ct), ct);
             _runTask = runTask;
             _ = runTask.ContinueWith(
-                _ =>
-                {
-                    try { RunCompleted?.Invoke(); }
-                    catch (Exception e) { Log($"run-completion observer failed: {e.Message}"); }
-                },
+                _ => NotifyRunCompleted(),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -328,6 +344,7 @@ public abstract class VpnTunnelBase
                 }
             }
             _runTask = null;
+            _cts?.Dispose();
             _cts = null;
             // Phase 2 — now that nothing is running inside SetupTun / the data plane, dispose
             // the TUN and undo the platform network state. Idempotent: the joined task's own
@@ -963,7 +980,7 @@ public abstract class VpnTunnelBase
                 _wasConnected = false;
                 attempt = NextAttempt(attempt, cleanWasEstablished, cleanForced);
                 if (!cleanForced && cleanWasEstablished)
-                    ConnectionDropped?.Invoke("Connection closed");
+                    NotifyConnectionDropped("Connection closed");
                 try
                 {
                     PreparePlatformForRetry(config);
@@ -1020,7 +1037,7 @@ public abstract class VpnTunnelBase
                 if (_wasConnected)
                 {
                     _wasConnected = false;
-                    ConnectionDropped?.Invoke(e.Message);
+                    NotifyConnectionDropped(e.Message);
                 }
                 // Reset backoff only after a STABLE established session; otherwise escalate so a
                 // flapping / never-stable server reaches its configured retry limit.
@@ -1352,6 +1369,8 @@ public abstract class VpnTunnelBase
 
             while (!ct.IsCancellationRequested)
             {
+                if (!runner.IsCompleted)
+                    NativeWorkerLifetime.CheckPacketPumps(uplink, downlink, ct);
                 bool drained = false;
                 NativeTransportCore.NativeEvent? nativeEvent;
                 while ((nativeEvent = NativeTransportCore.PollEvent(handle, eventPayload)) != null)
@@ -1568,12 +1587,10 @@ public abstract class VpnTunnelBase
             }
             try { packetCts?.Cancel(); } catch { }
             try { NativeTransportCore.Stop(handle); } catch { }
-            try { uplink?.Wait(2000); } catch { }
-            try { downlink?.Wait(2000); } catch { }
-            if (runner != null)
-            {
-                try { runner.Wait(5000); } catch { }
-            }
+            // Stop() bounds the caller's wait at 8s and refuses state reuse on timeout.
+            // This owner must remain alive until every worker actually relinquishes the
+            // TUN and handle; a timed-out join is not permission to free shared state.
+            NativeWorkerLifetime.Join(uplink, downlink, runner);
             try { UpdateNativeStats(handle); } catch { }
             NativeTransportCore.Free(handle);
             Interlocked.CompareExchange(ref _nativeHandle, 0, unchecked((long)handle));
@@ -1694,7 +1711,7 @@ public abstract class VpnTunnelBase
             $"native NetworkPlan omitted the connected carrier for {config.ServerAddress}");
     }
 
-    private (Task uplink, Task downlink) StartNativePacketPumps(
+    internal static (Task uplink, Task downlink) StartNativePacketPumps(
         ulong handle, ulong generation, IPacketTunDevice tun, CancellationToken ct)
     {
         Task uplink = Task.Run(() =>

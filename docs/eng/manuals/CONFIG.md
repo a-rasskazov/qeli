@@ -338,8 +338,15 @@ route-ipv6 2001:db8:42::/48
 
 Addresses with host bits are canonicalized and duplicates across all files are removed. IPv4
 netmasks must be contiguous; arbitrary text, a bare IP without `route`, a malformed mask, or
-more than 250,000 total routes is an error. Reading and installation can be interrupted with
-Disconnect. In full-tunnel mode `route_file` is unnecessary and is not applied (except desktop
+more than 250,000 total routes is an error.
+
+<!-- normative-sync: route-file-bounded-reader-q26-v1 -->
+
+Windows/macOS limit each line to 65,536 .NET characters (UTF-16 code units), including
+comments. Batches sent to the shared parser contain at most 512 lines and 131,072 characters;
+long Unicode comments cannot overflow the service request. Reading checks cancellation
+between 4096-character chunks, including before a long line ends.
+Reading and installation can be interrupted with Disconnect. In full-tunnel mode `route_file` is unnecessary and is not applied (except desktop
 per-app mode).
 
 #### Distinguishing service routes from `route_file`

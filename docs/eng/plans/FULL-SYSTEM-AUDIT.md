@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v44 -->
+<!-- normative-sync: full-system-audit-v45 -->
 
-**Current total, 4 October: 25/37 sections DONE/PASS (67.6%), 12 remaining. Q25 complete; next Q26.**
+**Current total, 5 October: 26/37 sections DONE/PASS (70.3%), 11 remaining. Q26 complete; next Q27.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1769,13 +1769,15 @@ Rust validation parity, import/export/storage and handle/callback lifetimes. Man
 
 **Existing harness/fixtures:** `conformance/README.md`, `.github/workflows/ci.yml`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: DONE/PASS** within available scope; user-excluded platform runtime is SKIPPED.
+
+[Q26 final](../reports/AUDIT-Q26-MANAGED-FINAL.md): four observer/pump-ownership/update-body/route-reader fixes; 543 shared conformance, 143 Windows selftest, Release builds and three negative fixture gates. Actual DLL: 32 handle generations; real Stop timeout/cleanup retry with fake TUN. Native/Rust inputs unchanged. Selftests do not claim a desktop VPN connection with real TUN/firewall or Mac runtime; user exclusions retained.
 
 ### 27. Windows GUI, service and drivers
 

@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v44 -->
+<!-- normative-sync: full-system-audit-v45 -->
 
-**Текущий итог, 4 октября: 25/37 разделов DONE/PASS (67,6%), осталось 12. Q25 завершён; далее Q26.**
+**Текущий итог, 5 октября: 26/37 разделов DONE/PASS (70,3%), осталось 11. Q26 завершён; далее Q27.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1780,13 +1780,15 @@ Rust validation parity, import/export/storage, lifetime handles/callbacks. Confo
 
 **Имеющаяся обвязка/fixtures:** `conformance/README.md`, `.github/workflows/ci.yml`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: DONE/PASS** в доступном объёме; исключённые пользователем platform runtime — SKIPPED.
+
+[Итог Q26](../reports/AUDIT-Q26-MANAGED-FINAL.md): четыре исправления observer/pump ownership/update body/route reader; 543 shared conformance, 143 Windows selftest, Release builds и три negative fixture gates. Настоящая DLL: 32 handle generations; реальный Stop timeout/cleanup retry с fake TUN. Native/Rust inputs неизменны. Desktop VPN connection с настоящими TUN/firewall и Mac runtime не выдаются за selftest; пользовательские исключения сохранены.
 
 ### 27. Windows: GUI, служба и драйверы
 

@@ -18,7 +18,10 @@ internal static class ConfigBoundaryConformance
         if (path == null) return;
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
         var root = doc.RootElement;
-        foreach (var item in root.GetProperty("cases").EnumerateArray())
+        var cases = root.GetProperty("cases");
+        check("config boundary corpus is non-empty", cases.GetArrayLength() > 0);
+        if (cases.GetArrayLength() == 0) return;
+        foreach (var item in cases.EnumerateArray())
         {
             bool valid;
             try

@@ -113,6 +113,9 @@ public static class Program
         WireConformance.Run(Check);
         RoamingPathConformance.Run(Check);
         ManagementEventConformance.Run(Check);
+        NativeLifecycleConformance.Run(Check);
+        UpdateMetadataConformance.Run(Check);
+        RouteReaderConformance.Run(Check);
 
         var routeLocalCaptures = RouteLocalPolicy.BuildCapturePrefixes(
             new[] { "192.168.1.27/24", "10.8.1.4/16", "203.0.113.4/24", "10.9.0.7/32" });
