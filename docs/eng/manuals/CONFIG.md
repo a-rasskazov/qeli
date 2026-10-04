@@ -2492,8 +2492,17 @@ client_subnet = 10.20.0.7/32
 ```
 
 `0.0.0.0/0` and `::/0` are accepted only as internal exit-node next hops and are never
-installed as Linux host defaults. Guards reject a non-default subnet covering the tunnel
-gateway or one already claimed by another client. Authentication also fails rather than
+installed as Linux host defaults. Registration skips a non-default subnet covering the tunnel gateway.
+If the same canonical prefix is already claimed, the first owner remains; the second
+client authenticates without that conflicting route.
+
+Outbound packets must pass allowed_networks and current source ownership: exact pool leases
+take precedence over longest-prefix client_subnet. A broader prefix or /0 cannot impersonate
+another client. An exit /0 permits external reply sources. A skipped conflicting route is
+not inherited when its owner disconnects; a new connection must register it. The rule is
+shared by TCP/UDP/QUIC and IPv4/IPv6. Server tunnel addresses remain local destinations
+even with an exit /0; clients cannot use those reserved addresses as sources.
+Authentication also fails rather than
 replacing or adopting a pre-existing exact host route that lacks Qeli's TUN+metric (`42760`) ownership
 marker. A marked route left by an earlier Qeli process is recovered safely; any unmarked route
 must be removed or reconciled explicitly before connecting. At most 16 `client_subnet` entries

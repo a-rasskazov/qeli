@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v33 -->
+<!-- normative-sync: full-system-audit-v34 -->
 
-**Current total, 4 October: 15/37 sections DONE/PASS (40.5%), 22 remaining. Q14/Q15 complete; next Q16.**
+**Current total, 4 October: 16/37 sections DONE/PASS (43.2%), 21 remaining. Q16 complete; next Q17.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -157,7 +157,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | PASS |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | PASS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | PASS |
-| 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | TODO |
+| 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | PASS |
 | 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | IN_PROGRESS |
 | 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | IN_PROGRESS |
 | 19 | Server and client DNS | H01–H02, H05–H06 | IN_PROGRESS |
@@ -748,19 +748,26 @@ concurrent admissions and actual Linux quota/expiry/revoke.
 
 ### 16. ACL, pushed routes and site-to-site
 
+**4 October, Q16 DONE/PASS:** Q16-F001 prevents source spoofing through conflicting or
+unregistered client_subnet; shared ingress enforces exact/LPM/current-session ownership.
+Q16-F002 keeps server tunnel endpoint delivery local with an exit /0.
+2374 units, real TCP/UDP/QUIC with IPv4/IPv6, matrix and native A/B — PASS.
+[Evidence and limits](../reports/AUDIT-Q16-ACL-ROUTES.md).
+
+
 **Source:** `qeli/src/server/acl.rs`, `qeli/src/config/users.rs`, `qeli/src/transport_core/network.rs`.
 
 User/group/profile precedence, longest prefixes, client_to_client, spoofed sources, overlaps, /0 and client_subnet return paths. Cover TCP/UDP and v4/v6. Server-side enforcement; revoke/route reassignment removes access from the previous session.
 
 **Existing harness/fixtures:** `scripts/test_push_matrix.py`, `scripts/test_route_push.py`, `scripts/test_l3_user_limits.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: DONE/PASS.**
 
 ### 17. IPv4 NAT, forwarding and sysctls
 

@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v33 -->
+<!-- normative-sync: full-system-audit-v34 -->
 
-**Актуальный итог 4 октября: 15/37 разделов DONE/PASS (40,5%), осталось 22. Q14 и Q15 завершены; далее Q16.**
+**Актуальный итог 4 октября: 16/37 разделов DONE/PASS (43,2%), осталось 21. Q16 завершён; далее Q17.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -162,7 +162,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 13 | Recordizer, padding и shaping | H02, H07–H08 | PASS |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | PASS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | PASS |
-| 16 | ACL, push routes и site-to-site | H03–H04, H06 | TODO |
+| 16 | ACL, push routes и site-to-site | H03–H04, H06 | PASS |
 | 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | IN_PROGRESS |
 | 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | IN_PROGRESS |
 | 19 | DNS сервера и клиентов | H01–H02, H05–H06 | IN_PROGRESS |
@@ -756,19 +756,26 @@ Allocate/auth/reconnect/evict/reap/revoke/quota под конкуренцией,
 
 ### 16. ACL, push routes и site-to-site
 
+**4 октября, Q16 DONE/PASS:** Q16-F001 закрывает подмену источника через чужой или
+незарегистрированный client_subnet; exact/LPM/current-session проверяются в общем ingress.
+Q16-F002 сохраняет локальную доставку к TUN-адресу сервера при exit-default /0.
+2374 unit-теста, реальные TCP/UDP/QUIC с IPv4/IPv6, матрица и native A/B — PASS.
+[Отчёт и границы](../reports/AUDIT-Q16-ACL-ROUTES.md).
+
+
 **Код:** `qeli/src/server/acl.rs`, `qeli/src/config/users.rs`, `qeli/src/transport_core/network.rs`.
 
 User/group/profile precedence, longest prefix, client_to_client, spoofed source, overlap, /0 и client_subnet return path. Проверить TCP/UDP, v4/v6. Enforcement на сервере; revoke/смена владельца маршрута не сохраняет доступ старой сессии.
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_push_matrix.py`, `scripts/test_route_push.py`, `scripts/test_l3_user_limits.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: DONE/PASS.**
 
 ### 17. IPv4 NAT, forwarding и sysctl
 
