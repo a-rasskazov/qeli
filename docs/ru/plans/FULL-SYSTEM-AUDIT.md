@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v40 -->
+<!-- normative-sync: full-system-audit-v41 -->
 
-**Текущий итог, 4 октября: 22/37 разделов DONE/PASS (59,5%), осталось 15. Q22 завершён; далее Q23.**
+**Текущий итог, 4 октября: 23/37 разделов DONE/PASS (62,2%), осталось 14. Q23 завершён; далее Q24.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1352,19 +1352,21 @@ default route требует защиты при отсутствии явног
 
 ### 23. Роуминг, resume и CONTROL_V2
 
+**4 октября, Q23 завершён:** [роуминг, resume и CONTROL_V2](../reports/AUDIT-Q23-ROAMING-FINAL.md). Q23-F001 восстанавливает таймер исходного grace после abort подготовленного resume. 2405 units, strict Clippy, 24 целевых теста, 12 свежих Linux сценариев/281 проверок и четыре native A/B PASS. Итого: 23/37 (62,2%), осталось 14; далее Q24.
+
 **Код:** `qeli/src/protocol/roaming.rs`, `qeli/src/protocol/control_v2.rs`, `qeli/src/transport_core`.
 
 TCP make-before-break/UDP migration: proof/path validation, anti-amplification, grace expiry, replay/revoke и candidate races. NAT rebinding, family switch, Wi-Fi/LTE, sleep/wake, server restart/APPLY rollback, PMTU reset. Проверить межсерверные границы; одна константа PUSH_CONFIG не доказывает реализацию.
 
 **Имеющаяся обвязка/fixtures:** `scripts/roaming_tcp_all_modes_netns_e2e.sh`, `scripts/roaming_udp_all_modes_netns_e2e.sh`, `scripts/roaming_mixed_version_netns_e2e.sh`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Владение задачами TCP и Linux path monitor, 23 сентября 2026:**
 [Q25-F010/F011](../reports/AUDIT-Q25-TCP-TASKS.md): общий владелец закрывает создание задач

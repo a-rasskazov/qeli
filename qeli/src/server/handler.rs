@@ -284,9 +284,11 @@ impl TcpRoamingSession {
         lifecycle.commit_resume(reservation, transport_id, &mut limiter)
     }
 
-    fn abort_resume(&self, reservation: ResumeReservation) {
-        let _ = lock_or_recover(&self.lifecycle, "TcpRoamingSession::abort_resume")
-            .abort_resume(reservation);
+    fn abort_resume(&self, reservation: ResumeReservation) -> Option<ReapTicket> {
+        lock_or_recover(&self.lifecycle, "TcpRoamingSession::abort_resume")
+            .abort_resume(reservation)
+            .ok()
+            .flatten()
     }
 
     fn detach(
@@ -1866,6 +1868,42 @@ mod tcp_resume_handler_tests {
     }
 
     #[test]
+    fn aborted_server_resume_returns_an_overdue_generation_scoped_reap_ticket() {
+        let limiter = Arc::new(Mutex::new(OrphanLimiter::new(1, 4 * 1024 * 1024)));
+        let session = TcpRoamingSession::new(
+            9,
+            LOCATOR,
+            1,
+            90,
+            zeroize::Zeroizing::new(SECRET),
+            limiter.clone(),
+            TcpRoamingPolicy {
+                grace: Duration::from_secs(30),
+                handover_enabled: true,
+            },
+        )
+        .unwrap();
+        session.mark_initial_transport_attached();
+        let ticket = match session
+            .detach(90, DetachReason::Unexpected, Instant::now())
+            .unwrap()
+        {
+            DetachOutcome::Orphaned(ticket) => ticket,
+            _ => panic!("last transport must enter grace"),
+        };
+        let transcript = [0x44; 32];
+        let reservation = session
+            .begin_resume(&resume(transcript, 1, false), &transcript)
+            .unwrap();
+        assert!(!session.reap(ticket, ticket.deadline()));
+        assert_eq!(session.abort_resume(reservation), Some(ticket));
+        assert!(session.reap(ticket, ticket.deadline()));
+        assert_eq!(session.abort_resume(reservation), None);
+        let limiter = limiter.lock().unwrap();
+        assert_eq!((limiter.sessions(), limiter.bytes()), (0, 0));
+    }
+
+    #[test]
     fn handover_requires_its_own_authenticated_capability() {
         let limiter = Arc::new(Mutex::new(OrphanLimiter::new(1, 4 * 1024 * 1024)));
         let session = TcpRoamingSession::new(
@@ -2320,9 +2358,7 @@ async fn run_stream<R, W>(
         #[cfg(feature = "experimental-roaming")]
         if let StreamAttach::Resume { reservation } = stream_attach {
             profile.tcp_roaming_metrics.note_failure();
-            if let Some(roaming) = &session.tcp_roaming {
-                roaming.abort_resume(reservation);
-            }
+            abort_tcp_resume(&profile, &session, reservation, addr);
         }
         return;
     }
@@ -2372,9 +2408,7 @@ async fn run_stream<R, W>(
             if let StreamAttach::Resume { reservation } = stream_attach {
                 profile.tcp_roaming_metrics.note_failure();
                 session.remove_stream(stream_id);
-                if let Some(roaming) = &session.tcp_roaming {
-                    roaming.abort_resume(reservation);
-                }
+                abort_tcp_resume(&profile, &session, reservation, addr);
                 return;
             }
             detach_stream(&profile, &session, stream_id, addr).await;
@@ -2400,9 +2434,7 @@ async fn run_stream<R, W>(
             if let Err(error) = client_commit {
                 profile.tcp_roaming_metrics.note_failure();
                 session.remove_stream(stream_id);
-                if let Some(roaming) = &session.tcp_roaming {
-                    roaming.abort_resume(reservation);
-                }
+                abort_tcp_resume(&profile, &session, reservation, addr);
                 log::warn!(
                     "TCP resume candidate for '{}' aborted before commit; old carrier remains active: {}",
                     crate::util::log_identity(&session.username),
@@ -2421,7 +2453,7 @@ async fn run_stream<R, W>(
                 Err(error) => {
                     profile.tcp_roaming_metrics.note_failure();
                     session.remove_stream(stream_id);
-                    roaming.abort_resume(reservation);
+                    abort_tcp_resume(&profile, &session, reservation, addr);
                     log::warn!(
                         "Authenticated JOIN for '{}' lost its reservation before commit: {}",
                         crate::util::log_identity(&session.username),
@@ -3105,6 +3137,27 @@ async fn detach_stream(
             // Notify (opt-in) — this guarded block is the fire-once per-session TCP
             // teardown (clean close), so no double-fire across bonded streams.
             crate::server::notify::fire_disconnect(&session.username, &profile.name, addr);
+        }
+    }
+}
+
+#[cfg(feature = "experimental-roaming")]
+fn abort_tcp_resume(
+    profile: &Arc<ProfileRuntime>,
+    session: &Arc<SessionShared>,
+    reservation: ResumeReservation,
+    addr: SocketAddr,
+) {
+    if let Some(ticket) = session
+        .tcp_roaming
+        .as_ref()
+        .and_then(|roaming| roaming.abort_resume(reservation))
+    {
+        // Before the deadline the original timer still owns cleanup. Rearm only an overdue
+        // ticket, because its one-shot reaper may have yielded while JOIN was prepared.
+        // Keep the exact generation/deadline; never create another future grace timer.
+        if ticket.deadline() <= Instant::now() {
+            schedule_tcp_orphan_reaper(profile.clone(), session.clone(), ticket, addr);
         }
     }
 }

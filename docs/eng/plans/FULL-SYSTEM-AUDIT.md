@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v40 -->
+<!-- normative-sync: full-system-audit-v41 -->
 
-**Current total, 4 October: 22/37 sections DONE/PASS (59.5%), 15 remaining. Q22 complete; next Q23.**
+**Current total, 4 October: 23/37 sections DONE/PASS (62.2%), 14 remaining. Q23 complete; next Q24.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1341,19 +1341,21 @@ deadlines, crash recovery and Linux runtime remain open.
 
 ### 23. Roaming, resume and CONTROL_V2
 
+**4 October, Q23 complete:** [roaming, resume and CONTROL_V2](../reports/AUDIT-Q23-ROAMING-FINAL.md). Q23-F001 rearms the original orphan deadline after aborted prepared resume. 2405 units, strict Clippy, 24 focused tests, 12 fresh Linux cases/281 checks and four native A/B PASS. Overall: 23/37 (62.2%), 14 remain; next Q24.
+
 **Source:** `qeli/src/protocol/roaming.rs`, `qeli/src/protocol/control_v2.rs`, `qeli/src/transport_core`.
 
 TCP make-before-break/UDP migration: proof/path validation, anti-amplification, grace expiry, replay/revoke and candidate races. NAT rebinding, family changes, Wi-Fi/LTE, sleep/wake, server restart/APPLY rollback and PMTU reset. Verify cross-server boundaries; a PUSH_CONFIG constant is not an implementation.
 
 **Existing harness/fixtures:** `scripts/roaming_tcp_all_modes_netns_e2e.sh`, `scripts/roaming_udp_all_modes_netns_e2e.sh`, `scripts/roaming_mixed_version_netns_e2e.sh`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **TCP and Linux path-monitor ownership, 23 September 2026:**
 [Q25-F010/F011](../reports/AUDIT-Q25-TCP-TASKS.md): the common owner closes admission before

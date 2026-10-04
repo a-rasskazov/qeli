@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Linux TCP make-before-break integration test. Everything runs in three isolated network
-# namespaces; no host route or production process is changed.
+# Linux TCP make-before-break integration test. Everything runs in isolated network
+# namespaces (a fourth server namespace for multinode); no host route or production process is changed.
 # QELI_ROAMING_DEVICE_TYPE selects a Linux tun or tap endpoint on both sides (default: tun).
 # QELI_ROAMING_MULTIPATH_MODE selects single, fixed, or adaptive stream membership.
 # The perf case may override QELI_ROAMING_SERVER_ENABLED and
@@ -49,6 +49,7 @@ mkdir -m 700 "$STATE_DIRECTORY" || exit 2
 CLI_NS=qrm-cli
 RTR_NS=qrm-rtr
 SRV_NS=qrm-srv
+SECONDARY_SRV_NS=qrm-srv-secondary
 PASS=0
 FAIL=0
 SERVER_JOB_PID=
@@ -252,7 +253,8 @@ cleanup() {
   done
   ip netns pids "$CLI_NS" 2>/dev/null | xargs -r kill -9 2>/dev/null
   ip netns pids "$SRV_NS" 2>/dev/null | xargs -r kill -9 2>/dev/null
-  for ns in "$CLI_NS" "$RTR_NS" "$SRV_NS"; do
+  ip netns pids "$SECONDARY_SRV_NS" 2>/dev/null | xargs -r kill -9 2>/dev/null
+  for ns in "$CLI_NS" "$RTR_NS" "$SRV_NS" "$SECONDARY_SRV_NS"; do
     ip netns del "$ns" 2>/dev/null
   done
   sleep 0.2
@@ -382,6 +384,25 @@ check "server $DEVICE_TYPE device has the requested kernel kind" \
   "flags=\$(ip netns exec $SRV_NS cat /sys/class/net/qrms0/tun_flags); \
    test \$((flags & 3)) -eq $EXPECTED_DEVICE_KIND"
 if [ "$CASE" = multinode ]; then
+  # Worker ownership is per network namespace. A different port/control socket
+  # does not isolate the independent registry and network cleanup responsibilities.
+  ip netns add "$SECONDARY_SRV_NS"
+  ip link add qrm-t type veth peer name qrm-tr
+  ip link set qrm-t netns "$SECONDARY_SRV_NS"
+  ip link set qrm-tr netns "$RTR_NS"
+  ip netns exec "$SECONDARY_SRV_NS" ip addr add 10.40.4.2/24 dev qrm-t
+  ip netns exec "$RTR_NS" ip addr add 10.40.4.1/24 dev qrm-tr
+  ip netns exec "$SECONDARY_SRV_NS" ip link set lo up
+  ip netns exec "$SECONDARY_SRV_NS" ip link set qrm-t up
+  ip netns exec "$RTR_NS" ip link set qrm-tr up
+  ip netns exec "$SECONDARY_SRV_NS" ip route add default via 10.40.4.1 dev qrm-t
+  if [ "$(ip netns exec "$SRV_NS" readlink /proc/self/ns/net)" != \
+       "$(ip netns exec "$SECONDARY_SRV_NS" readlink /proc/self/ns/net)" ]; then
+    ok "independent servers use different network namespaces"
+  else
+    bad "independent servers must use different network namespaces"
+    exit 1
+  fi
   sed \
     -e 's/^level = info$/level = debug/' \
     -e 's/^bind.port = 4443$/bind.port = 4444/' \
@@ -390,20 +411,20 @@ if [ "$CASE" = multinode ]; then
     -e 's#^pool.cidr = 10\.88\.0\.0/24$#pool.cidr = 10.89.0.0/24#' \
     -e 's/^pool.exclude = 10\.88\.0\.1$/pool.exclude = 10.89.0.1/' \
     "$WORK/server.conf" >"$WORK/server-secondary.conf"
-  ip netns exec "$SRV_NS" env QELI_CONTROL_SOCKET="$WORK/control-secondary.sock" \
+  ip netns exec "$SECONDARY_SRV_NS" env QELI_CONTROL_SOCKET="$WORK/control-secondary.sock" \
     "$BIN" server -c "$WORK/server-secondary.conf" >"$WORK/server-secondary.log" 2>&1 &
   SECONDARY_SERVER_JOB_PID=$!
-  if wait_for 50 "ip netns exec $SRV_NS ss -lnt | grep -q ':4444'"; then
+  if wait_for 50 "ip netns exec $SECONDARY_SRV_NS ss -lnt | grep -q ':4444'"; then
     ok "secondary process listens with the shared identity on port 4444"
   else
     bad "secondary process did not listen on port 4444"
     exit 1
   fi
-  wait_for 50 "ip netns exec $SRV_NS ip link show qrms1" || bad "secondary tunnel device did not come up"
+  wait_for 50 "ip netns exec $SECONDARY_SRV_NS ip link show qrms1" || bad "secondary tunnel device did not come up"
   ip netns exec "$RTR_NS" iptables -t nat -A PREROUTING -i qrm-br -p tcp \
-    -d 10.40.3.2 --dport 4443 -j DNAT --to-destination 10.40.3.2:4444
+    -d 10.40.3.2 --dport 4443 -j DNAT --to-destination 10.40.4.2:4444
   check "path B is mapped to the independent secondary process" \
-    "ip netns exec $RTR_NS iptables -t nat -C PREROUTING -i qrm-br -p tcp -d 10.40.3.2 --dport 4443 -j DNAT --to-destination 10.40.3.2:4444"
+    "ip netns exec $RTR_NS iptables -t nat -C PREROUTING -i qrm-br -p tcp -d 10.40.3.2 --dport 4443 -j DNAT --to-destination 10.40.4.2:4444"
 fi
 if [ "$REALITY_TARGET" = true ]; then
   if [ "$WIRE_MODE" = reality ]; then

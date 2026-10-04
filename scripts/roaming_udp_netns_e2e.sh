@@ -209,6 +209,18 @@ ip netns exec "$CLI_NS" sysctl -qw "net.ipv4.conf.qru-b.rp_filter=$ORIGINAL_RPF_
 check "path B reverse-path filter was restored before Qeli starts" \
   "test \"\$(ip netns exec $CLI_NS sysctl -n net.ipv4.conf.qru-b.rp_filter)\" = '$ORIGINAL_RPF_B'"
 
+if [ "$CASE" = supersede ] || [ "$CASE" = commit-race ]; then
+  # Probe the physical C link before Qeli installs its endpoint bypass on A.
+  # Bind the device and restore rp_filter so the actor still owns its handover.
+  ORIGINAL_RPF_C=$(ip netns exec "$CLI_NS" sysctl -n net.ipv4.conf.qru-c.rp_filter)
+  ip netns exec "$CLI_NS" sysctl -qw net.ipv4.conf.qru-c.rp_filter=2
+  check "path C reaches the server with a candidate-compatible reverse-path filter" \
+    "ip netns exec $CLI_NS ping -I qru-c -c1 -W2 10.41.3.2"
+  ip netns exec "$CLI_NS" sysctl -qw "net.ipv4.conf.qru-c.rp_filter=$ORIGINAL_RPF_C"
+  check "path C reverse-path filter was restored before Qeli starts" \
+    "test \"\$(ip netns exec $CLI_NS sysctl -n net.ipv4.conf.qru-c.rp_filter)\" = '$ORIGINAL_RPF_C'"
+fi
+
 if [ "$CASE" = nat-rebind ]; then
   # Stateless one-to-one translation keeps the client's local socket/interface untouched while
   # making the server observe a replaceable external address. Return traffic is rewritten before
@@ -600,8 +612,6 @@ elif [ "$CASE" = rollback ]; then
     "test -n '$PING_RX' && test '$PING_RX' -ge 140"
 elif [ "$CASE" = supersede ]; then
   sleep 3
-  check "path C reaches the server" \
-    "ip netns exec $CLI_NS ping -I 10.41.4.2 -c1 -W2 10.41.3.2"
   ip netns exec "$RTR_NS" iptables -I FORWARD 1 -i qru-br -o qru-sr \
     -p udp --dport 4444 -j DROP
   check "candidate path B blackhole is active" \
@@ -671,8 +681,6 @@ elif [ "$CASE" = supersede ]; then
     "test -n '$PING_RX' && test '$PING_RX' -ge 170"
 elif [ "$CASE" = commit-race ]; then
   sleep 3
-  check "path C reaches the server" \
-    "ip netns exec $CLI_NS ping -I 10.41.4.2 -c1 -W2 10.41.3.2"
   ip netns exec "$CLI_NS" ping -n -i 0.2 -c 240 -W1 10.89.0.1 >"$WORK/ping.log" 2>&1 &
   PING_PID=$!
 
