@@ -71,4 +71,4 @@ platform/backend rows keep their actual dates/artifacts. User-excluded Mac,
 router and Windows VM runtime, 60 ignored tests and accepted Q25-A125 WAN
 same-name replacement limits retain their existing scope.
 
-Next: **Q22 NetworkPlan and routes**.
+Next: **Q22 transport core, FFI/JNI and memory**.

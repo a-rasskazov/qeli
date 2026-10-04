@@ -378,3 +378,4 @@
 
 - [Q20: DHCP и аренды — завершено](reports/AUDIT-Q20-DHCP-FINAL.md)
 - [Q21: TUN/TAP, IP и MTU/PMTU — завершено](reports/AUDIT-Q21-PACKETS-FINAL.md)
+- [Q22: transport core, FFI/JNI и память — завершено](reports/AUDIT-Q22-CORE-FFI-FINAL.md)

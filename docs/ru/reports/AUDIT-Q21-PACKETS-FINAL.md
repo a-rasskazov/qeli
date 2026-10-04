@@ -71,4 +71,4 @@ PCAP относится к проверенному outer IPv4 UDP QUIC, а не
 пользователем Mac, router и Windows VM runtime, 60 ignored tests и принятое
 ограничение Q25-A125 для WAN same-name replacement сохраняют свою область.
 
-Далее: **Q22 NetworkPlan и маршруты**.
+Далее: **Q22 transport core, FFI/JNI и память**.

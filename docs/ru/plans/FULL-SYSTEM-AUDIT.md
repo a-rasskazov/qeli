@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v39 -->
+<!-- normative-sync: full-system-audit-v40 -->
 
-**Текущий итог, 4 октября: 21/37 разделов DONE/PASS (56,8%), осталось 16. Q21 завершён; далее Q22.**
+**Текущий итог, 4 октября: 22/37 разделов DONE/PASS (59,5%), осталось 15. Q22 завершён; далее Q23.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1199,6 +1199,8 @@ Identity маршрутов, namespace resolver-сервиса и reuse инде
 
 ### 22. Transport core, FFI/JNI и память
 
+**4 октября, Q22 завершён:** [transport core, FFI/JNI и память](../reports/AUDIT-Q22-CORE-FFI-FINAL.md). Q22-F001/F002 закрывают queued access после panic и отменяют leased runner до удаления handle. Два baseline-отказа воспроизведены; 2402 full-feature units, strict Clippy, 22 Windows C ABI, 23 actual Android JNI, C11/C++11 headers и четыре native A/B PASS. CLI Linux побайтно прежний, сетевые execution сохраняют свой scope. Итого: 22/37 (59,5%), осталось 15; далее Q23.
+
 [Q25-F067–F068](../reports/AUDIT-Q25-GATEWAY-IDENTITY.md): gateway привязан к RouteOwner;
 firewall проверяет namespace/TUN внутри операций, cleanup выполняется до закрытия TUN.
 При потере TUN правила очищаются в исходном namespace, sysctl scope сохраняется.
@@ -1223,13 +1225,13 @@ Create/start/PREPARE/APPLY/COMMIT/stop/free, callbacks, buffers, queues, cancell
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_native_repro.py`, `native-libs/provenance.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Проход общего сетевого плана, 22–23 сентября 2026:**
 [отчёт Q19/Q22](../reports/AUDIT-Q19-Q22-NETWORK-PLAN.md). Исправлены различия legacy/v2 DNS

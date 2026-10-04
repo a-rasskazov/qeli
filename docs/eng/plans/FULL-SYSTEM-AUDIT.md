@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v39 -->
+<!-- normative-sync: full-system-audit-v40 -->
 
-**Current total, 4 October: 21/37 sections DONE/PASS (56.8%), 16 remaining. Q21 complete; next Q22.**
+**Current total, 4 October: 22/37 sections DONE/PASS (59.5%), 15 remaining. Q22 complete; next Q23.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1188,6 +1188,8 @@ resolver service namespace and post-check index reuse remain open.
 
 ### 22. Transport core, FFI/JNI and memory
 
+**4 October, Q22 complete:** [transport core, FFI/JNI and memory](../reports/AUDIT-Q22-CORE-FFI-FINAL.md). Q22-F001/F002 fix queued access after panic and cancel leased runners before handle retirement. Two baseline failures reproduced; 2402 full-feature units, strict Clippy, 22 Windows C ABI checks, 23 actual Android JNI checks, C11/C++11 headers and four native A/B PASS. Linux CLI bytes unchanged; prior network executions retain their scope. Overall: 22/37 (59.5%), 15 remain; next Q23.
+
 [Q25-F067–F068](../reports/AUDIT-Q25-GATEWAY-IDENTITY.md): gateway binds RouteOwner;
 firewall operations check namespace/TUN internally, and cleanup precedes TUN release.
 Lost TUN permits rule cleanup in the original namespace while retaining the sysctl scope.
@@ -1212,13 +1214,13 @@ Create/start/PREPARE/APPLY/COMMIT/stop/free, callbacks, buffers, queues and gene
 
 **Existing harness/fixtures:** `scripts/test_native_repro.py`, `native-libs/provenance.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **Shared network-plan pass, 22–23 September 2026:**
 [Q19/Q22 report](../reports/AUDIT-Q19-Q22-NETWORK-PLAN.md). Fixed legacy/v2 DNS differences
