@@ -63,6 +63,7 @@ public static class CliRunner
         RunGroup("DPAPI profile store", () => QeliWin.Model.ProfileStoreSelfTest.Run(Check));
         RunGroup("service profile storage", () => QeliWin.Service.ServiceProfileSelfTest.Run(Check));
         RunGroup("service control and autostart", () => QeliWin.Service.ServiceControlSelfTest.Run(Check));
+        RunGroup("service observation and registration", () => QeliWin.Service.ServiceObservationSelfTest.Run(Check));
         RunGroup("WinDivert unit", () => WinDivertSelfTest.RunUnit(Check));
         RunGroup("roaming socket", () => WindowsRoamingSocket.RunSelfTest(Check));
         RunGroup("DNS lifecycle", () => NetworkConfigurator.RunDnsLifecycleSelfTest(Check));

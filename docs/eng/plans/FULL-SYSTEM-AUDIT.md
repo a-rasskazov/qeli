@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v47 -->
+<!-- normative-sync: full-system-audit-v48 -->
 
 **Current total, 5 October: 26/37 sections DONE/PASS (70.3%), 11 remaining. Q26 complete; next Q27.**
 
@@ -1814,6 +1814,8 @@ scheduler exit/deadline/pipe drains and settings snapshots. 40 new assertions,
 224 Windows + fresh543 shared PASS; baseline 8 FAIL. Shared/native inputs unchanged;
 managed Git-SHA metadata changed, so the current DLL was tested again. Q27 IN_PROGRESS: existing registration
 trust and recovery/status/log/driver adapters next; user runtime SKIPPED retained.
+
+**5 October, service observation:** [Q27-F229–F232](../reports/AUDIT-Q27-WINDOWS-OBSERVATION.md): Registration command/account/type/owner/DACL and filesystem recheck before changes; stale/unknown status and terminal cleanup Error, bounded trusted log snapshots/atomic rotation. 273 Windows + 543 shared PASS,49 new assertions,7 baseline FAIL. Q27 IN_PROGRESS; next native loader/driver adapters and final reconciliation. Plan26/37 (70.3%).
 
 ### 28. macOS daemon, utun, pf and Network Extension
 

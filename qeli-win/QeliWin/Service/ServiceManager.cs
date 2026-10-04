@@ -12,7 +12,7 @@ namespace QeliWin.Service;
 /// <summary>
 /// Installs/controls the Qeli Windows Service. Create/delete go through the Win32 SCM
 /// API (robust binPath quoting); start/stop/status use ServiceController. The service
-/// runs as LocalSystem with auto-start, so the VPN comes up at boot, before any logon.
+/// runs as LocalSystem with auto-start; saved connection intent controls the tunnel.
 /// </summary>
 public static class ServiceManager
 {
@@ -193,16 +193,15 @@ public static class ServiceManager
         finally { foreach (var service in services) service.Dispose(); }
     }
 
-    public static bool IsRunning()
+    public static ServiceControllerStatus GetStatus()
     {
-        try
-        {
-            using var sc = new ServiceController(ServiceName);
-            sc.Refresh();
-            return sc.Status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending;
-        }
-        catch { return false; }
+        using var sc = new ServiceController(ServiceName);
+        sc.Refresh();
+        return sc.Status; // Query failures must not masquerade as Disconnected.
     }
+
+    internal static void EnsureRegistration() => ServiceRegistration.Validate(
+        ServiceRegistration.Read(ServiceName), ExePath, EnsureProtectedLocation);
 
     public static void Install()
     {
@@ -218,6 +217,7 @@ public static class ServiceManager
             {
                 int err = Marshal.GetLastWin32Error();
                 if (err != ERROR_SERVICE_EXISTS) throw new Win32Exception(err, "CreateService failed");
+                EnsureRegistration();
             }
             else CloseServiceHandle(svc);
         }
@@ -258,6 +258,7 @@ public static class ServiceManager
 
     public static void Start()
     {
+        EnsureRegistration(); // Refuse legacy/mismatched registration before arming boot intent.
         ServiceState.SetDesiredConnected(true);
         try
         {
@@ -272,10 +273,11 @@ public static class ServiceManager
                 sc.Start();
             sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(20));
         }
-        catch
+        catch (Exception startFailure)
         {
-            // A failed Start must not arm a surprise connection on the next boot/install.
-            ServiceState.SetDesiredConnected(false);
+            // Preserve both failures if disarming intent also fails.
+            try { ServiceState.SetDesiredConnected(false); }
+            catch (Exception rollback) { throw new AggregateException("Service start and intent rollback failed", startFailure, rollback); }
             throw;
         }
     }

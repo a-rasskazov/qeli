@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v47 -->
+<!-- normative-sync: full-system-audit-v48 -->
 
 **Текущий итог, 5 октября: 26/37 разделов DONE/PASS (70,3%), осталось 11. Q26 завершён; далее Q27.**
 
@@ -1825,6 +1825,8 @@ scheduler exit/deadline/pipe drains и settings snapshot. 40 новых assertio
 224 Windows + свежие543 shared PASS; baseline 8 FAIL. Shared/native inputs unchanged;
 managed metadata поменялись с Git SHA, поэтому текущая DLL проверена заново. Q27 IN_PROGRESS: existing registration
 trust и recovery/status/log/driver adapters далее; user runtime SKIPPED сохранён.
+
+**5 октября, наблюдение службы:** [Q27-F229–F232](../reports/AUDIT-Q27-WINDOWS-OBSERVATION.md): Регистрация command/account/type/owner/DACL и filesystem recheck перед изменениями; stale/unknown status и terminal cleanup Error, bounded trusted log snapshot/atomic rotation. 273 Windows + 543 shared PASS, 49 новых assertions, 7 baseline FAIL. Q27 IN_PROGRESS; далее native loader/driver adapters и итоговая сверка. План 26/37 (70,3%).
 
 ### 28. macOS: daemon, utun, pf и Network Extension
 

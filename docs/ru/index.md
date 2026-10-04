@@ -391,3 +391,5 @@
 - [Q27: Windows-хранилища — этап PASS, раздел IN_PROGRESS](reports/AUDIT-Q27-WINDOWS-STORAGE.md)
 
 - [Q27: переходы службы и автозапуск — этап PASS](reports/AUDIT-Q27-WINDOWS-CONTROL.md)
+
+- [Q27: регистрация службы, статус и логи — этап PASS](reports/AUDIT-Q27-WINDOWS-OBSERVATION.md)

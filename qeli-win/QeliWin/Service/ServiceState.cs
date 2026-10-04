@@ -36,7 +36,8 @@ public static class ServiceState
     public static string DesiredConnectionFile => Path.Combine(Dir, "service-connect.enabled");
 
     private static readonly object _logLock = new();
-    private const long MaxLogBytes = 256 * 1024;
+    internal const int MaxLogBytes = 256 * 1024;
+    internal const int MaxLogLineChars = 4096;
     internal const int MaximumProfileBytes = 4 * 1024 * 1024;
     internal const int MaximumStatusBytes = 64 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -272,20 +273,76 @@ public static class ServiceState
 
     public static ServiceStatus? ReadStatus()
     {
+        EnsureDir();
+        CheckExistingFile(StatusFile);
         try
         {
-            EnsureDir();
-            CheckExistingFile(StatusFile);
             using var file = OpenSnapshot(StatusFile);
-            return JsonSerializer.Deserialize<ServiceStatus>(StrictUtf8.GetString(
-                ReadBounded(file, MaximumStatusBytes)));
+            return DecodeStatus(ReadBounded(file, MaximumStatusBytes));
         }
-        catch { return null; }
+        catch (FileNotFoundException) { return null; }
     }
+
+    internal static ServiceStatus DecodeStatus(byte[] bytes)
+    {
+        var snapshot = JsonSerializer.Deserialize<ServiceStatus>(StrictUtf8.GetString(bytes))
+            ?? throw new InvalidDataException("Service status is empty");
+        if (!Enum.TryParse<VpnStatus>(snapshot.Status, out var status) || !Enum.IsDefined(status)
+            || snapshot.Status != status.ToString() || snapshot.Time == default
+            || snapshot.BytesUp < 0 || snapshot.BytesDown < 0 || snapshot.Extra?.Length > 2048)
+            throw new InvalidDataException("Invalid service status snapshot");
+        return snapshot;
+    }
+
+    public static string ReadLog()
+    {
+        EnsureDir();
+        CheckExistingFile(LogFile);
+        try
+        {
+            using var file = new FileStream(LogFile, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            return ReadLogSnapshot(file);
+        }
+        catch (FileNotFoundException) { return ""; }
+    }
+
+    // A bounded complete view also handles truncate+regrow and atomic rotation without
+    // trusting a stale byte cursor. An incomplete UTF-8 write is retried next poll.
+    internal static string ReadLogSnapshot(Stream stream) =>
+        StrictUtf8.GetString(ReadBounded(stream, MaxLogBytes));
 
     public static void ResetLog()
     {
-        try { EnsureDir(); CheckExistingFile(LogFile); File.WriteAllText(LogFile, ""); } catch { }
+        lock (_logLock)
+        {
+            try { EnsureDir(); AtomicWrite(LogFile, []); } catch { }
+        }
+    }
+
+    internal static byte[] EncodeLogLine(string line, DateTime now)
+    {
+        if (line.Length > MaxLogLineChars)
+        {
+            int end = MaxLogLineChars;
+            if (char.IsHighSurrogate(line[end - 1])) end--;
+            line = line[..end] + " [truncated]";
+        }
+        return Encoding.UTF8.GetBytes($"{now:yyyy-MM-ddTHH:mm:ss'Z'}  {line}{Environment.NewLine}");
+    }
+
+    internal static void AppendLogFile(string path, byte[] entry)
+    {
+        if (entry.Length > MaxLogBytes) throw new InvalidDataException("Log entry exceeds byte limit");
+        // Rotate BEFORE writing, including a previously oversized legacy log.
+        if (File.Exists(path) && new FileInfo(path).Length > MaxLogBytes - entry.Length)
+            PublishAtomic(path, temporary => File.WriteAllBytes(temporary, entry));
+        else
+        {
+            using var file = new FileStream(path, FileMode.Append, FileAccess.Write,
+                FileShare.Read | FileShare.Delete);
+            file.Write(entry);
+        }
     }
 
     public static void AppendLog(string line)
@@ -296,9 +353,7 @@ public static class ServiceState
             {
                 EnsureDir();
                 CheckExistingFile(LogFile);
-                if (File.Exists(LogFile) && new FileInfo(LogFile).Length > MaxLogBytes)
-                    File.WriteAllText(LogFile, "");
-                File.AppendAllText(LogFile, $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss'Z'}  {line}{Environment.NewLine}");
+                AppendLogFile(LogFile, EncodeLogLine(line, DateTime.UtcNow));
             }
             catch { /* ignore */ }
         }

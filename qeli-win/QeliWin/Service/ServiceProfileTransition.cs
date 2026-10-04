@@ -9,12 +9,13 @@ namespace QeliWin.Service;
 // OS adapters stay injectable so failures are tested without controlling installed SCM.
 internal sealed class ServiceProfileTransition(
     Func<bool> installed, Func<bool> desiredConnected, Func<VpnConfig?> readProfile,
-    Action stop, Action<byte[]> publish, Action install, Action start, Action uninstall)
+    Action stop, Action<byte[]> publish, Action install, Action start, Action uninstall,
+    Action? validateRegistration = null)
 {
     internal static readonly ServiceProfileTransition Current = new(
         ServiceManager.IsInstalled, ServiceState.DesiredConnected, ServiceState.LoadProfile,
         ServiceManager.Stop, ServiceState.PublishProfile, ServiceManager.Install,
-        ServiceManager.Start, ServiceManager.Uninstall);
+        ServiceManager.Start, ServiceManager.Uninstall, ServiceManager.EnsureRegistration);
     private readonly object _gate = new();
 
     internal void Apply(VpnConfig? profile, bool connectRequested)
@@ -27,6 +28,7 @@ internal sealed class ServiceProfileTransition(
                 if (exists) uninstall();
                 return;
             }
+            if (exists) validateRegistration?.Invoke();
             // Validate/encode before stopping any existing tunnel or publishing its replacement.
             byte[] encrypted = ServiceState.EncodeProfile(profile);
             bool resume = !exists || connectRequested || desiredConnected();

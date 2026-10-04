@@ -53,7 +53,6 @@ public partial class MainWindow : Window
     private bool _serviceBusy;
     private bool _settingsOpen;
     private DispatcherTimer? _serviceTimer;
-    private long _serviceLogPos;
 
     // Live stats (sampled once a second while connected): speed tiles + sparkline.
     private DispatcherTimer? _statsTimer;
@@ -263,12 +262,18 @@ public partial class MainWindow : Window
     // ── Windows-service mode ─────────────────────────────────────────────────────
     private void RefreshServiceMode()
     {
-        bool nowService = ServiceManager.IsInstalled();
+        bool nowService;
+        try { nowService = ServiceManager.IsInstalled(); }
+        catch (Exception error)
+        {
+            // Unknown SCM state must not launch a competing in-process tunnel.
+            nowService = true;
+            RenderStatus(VpnStatus.Error, $"Cannot query installed service: {error.Message}");
+        }
         _serviceMode = nowService;
         if (nowService)
         {
             ConnectBtn.IsEnabled = true;
-            _serviceLogPos = 0;
             LogBox.Clear();
             StartServicePolling();
             ServicePollTick(null, EventArgs.Empty);
@@ -298,14 +303,24 @@ public partial class MainWindow : Window
     private void ServicePollTick(object? sender, EventArgs e)
     {
         if (!_serviceMode) return;
-        var snapshot = ServiceState.ReadStatus();
-        _svc = snapshot;
-        VpnStatus status = VpnStatus.Disconnected;
-        string? extra = snapshot?.Extra;
-        if (snapshot != null && Enum.TryParse<VpnStatus>(snapshot.Status, out var parsed)) status = parsed;
-        if (!ServiceManager.IsRunning()) { status = VpnStatus.Disconnected; extra = null; }
-
+        VpnStatus status;
+        string? extra;
+        try
+        {
+            var observed = ServiceObservation.Resolve(ServiceManager.GetStatus(),
+                ServiceState.ReadStatus(), DateTime.Now);
+            _svc = observed.Snapshot;
+            status = observed.Status;
+            extra = observed.Extra;
+        }
+        catch (Exception error)
+        {
+            _svc = null;
+            status = VpnStatus.Error;
+            extra = $"Cannot observe service: {error.Message}";
+        }
         if (status != _status) OnStatus(status, extra);
+        else if (extra != _lastExtra) RenderStatus(status, extra);
         TailServiceLog();
     }
 
@@ -313,18 +328,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            var path = ServiceState.LogFile;
-            if (!File.Exists(path)) return;
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            if (fs.Length < _serviceLogPos) _serviceLogPos = 0; // log was rotated
-            if (fs.Length == _serviceLogPos) return;
-            fs.Seek(_serviceLogPos, SeekOrigin.Begin);
-            using var sr = new StreamReader(fs);
-            var text = sr.ReadToEnd();
-            _serviceLogPos = fs.Length;
-            if (text.Length > 0) { LogBox.AppendText(text); LogBox.ScrollToEnd(); }
+            var text = ServiceState.ReadLog();
+            if (text != LogBox.Text) { LogBox.Text = text; LogBox.ScrollToEnd(); }
         }
-        catch { /* ignore transient IO */ }
+        catch { /* preserve the last bounded view during a partial write or IO failure */ }
     }
 
     private async Task ApplyServiceSettings(bool connectRequested = false, VpnConfig? profileOverride = null)
