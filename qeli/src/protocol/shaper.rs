@@ -173,7 +173,7 @@ impl StealthBudget {
 /// A session's cover budget and aggregate stealth reservations, shared by bonded writers.
 pub type SharedCoverBudget = Arc<Mutex<CoverBudget>>;
 
-/// One pacing reservation's absolute deadline. Shared by TCP/UDP and both peers:
+/// One TCP pacing reservation's absolute deadline, shared by both peers:
 /// cover is optional, but the entire reserved pause (including its final 6 ms)
 /// must elapse. Time spent writing cover counts towards that pause.
 pub(crate) struct StealthPacing {

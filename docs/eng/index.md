@@ -368,4 +368,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 
 - [Q11: REALITY, TLS 1.3 and HTTP/2](reports/AUDIT-Q11-REALITY-TLS-H2.md)
 - [Q12: transports and wire camouflage — complete](reports/AUDIT-Q12-TRANSPORTS.md)
-- [Q13: recordizer, padding and shaping audit](reports/AUDIT-Q13-MORPHOLOGY.md)
+- [Q13: recordizer, padding and shaping — complete](reports/AUDIT-Q13-MORPHOLOGY.md)
+- [Q14: current worker lifecycle checks](reports/AUDIT-Q14-CURRENT-LIFECYCLE.md)

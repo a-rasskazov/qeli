@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v30 -->
+<!-- normative-sync: full-system-audit-v31 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -152,7 +152,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | DONE |
 | 12 | Transports and wire camouflage | H02, H07–H08 | PASS |
-| 13 | Recordizer, padding and shaping | H02, H07–H08 | IN_PROGRESS |
+| 13 | Recordizer, padding and shaping | H02, H07–H08 | PASS |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | IN_PROGRESS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | IN_PROGRESS |
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | TODO |
@@ -486,6 +486,9 @@ Derive supported runtime/Quick Start combinations: plain/fake-tls/reality/realit
 
 ### 13. Recordizer, padding and shaping
 
+**4 October, Q13 DONE/PASS: ** removed both disabled UDP stealth branches; TCP-only policy retained. Final 2365 Linux units, 7 live cases, matrix 18/18, soak 33 and four native A/B PASS. Overall **13/37 (35.1%)**, 24 sections remain; next Q14. [Final evidence and limits](../reports/AUDIT-Q13-MORPHOLOGY.md).
+
+
 **4 October,morphology batch PASS:** four more padding/normalization/mux corrections,2365 Linux PASS,6 combined TCP/UDP cases,fresh matrix/soak/native A/B. [Evidence and remaining two UDP branches](../reports/AUDIT-Q13-MORPHOLOGY.md).
 
 
@@ -498,15 +501,17 @@ Off/prefer/required and legacy peers; batch/reassembly caps, flush deadlines, ca
 
 **Existing harness/fixtures:** `scripts/validate_shaping.py`, `scripts/bench_stealth.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 ### 14. Supervisor, workers and profiles
+
+**4 October, current lifecycle batch PASS: ** 8/8 worker cases, 80 reloads, 22 recovery and14 multiprofile checks on the current release; host/service preserved. [Review and Q14 remaining scope](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md). Q14 IN_PROGRESS.
 
 **Source:** `qeli/src/server/mod.rs`, `qeli/src/server/tasks.rs`, `qeli/src/server/supervisor.rs`, `qeli/src/server/control.rs`, `qeli/src/server/control_io.rs`, `qeli/src/server/control_socket.rs`, `qeli/src/main.rs`, `qeli/src/hooks.rs`, `qeli/src/hooks/process.rs`.
 

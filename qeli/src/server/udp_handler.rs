@@ -1983,11 +1983,9 @@ pub(crate) async fn run_udp_server(
                         }
                         client.next_cover_at =
                             now + client.shaper.next_gap(&mut rand::rng());
-                        // Fill genuine idle; in STEALTH run cover under load too so
-                        // small cover mixes into the (rate-capped) stream.
-                        if !client.shaper.stealth()
-                            && now.duration_since(client.last_activity)
-                                < std::time::Duration::from_millis(50)
+                        // UDP cover fills genuine idle; stealth pacing is TCP-only.
+                        if now.duration_since(client.last_activity)
+                            < std::time::Duration::from_millis(50)
                         {
                             continue;
                         }

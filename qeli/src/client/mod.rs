@@ -8774,13 +8774,10 @@ async fn send_client_udp_payloads(
     data_frag_enabled: bool,
     tx_data_frag_key: &[u8; 32],
     tx_record_id: &mut u64,
-    shaper: &mut crate::protocol::Shaper,
     socket: &crate::protocol::obfs::ObfsUdp,
     framing: crate::transport_core::udp_client_framing::UdpClientFraming,
     quic_pn: &mut u32,
-    max_empty_record_padding: usize,
     wire_record: &mut Vec<u8>,
-    cover_record: &mut Vec<u8>,
     quic_record: &mut Vec<u8>,
     padding: &mut Vec<u8>,
     send_scratch: &mut crate::transport_core::udp_batch::BatchScratch,
@@ -8831,43 +8828,6 @@ async fn send_client_udp_payloads(
                 return ClientUdpPayloadSendOutcome::CarrierFailed;
             }
             return ClientUdpPayloadSendOutcome::EncodeFailed;
-        }
-
-        let delay = shaper.stealth_pace(wire_record.len(), std::time::Instant::now());
-        if !delay.is_zero()
-            && flush_client_udp_datagrams(&mut datagrams, socket, send_scratch)
-                .await
-                .is_err()
-        {
-            return ClientUdpPayloadSendOutcome::CarrierFailed;
-        }
-        if shaper.stealth() && !delay.is_zero() {
-            let pacing = crate::protocol::shaper::StealthPacing::new(delay);
-            while let Some(step) = pacing.next_step() {
-                let cover_size = shaper
-                    .next_size(&mut rand::rng())
-                    .min(max_empty_record_padding);
-                if step.cover && shaper.try_spend(cover_size, std::time::Instant::now()) {
-                    let mut cover_obf = Obfuscator::new();
-                    cover_obf.generate_padding_into(cover_size as u16, cover_size as u16, padding);
-                    if client_tx
-                        .encrypt_packet_into(&[], padding, cover_record)
-                        .is_ok()
-                    {
-                        let send_data =
-                            crate::transport_core::udp_client_framing::wrap_next_udp_record(
-                                framing,
-                                cover_record,
-                                quic_pn,
-                                quic_record,
-                            );
-                        let _ = socket.send(send_data).await;
-                    }
-                }
-                tokio::time::sleep_until(step.resume_at).await;
-            }
-        } else if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
         }
 
         if data_frag_enabled && wire_record.len() > data_record_budget {
@@ -8991,13 +8951,10 @@ async fn send_client_udp_control_frame(
     data_frag_enabled: bool,
     tx_data_frag_key: &[u8; 32],
     tx_record_id: &mut u64,
-    shaper: &mut crate::protocol::Shaper,
     socket: &crate::protocol::obfs::ObfsUdp,
     framing: crate::transport_core::udp_client_framing::UdpClientFraming,
     quic_pn: &mut u32,
-    max_empty_record_padding: usize,
     wire_record: &mut Vec<u8>,
-    cover_record: &mut Vec<u8>,
     quic_record: &mut Vec<u8>,
     padding: &mut Vec<u8>,
     send_scratch: &mut crate::transport_core::udp_batch::BatchScratch,
@@ -9012,13 +8969,10 @@ async fn send_client_udp_control_frame(
         data_frag_enabled,
         tx_data_frag_key,
         tx_record_id,
-        shaper,
         socket,
         framing,
         quic_pn,
-        max_empty_record_padding,
         wire_record,
-        cover_record,
         quic_record,
         padding,
         send_scratch,
@@ -10615,13 +10569,10 @@ pub(crate) async fn run_udp_tunnel(
                 data_frag_enabled,
                 &tx_data_frag_key,
                 &mut tx_record_id,
-                &mut shaper,
                 &socket,
                 udp_framing,
                 &mut quic_pn,
-                max_empty_record_padding,
                 &mut wire_record,
-                &mut cover_record,
                 &mut quic_record,
                 &mut padding,
                 &mut udp_send_scratch,
@@ -11045,13 +10996,10 @@ pub(crate) async fn run_udp_tunnel(
                         data_frag_enabled,
                         &tx_data_frag_key,
                         &mut tx_record_id,
-                        &mut shaper,
                         &socket,
                         udp_framing,
                         &mut quic_pn,
-                        max_empty_record_padding,
                         &mut wire_record,
-                        &mut cover_record,
                         &mut quic_record,
                         &mut padding,
                         &mut udp_send_scratch,
@@ -11297,13 +11245,10 @@ pub(crate) async fn run_udp_tunnel(
                         data_frag_enabled,
                         &tx_data_frag_key,
                         &mut tx_record_id,
-                        &mut shaper,
                         &socket,
                         udp_framing,
                         &mut quic_pn,
-                        max_empty_record_padding,
                         &mut wire_record,
-                        &mut cover_record,
                         &mut quic_record,
                         &mut padding,
                         &mut udp_send_scratch,
@@ -11384,53 +11329,9 @@ pub(crate) async fn run_udp_tunnel(
                         .is_ok()
                 };
                 // Encryption has copied the plaintext into its wire record; return the TUN
-                // allocation before any pacing or socket-send await below.
+                // allocation before any socket-send await below.
                 drop(ip_packet);
                 if encrypted {
-                    // Stealth: pace the uplink to stealth_rate; fill the gap with
-                    // jittered small cover (size mix + non-metronome). Cover datagrams
-                    // take their own QUIC pns FIRST so the real packet's pn stays the
-                    // largest (monotonic on the wire).
-                    let d = shaper.stealth_pace(wire_record.len(), std::time::Instant::now());
-                    if shaper.stealth() && !d.is_zero() {
-                        let pacing = crate::protocol::shaper::StealthPacing::new(d);
-                        while let Some(step) = pacing.next_step() {
-                            // Cap cover size to the probed tunnel MTU: with DF armed after a
-                            // successful probe, an oversized cover datagram is dropped with
-                            // EMSGSIZE (send error swallowed), so the DPI cover silently never
-                            // goes out. Mirrors the data path and C#/Kotlin's EncryptCapped.
-                            let csize = shaper
-                                .next_size(&mut rand::rng())
-                                .min(tun_mtu.max(0) as usize)
-                                .min(max_empty_record_padding);
-                            if step.cover && shaper.try_spend(csize, std::time::Instant::now()) {
-                                let cover_ready = {
-                                    let mut obf = Obfuscator::new();
-                                    obf.generate_padding_into(
-                                        csize as u16,
-                                        csize as u16,
-                                        &mut padding,
-                                    );
-                                    client_tx
-                                        .encrypt_packet_into(&[], &padding, &mut cover_record)
-                                        .is_ok()
-                                };
-                                if cover_ready {
-                                    let send_data =
-                                        crate::transport_core::udp_client_framing::wrap_next_udp_record(
-                                            udp_framing,
-                                            &cover_record,
-                                            &mut quic_pn,
-                                            &mut quic_record,
-                                        );
-                                    let _ = socket.send(send_data).await;
-                                }
-                            }
-                            tokio::time::sleep_until(step.resume_at).await;
-                        }
-                    } else if !d.is_zero() {
-                        tokio::time::sleep(d).await;
-                    }
                     if data_frag_enabled && wire_record.len() > data_record_budget {
                         let record_id = tx_record_id;
                         tx_record_id = tx_record_id.wrapping_add(1);
@@ -12352,10 +12253,9 @@ pub(crate) async fn run_udp_tunnel(
                     );
             }
             _ = tokio::time::sleep_until(cover_deadline), if shaping_on => {
-                // Fill genuine idle on OUR send side (last_tx_inst); in STEALTH run
-                // cover under load too so small cover mixes into the rate-capped stream.
-                if shaper.stealth() || last_tx_inst.elapsed() >= Duration::from_millis(50) {
-                    // Cap idle-cover size to the probed MTU (see the stealth-cover branch).
+                // UDP cover fills genuine idle on our send side (last_tx_inst).
+                if last_tx_inst.elapsed() >= Duration::from_millis(50) {
+                    // Keep cover within the probed MTU and codec's padding budget.
                     let size = shaper
                         .next_size(&mut rand::rng())
                         .min(tun_mtu.max(0) as usize)

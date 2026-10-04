@@ -1,6 +1,50 @@
 # Q13: recordizer, padding and shaping
 
-<!-- normative-sync: audit-q13-morphology-v2 -->
+<!-- normative-sync: audit-q13-morphology-v3 -->
+
+## 4 October: Q13 completion
+
+**Q13 DONE/PASS. Overall plan: 13/37 (35.1%), 24 sections remaining.**
+Core `711782d6d1cb6e41889c7c359f964e7242e314fc`, Linux candidate `5605f4b7867cefb0886f14c943c499693fb41a0d0f767f8675292115d5f27c55`.
+Evidence: `release/certification/evidence/q13-close-20261004.json`.
+
+Removed two unreachable UDP stealth/pacing branches, three unused private send-helper
+parameters and their arguments. Simplified both UDP idle-cover conditions and corrected
+comments. Both peers still force UDP stealth off: saved `stealth=true` does not enable
+data pacing or cover under load. TCP pacing and UDP idle cover remain. INI, ABI and
+wire format are unchanged. This is dead-code removal, no new reproduced runtime defect.
+
+Final batch:
+
+- **2365 Linux PASS / 60 ignored**, full/minimal Clippy and fmt.
+- Shipping rlib: **714992 assertions**,18000 padding compositions,
+  10000 rejected callback cases and 64 simultaneous fragment completions;
+  peak RSS **11176 KiB**. Bounded invariant campaign, not ASan/libFuzzer.
+- **7 live cases / 72 fixture checks**: UDP required/off, idle-cover and saved
+  stealth=true; TCP 2 Mbps stealth single/bonded3; normalization with padding on/off.
+  UDP data exceeds 2 Mbps; both TCP directions remain below the 2.6 Mbps allowance,
+  including aggregate throughput of three flows. Capture SHA and flow counts verified;
+  post-load ping and cleanup checked.
+- **18/18 matrix / 327 assertions**, aggregate IPv4/IPv6 leak,
+  **100 TCP + 100 QUIC / 33 soak checks**, **24 REALITY-TLS/H2 checks** on this exact candidate.
+- Four independent native A/B libraries, exports, copies/provenance PASS.
+  Active services/executables preserved. Raw desktop snapshot=false is accepted only
+  for the recorded exact known legacy firewall-rule delta.
+
+Earlier baseline/fixed probes and 17 INI checks retain their original hashes; their
+recordizer/obfuscate/config modules match byte-for-byte. Current units, campaign and
+live send paths rerun. Q13 fixed five shaping and four padding/mux defects and removed
+both disabled UDP paths. All five section criteria are complete within available scope.
+
+Reassembly internal state remains incremental on errors; callback delivery is atomic
+only after complete-envelope success. Bucket targets include data+padding but exclude
+AEAD/carrier headers. PCAP timing alone proves neither plaintext buckets nor DPI
+resistance. Measurements are owned lab workloads. No fresh installed-app E2E claim;
+unavailable Mac/router/Windows VM runtime was excluded by the user. Continue with Q14.
+
+## Earlier padding/normalization/mux batch
+
+
 
 ## 4 October: padding, normalization and mux error handling
 

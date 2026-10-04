@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v30 -->
+<!-- normative-sync: full-system-audit-v31 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -157,7 +157,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | DONE |
 | 12 | Транспорты и wire-маскировка | H02, H07–H08 | PASS |
-| 13 | Recordizer, padding и shaping | H02, H07–H08 | IN_PROGRESS |
+| 13 | Recordizer, padding и shaping | H02, H07–H08 | PASS |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | IN_PROGRESS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | IN_PROGRESS |
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | TODO |
@@ -491,6 +491,9 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 
 ### 13. Recordizer, padding и shaping
 
+**4 октября, Q13 DONE/PASS:** удалены две выключенные UDP stealth-ветви, сохранена действующая политика TCP. Прошли 2365 Linux-тестов, 7 сетевых сценариев, матрица 18/18, 33 проверки длительного прогона и четыре независимые сборки библиотек A/B. Общий план **13/37 (35,1%)**, осталось 24 раздела; далее Q14. [Итог и границы](../reports/AUDIT-Q13-MORPHOLOGY.md).
+
+
 **4 октября, morphology batch PASS:** ещё четыре исправления padding/normalization/mux,2365 Linux PASS,6 combined TCP/UDP cases,свежие matrix/soak/native A/B. [Evidence и оставшиеся две UDP ветви](../reports/AUDIT-Q13-MORPHOLOGY.md).
 
 
@@ -503,15 +506,17 @@ Off/prefer/required и legacy peer; batch/reassembly caps, flush deadlines, canc
 
 **Имеющаяся обвязка/fixtures:** `scripts/validate_shaping.py`, `scripts/bench_stealth.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 ### 14. Supervisor, workers и профили
+
+**4 октября, текущий пакет lifecycle PASS:** 8/8 сценариев worker, 80 reload, 22 проверки восстановления и 14 проверок нескольких профилей на текущем release. Состояние лабы и рабочий сервис сохранены. [Разбор и остаток Q14](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md). Q14 IN_PROGRESS.
 
 **Код:** `qeli/src/server/mod.rs`, `qeli/src/server/tasks.rs`, `qeli/src/server/supervisor.rs`, `qeli/src/server/control.rs`, `qeli/src/server/control_io.rs`, `qeli/src/server/control_socket.rs`, `qeli/src/main.rs`, `qeli/src/hooks.rs`, `qeli/src/hooks/process.rs`.
 
