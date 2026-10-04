@@ -369,4 +369,4 @@
 - [Q11: REALITY, TLS 1.3 и HTTP/2](reports/AUDIT-Q11-REALITY-TLS-H2.md)
 - [Q12: транспорты и wire-маскировка — завершено](reports/AUDIT-Q12-TRANSPORTS.md)
 - [Q13: recordizer, padding и shaping — завершено](reports/AUDIT-Q13-MORPHOLOGY.md)
-- [Q14: актуальная проверка worker lifecycle](reports/AUDIT-Q14-CURRENT-LIFECYCLE.md)
+- [Q14: supervisor, workers и профили — завершено](reports/AUDIT-Q14-CURRENT-LIFECYCLE.md)

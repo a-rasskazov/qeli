@@ -1,6 +1,7 @@
 pub mod api;
 pub mod assets;
 pub mod auth;
+mod lifetime;
 pub mod pages;
 pub mod tls;
 
@@ -619,7 +620,11 @@ async fn security_headers(
 /// port was refused — TLS misconfigured, address unparseable, port taken. The signal is sent
 /// once, the moment the outcome is known, so the caller can say what is actually true.
 /// (Audit 2026-08-01, §P2.)
-pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::Sender<bool>>) {
+pub async fn start(
+    state: Arc<ServerState>,
+    ready: Option<tokio::sync::oneshot::Sender<bool>>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<()> {
     // Fires exactly once; later calls are no-ops because the sender is consumed.
     let mut ready = ready;
     let mut report = move |up: bool| {
@@ -646,7 +651,7 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
              panel is genuinely what you want — set web.insecure_no_auth = true."
         );
         report(false);
-        return;
+        return Ok(());
     }
     if web_cfg.password_hash.is_empty() {
         log::warn!(
@@ -774,7 +779,7 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
             Err(e) => {
                 log::error!("Web panel TLS init failed: {e} — panel not started");
                 report(false);
-                return;
+                return Ok(());
             }
         };
         // Bind EXPLICITLY, before reporting success.
@@ -791,7 +796,7 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
             Err(e) => {
                 log::error!("Web UI failed to bind {addr}: {e}");
                 report(false);
-                return;
+                return Ok(());
             }
         };
         // A std listener is BLOCKING; tokio requires a non-blocking one and neither
@@ -806,7 +811,7 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
         if let Err(e) = listener.set_nonblocking(true) {
             log::error!("Web UI could not set the listener non-blocking on {addr}: {e}");
             report(false);
-            return;
+            return Ok(());
         }
         let rustls_cfg = axum_server::tls_rustls::RustlsConfig::from_config(tls_cfg);
         let server = match axum_server::from_tcp_rustls(listener, rustls_cfg) {
@@ -814,22 +819,34 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
             Err(e) => {
                 log::error!("Web panel could not adopt the listener on {addr}: {e}");
                 report(false);
-                return;
+                return Ok(());
             }
         };
         log::info!("Web UI (HTTPS) listening on https://{}", addr);
         report(true);
-        if let Err(e) = server.serve(make).await {
-            log::error!("Web panel (HTTPS) stopped: {e}");
-        }
+        let guard = lifetime::StopOnDrop(axum_server::Handle::new());
+        let server = server
+            .handle(guard.0.clone())
+            .map(|inner| lifetime::StoppableAccept {
+                inner,
+                shutdown: shutdown.clone(),
+            });
+        lifetime::serve(server.serve(make), guard, &mut shutdown).await?;
     } else {
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => {
                 log::info!("Web UI listening on http://{}", addr);
                 report(true);
-                if let Err(e) = axum::serve(l, make).await {
-                    log::error!("Web panel stopped: {e}");
-                }
+                let server = axum_server::from_tcp(l.into_std()?)?;
+                let guard = lifetime::StopOnDrop(axum_server::Handle::new());
+                let server =
+                    server
+                        .handle(guard.0.clone())
+                        .map(|inner| lifetime::StoppableAccept {
+                            inner,
+                            shutdown: shutdown.clone(),
+                        });
+                lifetime::serve(server.serve(make), guard, &mut shutdown).await?;
             }
             Err(e) => {
                 log::error!("Web UI failed to bind {}: {}", addr, e);
@@ -837,6 +854,7 @@ pub async fn start(state: Arc<ServerState>, ready: Option<tokio::sync::oneshot::
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

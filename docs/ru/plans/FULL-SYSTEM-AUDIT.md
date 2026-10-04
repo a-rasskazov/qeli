@@ -10,7 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v31 -->
+<!-- normative-sync: full-system-audit-v32 -->
+
+**Актуальный итог 4 октября: 14/37 разделов DONE/PASS (37,8%), осталось 23. Q14 завершён; далее Q15.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -158,7 +160,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | DONE |
 | 12 | Транспорты и wire-маскировка | H02, H07–H08 | PASS |
 | 13 | Recordizer, padding и shaping | H02, H07–H08 | PASS |
-| 14 | Supervisor, workers и профили | H02–H03, H08 | IN_PROGRESS |
+| 14 | Supervisor, workers и профили | H02–H03, H08 | PASS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | IN_PROGRESS |
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | TODO |
 | 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | IN_PROGRESS |
@@ -516,7 +518,10 @@ Off/prefer/required и legacy peer; batch/reassembly caps, flush deadlines, canc
 
 ### 14. Supervisor, workers и профили
 
-**4 октября, текущий пакет lifecycle PASS:** 8/8 сценариев worker, 80 reload, 22 проверки восстановления и 14 проверок нескольких профилей на текущем release. Состояние лабы и рабочий сервис сохранены. [Разбор и остаток Q14](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md). Q14 IN_PROGRESS.
+**4 октября, Q14 DONE/PASS:** исправлен Q14-F039 — supervisor владеет фоновыми задачами и останавливает HTTP/HTTPS-панель. 2368 Linux-тестов, 38 process checks, 4 panel stop/cancel cases, 5 privileged-прогонов, stop во время backoff, матрица 18/18 и native A/B PASS. [Итог и границы](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md).
+
+
+**Предыдущий пакет 4 октября, lifecycle PASS:** 8/8 сценариев worker, 80 reload, 22 проверки восстановления и 14 проверок нескольких профилей на текущем release. Состояние лабы и рабочий сервис сохранены. [Разбор и остаток Q14](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md). Q14 IN_PROGRESS.
 
 **Код:** `qeli/src/server/mod.rs`, `qeli/src/server/tasks.rs`, `qeli/src/server/supervisor.rs`, `qeli/src/server/control.rs`, `qeli/src/server/control_io.rs`, `qeli/src/server/control_socket.rs`, `qeli/src/main.rs`, `qeli/src/hooks.rs`, `qeli/src/hooks/process.rs`.
 
@@ -524,13 +529,13 @@ Start/stop/reload/crash/respawn, занятый bind/TUN, удаление/renam
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_web_reload.py`, `scripts/test_tun_reclaim.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Владение задачами, 23 сентября 2026:**
 [проход Q14/Q19](../reports/AUDIT-Q14-Q19-LIFECYCLE.md) исправляет Q14-F001–F002:

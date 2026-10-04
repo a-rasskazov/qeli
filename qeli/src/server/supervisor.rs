@@ -38,6 +38,63 @@ impl Default for SupervisorPolicy {
     }
 }
 
+/// Scoped control-plane services. Normal stop joins every task; outer cancellation
+/// announces stop and aborts the owned futures instead of detaching them.
+pub(crate) struct SupervisorServices {
+    tasks: tokio::task::JoinSet<anyhow::Result<()>>,
+    stopping: watch::Sender<bool>,
+    failures: crate::server_shutdown::Failures,
+}
+impl SupervisorServices {
+    pub(crate) fn new() -> Self {
+        Self {
+            tasks: tokio::task::JoinSet::new(),
+            stopping: watch::channel(false).0,
+            failures: Default::default(),
+        }
+    }
+    pub(crate) fn stop_sender(&self) -> watch::Sender<bool> {
+        self.stopping.clone()
+    }
+    pub(crate) fn subscribe(&self) -> watch::Receiver<bool> {
+        self.stopping.subscribe()
+    }
+    pub(crate) fn spawn(
+        &mut self,
+        name: &'static str,
+        future: impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) -> bool {
+        if *self.stopping.borrow() {
+            return false;
+        }
+        self.tasks.spawn(async move {
+            future
+                .await
+                .map_err(|error| anyhow::anyhow!("{name}: {error:#}"))
+        });
+        true
+    }
+    pub(crate) async fn shutdown(&mut self) -> anyhow::Result<()> {
+        self.stopping.send_replace(true);
+        while let Some(result) = self.tasks.join_next().await {
+            self.failures.record(
+                "supervisor service",
+                match result {
+                    Ok(result) => result,
+                    Err(error) => Err(error.into()),
+                },
+            );
+        }
+        self.failures.result()
+    }
+}
+impl Drop for SupervisorServices {
+    fn drop(&mut self) {
+        self.stopping.send_replace(true);
+        // JoinSet drop requests cancellation on the same futures owned above.
+    }
+}
+
 /// A worker handle never leaves the supervision future. Its PID is published only while
 /// owned; cancellation kills the child rather than detaching an independently waiting task.
 struct OwnedWorker<'a, Report: FnMut(Option<u32>)> {
@@ -254,6 +311,53 @@ mod tests {
         time::timeout,
     };
     const DEADLINE: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn supervisor_services_join_cooperative_stop_and_close_admission() {
+        let mut services = SupervisorServices::new();
+        let mut stop = services.subscribe();
+        let (done, finished) = oneshot::channel();
+        assert!(services.spawn("fixture", async move {
+            wait_for_shutdown(&mut stop).await;
+            let _ = done.send(());
+            Ok(())
+        }));
+        timeout(DEADLINE, services.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(finished.await.is_ok());
+        assert!(!services.spawn("late", async { Ok(()) }));
+        services.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn supervisor_services_preserve_failure_after_repeated_shutdown() {
+        let mut services = SupervisorServices::new();
+        services.spawn("panel", async { anyhow::bail!("drain failed") });
+        let first = services.shutdown().await.unwrap_err().to_string();
+        assert!(first.contains("panel") && first.contains("drain failed"));
+        assert_eq!(services.shutdown().await.unwrap_err().to_string(), first);
+    }
+
+    #[tokio::test]
+    async fn cancelling_supervisor_services_drops_tasks_and_announces_stop() {
+        let mut services = SupervisorServices::new();
+        let mut stop = services.subscribe();
+        let (dropped, finished) = oneshot::channel::<()>();
+        let (started, ready) = oneshot::channel();
+        services.spawn("pending", async move {
+            let _guard = dropped;
+            let _ = started.send(());
+            std::future::pending().await
+        });
+        timeout(DEADLINE, ready).await.unwrap().unwrap();
+        drop(services);
+        timeout(DEADLINE, wait_for_shutdown(&mut stop))
+            .await
+            .unwrap();
+        assert!(timeout(DEADLINE, finished).await.unwrap().is_err());
+    }
 
     #[test]
     fn worker_fixture() {

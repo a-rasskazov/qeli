@@ -10,7 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v31 -->
+<!-- normative-sync: full-system-audit-v32 -->
+
+**Current total, 4 October: 14/37 sections DONE/PASS (37.8%), 23 remaining. Q14 complete; next Q15.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -153,7 +155,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | DONE |
 | 12 | Transports and wire camouflage | H02, H07–H08 | PASS |
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | PASS |
-| 14 | Supervisor, workers and profiles | H02–H03, H08 | IN_PROGRESS |
+| 14 | Supervisor, workers and profiles | H02–H03, H08 | PASS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | IN_PROGRESS |
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | TODO |
 | 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | IN_PROGRESS |
@@ -511,6 +513,9 @@ Off/prefer/required and legacy peers; batch/reassembly caps, flush deadlines, ca
 
 ### 14. Supervisor, workers and profiles
 
+**4 October, Q14 DONE/PASS:** Q14-F039 fixed — supervisor owns background services and stops HTTP/HTTPS panel. 2368 Linux tests, 38 process checks, 4 panel stop/cancel cases, 5 privileged executions, stop during backoff, matrix18/18 and native A/B PASS. [Evidence and limits](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md).
+
+
 **4 October, current lifecycle batch PASS: ** 8/8 worker cases, 80 reloads, 22 recovery and14 multiprofile checks on the current release; host/service preserved. [Review and Q14 remaining scope](../reports/AUDIT-Q14-CURRENT-LIFECYCLE.md). Q14 IN_PROGRESS.
 
 **Source:** `qeli/src/server/mod.rs`, `qeli/src/server/tasks.rs`, `qeli/src/server/supervisor.rs`, `qeli/src/server/control.rs`, `qeli/src/server/control_io.rs`, `qeli/src/server/control_socket.rs`, `qeli/src/main.rs`, `qeli/src/hooks.rs`, `qeli/src/hooks/process.rs`.
@@ -519,13 +524,13 @@ Start/stop/reload/crash/respawn, occupied bind/TUN, profile deletion/rename, hoo
 
 **Existing harness/fixtures:** `scripts/test_web_reload.py`, `scripts/test_tun_reclaim.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **Task ownership, 23 September 2026:**
 [Q14/Q19 pass](../reports/AUDIT-Q14-Q19-LIFECYCLE.md) fixes Q14-F001–F002: joining

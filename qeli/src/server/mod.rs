@@ -4339,6 +4339,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let exe = std::env::current_exe()
         .map_err(|e| anyhow::anyhow!("cannot resolve current_exe for worker: {}", e))?;
     let notifications = notify::start()?;
+    let mut services = crate::server_supervisor::SupervisorServices::new();
 
     // Web panel — the always-up control plane.
     //
@@ -4348,8 +4349,9 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let panel_state = if state.config.web.enabled {
         let web_state = state.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            web::start(web_state, Some(tx)).await;
+        let shutdown = services.subscribe();
+        services.spawn("web panel", async move {
+            web::start(web_state, Some(tx), shutdown).await
         });
         // Bounded: a panel that has not reported either way within a few seconds is not
         // something to hold the whole worker on. Timing out reports the honest "unknown"
@@ -4376,8 +4378,10 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
             .iter()
             .map(|p| p.tun.name.clone())
             .collect();
-        tokio::spawn(async move {
-            metrics::run_sampler(m, tun_names).await;
+        let shutdown = services.subscribe();
+        services.spawn("metrics sampler", async move {
+            metrics::run_sampler(m, tun_names, shutdown).await;
+            Ok(())
         });
     }
 
@@ -4412,8 +4416,14 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // is independent of the local worker — bring them up as soon as the supervisor is.
     {
         let cm = state.client_manager.clone();
-        tokio::spawn(async move {
-            cm.start_autostart().await;
+        let mut shutdown = services.subscribe();
+        services.spawn("client autostart", async move {
+            tokio::select! {
+                biased;
+                _ = crate::server_supervisor::wait_for_shutdown(&mut shutdown) => {},
+                _ = cm.start_autostart() => {},
+            }
+            Ok(())
         });
     }
 
@@ -4432,7 +4442,8 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     // Primary completion also starts side cleanup if supervision returns without a signal.
     let stopping_notifications = &notifications;
     let stopping_state = &state;
-    let (worker_result, (client_result, ())) = crate::server_shutdown::coordinate(
+    let services_stop = services.stop_sender();
+    let (worker_result, (client_result, (), service_result)) = crate::server_shutdown::coordinate(
         |stopping| async move {
             crate::server_supervisor::supervise(
                 spawn_worker,
@@ -4451,6 +4462,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
                     }
                     stopping_state.client_manager.request_shutdown();
                     stopping_notifications.request_shutdown();
+                    services_stop.send_replace(true);
                     let _ = stopping.send(true);
                 },
                 crate::server_supervisor::SupervisorPolicy::default(),
@@ -4460,7 +4472,8 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
         || async {
             tokio::join!(
                 state.client_manager.shutdown_all(),
-                notifications.shutdown()
+                notifications.shutdown(),
+                services.shutdown()
             )
         },
     )
@@ -4468,6 +4481,7 @@ pub async fn run_supervisor(cfg_path: &str) -> anyhow::Result<()> {
     let mut shutdown_failures = crate::server_shutdown::Failures::default();
     shutdown_failures.record("worker", worker_result.map_err(Into::into));
     shutdown_failures.record("outbound clients", client_result);
+    shutdown_failures.record("control-plane services", service_result);
     let result = shutdown_failures.result();
 
     match &result {

@@ -80,15 +80,18 @@ impl Default for MetricsState {
     }
 }
 
-/// Spawned by the supervisor: sample once a second forever.
+/// Owned by the supervisor: sample once a second until shutdown.
 ///
 /// `tun_names` lists the tunnel interfaces configured on this server, so the WAN counters
 /// can exclude them by NAME. See `net_bytes`.
-pub async fn run_sampler(metrics: Arc<MetricsState>, tun_names: Vec<String>) {
+pub async fn run_sampler(
+    metrics: Arc<MetricsState>,
+    tun_names: Vec<String>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
     let mut tick = tokio::time::interval(SAMPLE_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tick.tick().await;
+    while crate::profile_tasks::worker_tick(&mut tick, &mut shutdown).await {
         sample_once(&metrics, &tun_names).await;
     }
 }
