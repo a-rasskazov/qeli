@@ -37,6 +37,9 @@ public static class ServiceState
 
     private static readonly object _logLock = new();
     private const long MaxLogBytes = 256 * 1024;
+    internal const int MaximumProfileBytes = 4 * 1024 * 1024;
+    internal const int MaximumStatusBytes = 64 * 1024;
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public static void EnsureDir()
     {
@@ -91,7 +94,8 @@ public static class ServiceState
         {
             EnsureDir();
             CheckExistingFile(DesiredConnectionFile);
-            return File.ReadAllText(DesiredConnectionFile).Trim() == "1";
+            using var file = OpenSnapshot(DesiredConnectionFile);
+            return StrictUtf8.GetString(ReadBounded(file, 16)).Trim() == "1";
         }
         catch { return false; }
     }
@@ -148,12 +152,77 @@ public static class ServiceState
         }
     }
 
+    // Read a single generation while allowing its atomic replacement, never a writer.
+    private static FileStream OpenSnapshot(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+
+    // Enforce the budget during streaming too, not just against an initial Length.
+    internal static byte[] ReadBounded(Stream input, int maximumBytes)
+    {
+        using var output = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        try
+        {
+            while (true)
+            {
+                int read = input.Read(buffer, 0,
+                    (int)Math.Min(buffer.Length, maximumBytes - output.Length + 1));
+                if (read == 0) return output.ToArray();
+                if (output.Length + read > maximumBytes)
+                    throw new InvalidDataException("Service storage exceeds its byte limit");
+                output.Write(buffer, 0, read);
+            }
+        }
+        finally { CryptographicOperations.ZeroMemory(buffer); }
+    }
+
+    internal static byte[] EncodeProfile(VpnConfig cfg)
+    {
+        ProfileStorePayload.Validate(cfg);
+        var plaintext = StrictUtf8.GetBytes(JsonSerializer.Serialize(cfg));
+        try
+        {
+            if (plaintext.Length > MaximumProfileBytes)
+                throw new InvalidDataException("Service profile is too large");
+            var encrypted = ProtectedData.Protect(plaintext, null, DataProtectionScope.LocalMachine);
+            // The reader limits the stored blob, including DPAPI envelope overhead.
+            if (encrypted.Length > MaximumProfileBytes)
+                throw new InvalidDataException("Service profile is too large");
+            return encrypted;
+        }
+        finally { CryptographicOperations.ZeroMemory(plaintext); }
+    }
+
+    internal static VpnConfig DecodeProfile(byte[] bytes, bool allowLegacy, out bool legacy)
+    {
+        legacy = false;
+        byte[]? plaintext = null;
+        try
+        {
+            try { plaintext = ProtectedData.Unprotect(bytes, null, DataProtectionScope.LocalMachine); }
+            catch (CryptographicException)
+            {
+                if (!allowLegacy)
+                    throw new InvalidDataException("Service profile is corrupt or not DPAPI-encrypted; re-save it from the GUI");
+                plaintext = bytes; // trusted, elevated GUI legacy migration only
+                legacy = true;
+            }
+            var cfg = JsonSerializer.Deserialize<VpnConfig>(StrictUtf8.GetString(plaintext))
+                ?? throw new InvalidDataException("Service profile is empty");
+            ProfileStorePayload.Validate(cfg);
+            return cfg;
+        }
+        finally
+        {
+            if (plaintext != null && !ReferenceEquals(plaintext, bytes))
+                CryptographicOperations.ZeroMemory(plaintext);
+        }
+    }
+
     public static void SaveProfile(VpnConfig cfg)
     {
         EnsureDir();
-        var json = JsonSerializer.Serialize(cfg);
-        var enc = ProtectedData.Protect(Encoding.UTF8.GetBytes(json), null, DataProtectionScope.LocalMachine);
-        AtomicWrite(ProfileFile, enc);
+        AtomicWrite(ProfileFile, EncodeProfile(cfg));
     }
 
     public static VpnConfig? LoadProfile()
@@ -161,31 +230,20 @@ public static class ServiceState
         EnsureDir();
         CheckExistingFile(ProfileFile);
         byte[] bytes;
-        // Allow atomic publication while the service has an old file open.
         try
         {
-            using var file = new FileStream(ProfileFile, FileMode.Open, FileAccess.Read,
-                FileShare.Read | FileShare.Delete);
-            if (file.Length > 4 * 1024 * 1024) throw new InvalidDataException("Service profile is too large");
-            using var copy = new MemoryStream();
-            file.CopyTo(copy);
-            bytes = copy.ToArray();
+            using var file = OpenSnapshot(ProfileFile);
+            bytes = ReadBounded(file, MaximumProfileBytes);
         }
         catch (FileNotFoundException) { return null; } // only absence is "no profile"
-        string json;
-        bool legacy = false;
-        try { json = Encoding.UTF8.GetString(ProtectedData.Unprotect(bytes, null, DataProtectionScope.LocalMachine)); }
-        catch (CryptographicException)
+        try
         {
-            if (WindowsIdentity.GetCurrent().IsSystem)
-                throw new InvalidDataException("Service profile is corrupt or not DPAPI-encrypted; re-save it from the GUI");
-            json = Encoding.UTF8.GetString(bytes); // trusted, elevated legacy migration only
-            legacy = true;
+            using var identity = WindowsIdentity.GetCurrent();
+            var cfg = DecodeProfile(bytes, allowLegacy: !identity.IsSystem, out bool legacy);
+            if (legacy) SaveProfile(cfg);
+            return cfg;
         }
-        var cfg = JsonSerializer.Deserialize<VpnConfig>(json)
-            ?? throw new InvalidDataException("Service profile is empty");
-        if (legacy) SaveProfile(cfg);
-        return cfg;
+        finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
     public static void WriteStatus(VpnStatus status, string? extra,
@@ -197,7 +255,8 @@ public static class ServiceState
             AtomicWrite(StatusFile, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new ServiceStatus
             {
                 Status = status.ToString(),
-                Extra = extra,
+                // Bound status even when an upstream error includes a large file/response.
+                Extra = extra is { Length: > 2048 } ? extra[..2048] : extra,
                 Time = DateTime.Now,
                 BytesUp = bytesUp,
                 BytesDown = bytesDown,
@@ -211,9 +270,11 @@ public static class ServiceState
     {
         try
         {
-            return File.Exists(StatusFile)
-                ? JsonSerializer.Deserialize<ServiceStatus>(File.ReadAllText(StatusFile))
-                : null;
+            EnsureDir();
+            CheckExistingFile(StatusFile);
+            using var file = OpenSnapshot(StatusFile);
+            return JsonSerializer.Deserialize<ServiceStatus>(StrictUtf8.GetString(
+                ReadBounded(file, MaximumStatusBytes)));
         }
         catch { return null; }
     }

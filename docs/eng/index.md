@@ -387,3 +387,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q25: Linux CLI and network recovery — DONE/PASS](reports/AUDIT-Q25-LINUX-CLI-FINAL.md)
 
 - [Q26: shared C# and managed/native — DONE/PASS](reports/AUDIT-Q26-MANAGED-FINAL.md)
+
+- [Q27: Windows storage — stage PASS, section IN_PROGRESS](reports/AUDIT-Q27-WINDOWS-STORAGE.md)

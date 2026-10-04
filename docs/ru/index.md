@@ -387,3 +387,5 @@
 - [Q25: Linux CLI и восстановление сети — DONE/PASS](reports/AUDIT-Q25-LINUX-CLI-FINAL.md)
 
 - [Q26: общий C# и managed/native — DONE/PASS](reports/AUDIT-Q26-MANAGED-FINAL.md)
+
+- [Q27: Windows-хранилища — этап PASS, раздел IN_PROGRESS](reports/AUDIT-Q27-WINDOWS-STORAGE.md)

@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v45 -->
+<!-- normative-sync: full-system-audit-v46 -->
 
 **Текущий итог, 5 октября: 26/37 разделов DONE/PASS (70,3%), осталось 11. Q26 завершён; далее Q27.**
 
@@ -1811,6 +1811,13 @@ LocalSystem IPC/ACL/SID, DPAPI, protected directories, atomic service profile и
 начатого shutdown и занятый blocking pool. Семь новых host-регрессий; 947 Rust tests PASS.
 Unix-тест дескрипторов только кросс-компилирован. Реальные устройства/драйверы и остальные
 сценарии раздела не проверены; полный аудит остаётся открытым.
+
+**5 октября, storage этап:** [Q27-F222–F224](../reports/AUDIT-Q27-WINDOWS-STORAGE.md):
+DPAPI `.bak` recovery, согласованные bounded service files, strict UTF-8 и required-null
+validation. 41 новая Windows проверка; 184/184 platform + 543/543 shared PASS;
+5 старых production FAIL воспроизведены, Wintun signatures/hash/licenses PASS.
+Q27 остаётся IN_PROGRESS: GUI/SCM/autostart и остальные adapters далее;
+Windows VM network/sleep/boot runtime — пользовательский SKIPPED.
 
 ### 28. macOS: daemon, utun, pf и Network Extension
 

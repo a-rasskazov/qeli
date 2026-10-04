@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v45 -->
+<!-- normative-sync: full-system-audit-v46 -->
 
 **Current total, 5 October: 26/37 sections DONE/PASS (70.3%), 11 remaining. Q26 complete; next Q27.**
 
@@ -1800,6 +1800,13 @@ Shared TunWorkers retains Unix TUN/Wintun thread ownership through joining, incl
 cancelled shutdown and a saturated blocking pool. Seven new host regressions; 947 Rust
 tests PASS. The Unix descriptor test was cross-compiled only. Real devices/drivers and
 other section scenarios remain unverified; the full audit is still open.
+
+**5 October, storage stage:** [Q27-F222–F224](../reports/AUDIT-Q27-WINDOWS-STORAGE.md):
+DPAPI `.bak` recovery, consistent bounded service files, strict UTF-8 and required-null
+validation. 41 new Windows assertions; 184/184 platform + 543/543 shared PASS;
+5 old production failures reproduced, Wintun signatures/hash/licenses PASS.
+Q27 remains IN_PROGRESS: GUI/SCM/autostart and remaining adapters next;
+Windows VM network/sleep/boot runtime remains user SKIPPED.
 
 ### 28. macOS daemon, utun, pf and Network Extension
 
