@@ -1423,15 +1423,15 @@ impl ClientConfig {
             anyhow::bail!("'heartbeat_interval' must be at least 1 ms");
         }
         let shaping = &self.obfuscation.traffic_shaping;
+        shaping.validate("shaping")?;
         if shaping.idle_gap_mean_ms == 0
             || shaping.idle_gap_min_ms == 0
             || shaping.idle_gap_max_ms == 0
             || shaping.budget_bytes_per_sec == 0
             || shaping.min_size == 0
             || shaping.max_size == 0
-            || shaping.stealth_rate_mbps == 0
         {
-            anyhow::bail!("shaping durations, sizes, budget and stealth rate must be positive");
+            anyhow::bail!("shaping durations, sizes and budget must be positive");
         }
         if shaping.idle_gap_min_ms > shaping.idle_gap_max_ms || shaping.min_size > shaping.max_size
         {
@@ -2959,5 +2959,43 @@ mod panel_ini_conformance {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod q13_shaping_validation_tests {
+    use super::*;
+    fn parse(lines: &str) -> ClientConfig {
+        ClientConfig::from_ini(
+            &IniDoc::parse(&format!("[qeli]\nserver = h:443\n{lines}\n")).unwrap(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn q13_inactive_stealth_rate_is_preserved_without_blocking_client() {
+        for lines in [
+            "shaping = false\nshaping_stealth = true\nshaping_stealth_mbps = 0",
+            "shaping = true\nshaping_stealth = false\nshaping_stealth_mbps = 0",
+        ] {
+            let cfg = parse(lines);
+            cfg.validate().expect("inactive stealth rate is dormant");
+            let back =
+                ClientConfig::from_ini(&IniDoc::parse(&cfg.to_ini_string()).unwrap()).unwrap();
+            assert_eq!(back.obfuscation.traffic_shaping.stealth_rate_mbps, 0);
+        }
+        assert!(
+            parse("shaping = true\nshaping_stealth = true\nshaping_stealth_mbps = 0")
+                .validate()
+                .is_err()
+        );
+    }
+    #[test]
+    fn q13_active_shaping_cannot_request_unencodable_cover() {
+        let cfg = parse("shaping = true\nshaping_budget = 65536\nshaping_max_size = 65535");
+        let err = cfg
+            .validate()
+            .expect_err("cover must fit a shared AEAD record")
+            .to_string();
+        assert!(err.contains("shaping"), "{err}");
     }
 }

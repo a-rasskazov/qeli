@@ -4885,10 +4885,10 @@ async fn write_client_wire_record<W: AsyncWrite + Unpin>(
 ) -> bool {
     let delay = shaper.stealth_pace(wire_record.len(), std::time::Instant::now());
     if shaper.stealth() && !delay.is_zero() {
-        let mut remaining = delay;
-        while remaining > Duration::from_millis(6) {
+        let pacing = crate::protocol::shaper::StealthPacing::new(delay);
+        while let Some(step) = pacing.next_step() {
             let size = shaper.next_size(&mut rand::rng());
-            let cover_ready = if shaper.try_spend(size, std::time::Instant::now()) {
+            let cover_ready = if step.cover && shaper.try_spend(size, std::time::Instant::now()) {
                 let mut obf = Obfuscator::new();
                 obf.generate_padding_into(size as u16, size as u16, padding);
                 tx.encrypt_packet_into(&[], padding, cover_record).is_ok()
@@ -4898,10 +4898,7 @@ async fn write_client_wire_record<W: AsyncWrite + Unpin>(
             if cover_ready && write_half.write_all_flush(cover_record).await.is_err() {
                 return false;
             }
-            let step = Duration::from_millis(rand::rng().random_range(4..=18));
-            let sleep = step.min(remaining);
-            tokio::time::sleep(sleep).await;
-            remaining = remaining.saturating_sub(sleep);
+            tokio::time::sleep_until(step.resume_at).await;
         }
     } else if !delay.is_zero() {
         tokio::time::sleep(delay).await;
@@ -8843,12 +8840,12 @@ async fn send_client_udp_payloads(
             return ClientUdpPayloadSendOutcome::CarrierFailed;
         }
         if shaper.stealth() && !delay.is_zero() {
-            let mut remaining = delay;
-            while remaining > Duration::from_millis(6) {
+            let pacing = crate::protocol::shaper::StealthPacing::new(delay);
+            while let Some(step) = pacing.next_step() {
                 let cover_size = shaper
                     .next_size(&mut rand::rng())
                     .min(max_empty_record_padding);
-                if shaper.try_spend(cover_size, std::time::Instant::now()) {
+                if step.cover && shaper.try_spend(cover_size, std::time::Instant::now()) {
                     let mut cover_obf = Obfuscator::new();
                     cover_obf.generate_padding_into(cover_size as u16, cover_size as u16, padding);
                     if client_tx
@@ -8865,10 +8862,7 @@ async fn send_client_udp_payloads(
                         let _ = socket.send(send_data).await;
                     }
                 }
-                let step = Duration::from_millis(rand::rng().random_range(4..=18));
-                let sleep = step.min(remaining);
-                tokio::time::sleep(sleep).await;
-                remaining = remaining.saturating_sub(sleep);
+                tokio::time::sleep_until(step.resume_at).await;
             }
         } else if !delay.is_zero() {
             tokio::time::sleep(delay).await;
@@ -11397,8 +11391,8 @@ pub(crate) async fn run_udp_tunnel(
                     // largest (monotonic on the wire).
                     let d = shaper.stealth_pace(wire_record.len(), std::time::Instant::now());
                     if shaper.stealth() && !d.is_zero() {
-                        let mut remaining = d;
-                        while remaining > Duration::from_millis(6) {
+                        let pacing = crate::protocol::shaper::StealthPacing::new(d);
+                        while let Some(step) = pacing.next_step() {
                             // Cap cover size to the probed tunnel MTU: with DF armed after a
                             // successful probe, an oversized cover datagram is dropped with
                             // EMSGSIZE (send error swallowed), so the DPI cover silently never
@@ -11407,7 +11401,7 @@ pub(crate) async fn run_udp_tunnel(
                                 .next_size(&mut rand::rng())
                                 .min(tun_mtu.max(0) as usize)
                                 .min(max_empty_record_padding);
-                            if shaper.try_spend(csize, std::time::Instant::now()) {
+                            if step.cover && shaper.try_spend(csize, std::time::Instant::now()) {
                                 let cover_ready = {
                                     let mut obf = Obfuscator::new();
                                     obf.generate_padding_into(
@@ -11430,10 +11424,7 @@ pub(crate) async fn run_udp_tunnel(
                                     let _ = socket.send(send_data).await;
                                 }
                             }
-                            let step = Duration::from_millis(rand::rng().random_range(4..=18));
-                            let s = step.min(remaining);
-                            tokio::time::sleep(s).await;
-                            remaining = remaining.saturating_sub(s);
+                            tokio::time::sleep_until(step.resume_at).await;
                         }
                     } else if !d.is_zero() {
                         tokio::time::sleep(d).await;
@@ -13759,3 +13750,41 @@ mod udp_task_shutdown_tests {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "network_view_tests.rs"]
 mod network_view_tests;
+
+#[cfg(test)]
+mod q13_stealth_writer_tests {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, Waker};
+    #[tokio::test]
+    async fn q13_tcp_writer_waits_for_sub_six_ms_stealth_debt() {
+        let cfg = crate::protocol::ShapingConfig {
+            enabled: true,
+            stealth: true,
+            stealth_rate_mbps: 1,
+            ..Default::default()
+        };
+        // Fix refill at zero even if the host scheduler stalls between construction and poll.
+        let mut shaper =
+            crate::protocol::Shaper::new(cfg, std::time::Instant::now() + Duration::from_secs(1));
+        let (mut writer, _reader) = tokio::io::duplex(8192);
+        let mut codec = PacketCodec::new_raw([7; 32]);
+        let wire = vec![0x42; 700];
+        let mut cover = Vec::new();
+        let mut padding = Vec::new();
+        let mut send = Box::pin(write_client_wire_record(
+            &mut writer,
+            &mut codec,
+            &mut shaper,
+            &wire,
+            &mut cover,
+            &mut padding,
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(
+            matches!(Pin::new(&mut send).poll(&mut cx), Poll::Pending),
+            "5.6 ms debt must park before the data write"
+        );
+    }
+}

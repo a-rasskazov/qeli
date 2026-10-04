@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v28 -->
+<!-- normative-sync: full-system-audit-v29 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -152,7 +152,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 10 | PacketCodec, replay and control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 and HTTP/2 | H07–H08 | DONE |
 | 12 | Transports and wire camouflage | H02, H07–H08 | PASS |
-| 13 | Recordizer, padding and shaping | H02, H07–H08 | TODO |
+| 13 | Recordizer, padding and shaping | H02, H07–H08 | IN_PROGRESS |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | IN_PROGRESS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | IN_PROGRESS |
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | TODO |
@@ -486,6 +486,9 @@ Derive supported runtime/Quick Start combinations: plain/fake-tls/reality/realit
 
 ### 13. Recordizer, padding and shaping
 
+**4 October, shaping batch PASS:** [five fixes and measurements](../reports/AUDIT-Q13-MORPHOLOGY.md):5 baseline FAIL,7 new tests,2359 Linux PASS,10 network cases/102 assertions,recordizer campaign,fresh matrix/soak/native A/B. Recordizer/padding/normalization review continues;overall remains12/37 (32.4%).
+
+
 **Source:** `qeli/src/protocol/recordizer.rs`, `qeli/src/protocol/shaper.rs`, `qeli/src/protocol/obfuscate.rs`.
 
 Off/prefer/required and legacy peers; batch/reassembly caps, flush deadlines, cancellation and aggregate budgets. Junk/heartbeat must not starve payloads. Compare on/off on identical workloads; inspect bounded memory, jitter and periodic PCAP signals.
@@ -498,7 +501,7 @@ Off/prefer/required and legacy peers; batch/reassembly caps, flush deadlines, ca
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
 
 ### 14. Supervisor, workers and profiles
 

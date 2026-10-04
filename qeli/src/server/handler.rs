@@ -2808,10 +2808,10 @@ async fn run_stream<R, W>(
                     // jittered small cover packets. This (a) breaks the 100% full-MTU
                     // size histogram and (b) makes the timing irregular (not a flat
                     // rate). Cover is budget-capped separately from the data rate.
-                    let mut remaining = delay;
-                    while remaining > Duration::from_millis(6) {
+                    let pacing = crate::protocol::shaper::StealthPacing::new(delay);
+                    while let Some(step) = pacing.next_step() {
                         let csize = shaper.next_size(&mut rand::rng());
-                        let cover_ready = if shaper.try_spend(csize, std::time::Instant::now()) {
+                        let cover_ready = if step.cover && shaper.try_spend(csize, std::time::Instant::now()) {
                             let mut obf = Obfuscator::new();
                             obf.generate_padding_into(
                                 csize as u16,
@@ -2826,12 +2826,9 @@ async fn run_stream<R, W>(
                             false
                         };
                         if cover_ready && write_half.write_all_flush(&cover_record).await.is_err() {
-                            break;
+                            break 'writer;
                         }
-                        let step = Duration::from_millis(rand::rng().random_range(4..=18));
-                        let s = step.min(remaining);
-                        tokio::time::sleep(s).await;
-                        remaining = remaining.saturating_sub(s);
+                        tokio::time::sleep_until(step.resume_at).await;
                     }
                 } else if !delay.is_zero() {
                     tokio::time::sleep(delay).await;

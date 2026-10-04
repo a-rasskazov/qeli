@@ -388,42 +388,8 @@ impl PushedObf {
             anyhow::bail!("{label}.traffic_normalization.round_sizes must be strictly increasing");
         }
 
-        let shaping = &self.traffic_shaping;
-        if shaping.enabled {
-            if shaping.idle_gap_mean_ms == 0
-                || shaping.idle_gap_min_ms == 0
-                || shaping.idle_gap_max_ms == 0
-                || shaping.budget_bytes_per_sec == 0
-                || shaping.min_size == 0
-                || shaping.max_size == 0
-            {
-                anyhow::bail!(
-                    "{label}.traffic_shaping durations, sizes and budget must be positive"
-                );
-            }
-            if shaping.stealth && shaping.stealth_rate_mbps == 0 {
-                anyhow::bail!(
-                    "{label}.traffic_shaping.stealth_rate_mbps must be positive when stealth mode is enabled"
-                );
-            }
-            if shaping.idle_gap_min_ms > shaping.idle_gap_max_ms {
-                anyhow::bail!("{label}.traffic_shaping.idle_gap_min_ms must be <= idle_gap_max_ms");
-            }
-            if shaping.min_size > shaping.max_size {
-                anyhow::bail!("{label}.traffic_shaping.min_size must be <= max_size");
-            }
-            if usize::from(shaping.max_size) > crate::protocol::packet::MAX_TUNNEL_MTU {
-                anyhow::bail!(
-                    "{label}.traffic_shaping.max_size must be <= {}",
-                    crate::protocol::packet::MAX_TUNNEL_MTU
-                );
-            }
-            if shaping.budget_bytes_per_sec < u32::from(shaping.max_size) {
-                anyhow::bail!(
-                    "{label}.traffic_shaping.budget_bytes_per_sec must be at least max_size"
-                );
-            }
-        }
+        self.traffic_shaping
+            .validate(&format!("{label}.traffic_shaping"))?;
 
         if let Some(recordizer) = &self.recordizer {
             recordizer.validate(&format!("{label}.recordizer"))?;
@@ -700,6 +666,44 @@ impl Default for TrafficShapingConfig {
 }
 
 impl TrafficShapingConfig {
+    /// Shared active shaping contract for local INI and authenticated peer settings.
+    pub fn validate(&self, label: &str) -> anyhow::Result<()> {
+        let shaping = self;
+        if shaping.enabled {
+            if shaping.idle_gap_mean_ms == 0
+                || shaping.idle_gap_min_ms == 0
+                || shaping.idle_gap_max_ms == 0
+                || shaping.budget_bytes_per_sec == 0
+                || shaping.min_size == 0
+                || shaping.max_size == 0
+            {
+                anyhow::bail!("{label} durations, sizes and budget must be positive");
+            }
+            if shaping.stealth && shaping.stealth_rate_mbps == 0 {
+                anyhow::bail!(
+                    "{label}.stealth_rate_mbps must be positive when stealth mode is enabled"
+                );
+            }
+            if shaping.idle_gap_min_ms > shaping.idle_gap_max_ms {
+                anyhow::bail!("{label}.idle_gap_min_ms must be <= idle_gap_max_ms");
+            }
+            if shaping.min_size > shaping.max_size {
+                anyhow::bail!("{label}.min_size must be <= max_size");
+            }
+            if usize::from(shaping.max_size) > crate::protocol::packet::MAX_TUNNEL_MTU {
+                anyhow::bail!(
+                    "{label}.max_size must be <= {}",
+                    crate::protocol::packet::MAX_TUNNEL_MTU
+                );
+            }
+            if shaping.budget_bytes_per_sec < u32::from(shaping.max_size) {
+                anyhow::bail!("{label}.budget_bytes_per_sec must be at least max_size");
+            }
+        }
+
+        Ok(())
+    }
+
     /// Resolve to the protocol-layer [`crate::protocol::ShapingConfig`].
     pub fn to_shaping(&self) -> crate::protocol::ShapingConfig {
         crate::protocol::ShapingConfig {

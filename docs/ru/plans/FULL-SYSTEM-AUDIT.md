@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v28 -->
+<!-- normative-sync: full-system-audit-v29 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -157,7 +157,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 10 | PacketCodec, replay и control framing | H01, H04, H08 | DONE |
 | 11 | REALITY, TLS 1.3 и HTTP/2 | H07–H08 | DONE |
 | 12 | Транспорты и wire-маскировка | H02, H07–H08 | PASS |
-| 13 | Recordizer, padding и shaping | H02, H07–H08 | TODO |
+| 13 | Recordizer, padding и shaping | H02, H07–H08 | IN_PROGRESS |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | IN_PROGRESS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | IN_PROGRESS |
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | TODO |
@@ -491,6 +491,9 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 
 ### 13. Recordizer, padding и shaping
 
+**4 октября, shaping batch PASS:** [пять исправлений и замеры](../reports/AUDIT-Q13-MORPHOLOGY.md):5 baseline FAIL,7 новых тестов,2359 Linux PASS,10 network cases/102 assertions,recordizer campaign,свежие matrix/soak/native A/B. Review recordizer/padding/normalization продолжается;общий итог остаётся12/37 (32,4%).
+
+
 **Код:** `qeli/src/protocol/recordizer.rs`, `qeli/src/protocol/shaper.rs`, `qeli/src/protocol/obfuscate.rs`.
 
 Off/prefer/required и legacy peer; batch/reassembly caps, flush deadlines, cancellation и общий budget. Junk/heartbeat не вытесняют payload. Сравнить on/off на одинаковом workload; bounded memory, jitter и периодические сигналы в PCAP.
@@ -503,7 +506,7 @@ Off/prefer/required и legacy peer; batch/reassembly caps, flush deadlines, canc
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
 
 ### 14. Supervisor, workers и профили
 

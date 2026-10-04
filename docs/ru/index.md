@@ -368,3 +368,4 @@
 
 - [Q11: REALITY, TLS 1.3 и HTTP/2](reports/AUDIT-Q11-REALITY-TLS-H2.md)
 - [Q12: транспорты и wire-маскировка — завершено](reports/AUDIT-Q12-TRANSPORTS.md)
+- [Q13: исправления общего shaping и результаты замеров](reports/AUDIT-Q13-MORPHOLOGY.md)
