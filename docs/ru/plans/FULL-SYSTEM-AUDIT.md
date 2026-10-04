@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v34 -->
+<!-- normative-sync: full-system-audit-v35 -->
 
-**Актуальный итог 4 октября: 16/37 разделов DONE/PASS (43,2%), осталось 21. Q16 завершён; далее Q17.**
+**Актуальный итог 4 октября: 17/37 разделов DONE/PASS (45,9%), осталось 20. Q17 завершён; далее Q18.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -163,7 +163,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 14 | Supervisor, workers и профили | H02–H03, H08 | PASS |
 | 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | PASS |
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | PASS |
-| 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | IN_PROGRESS |
+| 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | PASS |
 | 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | IN_PROGRESS |
 | 19 | DNS сервера и клиентов | H01–H02, H05–H06 | IN_PROGRESS |
 | 20 | DHCP и lease lifecycle | H02, H05 | TODO |
@@ -779,19 +779,26 @@ User/group/profile precedence, longest prefix, client_to_client, spoofed source,
 
 ### 17. IPv4 NAT, forwarding и sysctl
 
+**4 октября, Q17 DONE/PASS:** 228 свежих packet/gateway checks на текущем кандидате;
+319 адресных unit из Q16 и source/hash-qualified прежние backend/recovery проверки.
+Q17-F001: старый gateway runner заменён безопасным изолированным. Исторические
+открытые статусы ниже относятся к прежним снимкам; текущие результаты и принятые
+границы — в [отчёте](../reports/AUDIT-Q17-IPV4-NETWORK.md).
+
+
 **Код:** `qeli/src/server/nat.rs`, `qeli/src/client/sysctl.rs`, `qeli/src/client/gateway.rs`.
 
 NAT44/forward_private/gateway_nat/MSS и iptables/nft backend errors. Before/after rules/routes/sysctl при нескольких профилях. Точный tag вместо substring, ownership, crash journal/boot-id; чужие правила и значения сохраняются.
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_gateway_nat.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Очистка NAT, 23 сентября 2026:**
 [Q14-F024/F025](../reports/AUDIT-Q14-NAT-CLEANUP.md): конечный проход по снимку правил,

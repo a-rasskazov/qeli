@@ -372,3 +372,4 @@
 - [Q14: supervisor, workers и профили — завершено](reports/AUDIT-Q14-CURRENT-LIFECYCLE.md)
 - [Q15: сессии, IP-пулы и лимиты — завершено](reports/AUDIT-Q15-CURRENT-SESSIONS.md)
 - [Q16: ACL и site-to-site — завершено](reports/AUDIT-Q16-ACL-ROUTES.md)
+- [Q17: IPv4 NAT, forwarding и sysctl — завершено](reports/AUDIT-Q17-IPV4-NETWORK.md)

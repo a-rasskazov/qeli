@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import re
 import signal
 import socket
 import subprocess
@@ -128,11 +129,34 @@ def main(args):
                 ns(name,['ip','route','add','default','via',h4]);ns(name,['ip','-6','route','add','default','via',h6])
             else:
                 ns(name,['ip','route','add','10.86.0.0/24','via',h4])
+                if args.ipv4_gateway:ns(name,['ip','route','add','10.87.0.0/24','via',h4])
                 for prefix in ('fd86::/64','fd87::/64'):ns(name,['ip','-6','route','add',prefix,'via',h6])
         for name in ('qwa','qwb'):
             ns(name,['ip','addr','add','203.0.113.99/32','dev','lo']);ns(name,['ip','-6','addr','add','fd60:d::99/128','dev','lo'])
         for address in ('172.16.0.1','192.168.50.1','100.64.0.1','192.0.2.1'):
             ns('qwl',['ip','addr','add',address+'/32','dev','lo']);run(['ip','route','add',address+'/32','via','10.50.0.1','dev','lan0'])
+        gateway_before = None
+        def gateway_network():
+            return dict(forwarding=ns('qwn',['cat','/proc/sys/net/ipv4/ip_forward']).stdout,
+                        firewall={tool: ns('qwn',[tool]).stdout for tool in ('iptables-save','iptables-legacy-save')},
+                        routes=ns('qwn',['ip','-4','route','show','table','all']).stdout,
+                        rp_filter=ns('qwn',[sys.executable,'-c',"from pathlib import Path;import json;print(json.dumps({str(p):p.read_text() for p in Path('/proc/sys/net/ipv4/conf').glob('*/rp_filter')},sort_keys=True))"]).stdout)
+        if args.ipv4_gateway:
+            run(['ip','netns','add','qwg']);namespaces.append('qwg')
+            ns('qwn',['ip','link','add','lan0','type','veth','peer','name','gl0'])
+            ns('qwn',['ip','link','set','gl0','netns','qwg'])
+            ns('qwn',['ip','addr','add','192.168.77.1/24','dev','lan0'])
+            ns('qwn',['ip','link','set','lan0','up'])
+            ns('qwg',['ip','link','set','lo','up']);ns('qwg',['ip','link','set','gl0','up'])
+            ns('qwg',['ip','addr','add','192.168.77.2/24','dev','gl0'])
+            ns('qwg',['ip','route','add','default','via','192.168.77.1'])
+            for table,chain in (('filter','FORWARD'),('nat','POSTROUTING'),('mangle','FORWARD')):
+                spec=['iptables','-t',table,'-A',chain,'-m','comment','--comment','audit-prime','-j','RETURN']
+                ns('qwn',spec);spec[3]='-D';ns('qwn',spec)
+            ns('qwn',['iptables','-P','FORWARD','DROP'])
+            ns('qwn',['iptables','-A','FORWARD','-m','comment','--comment','qeli-gw-nat-foreign','-j','RETURN'])
+            gateway_before=gateway_network()
+            (root/'gateway-before.json').write_text(json.dumps(gateway_before,indent=2))
         for name, addresses in [('qwa','203.0.113.99,fd60:d::99'),('qwb','203.0.113.99,fd60:d::99'),('qwl','10.50.0.1,172.16.0.1,192.168.50.1,100.64.0.1,192.0.2.1,fd60:c::1')]:
             ready=root/(name+'.ready')
             spawn(name,[sys.executable,str(Path(__file__).resolve()),'echo','--peer',name,'--ready',str(ready),'--addresses',addresses],'echo-'+name)
@@ -166,7 +190,7 @@ bind.address = 10.46.{idx+1}.1
 bind.port = {27443+idx}
 bind.transport = {transport}
 tun.name = vpns{idx}
-tun.ip_mode = {'dual' if idx==0 else 'ipv6'}
+tun.ip_mode = {'dual' if idx==0 or args.ipv4_gateway else 'ipv6'}
 tun.address = 10.{86+idx}.0.1
 tun.ipv6_address = {pool}::1
 tun.queues = 1
@@ -174,7 +198,7 @@ pool.cidr = 10.{86+idx}.0.0/24
 pool.ipv6.cidr = {pool}::/64
 routing.nat.enabled = {'true' if idx==0 else 'false'}
 routing.nat.interface =
-routing.forward_private = false
+routing.forward_private = {'true' if args.ipv4_gateway and idx==1 else 'false'}
 routing.ipv6.mode = {mode}
 routing.ipv6.interface =
 routing.ipv6.ndp_proxy = off
@@ -186,7 +210,7 @@ obf.mode = fake-tls
         cfg.write_text(text);cfg.chmod(0o600)
         for mode,idx,pool in [('nat66',0,'fd86'),('route',1,'fd87')]:
             argv=[str(binary),'add-client',mode+'-user','--password-stdin','--profiles',mode,'--static-ipv6',pool+'::2','-c',str(cfg)]
-            if idx==0:argv+=['--static-ip','10.86.0.2']
+            if idx==0 or args.ipv4_gateway:argv+=['--static-ip',f'10.{86+idx}.0.2']
             run(argv,input='route-fixture-pass\n')
         run([str(binary),'check-config','-c',str(cfg)])
         worker=spawn(None,['env','STATE_DIRECTORY='+str(state),'QELI_CONTROL_SOCKET='+str(root/'control.sock'),str(binary),'_worker','-c',str(cfg)],'worker')
@@ -195,7 +219,8 @@ obf.mode = fake-tls
         clients=[]
         include='203.0.113.99/32,fd60:d::99/128,10.50.0.1/32,172.16.0.1/32,192.168.50.1/32,100.64.0.1/32,192.0.2.1/32,fd60:c::1/128'
         for mode,idx,name,transport,pool in [('nat66',0,'qwn','tcp','fd86'),('route',1,'qwr','udp','fd87')]:
-            client_include=include if idx==0 else 'fd60:d::99/128,fd60:c::1/128'
+            client_include=include if idx==0 or args.ipv4_gateway else 'fd60:d::99/128,fd60:c::1/128'
+            gateway_options='gateway_nat = true\nlan_subnet = 192.168.77.0/24\n' if args.ipv4_gateway and idx==0 else ''
             c=root/('client-'+mode+'.conf');c.write_text(f'''[qeli]
 server = 10.46.{idx+1}.1:{27443+idx}
 proto = {transport}
@@ -206,7 +231,7 @@ mode = fake-tls
 dev = vpnc
 bind_static = false
 gateway = false
-include = {client_include}
+{gateway_options}include = {client_include}
 ipv6 = required
 dns = off
 kill_switch = false
@@ -240,7 +265,16 @@ level = info
         for address in ('100.64.0.1','192.0.2.1'):packet('lan-public-positive-'+address,None,address,'10.50.0.2','qwl')
         for address in ('100.64.0.1','192.0.2.1'):nat('non-rfc1918-block-'+address,False,'10.86.0.2','qwl',False,address)
         nat('nat66-lan-off-wan-block',True,'fd86::2','qwl',False,'fd60:c::1');route('route-lan-source','qwl','fd60:c::1')
+        if args.ipv4_gateway:
+            gw_rules=ns('qwn',['iptables-save']).stdout
+            record('gateway exact LAN MASQUERADE with explicit permits and MSS',all(x in gw_rules for x in ('192.168.77.0/24','-o vpnc','MASQUERADE','TCPMSS','qeli-gw-nat')))
+            record('gateway enables actual IPv4 forwarding',ns('qwn',['cat','/proc/sys/net/ipv4/ip_forward']).stdout.strip()=='1')
+            packet('gateway-lan-double-nat-wan','qwg','203.0.113.99','198.18.60.2','qwa',True,'192.168.77.2')
+            packet('gateway-lan-nat-private-server-network','qwg','10.50.0.1','10.86.0.2','qwl',True,'192.168.77.2')
+            packet('forward-private-preserves-v4-source','qwr','10.50.0.1','10.87.0.2','qwl',True,'10.87.0.2')
         run(['iptables','-P','FORWARD','DROP'])
+        if args.ipv4_gateway:
+            packet('forward-private-explicit-permit-over-drop-policy','qwr','10.50.0.1','10.87.0.2','qwl',True,'10.87.0.2')
         nat('administrator-drop-denies-rfc1918-lan',False,'10.86.0.2','qwl',False,'10.50.0.1')
         nat('administrator-drop-keeps-selected-nat44',False,'198.18.60.2','qwa')
         run(['iptables','-P','FORWARD','ACCEPT'])
@@ -267,6 +301,13 @@ level = info
         record('all route and policy changes restore live generation',network()==active)
         record('both authenticated clients retain their processes',all(c.poll() is None for c in clients))
         for i,c in enumerate(clients):record('client clean stop '+str(i),stop(c)==0)
+        if args.ipv4_gateway:
+            gateway_after=gateway_network()
+            (root/'gateway-after.json').write_text(json.dumps(gateway_after,indent=2))
+            def stable_gateway(snapshot):
+                return {**snapshot,'firewall':{tool:re.sub(r'\[\d+:\d+\]','[COUNTERS]', '\n'.join(line for line in value.splitlines() if not line.startswith('#'))) for tool,value in snapshot['firewall'].items()}}
+            record('gateway clean stop restores foreign rules routes forwarding and rp_filter',stable_gateway(gateway_after)==stable_gateway(gateway_before))
+            packet('stopped-gateway-no-longer-forwards-LAN','qwg','203.0.113.99','192.168.77.2','qwa',False,'192.168.77.2')
         record('worker clean stop',stop(worker)==0)
         after=network();(root/'network-after.json').write_text(json.dumps(after,indent=2))
         record('worker restores foreign firewall routes links and sysctl',after==before)
@@ -290,6 +331,7 @@ if __name__=='__main__':
     rp=sub.add_parser('run')
     for n in ('qeli','sha256','artifacts','package','parent-net','parent-mnt','parent-pid'):rp.add_argument('--'+n,required=True)
     for n in ('ipv4','ipv6'):rp.add_argument('--'+n,choices=('nft','legacy'),required=True)
+    rp.add_argument('--ipv4-gateway',action='store_true',help='Add a private LAN sender, gateway NAT cleanup, and IPv4 forward_private profile')
     args=ap.parse_args()
     if args.command=='echo':echo(args)
     elif args.command=='query':query(args)

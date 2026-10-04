@@ -372,3 +372,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q14: supervisor, workers and profiles — complete](reports/AUDIT-Q14-CURRENT-LIFECYCLE.md)
 - [Q15: sessions, IP pools and limits — complete](reports/AUDIT-Q15-CURRENT-SESSIONS.md)
 - [Q16: ACL and site-to-site — complete](reports/AUDIT-Q16-ACL-ROUTES.md)
+- [Q17: IPv4 NAT, forwarding and sysctls — complete](reports/AUDIT-Q17-IPV4-NETWORK.md)

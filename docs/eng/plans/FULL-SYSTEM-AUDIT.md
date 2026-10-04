@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v34 -->
+<!-- normative-sync: full-system-audit-v35 -->
 
-**Current total, 4 October: 16/37 sections DONE/PASS (43.2%), 21 remaining. Q16 complete; next Q17.**
+**Current total, 4 October: 17/37 sections DONE/PASS (45.9%), 20 remaining. Q17 complete; next Q18.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -158,7 +158,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | PASS |
 | 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | PASS |
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | PASS |
-| 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | IN_PROGRESS |
+| 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | PASS |
 | 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | IN_PROGRESS |
 | 19 | Server and client DNS | H01–H02, H05–H06 | IN_PROGRESS |
 | 20 | DHCP and lease lifecycle | H02, H05 | TODO |
@@ -771,19 +771,25 @@ User/group/profile precedence, longest prefixes, client_to_client, spoofed sourc
 
 ### 17. IPv4 NAT, forwarding and sysctls
 
+**4 October, Q17 DONE/PASS:** 228 fresh current-candidate packet/gateway checks;
+319 selected Q16 units plus source/hash-qualified prior backend/recovery evidence.
+Q17-F001 replaces the old gateway runner with private isolation. Historical open
+statuses below describe earlier snapshots; see [current results and accepted limits](../reports/AUDIT-Q17-IPV4-NETWORK.md).
+
+
 **Source:** `qeli/src/server/nat.rs`, `qeli/src/client/sysctl.rs`, `qeli/src/client/gateway.rs`.
 
 NAT44/forward_private/gateway_nat/MSS and iptables/nft backend errors. Before/after rules/routes/sysctls with multiple profiles. Exact tags, ownership, crash journals and boot IDs; preserve administrator rules and values.
 
 **Existing harness/fixtures:** `scripts/test_gateway_nat.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **NAT cleanup, 23 September 2026:**
 [Q14-F024/F025](../reports/AUDIT-Q14-NAT-CLEANUP.md): finite snapshot deletion,
