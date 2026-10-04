@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v32 -->
+<!-- normative-sync: full-system-audit-v33 -->
 
-**Актуальный итог 4 октября: 14/37 разделов DONE/PASS (37,8%), осталось 23. Q14 завершён; далее Q15.**
+**Актуальный итог 4 октября: 15/37 разделов DONE/PASS (40,5%), осталось 22. Q14 и Q15 завершены; далее Q16.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -161,7 +161,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 12 | Транспорты и wire-маскировка | H02, H07–H08 | PASS |
 | 13 | Recordizer, padding и shaping | H02, H07–H08 | PASS |
 | 14 | Supervisor, workers и профили | H02–H03, H08 | PASS |
-| 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | IN_PROGRESS |
+| 15 | Сессии, IP-пулы и лимиты | H01, H03–H04, H08 | PASS |
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | TODO |
 | 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | IN_PROGRESS |
 | 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | IN_PROGRESS |
@@ -730,24 +730,29 @@ Identity маршрутов, namespace resolver-сервиса и reuse инде
 
 ### 15. Сессии, IP-пулы и лимиты
 
+**4 октября, Q15 DONE/PASS:** Q15-F003 ограничивает историю освобождённых IPv4/IPv6.
+2370 unit-тестов, 148 проверок сессий, 54 проверки доставки через TUN, bonding,
+матрица 18/18 и native A/B — PASS. [Отчёт и границы](../reports/AUDIT-Q15-CURRENT-SESSIONS.md).
+
 **Код:** `qeli/src/server/pool.rs`, `qeli/src/server/handler.rs`, `qeli/src/server/udp_handler.rs`, `qeli/src/server/usage.rs`.
 
 Allocate/auth/reconnect/evict/reap/revoke/quota под конкуренцией, atomic v4+v6, static/reservations/excludes, pool exhaustion. Общие caps TCP/UDP/bonding. Нет duplicate IP, leaked lease/token/task/client_subnet после каждого выхода.
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_udp_reap.py`, `scripts/test_maxsessions.py`, `scripts/test_multidevice.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Проход учёта трафика:** [Q15-F001](../reports/AUDIT-Q14-Q15-WORKER-USAGE.md) закрывает
 короткие TCP/UDP-сессии, последние байты writer, baseline при reset и удаление счётчиков.
-14 переносимых accounting-тестов проходят. IP-пулы, конкурентные auth/reconnect/revoke
-и фактическое отключение по квоте на Linux ещё требуют остальных сценариев раздела 15.
+14 переносимых тестов учёта проходят. Финальный пакет выше дополняет этот
+исторический проход IP-пулами, конкурентными подключениями и фактическим
+отключением по quota/expiry/revoke на Linux.
 
 ### 16. ACL, push routes и site-to-site
 

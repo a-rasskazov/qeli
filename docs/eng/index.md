@@ -370,3 +370,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q12: transports and wire camouflage — complete](reports/AUDIT-Q12-TRANSPORTS.md)
 - [Q13: recordizer, padding and shaping — complete](reports/AUDIT-Q13-MORPHOLOGY.md)
 - [Q14: supervisor, workers and profiles — complete](reports/AUDIT-Q14-CURRENT-LIFECYCLE.md)
+- [Q15: sessions, IP pools and limits — complete](reports/AUDIT-Q15-CURRENT-SESSIONS.md)

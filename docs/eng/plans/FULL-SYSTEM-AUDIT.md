@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v32 -->
+<!-- normative-sync: full-system-audit-v33 -->
 
-**Current total, 4 October: 14/37 sections DONE/PASS (37.8%), 23 remaining. Q14 complete; next Q15.**
+**Current total, 4 October: 15/37 sections DONE/PASS (40.5%), 22 remaining. Q14/Q15 complete; next Q16.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -156,7 +156,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 12 | Transports and wire camouflage | H02, H07–H08 | PASS |
 | 13 | Recordizer, padding and shaping | H02, H07–H08 | PASS |
 | 14 | Supervisor, workers and profiles | H02–H03, H08 | PASS |
-| 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | IN_PROGRESS |
+| 15 | Sessions, IP pools and limits | H01, H03–H04, H08 | PASS |
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | TODO |
 | 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | IN_PROGRESS |
 | 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | IN_PROGRESS |
@@ -725,24 +725,26 @@ resolver service namespace and post-check index reuse remain open.
 
 ### 15. Sessions, IP pools and limits
 
+**4 October, Q15 DONE/PASS:** Q15-F003 bounds IPv4/IPv6 reuse history. 2370 unit, 148 session + 54 actual-TUN data checks, bonding, matrix 18/18 and native A/B PASS. [Evidence and limits](../reports/AUDIT-Q15-CURRENT-SESSIONS.md).
+
 **Source:** `qeli/src/server/pool.rs`, `qeli/src/server/handler.rs`, `qeli/src/server/udp_handler.rs`, `qeli/src/server/usage.rs`.
 
 Concurrent allocate/auth/reconnect/evict/reap/revoke/quota, atomic v4+v6, reservations/exclusions and exhaustion. Shared TCP/UDP/bonding caps. No duplicate IP or leaked lease/token/task/client_subnet after any termination path.
 
 **Existing harness/fixtures:** `scripts/test_udp_reap.py`, `scripts/test_maxsessions.py`, `scripts/test_multidevice.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **Accounting subpass:** [Q15-F001](../reports/AUDIT-Q14-Q15-WORKER-USAGE.md) covers
 short TCP/UDP sessions, writer tails, reset baselines and counter retirement. 14 portable
-accounting tests pass. Pool allocation, concurrent authentication/reconnect/revoke and
-real Linux quota enforcement still need the remaining section-15 scenarios.
+accounting tests pass. The final batch above supplements this historical accounting pass with pool allocation,
+concurrent admissions and actual Linux quota/expiry/revoke.
 
 ### 16. ACL, pushed routes and site-to-site
 
