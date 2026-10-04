@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v38 -->
+<!-- normative-sync: full-system-audit-v39 -->
 
-**Текущий итог, 4 октября: 20/37 разделов DONE/PASS (54,1%), осталось 17. Q20 завершён; далее Q21.**
+**Текущий итог, 4 октября: 21/37 разделов DONE/PASS (56,8%), осталось 16. Q21 завершён; далее Q22.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1124,6 +1124,8 @@ DISCOVER/OFFER/REQUEST/ACK/NAK/RELEASE, bad requested_ip, duplicate xid/MAC, exp
 
 ### 21. TUN/TAP, IP, MTU/PMTU и фрагментация
 
+**4 октября, Q21 завершён:** [TUN/TAP, IP и MTU/PMTU](../reports/AUDIT-Q21-PACKETS-FINAL.md). Новых production-ошибок не подтверждено; семь новых свойств,61 actual-module test,70 сетевых проверок,3 portable checks и два независимо разобранных carrier PCAP PASS. Текущие full unit/Clippy/release/native Q20 и прежний privileged TUN runtime сверены в пределах реального scope. Итого: 21/37 (56,8%), осталось 16; далее Q22.
+
 [Q25-F067–F068](../reports/AUDIT-Q25-GATEWAY-IDENTITY.md): gateway привязан к RouteOwner;
 firewall проверяет namespace/TUN внутри операций, cleanup выполняется до закрытия TUN.
 При потере TUN правила очищаются в исходном namespace, sysctl scope сохраняется.
@@ -1148,13 +1150,13 @@ TUN host prefixes, TAP ARP/NDP/RA/DAD, unsupported EtherType/VLAN/multicast. MTU
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_tap_ipv6_control_probe.py`, `qeli/fuzz/fuzz_targets/data_frag.rs`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Отмена shutdown TUN, 23 сентября 2026:** [Q25-F014](../reports/AUDIT-Q25-TUN-WORKERS.md).
 Общий TunWorkers сохраняет владение Unix TUN/Wintun потоками до join, включая отмену

@@ -377,3 +377,4 @@
 - [Q19: серверный и клиентский DNS — завершено](reports/AUDIT-Q19-DNS-FINAL.md)
 
 - [Q20: DHCP и аренды — завершено](reports/AUDIT-Q20-DHCP-FINAL.md)
+- [Q21: TUN/TAP, IP и MTU/PMTU — завершено](reports/AUDIT-Q21-PACKETS-FINAL.md)

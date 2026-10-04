@@ -16,7 +16,7 @@ FLAVOR=${7:-base}
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 usage() {
-  echo "usage: $0 <qeli-binary> <outer:4|6> <inner:4|6|dual> <tcp|udp> <fake-tls|quic> <full|split> [base|tap|legacy|dns4|dns6|pmtu|mtu]" >&2
+  echo "usage: $0 <qeli-binary> <outer:4|6> <inner:4|6|dual> <tcp|udp> <fake-tls|quic> <full|split> [base|tap|tapdual|legacy|dns4|dns6|pmtu|mtu]" >&2
 }
 
 case "$OUTER:$INNER:$TRANSPORT:$WIRE:$ROUTING" in
@@ -31,6 +31,7 @@ esac
 case "$FLAVOR" in
   base) ;;
   tap) [ "$OUTER:$INNER:$TRANSPORT:$WIRE:$ROUTING" = "4:6:tcp:fake-tls:full" ] || { usage; exit 2; } ;;
+  tapdual) [ "$OUTER:$INNER:$TRANSPORT:$WIRE:$ROUTING" = "4:dual:tcp:fake-tls:full" ] || { usage; exit 2; } ;;
   legacy) [ "$OUTER:$INNER:$TRANSPORT:$WIRE:$ROUTING" = "4:4:tcp:fake-tls:full" ] || { usage; exit 2; } ;;
   dns4|dns6) [ "$OUTER:$INNER:$TRANSPORT:$WIRE:$ROUTING" = "4:dual:tcp:fake-tls:full" ] || { usage; exit 2; } ;;
   pmtu) [ "$OUTER:$INNER:$TRANSPORT:$WIRE:$ROUTING" = "4:6:udp:quic:full" ] || { usage; exit 2; } ;;
@@ -90,6 +91,7 @@ mkdir -m 700 "$STATE_DIRECTORY" || exit 2
 SERVER_PID=
 CLIENT_PID=
 DNS_PID=
+CAPTURE_PID=
 PASS=0
 FAIL=0
 
@@ -111,6 +113,7 @@ wait_for() {
   return 1
 }
 cleanup() {
+  if [ -n "$CAPTURE_PID" ]; then kill -TERM "$CAPTURE_PID" 2>/dev/null || true; wait "$CAPTURE_PID" 2>/dev/null || true; fi
   if [ -n "$DNS_PID" ]; then kill -TERM "$DNS_PID" 2>/dev/null || true; fi
   for pid in "$CLIENT_PID" "$SERVER_PID"; do
     if [ -n "$pid" ]; then kill -TERM "$pid" 2>/dev/null || true; fi
@@ -237,6 +240,13 @@ PY_CHECK_PRIVATE
   SERVER_AUTHORITY="qeli-matrix.test:$PORT"
 fi
 
+# Optional Q21 wire observation runs only inside this fixture's router namespace.
+if [ "${QELI_PACKET_AUDIT:-0}" = 1 ] && { [ "$FLAVOR" = pmtu ] || [ "$FLAVOR" = mtu ]; }; then
+  ip netns exec "$RTR_NS" python3 "$SCRIPT_DIR/audit_outer_udp_capture.py" "$RTR_C_IF" \
+    "$WORK/outer-capture.log" >"$WORK/outer-capture-process.log" 2>&1 &
+  CAPTURE_PID=$!
+  wait_for 25 "test -f $WORK/outer-capture.log.ready" || { echo 'carrier capture did not start' >&2; exit 2; }
+fi
 QUIC=false
 if [ "$WIRE" = quic ]; then QUIC=true; fi
 GATEWAY=false
@@ -244,10 +254,11 @@ SERVER_DEVICE_TYPE=tun
 CLIENT_DEVICE_TYPE=tun
 CLIENT_IPV4_PREFIX=${QELI_EXPECT_CLIENT_IPV4_PREFIX:-32}
 CLIENT_IPV6_PREFIX=128
-if [ "$FLAVOR" = tap ]; then
+if [ "$FLAVOR" = tap ] || [ "$FLAVOR" = tapdual ]; then
   SERVER_DEVICE_TYPE=tap
   CLIENT_DEVICE_TYPE=tap
   CLIENT_IPV6_PREFIX=64
+  [ "$FLAVOR" != tapdual ] || CLIENT_IPV4_PREFIX=24
 fi
 if [ "$ROUTING" = full ]; then GATEWAY=true; fi
 
@@ -438,7 +449,7 @@ persistent_before_release() {
   [ "$PERSISTENT_CHECK" = 1 ] || return 0
   local kind=tun
   local extra=()
-  [ "$FLAVOR" != tap ] || kind=tap
+  { [ "$FLAVOR" != tap ] && [ "$FLAVOR" != tapdual ]; } || kind=tap
   if [ -n "$DNS_UPSTREAM" ]; then extra=(--resolver-pid "$RESOLVER_PID" --dns-marker "$DNS_MARKER"); fi
   if python3 "$SCRIPT_DIR/audit_persistent_tun.py" --namespace "$CLI_NS" --tun "$TUN_IF" \
       --work "$WORK" --binary "$CLIENT_BIN" --owner-pid "$CRASH_CLIENT_PID" --kind "$kind" \
@@ -633,7 +644,16 @@ if [ "$FLAVOR" = mtu ]; then
     "ip netns exec $RTR_NS ping -6 -M do -s 1232 -c3 -W2 fd86::2"
 fi
 
-  if [ "$FLAVOR" = tap ]; then
+
+if [ -n "$CAPTURE_PID" ]; then
+  touch "$WORK/outer-capture.log.stop"
+  if wait "$CAPTURE_PID"; then ok "observed UDP carrier has both directions and no outer IP fragmentation";
+  else bad "observed UDP carrier has both directions and no outer IP fragmentation"; fi
+  CAPTURE_PID=
+  cat "$WORK/outer-capture.log" 2>/dev/null || true
+fi
+
+  if [ "$FLAVOR" = tap ] || [ "$FLAVOR" = tapdual ]; then
     check "client interface is a real TAP device" \
       "ip netns exec $CLI_NS ip tuntap show | grep -q '^$TUN_IF: tap'"
     if ip netns exec "$CLI_NS" python3 "$SCRIPT_DIR/tap_ipv6_control_probe.py" \

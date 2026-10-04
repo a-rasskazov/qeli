@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v38 -->
+<!-- normative-sync: full-system-audit-v39 -->
 
-**Current total, 4 October: 20/37 sections DONE/PASS (54.1%), 17 remaining. Q20 complete; next Q21.**
+**Current total, 4 October: 21/37 sections DONE/PASS (56.8%), 16 remaining. Q21 complete; next Q22.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1113,6 +1113,8 @@ DISCOVER/OFFER/REQUEST/ACK/NAK/RELEASE, invalid requested_ip, duplicate xid/MAC,
 
 ### 21. TUN/TAP, IP, MTU/PMTU and fragmentation
 
+**4 October, Q21 complete:** [TUN/TAP, IP and MTU/PMTU](../reports/AUDIT-Q21-PACKETS-FINAL.md). No new production defect; seven boundary properties,61 actual-module tests,70 real network checks,3 portable checks and two independently parsed carrier PCAPs PASS. Current Q20 full units/Clippy/release/native and earlier privileged TUN evidence are reconciled within their exact scope. Overall: 21/37 (56.8%), 16 remain; next Q22.
+
 [Q25-F067–F068](../reports/AUDIT-Q25-GATEWAY-IDENTITY.md): gateway binds RouteOwner;
 firewall operations check namespace/TUN internally, and cleanup precedes TUN release.
 Lost TUN permits rule cleanup in the original namespace while retaining the sysctl scope.
@@ -1137,13 +1139,13 @@ TUN host prefixes, TAP ARP/NDP/RA/DAD and unsupported EtherType/VLAN/multicast. 
 
 **Existing harness/fixtures:** `scripts/test_tap_ipv6_control_probe.py`, `qeli/fuzz/fuzz_targets/data_frag.rs`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **Cancelled TUN shutdown, 23 September 2026:** [Q25-F014](../reports/AUDIT-Q25-TUN-WORKERS.md).
 Shared TunWorkers retains Unix TUN/Wintun thread ownership through joining, including

@@ -377,3 +377,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q19: server and client DNS — complete](reports/AUDIT-Q19-DNS-FINAL.md)
 
 - [Q20: DHCP and lease lifecycle — complete](reports/AUDIT-Q20-DHCP-FINAL.md)
+- [Q21: TUN/TAP, IP and MTU/PMTU — complete](reports/AUDIT-Q21-PACKETS-FINAL.md)

@@ -17,7 +17,8 @@ from native_repro import source_digest
 from run_ipv6_release_matrix import MATRIX_CASES, SPECIAL_CASES
 
 FILES = ('ipv6_netns_case.sh', 'ipv6_dns_pair.sh', 'ipv6_mtu_pair.sh',
-         'ipv6_legacy_pair.sh', 'dns_test_server.py', 'tap_ipv6_control_probe.py')
+         'ipv6_legacy_pair.sh', 'dns_test_server.py', 'tap_ipv6_control_probe.py',
+         'audit_outer_udp_capture.py')
 CASES = {name: ('ipv6_netns_case.sh', parameters, 180)
          for name, parameters in MATRIX_CASES + SPECIAL_CASES}
 CASES.update({'linux.dns.ipv4-ipv6': ('ipv6_dns_pair.sh', (), 360),
@@ -73,7 +74,7 @@ def pull_logs(sftp, remote, local):
         if stat.S_ISDIR(item.st_mode):
             dst.mkdir(exist_ok=True)
             pull_logs(sftp, src, dst)
-        elif stat.S_ISREG(item.st_mode) and item.filename.endswith('.log'):
+        elif stat.S_ISREG(item.st_mode) and item.filename.endswith(('.log', '.pcap')):
             sftp.get(src, str(dst))
 
 
