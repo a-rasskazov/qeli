@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v41 -->
+<!-- normative-sync: full-system-audit-v42 -->
 
 **Current total, 4 October: 23/37 sections DONE/PASS (62.2%), 14 remaining. Q23 complete; next Q24.**
 
@@ -1451,11 +1451,11 @@ deadlines, crash recovery and Linux runtime remain open.
 
 ### 24. Multipath, bonding and shared budgets
 
-**Source:** `qeli/src/transport_core/carrier.rs`, `qeli/src/transport_core/session.rs`, `qeli/src/server/handler.rs`.
+**Source:** `qeli/src/client/mod.rs`, `qeli/src/transport_core/buffer_pool.rs`, `qeli/src/transport_core/carrier.rs`, `qeli/src/transport_core/session.rs`, `qeli/src/server/handler.rs`.
 
 JOIN proof, stream caps, asymmetric RTT/loss, one/all path failures and ordering/starvation. Bandwidth/quota/buffer caps must not multiply by stream count. Resume/reconnect/stream close preserve valid sessions and release obsolete carriers.
 
-**Existing harness/fixtures:** `scripts/test_multipath_bonding.py`, `scripts/test_multipath_resilience.py`, `scripts/test_multipath_allmodes.py`.
+**Existing harness/fixtures:** `scripts/roaming_netns_e2e.sh`, `scripts/roaming_tcp_bonding_netns_case.sh`, `scripts/roaming_tcp_starvation_netns_case.sh`.
 
 - [ ] Review and dead code.
 - [ ] Positive, boundary and negative scenarios.
@@ -1464,6 +1464,12 @@ JOIN proof, stream caps, asymmetric RTT/loss, one/all path failures and ordering
 - [ ] Fixes, retesting and evidence.
 
 **Status: IN_PROGRESS.**
+
+**4 October — Q24-F001:** [report](../reports/AUDIT-Q24-BONDING.md). Reproduced
+all-flow starvation when one blocked carrier retained the shared pool. Fixed the
+common client snapshot pool and queue shares on both peers; final qualification
+is still running. Q24 remains open; overall completion stays 23/37.
+
 
 **TCP and Linux path-monitor ownership, 23 September 2026:**
 [Q25-F010/F011](../reports/AUDIT-Q25-TCP-TASKS.md): the common owner closes admission before

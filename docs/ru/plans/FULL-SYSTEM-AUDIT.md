@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v41 -->
+<!-- normative-sync: full-system-audit-v42 -->
 
 **Текущий итог, 4 октября: 23/37 разделов DONE/PASS (62,2%), осталось 14. Q23 завершён; далее Q24.**
 
@@ -1462,11 +1462,11 @@ default route требует защиты при отсутствии явног
 
 ### 24. Multipath, bonding и общий бюджет
 
-**Код:** `qeli/src/transport_core/carrier.rs`, `qeli/src/transport_core/session.rs`, `qeli/src/server/handler.rs`.
+**Код:** `qeli/src/client/mod.rs`, `qeli/src/transport_core/buffer_pool.rs`, `qeli/src/transport_core/carrier.rs`, `qeli/src/transport_core/session.rs`, `qeli/src/server/handler.rs`.
 
 JOIN proof, stream caps, asymmetric RTT/loss, отказ одного/всех путей, ordering/starvation. Bandwidth/quota/buffer cap не умножается на streams. Resume/reconnect/stream close сохраняют корректную сессию и освобождают лишние carriers.
 
-**Имеющаяся обвязка/fixtures:** `scripts/test_multipath_bonding.py`, `scripts/test_multipath_resilience.py`, `scripts/test_multipath_allmodes.py`.
+**Имеющаяся обвязка/fixtures:** `scripts/roaming_netns_e2e.sh`, `scripts/roaming_tcp_bonding_netns_case.sh`, `scripts/roaming_tcp_starvation_netns_case.sh`.
 
 - [ ] Review и мёртвый код.
 - [ ] Штатные, граничные и негативные сценарии.
@@ -1475,6 +1475,12 @@ JOIN proof, stream caps, asymmetric RTT/loss, отказ одного/всех �
 - [ ] Исправления, повторная проверка и evidence.
 
 **Статус: IN_PROGRESS.**
+
+**4 октября — Q24-F001:** [отчёт](../reports/AUDIT-Q24-BONDING.md). Воспроизведена
+остановка всех потоков при заполнении общего пула одним blocked carrier. Исправлены
+общий клиентский snapshot pool и доли очередей с обеих сторон; финальная
+квалификация ещё идёт. Q24 и общий итог 23/37 пока не закрываются.
+
 
 **Владение задачами TCP и Linux path monitor, 23 сентября 2026:**
 [Q25-F010/F011](../reports/AUDIT-Q25-TCP-TASKS.md): общий владелец закрывает создание задач

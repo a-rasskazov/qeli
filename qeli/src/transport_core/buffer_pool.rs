@@ -11,6 +11,15 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::Semaphore;
 
+/// Reserve room for the other carriers and one temporary resume candidate.
+/// A single stalled queue must never retain the session's entire packet pool.
+pub(crate) fn bonded_queue_capacity(buffer_count: usize, max_streams: u32) -> usize {
+    if max_streams <= 1 {
+        return buffer_count.max(1);
+    }
+    (buffer_count.saturating_sub(1) / (max_streams as usize + 1)).max(1)
+}
+
 #[derive(Clone)]
 pub(crate) struct BufferPool {
     inner: Arc<PoolInner>,
@@ -184,6 +193,41 @@ impl Drop for PooledBuffer {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn stalled_bonded_queue_cannot_exhaust_the_shared_packet_pool() {
+        let pool = BufferPool::new(64, 128).unwrap();
+        let capacity = bonded_queue_capacity(pool.buffer_count(), 3);
+        let (stalled, _receiver) = tokio::sync::mpsc::channel::<PooledBuffer>(capacity);
+        for _ in 0..pool.buffer_count() {
+            let packet = pool.try_acquire().expect("stalled queue must leave room");
+            let _ = stalled.try_send(packet);
+        }
+        let (healthy, mut receiver) = tokio::sync::mpsc::channel(1);
+        let mut packet = pool
+            .try_acquire()
+            .expect("healthy carrier retains capacity");
+        packet.as_vec_mut().extend_from_slice(b"healthy flow");
+        assert!(healthy.try_send(packet).is_ok());
+        assert_eq!(receiver.recv().await.unwrap().as_ref(), b"healthy flow");
+        drop(stalled);
+        drop(_receiver);
+        assert_eq!(pool.inner.permits.available_permits(), pool.buffer_count());
+    }
+
+    #[test]
+    fn bonded_queue_share_reserves_space_without_multiplying_the_pool() {
+        for budget in [4, 16, 64, 128, 256, 2048] {
+            assert_eq!(bonded_queue_capacity(budget, 1), budget);
+            for streams in 2..=16 {
+                let capacity = bonded_queue_capacity(budget, streams);
+                assert!(capacity > 0 && capacity < budget);
+                if budget > streams as usize + 1 {
+                    assert!(capacity * (streams as usize + 1) < budget);
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn exhausted_pool_waits_and_reuses_returned_allocation() {

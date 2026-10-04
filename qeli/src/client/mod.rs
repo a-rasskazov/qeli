@@ -4420,6 +4420,7 @@ struct StreamPump {
 
     /// Aggregate client→server cover budget shared by every bonded stream.
     cover_budget: crate::protocol::SharedCoverBudget,
+    uplink_queue_capacity: usize,
     /// reality-tls only: run the receive side as a 2-stage pipeline so the outer
     /// TLS AES-GCM (done in `read_record`) and the inner qeli ChaCha
     /// (`decrypt_packet`) overlap across cores instead of running serially in one
@@ -4433,8 +4434,12 @@ struct StreamPump {
 
 /// Plaintext queued for one TCP stream. TUN packets retain their reusable backing
 /// allocation until encryption finishes; small control frames keep ordinary owned storage.
+const CLIENT_BONDED_UPLINK_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+const CLIENT_BONDED_UPLINK_SLOT_BYTES: usize = u16::MAX as usize;
+
 enum ClientUplink {
     Tun(TunPacket),
+    Bonded(PooledBuffer),
     Owned(Vec<u8>),
 }
 
@@ -4827,6 +4832,7 @@ impl AsRef<[u8]> for ClientUplink {
     fn as_ref(&self) -> &[u8] {
         match self {
             Self::Tun(packet) => packet,
+            Self::Bonded(packet) => packet,
             Self::Owned(packet) => packet,
         }
     }
@@ -5176,7 +5182,7 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: crate::protocol::obfs::CarrierWriteControl + Unpin + Send + 'static,
 {
-    let (out_tx, mut out_rx) = mpsc::channel::<ClientUplink>(4096);
+    let (out_tx, mut out_rx) = mpsc::channel::<ClientUplink>(cfg.uplink_queue_capacity);
     let (terminal_tx, mut terminal_rx) = mpsc::channel::<ClientTerminalControl>(4);
     let stream_sender = ClientStreamSender {
         logical_slot_id,
@@ -5878,6 +5884,34 @@ where
         mtu: tun_mtu,
         fallback_dns_servers: &fallback_dns_servers,
     };
+    // Stream-bonding plan. `max_streams` is the server's hard ceiling.
+    let target = if max_streams > 1 {
+        max_streams as usize
+    } else {
+        1
+    };
+    // TCP_RESUME_V2 gives both peers the same stable logical-slot namespace. Keep that fixed
+    // width for flow placement even while the live carrier set temporarily shrinks or grows.
+    let stable_stream_width = tcp_resume
+        .as_ref()
+        .map(|_| u32::try_from(target).unwrap_or(u32::MAX).max(1));
+    let token_bytes = hex_to_bytes(&session_token);
+    let bonding = target > 1 && !token_bytes.is_empty();
+    // Snapshot bonded packets into one fixed pool before queuing them. Queues must
+    // release TUN buffers (and FIFO Wintun ring reservations) even when one writer
+    // is blocked. One 4 MiB budget serves all streams; there is no fallback allocation.
+    let bonded_uplink_pool = if bonding {
+        Some(crate::transport_core::buffer_pool::BufferPool::new(
+            CLIENT_BONDED_UPLINK_BUFFER_BYTES / CLIENT_BONDED_UPLINK_SLOT_BYTES,
+            CLIENT_BONDED_UPLINK_SLOT_BYTES,
+        )?)
+    } else {
+        None
+    };
+    let uplink_queue_capacity = bonded_uplink_pool.as_ref().map_or(4096, |pool| {
+        crate::transport_core::buffer_pool::bonded_queue_capacity(pool.buffer_count(), max_streams)
+    });
+
     let mut plan = build_network_plan(config, core.next_generation(), &network)?;
     #[cfg(target_os = "linux")]
     {
@@ -6155,6 +6189,7 @@ where
         shaping,
         recordizer,
         cover_budget,
+        uplink_queue_capacity,
         // Only reality-tls pays a second (outer TLS AES-GCM) AEAD on the read
         // side; pipeline its two decrypt layers across cores. Other modes decrypt
         // inline (unchanged path).
@@ -6216,19 +6251,6 @@ where
         }
     }
 
-    // Stream-bonding plan. `max_streams` is the server's hard ceiling.
-    let target = if max_streams > 1 {
-        max_streams as usize
-    } else {
-        1
-    };
-    // TCP_RESUME_V2 gives both peers the same stable logical-slot namespace. Keep that fixed
-    // width for flow placement even while the live carrier set temporarily shrinks or grows.
-    let stable_stream_width = tcp_resume
-        .as_ref()
-        .map(|_| u32::try_from(target).unwrap_or(u32::MAX).max(1));
-    let token_bytes = hex_to_bytes(&session_token);
-    let bonding = target > 1 && !token_bytes.is_empty();
     // The adaptive ramp decides the desired width; a separate maintainer restores
     // that width after individual bonded streams die. Fixed mode wants the full
     // configured width from the start (including retrying initial JOIN failures).
@@ -6854,7 +6876,19 @@ where
                 // not reorder healthy flows. Legacy sessions retain modulo-live-width.
                 let mut g = crate::util::lock_or_recover(&outs, "client::outs");
                 let h = crate::protocol::flow_hash(ip_packet.as_ref());
-                let mut pkt = ClientUplink::Tun(ip_packet);
+                let mut pkt = if let Some(pool) = &bonded_uplink_pool {
+                    let Some(mut packet) = pool.try_acquire() else {
+                        continue;
+                    };
+                    if ip_packet.len() > packet.capacity() {
+                        continue;
+                    }
+                    packet.as_vec_mut().extend_from_slice(ip_packet.as_ref());
+                    drop(ip_packet);
+                    ClientUplink::Bonded(packet)
+                } else {
+                    ClientUplink::Tun(ip_packet)
+                };
                 while !g.is_empty() {
                     let Some(i) = select_tcp_stream_index(&g, h, stable_stream_width) else {
                         break;
@@ -13398,6 +13432,7 @@ mod tcp_task_shutdown_tests {
                 shaping,
                 recordizer: None,
                 cover_budget,
+                uplink_queue_capacity: 4096,
                 pipeline_rx,
                 management_v1: final_kick,
                 management_reassembler: Arc::new(std::sync::Mutex::new(

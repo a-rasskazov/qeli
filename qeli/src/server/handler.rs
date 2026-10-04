@@ -2326,7 +2326,11 @@ async fn run_stream<R, W>(
     });
     let idle_timeout = Duration::from_secs(pcfg.performance.connection.idle_timeout_secs);
 
-    let (tx, mut rx) = mpsc::channel::<PooledBuffer>(session.wire_pool.buffer_count());
+    let queue_capacity = crate::transport_core::buffer_pool::bonded_queue_capacity(
+        session.wire_pool.buffer_count(),
+        session.max_streams,
+    );
+    let (tx, mut rx) = mpsc::channel::<PooledBuffer>(queue_capacity);
     #[cfg(feature = "experimental-roaming")]
     let (terminal_management_tx, mut terminal_management_rx) = mpsc::channel(1);
     let (kick_tx, mut kick_rx) = mpsc::channel::<()>(1);
