@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v36 -->
+<!-- normative-sync: full-system-audit-v37 -->
 
-**Актуальный итог 4 октября: 18/37 разделов DONE/PASS (48,6%), осталось 19. Q18 завершён; далее Q19.**
+**Актуальный итог 4 октября: 19/37 разделов DONE/PASS (51,4%), осталось 18. Q19 завершён; далее Q20.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -165,7 +165,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 16 | ACL, push routes и site-to-site | H03–H04, H06 | PASS |
 | 17 | IPv4 NAT, forwarding и sysctl | H02, H04, H08 | PASS |
 | 18 | IPv6 off/manual/route/nat66 и NDP | H06, H11 | PASS |
-| 19 | DNS сервера и клиентов | H01–H02, H05–H06 | IN_PROGRESS |
+| 19 | DNS сервера и клиентов | H01–H02, H05–H06 | PASS |
 | 20 | DHCP и lease lifecycle | H02, H05 | TODO |
 | 21 | TUN/TAP, IP, MTU/PMTU и фрагментация | H06, H08 | IN_PROGRESS |
 | 22 | Transport core, FFI/JNI и память | H06, H08 | IN_PROGRESS |
@@ -984,19 +984,21 @@ identity журнала, реальный Linux runtime и полный PASS р�
 
 ### 19. DNS сервера и клиентов
 
+**4 октября, Q19 DONE/PASS:** 105 свежих real DNS/tunnel/resolved/crash checks; Q19-V001 закрывает TCP/TC runtime gap. Новых production-багов не найдено; 32 релевантных source hashes, 61 raw file и 9 архивов сверены; неизменённый Q18 Linux/native reuse. [Итог и границы](../reports/AUDIT-Q19-DNS-FINAL.md). Исторические открытые статусы ниже относятся к прежним снимкам.
+
 **Код:** `qeli/src/server/dns.rs`, `qeli/src/server/dns/resolver.rs`, `qeli/src/client/dns.rs`, `qeli/src/transport_core/network.rs`.
 
 UDP/TCP upstream, truncation fallback, timeouts, malformed packets, cache/eviction/blocklist. Full/split, resolved/resolv.conf и OS resolvers, leak v4/v6, failed apply до Connected, crash restore. Custom port/manual IPv6; DoT не объявляется реализованным при отказе валидатора.
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_dns_test_server.py`, `scripts/test_panel_route_dns.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE/PASS.**
 
 **Проход общего сетевого плана, 22–23 сентября 2026:**
 [отчёт Q19/Q22](../reports/AUDIT-Q19-Q22-NETWORK-PLAN.md). Исправлены различия legacy/v2 DNS

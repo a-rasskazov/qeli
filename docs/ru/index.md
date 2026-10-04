@@ -374,3 +374,4 @@
 - [Q16: ACL и site-to-site — завершено](reports/AUDIT-Q16-ACL-ROUTES.md)
 - [Q17: IPv4 NAT, forwarding и sysctl — завершено](reports/AUDIT-Q17-IPV4-NETWORK.md)
 - [Q18: IPv6 и NDP — завершено](reports/AUDIT-Q18-IPV6-NDP.md)
+- [Q19: серверный и клиентский DNS — завершено](reports/AUDIT-Q19-DNS-FINAL.md)

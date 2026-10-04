@@ -310,7 +310,7 @@ if [ -n "$DNS_UPSTREAM" ]; then
 dns.listen = 10.86.0.1
 dns.listen_ipv6 = fd86::1
 dns.upstream = $DNS_UPSTREAM
-dns.upstream_protocol = udp"
+dns.upstream_protocol = ${QELI_DNS_UPSTREAM_PROTOCOL:-udp}"
   CLIENT_DNS=tunnel
 fi
 if [ "$FLAVOR" = mtu ]; then
@@ -577,6 +577,28 @@ if [ -n "$DNS_UPSTREAM" ]; then
     ok "AAAA query resolves through the IPv6 tunnel DNS listener"
   else
     bad "AAAA query resolves through the IPv6 tunnel DNS listener"
+  fi
+  for dns_server in 10.86.0.1 fd86::1; do
+    for dns_type in A AAAA; do
+      dns_expect=192.0.2.80; [ "$dns_type" = A ] || dns_expect=2001:db8::80
+      if ip netns exec "$CLI_NS" python3 "$SCRIPT_DIR/dns_test_server.py" query --tcp \
+        --server "$dns_server" --name "tcp-$dns_type-${dns_server//:/-}.release.test" --type "$dns_type" --expect "$dns_expect"; then
+        ok "TCP $dns_type via tunnel DNS $dns_server"
+      else
+        bad "TCP $dns_type via tunnel DNS $dns_server"
+      fi
+    done
+    if ip netns exec "$CLI_NS" python3 "$SCRIPT_DIR/dns_test_server.py" query \
+      --server "$dns_server" --name "tc.${dns_server//:/-}.release.test" --type A --expect 192.0.2.80; then
+      ok "UDP query for TC fixture via tunnel DNS $dns_server"
+    else
+      bad "UDP query for TC fixture via tunnel DNS $dns_server"
+    fi
+  done
+  if [ "${QELI_DNS_UPSTREAM_PROTOCOL:-udp}" = udp ]; then
+    check "upstream TC caused a TCP retry" "grep -q 'transport=udp tc=1 .*qname=tc.' $WORK/dns-upstream.log && grep -q 'transport=tcp tc=0 .*qname=tc.' $WORK/dns-upstream.log"
+  else
+    check "forced TCP upstream sent no UDP queries" "grep -q 'transport=tcp' $WORK/dns-upstream.log && ! grep -q 'transport=udp' $WORK/dns-upstream.log"
   fi
   check_eventually "the configured IPv$DNS_UPSTREAM_FAMILY upstream received A and AAAA" \
     "grep -q 'qtype=A ' $WORK/dns-upstream.log && grep -q 'qtype=AAAA ' $WORK/dns-upstream.log"

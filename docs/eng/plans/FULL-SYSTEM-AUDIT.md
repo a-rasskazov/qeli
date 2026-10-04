@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v36 -->
+<!-- normative-sync: full-system-audit-v37 -->
 
-**Current total, 4 October: 18/37 sections DONE/PASS (48.6%), 19 remaining. Q18 complete; next Q19.**
+**Current total, 4 October: 19/37 sections DONE/PASS (51.4%), 18 remaining. Q19 complete; next Q20.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -160,7 +160,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 16 | ACL, pushed routes and site-to-site | H03–H04, H06 | PASS |
 | 17 | IPv4 NAT, forwarding and sysctls | H02, H04, H08 | PASS |
 | 18 | IPv6 off/manual/route/nat66 and NDP | H06, H11 | PASS |
-| 19 | Server and client DNS | H01–H02, H05–H06 | IN_PROGRESS |
+| 19 | Server and client DNS | H01–H02, H05–H06 | PASS |
 | 20 | DHCP and lease lifecycle | H02, H05 | TODO |
 | 21 | TUN/TAP, IP, MTU/PMTU and fragmentation | H06, H08 | IN_PROGRESS |
 | 22 | Transport core, FFI/JNI and memory | H06, H08 | IN_PROGRESS |
@@ -975,19 +975,21 @@ namespace identity after object destruction and full section PASS remain open.
 
 ### 19. Server and client DNS
 
+**4 October, Q19 DONE/PASS:** 105 fresh real DNS/tunnel/resolved/crash checks; Q19-V001 closes the TCP/TC runtime gap. No new production bug; 32 relevant source hashes, 61 raw files and nine archives verified; unchanged Q18 Linux/native qualification reused. [Results and limits](../reports/AUDIT-Q19-DNS-FINAL.md). Historical open statuses below refer to earlier snapshots.
+
 **Source:** `qeli/src/server/dns.rs`, `qeli/src/server/dns/resolver.rs`, `qeli/src/client/dns.rs`, `qeli/src/transport_core/network.rs`.
 
 UDP/TCP upstreams, truncation fallback, timeouts, malformed packets, caching/eviction/blocklists. Full/split, resolved/resolv.conf and OS resolvers, v4/v6 leaks, failed apply before Connected and crash recovery. Custom ports/manual IPv6; rejected DoT is not implemented DoT.
 
 **Existing harness/fixtures:** `scripts/test_dns_test_server.py`, `scripts/test_panel_route_dns.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE/PASS.**
 
 **Shared network-plan pass, 22–23 September 2026:**
 [Q19/Q22 report](../reports/AUDIT-Q19-Q22-NETWORK-PLAN.md). Fixed legacy/v2 DNS differences
