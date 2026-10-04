@@ -23,6 +23,18 @@ Configs are **text flat-INI**. Structure:
   "which client supports what" matrix live in
   [Client: credentials, routing, reconnect](#client-credentials-routing-reconnect).
 
+The client INI is limited to **256 KiB**, including logging inspection before
+startup and `qeli check-config --client`. On Linux, both `qeli client` and the
+standalone `qeli-client` accept regular files only; FIFOs and directories are
+rejected without waiting. `[logging]` uses the same strict parser as the rest of
+the profile. An invalid profile sends diagnostics to stderr. To use
+`logging.file`, the config must be a regular file without a symlink, owned by root
+or the process user, with no group/other write permission; use
+`chmod 600 client.ini`. An untrusted config cannot open a log file; its other
+valid logging settings remain effective.
+A file sink must be a regular file: FIFOs, devices and directories are rejected,
+and messages fall back to stderr. Leave `file` empty for journald/logread.
+
 The panel provides a **form and an INI editor**; there is no configuration JSON editor.
 JSON in the internal HTTP API carries form data and status, not a configuration file format.
 The server INI is limited to **16 MiB**: `check-config`, startup, SIGHUP and panel

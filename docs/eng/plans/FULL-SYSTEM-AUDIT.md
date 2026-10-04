@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v43 -->
+<!-- normative-sync: full-system-audit-v44 -->
 
-**Current total, 4 October: 24/37 sections DONE/PASS (64.9%), 13 remaining. Q24 complete; next Q25.**
+**Current total, 4 October: 25/37 sections DONE/PASS (67.6%), 12 remaining. Q25 complete; next Q26.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -166,7 +166,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 22 | Transport core, FFI/JNI and memory | H06, H08 | IN_PROGRESS |
 | 23 | Roaming, resume and CONTROL_V2 | H06, H08 | IN_PROGRESS |
 | 24 | Multipath, bonding and shared budgets | H04, H06, H08 | DONE/PASS |
-| 25 | Linux CLI and network recovery | H01, H04, H08 | IN_PROGRESS |
+| 25 | Linux CLI and network recovery | H01, H04, H08 | DONE / PASS |
 | 26 | Shared C# and managed/native boundary | H04, H06, H08 | TODO |
 | 27 | Windows GUI, service and drivers | H01, H04, H08 | IN_PROGRESS |
 | 28 | macOS daemon, utun, pf and Network Extension | H04, H08 | TODO |
@@ -1494,6 +1494,8 @@ Standalone H2, early platform rollback, UDP cancellation and deadlines remain op
 
 ### 25. Linux CLI and network recovery
 
+**Reconciliation on 4 October:** [Q25 final](../reports/AUDIT-Q25-LINUX-CLI-FINAL.md). F216/F217 fixed; 2414 units, 26 CLI/68 checks, 2 connected/32 checks and four fresh A/B pairs PASS. Unchanged network implementations reconciled by SHA/exact shared prefix; earlier recovery/soak scopes and D06 accepted limitation retained. Historical open wording below describes earlier snapshots.
+
 [Q25-F067–F068](../reports/AUDIT-Q25-GATEWAY-IDENTITY.md): gateway binds RouteOwner;
 firewall operations check namespace/TUN internally, and cleanup precedes TUN release.
 Lost TUN permits rule cleanup in the original namespace while retaining the sysctl scope.
@@ -1518,13 +1520,13 @@ Endpoint route pinning/same-LAN, full/split, includes/excludes, leak policies/ki
 
 **Existing harness/fixtures:** `scripts/test_gateway_nat.py`, `scripts/test_tun_reclaim.py`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE / PASS.**
 
 **Credential execution and feature isolation, 23 September 2026:**
 [Q25-F001 / Q33-F002 / Q14-F020 / Q34-F001](../reports/AUDIT-Q25-CREDENTIAL-COMMANDS.md):

@@ -381,3 +381,7 @@
 - [Q22: transport core, FFI/JNI и память — завершено](reports/AUDIT-Q22-CORE-FFI-FINAL.md)
 - [Q23: роуминг, resume и CONTROL_V2 — завершено](reports/AUDIT-Q23-ROAMING-FINAL.md)
 - [Q24: multipath и общий бюджет — DONE/PASS](reports/AUDIT-Q24-BONDING.md)
+
+- [Q25: единый INI bootstrap Linux CLI — проверено](reports/AUDIT-Q25-CLI-BOOTSTRAP.md)
+
+- [Q25: Linux CLI и восстановление сети — DONE/PASS](reports/AUDIT-Q25-LINUX-CLI-FINAL.md)

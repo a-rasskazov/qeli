@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v43 -->
+<!-- normative-sync: full-system-audit-v44 -->
 
-**Текущий итог, 4 октября: 24/37 разделов DONE/PASS (64,9%), осталось 13. Q24 завершён; далее Q25.**
+**Текущий итог, 4 октября: 25/37 разделов DONE/PASS (67,6%), осталось 12. Q25 завершён; далее Q26.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -171,7 +171,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 22 | Transport core, FFI/JNI и память | H06, H08 | IN_PROGRESS |
 | 23 | Роуминг, resume и CONTROL_V2 | H06, H08 | IN_PROGRESS |
 | 24 | Multipath, bonding и общий бюджет | H04, H06, H08 | DONE/PASS |
-| 25 | Linux CLI и восстановление сети | H01, H04, H08 | IN_PROGRESS |
+| 25 | Linux CLI и восстановление сети | H01, H04, H08 | DONE / PASS |
 | 26 | Общий C# и managed/native граница | H04, H06, H08 | TODO |
 | 27 | Windows: GUI, служба и драйверы | H01, H04, H08 | IN_PROGRESS |
 | 28 | macOS: daemon, utun, pf и Network Extension | H04, H08 | TODO |
@@ -1505,6 +1505,8 @@ Standalone H2, ранний platform rollback, UDP cancellation и deadlines о�
 
 ### 25. Linux CLI и восстановление сети
 
+**Сверка 4 октября:** [итог Q25](../reports/AUDIT-Q25-LINUX-CLI-FINAL.md). F216/F217 исправлены; 2414 unit, 26 CLI/68 checks, 2 connected/32 checks и четыре fresh A/B пары PASS. Неизменённые сетевые реализации сверены по SHA/точному shared prefix; прежние recovery/soak scopes и D06 accepted limitation сохранены. Исторические открытые формулировки ниже относятся к прежним снимкам.
+
 [Q25-F067–F068](../reports/AUDIT-Q25-GATEWAY-IDENTITY.md): gateway привязан к RouteOwner;
 firewall проверяет namespace/TUN внутри операций, cleanup выполняется до закрытия TUN.
 При потере TUN правила очищаются в исходном namespace, sysctl scope сохраняется.
@@ -1529,13 +1531,13 @@ Endpoint route pin/same-LAN, full/split, include/exclude, leak policy/kill switc
 
 **Имеющаяся обвязка/fixtures:** `scripts/test_gateway_nat.py`, `scripts/test_tun_reclaim.py`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE / PASS.**
 
 **Поставщик пароля и изоляция features, 23 сентября 2026:**
 [Q25-F001 / Q33-F002 / Q14-F020 / Q34-F001](../reports/AUDIT-Q25-CREDENTIAL-COMMANDS.md):

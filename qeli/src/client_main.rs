@@ -31,26 +31,6 @@ struct Cli {
     config: PathBuf,
 }
 
-/// Read the `[logging]` section (level + optional file) so logs land where the
-/// router operator expects. Mirrors `main.rs::peek_logging`; falls back to
-/// (info, stderr) on any error.
-fn peek_logging(path: &PathBuf) -> (String, Option<String>, String) {
-    if let Ok(s) = std::fs::read_to_string(path) {
-        if let Ok(doc) = qeli::config::format::IniDoc::parse(&s) {
-            if let Some(log) = doc.section("logging") {
-                let level = log.get_or("level", "info").to_string();
-                let file = log
-                    .get("file")
-                    .filter(|f| !f.is_empty())
-                    .map(str::to_string);
-                let time_format = log.get_or("time_format", "datetime").to_string();
-                return (level, file, time_format);
-            }
-        }
-    }
-    ("info".to_string(), None, "datetime".to_string())
-}
-
 fn init_logging(level: &str, file: Option<&str>, time_format: &str) {
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level));
@@ -81,14 +61,7 @@ fn init_logging(level: &str, file: Option<&str>, time_format: &str) {
         }
     });
     if let Some(path) = file {
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
+        match qeli::client::open_log_file(std::path::Path::new(path)) {
             Ok(f) => {
                 builder.target(env_logger::Target::Pipe(Box::new(f)));
             }
@@ -104,7 +77,7 @@ fn init_logging(level: &str, file: Option<&str>, time_format: &str) {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let (level, log_file, time_format) = peek_logging(&cli.config);
+    let (level, log_file, time_format) = qeli::client::peek_logging(&cli.config);
     init_logging(&level, log_file.as_deref(), &time_format);
 
     let config_str = cli.config.to_str().ok_or_else(|| {
