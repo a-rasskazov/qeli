@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v46 -->
+<!-- normative-sync: full-system-audit-v47 -->
 
 **Current total, 5 October: 26/37 sections DONE/PASS (70.3%), 11 remaining. Q26 complete; next Q27.**
 
@@ -1807,6 +1807,13 @@ validation. 41 new Windows assertions; 184/184 platform + 543/543 shared PASS;
 5 old production failures reproduced, Wintun signatures/hash/licenses PASS.
 Q27 remains IN_PROGRESS: GUI/SCM/autostart and remaining adapters next;
 Windows VM network/sleep/boot runtime remains user SKIPPED.
+
+**5 October, GUI/control stage:** [Q27-F225–F228](../reports/AUDIT-Q27-WINDOWS-CONTROL.md):
+profile stop/publish/restart preserving intent, SCM pending-state refusal,
+scheduler exit/deadline/pipe drains and settings snapshots. 40 new assertions,
+224 Windows + fresh543 shared PASS; baseline 8 FAIL. Shared/native inputs unchanged;
+managed Git-SHA metadata changed, so the current DLL was tested again. Q27 IN_PROGRESS: existing registration
+trust and recovery/status/log/driver adapters next; user runtime SKIPPED retained.
 
 ### 28. macOS daemon, utun, pf and Network Extension
 

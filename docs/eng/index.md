@@ -389,3 +389,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q26: shared C# and managed/native — DONE/PASS](reports/AUDIT-Q26-MANAGED-FINAL.md)
 
 - [Q27: Windows storage — stage PASS, section IN_PROGRESS](reports/AUDIT-Q27-WINDOWS-STORAGE.md)
+
+- [Q27: service transitions and autostart — stage PASS](reports/AUDIT-Q27-WINDOWS-CONTROL.md)

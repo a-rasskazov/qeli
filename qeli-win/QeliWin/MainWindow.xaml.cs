@@ -50,6 +50,8 @@ public partial class MainWindow : Window
 
     // Windows-service mode: the VPN runs in the service; the GUI polls its status/log.
     private bool _serviceMode;
+    private bool _serviceBusy;
+    private bool _settingsOpen;
     private DispatcherTimer? _serviceTimer;
     private long _serviceLogPos;
 
@@ -215,14 +217,20 @@ public partial class MainWindow : Window
 
     private async Task OpenSettings()
     {
-        bool saved = SettingsWindow.Show(this, _profiles);
-        if (saved)
+        if (_settingsOpen || _serviceBusy || _toggleBusy || _exiting) return;
+        _settingsOpen = true;
+        bool previouslyEnabled = AppSettings.Current.ServiceEnabled;
+        try
         {
-            _tunnel.LogLevel = AppSettings.Current.LogLevel;
-            await ApplyServiceSettings();
-            ReapplyLanguage(); // language may have changed (live)
-            ConfigureProbeTimer(); // auto-poll toggle / interval may have changed
+            if (SettingsWindow.Show(this, _profiles))
+            {
+                _tunnel.LogLevel = AppSettings.Current.LogLevel;
+                await ApplyServiceSettings(connectRequested: !previouslyEnabled);
+                ReapplyLanguage();
+                ConfigureProbeTimer();
+            }
         }
+        finally { _settingsOpen = false; }
     }
 
     /// <summary>Resolve a saved profile reference (service / auto-connect) to a live profile.
@@ -319,56 +327,71 @@ public partial class MainWindow : Window
         catch { /* ignore transient IO */ }
     }
 
-    private async Task ApplyServiceSettings()
+    private async Task ApplyServiceSettings(bool connectRequested = false, VpnConfig? profileOverride = null)
     {
-        var s = AppSettings.Current;
+        if (_serviceBusy) return;
+        _serviceBusy = true;
+        ConnectBtn.IsEnabled = false;
         try
         {
-            if (s.ServiceEnabled)
+            var s = AppSettings.Current;
+            VpnConfig? snapshot = null;
+            if (s.ServiceEnabled || profileOverride != null)
             {
-                var p = ResolveProfile(s.ServiceProfile) ?? _profiles.FirstOrDefault();
-                if (p == null)
+                var p = profileOverride ?? ResolveProfile(s.ServiceProfile) ?? _profiles.FirstOrDefault();
+                if (p is null)
                 {
                     MessageBox.Show(this, Loc.T("NoServiceProfile"), Loc.T("ServiceWord"),
                         MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-                // Avoid two tunnels fighting over the Wintun adapter.
-                if (_status is VpnStatus.Connected or VpnStatus.Connecting)
+                snapshot = ServiceProfileTransition.Snapshot(p, s.LogLevel);
+                // Serialize with Start and stop retained Error/reconnect attempts too.
+                if (!_serviceMode)
+                {
                     await Task.Run(_tunnel.Stop);
-                p.LoggingLevel = s.LogLevel;
-                ServiceState.SaveProfile(p);
-                if (!ServiceManager.IsInstalled()) ServiceManager.Install();
-                ServiceManager.Start();
+                    _activeProfile = null;
+                }
             }
-            else if (ServiceManager.IsInstalled())
-            {
-                ServiceManager.Uninstall();
-            }
+            await Task.Run(() => ServiceProfileTransition.Current.Apply(snapshot, connectRequested));
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, Loc.F("ServiceApplyError", ex.Message),
                 Loc.T("ServiceWord"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        RefreshServiceMode();
+        finally
+        {
+            _serviceBusy = false;
+            RefreshServiceMode();
+            ConnectBtn.IsEnabled = _serviceMode || Selected != null;
+        }
     }
 
-    private void ToggleService()
+    private async Task ToggleService()
     {
+        if (_serviceBusy || _settingsOpen || _exiting) return;
+        _serviceBusy = true;
+        ConnectBtn.IsEnabled = false;
         try
         {
-            // The auto-started service may be running but intentionally idle. Toggle the
-            // persisted connection intent, not the SCM process state.
-            if (ServiceState.DesiredConnected()) ServiceManager.Stop();
-            else ServiceManager.Start();
+            await Task.Run(() =>
+            {
+                if (ServiceState.DesiredConnected()) ServiceManager.Stop();
+                else ServiceManager.Start();
+            });
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, Loc.F("ServiceControlError", ex.Message),
                 Loc.T("ServiceWord"), MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        ServicePollTick(null, EventArgs.Empty);
+        finally
+        {
+            _serviceBusy = false;
+            ConnectBtn.IsEnabled = true;
+            ServicePollTick(null, EventArgs.Empty);
+        }
     }
 
     /// <summary>Quit: tear the tunnel down, then shut the app down.
@@ -820,12 +843,21 @@ public partial class MainWindow : Window
 
     private async void EditProfile(VpnConfig p)
     {
+        if (_serviceBusy || _settingsOpen || _exiting) return;
         long openedAtRevision = _profileRevision;
         var edited = ConfigEditorWindow.Show(this, p);
         if (edited == null) return;
         if (_profileRevision != openedAtRevision)
         {
             MessageBox.Show(this, Loc.T("ProfileListChanged"), "Qeli",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        bool serviceProfile;
+        try { serviceProfile = _serviceMode && ServiceProfileTransition.Current.UsesProfile(p.Id); }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, Loc.F("ServiceApplyError", error.Message), Loc.T("ServiceWord"),
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -874,6 +906,8 @@ public partial class MainWindow : Window
             ProfilesList.SelectedItem = edited;
         });
         CheckReachability(edited);
+        if (serviceProfile)
+            await ApplyServiceSettings(profileOverride: edited);
         // If we just edited the live profile (e.g. changed the server IP), the running
         // tunnel is still on the OLD config — restart it on the edited one so the change
         // takes effect instead of the reconnect loop retrying the stale endpoint.
@@ -886,6 +920,22 @@ public partial class MainWindow : Window
 
     private async void DeleteProfile(VpnConfig p)
     {
+        if (_serviceBusy || _settingsOpen || _exiting) return;
+        try
+        {
+            if (_serviceMode && ServiceProfileTransition.Current.UsesProfile(p.Id))
+            {
+                MessageBox.Show(this, Loc.T("ServiceProfileDeleteBlocked"), Loc.T("ServiceWord"),
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, Loc.F("ServiceApplyError", error.Message), Loc.T("ServiceWord"),
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
         long openedAtRevision = _profileRevision;
         if (MessageBox.Show(this, Loc.F("DeleteConfirm", p.DisplayName), Loc.T("DeleteTitle"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -1150,7 +1200,8 @@ public partial class MainWindow : Window
     private bool _toggleBusy;
     private async void ToggleConnection()
     {
-        if (_serviceMode) { ToggleService(); return; }
+        if (_serviceBusy || _settingsOpen || _exiting) return;
+        if (_serviceMode) { await ToggleService(); return; }
         // Debounce: ignore re-entrant taps while a transition is in flight. This is the
         // fix for the "click once → window froze → clicked again → it disconnected then
         // reconnected" report: the second click used to queue behind the blocked UI

@@ -219,10 +219,14 @@ public static class ServiceState
         }
     }
 
-    public static void SaveProfile(VpnConfig cfg)
+    public static void SaveProfile(VpnConfig cfg) => PublishProfile(EncodeProfile(cfg));
+
+    internal static void PublishProfile(byte[] encrypted)
     {
+        if (encrypted.Length > MaximumProfileBytes)
+            throw new InvalidDataException("Service profile is too large");
         EnsureDir();
-        AtomicWrite(ProfileFile, EncodeProfile(cfg));
+        AtomicWrite(ProfileFile, encrypted);
     }
 
     public static VpnConfig? LoadProfile()

@@ -389,3 +389,5 @@
 - [Q26: общий C# и managed/native — DONE/PASS](reports/AUDIT-Q26-MANAGED-FINAL.md)
 
 - [Q27: Windows-хранилища — этап PASS, раздел IN_PROGRESS](reports/AUDIT-Q27-WINDOWS-STORAGE.md)
+
+- [Q27: переходы службы и автозапуск — этап PASS](reports/AUDIT-Q27-WINDOWS-CONTROL.md)

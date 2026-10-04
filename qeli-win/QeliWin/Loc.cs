@@ -28,6 +28,7 @@ internal static class PlatformStrings
         ["RunAtLogon"] = ("Start the app at Windows logon", "Запускать приложение при входе в Windows"),
         ["StartMinimized"] = ("Start minimized to tray", "Запускать свёрнутым в трей"),
         ["ServiceWord"] = ("Service", "Служба"),
+        ["ServiceProfileDeleteBlocked"] = ("This profile is configured for the Windows service. Disable the service or select another service profile in Settings before deleting it.", "Этот профиль используется службой Windows. Перед удалением отключите службу или выберите другой профиль службы в настройках."),
         ["NoServiceProfile"] = ("No service profile — create a profile first.", "Нет профиля для службы — создайте профиль."),
         ["ServiceApplyError"] = ("Could not apply service settings:\n{0}", "Не удалось применить настройки службы:\n{0}"),
         ["ServiceControlError"] = ("Service control error:\n{0}", "Ошибка управления службой:\n{0}"),

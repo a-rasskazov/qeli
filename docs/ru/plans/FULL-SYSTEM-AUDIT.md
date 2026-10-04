@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v46 -->
+<!-- normative-sync: full-system-audit-v47 -->
 
 **Текущий итог, 5 октября: 26/37 разделов DONE/PASS (70,3%), осталось 11. Q26 завершён; далее Q27.**
 
@@ -1818,6 +1818,13 @@ validation. 41 новая Windows проверка; 184/184 platform + 543/543 s
 5 старых production FAIL воспроизведены, Wintun signatures/hash/licenses PASS.
 Q27 остаётся IN_PROGRESS: GUI/SCM/autostart и остальные adapters далее;
 Windows VM network/sleep/boot runtime — пользовательский SKIPPED.
+
+**5 октября, GUI/control этап:** [Q27-F225–F228](../reports/AUDIT-Q27-WINDOWS-CONTROL.md):
+profile stop/publish/restart с сохранением intent, SCM pending-state refusal,
+scheduler exit/deadline/pipe drains и settings snapshot. 40 новых assertions,
+224 Windows + свежие543 shared PASS; baseline 8 FAIL. Shared/native inputs unchanged;
+managed metadata поменялись с Git SHA, поэтому текущая DLL проверена заново. Q27 IN_PROGRESS: existing registration
+trust и recovery/status/log/driver adapters далее; user runtime SKIPPED сохранён.
 
 ### 28. macOS: daemon, utun, pf и Network Extension
 

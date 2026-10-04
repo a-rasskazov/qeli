@@ -185,9 +185,13 @@ public static class ServiceManager
     private static extern bool CloseServiceHandle(IntPtr handle);
 
     // ── public API ────────────────────────────────────────────────────────────────
-    public static bool IsInstalled() =>
-        ServiceController.GetServices().Any(s =>
-            s.ServiceName.Equals(ServiceName, StringComparison.OrdinalIgnoreCase));
+    public static bool IsInstalled()
+    {
+        // Dispose every enumerated controller, including those after an early match.
+        var services = ServiceController.GetServices();
+        try { return services.Any(s => s.ServiceName.Equals(ServiceName, StringComparison.OrdinalIgnoreCase)); }
+        finally { foreach (var service in services) service.Dispose(); }
+    }
 
     public static bool IsRunning()
     {
@@ -283,11 +287,34 @@ public static class ServiceManager
         ServiceState.SetDesiredConnected(false);
         if (!IsInstalled()) return;
         using var sc = new ServiceController(ServiceName);
-        sc.Refresh();
-        if (sc.CanStop)
+        StopController(sc.Refresh, () => sc.Status, () => sc.CanStop, sc.Stop, sc.WaitForStatus);
+    }
+
+    internal static void StopController(Action refresh, Func<ServiceControllerStatus> status,
+        Func<bool> canStop, Action stop, Action<ServiceControllerStatus, TimeSpan> wait)
+    {
+        var elapsed = Stopwatch.StartNew();
+        void Wait(ServiceControllerStatus target)
         {
-            sc.Stop();
-            sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(20));
+            var remaining = TimeSpan.FromSeconds(20) - elapsed.Elapsed;
+            if (remaining <= TimeSpan.Zero) throw new System.TimeoutException("Service stop exceeded 20 seconds");
+            wait(target, remaining);
+            refresh();
+            if (status() != target)
+                throw new InvalidOperationException($"Service changed state after waiting for {target}; cleanup is not confirmed");
         }
+        refresh();
+        if (status() == ServiceControllerStatus.StartPending)
+            Wait(ServiceControllerStatus.Running);
+        if (status() == ServiceControllerStatus.Stopped) return;
+        if (status() == ServiceControllerStatus.StopPending)
+        {
+            Wait(ServiceControllerStatus.Stopped);
+            return;
+        }
+        if (!canStop())
+            throw new InvalidOperationException($"Service cannot stop in state {status()}; cleanup is not confirmed");
+        stop();
+        Wait(ServiceControllerStatus.Stopped);
     }
 }

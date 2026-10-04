@@ -34,6 +34,8 @@ public sealed class AppSettings
 
     public static AppSettings Load() => AppSettingsStore.Load<AppSettings>(FilePath, Options);
 
+    internal AppSettings Snapshot() => (AppSettings)MemberwiseClone();
+
     public void Save()
     {
         AppSettingsStore.Save(this, FilePath, Options);
