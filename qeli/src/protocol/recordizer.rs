@@ -345,7 +345,10 @@ impl Reassembler {
     /// Whole packets borrow the authenticated record directly, avoiding the old allocation per
     /// UDP datagram. Fragmented packets are assembled in one pre-sized buffer and borrowed from
     /// that allocation for the duration of the callback. The compatibility [`Self::decode`]
-    /// wrapper remains for callers that need owned packets.
+    /// wrapper remains for callers that need owned packets. No callback runs unless the
+    /// complete envelope succeeds, so rejected records cannot apply management effects.
+    /// Reassembly state is incremental: accepted fragments may remain after a later error;
+    /// conflicting state is removed and completed packets in a rejected envelope are dropped.
     pub fn decode_with(
         &mut self,
         record: &[u8],
@@ -367,6 +370,17 @@ impl Reassembler {
         if &record[..MAGIC.len()] != MAGIC {
             return Err(RecordizerError::Unsupported);
         }
+        // Keep the common single-packet case allocation-free. Whole packets still borrow
+        // record; completed fragments transfer their existing allocation without copying.
+        let mut first_packet: Option<std::borrow::Cow<'_, [u8]>> = None;
+        let mut extra_packets = Vec::new();
+        let mut defer = |packet| {
+            if first_packet.is_none() {
+                first_packet = Some(packet);
+            } else {
+                extra_packets.push(packet);
+            }
+        };
         let mut cursor = MAGIC.len();
         while cursor < record.len() {
             if record.len() - cursor < FRAME_HEADER_LEN {
@@ -404,7 +418,7 @@ impl Reassembler {
                     self.remove(packet_id);
                     return Err(RecordizerError::Conflict);
                 }
-                completed(payload);
+                defer(std::borrow::Cow::Borrowed(payload));
                 continue;
             }
             if let Some(packet) = self.pending.get(&packet_id) {
@@ -474,11 +488,14 @@ impl Reassembler {
                     .remove(&packet_id)
                     .expect("complete packet exists");
                 self.buffered_bytes = self.buffered_bytes.saturating_sub(packet.total_len);
-                completed(&packet.bytes);
+                defer(std::borrow::Cow::Owned(packet.bytes));
             }
         }
         if cursor == MAGIC.len() {
             return Err(RecordizerError::InvalidMetadata);
+        }
+        for packet in first_packet.into_iter().chain(extra_packets) {
+            completed(&packet);
         }
         Ok(())
     }
@@ -525,6 +542,76 @@ mod tests {
             max_fragments_per_packet: 64,
             max_packet_bytes: 16 * 1024,
         }
+    }
+
+    fn frame(id: u32, total: u16, offset: u16, payload: &[u8]) -> Vec<u8> {
+        let mut frame = id.to_be_bytes().to_vec();
+        frame.extend_from_slice(&total.to_be_bytes());
+        frame.extend_from_slice(&offset.to_be_bytes());
+        frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn rejected_envelope_delivers_no_whole_packet_callbacks() {
+        for suffix in [vec![0], frame(8, 0, 0, b"x"), frame(8, 3, 3, b"x")] {
+            let mut record = MAGIC.to_vec();
+            record.extend(frame(7, 3, 0, b"one"));
+            record.extend(suffix);
+            let mut calls = 0;
+            assert!(Reassembler::new(config(256))
+                .decode_with(&record, |_| calls += 1)
+                .is_err());
+            assert_eq!(calls, 0);
+            assert!(Reassembler::new(config(256)).decode(&record).is_err());
+        }
+    }
+
+    #[test]
+    fn later_conflict_or_resource_error_delivers_no_prefix_callbacks() {
+        for resource in [false, true] {
+            let mut cfg = config(256);
+            cfg.max_inflight_packets = 1;
+            let mut rx = Reassembler::new(cfg);
+            let mut initial = MAGIC.to_vec();
+            initial.extend(frame(1, 6, 0, b"abc"));
+            rx.decode(&initial).unwrap();
+            let mut record = MAGIC.to_vec();
+            record.extend(frame(7, 3, 0, b"one"));
+            record.extend(if resource {
+                frame(2, 6, 0, b"def")
+            } else {
+                frame(1, 6, 2, b"XYZ")
+            });
+            let mut calls = 0;
+            assert_eq!(
+                rx.decode_with(&record, |_| calls += 1),
+                Err(if resource {
+                    RecordizerError::ResourceLimit
+                } else {
+                    RecordizerError::Conflict
+                })
+            );
+            assert_eq!(calls, 0);
+            assert_eq!(rx.buffered_bytes, if resource { 6 } else { 0 });
+        }
+    }
+
+    #[test]
+    fn rejected_envelope_drops_completed_fragment_allocation() {
+        let mut rx = Reassembler::new(config(256));
+        let mut initial = MAGIC.to_vec();
+        initial.extend(frame(1, 6, 0, b"abc"));
+        rx.decode(&initial).unwrap();
+        let mut record = MAGIC.to_vec();
+        record.extend(frame(1, 6, 3, b"def"));
+        record.push(0);
+        let mut calls = 0;
+        assert!(rx.decode_with(&record, |_| calls += 1).is_err());
+        assert_eq!(calls, 0);
+        assert_eq!(rx.buffered_bytes, 0);
+        assert!(rx.pending.is_empty());
     }
 
     #[test]

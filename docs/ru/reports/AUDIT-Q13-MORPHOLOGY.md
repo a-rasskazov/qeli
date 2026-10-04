@@ -1,6 +1,61 @@
-# Q13: recordizer, padding и shaping — пакет исправлений shaping
+# Q13: recordizer, padding и shaping
 
-<!-- normative-sync: audit-q13-shaping-v1 -->
+<!-- normative-sync: audit-q13-morphology-v2 -->
+
+## 4 октября: padding, normalization и обработка ошибок mux
+
+**Новый пакет PASS; Q13 IN_PROGRESS.** Код `97cbe865a8a196e203bc6b3416d2e066ab6e6ebf`,
+Linux-кандидат `0e51469f3a879e1c2061bcbf02b5ece223d600fce5fea6cddbc9aba4fa852b68`. Evidence:
+`release/certification/evidence/q13-morphology-r2-20261004.json`.
+Общий план остаётся **12/37 DONE/PASS (32,4%)**.
+
+| ID | Исправление |
+|---|---|
+| Q13-M001, P2 | Normalization округлял только payload, затем прибавлял уже созданный random padding: 70+3 байта превращались в 131 вместо цели 128. Общий helper теперь выбирает цель для data+всего padding; вызов выполняется и когда сам payload уже равен одному из размеров. Исправлены TCP client/server и оба UDP client пути; UDP server использует общий server helper. |
+| Q13-M002, P2 | Выключенный padding принимал NaN/Inf; AuthOK сериализовал значение в null, после чего клиент не мог разобрать ответ. Вероятности и recordizer ratios должны быть конечными даже при выключенной функции. Конечные dormant значения по-прежнему сохраняются без принудительного сброса. |
+| Q13-M003, P2 | decode_with вызывал callback для корректного первого пакета до обнаружения ошибки в следующем frame; клиент мог уже применить management event. Теперь никакой callback не выполняется до успешного разбора всего envelope, включая конфликты и resource errors. |
+| Q13-M004, P3 | Сравнение sample > probability допускало padding при probability=0 и draw=0. Теперь используется строгое sample < probability, с отказом для нечисловых значений публичного API. |
+
+Первые три расхождения воспроизведены на прежнем shipping release rlib.
+Нулевая вероятность проверена детерминированно на границе RNG; случайный baseline
+FAIL для события с крайне малой вероятностью не заявляется.
+
+Reassembly **не является транзакцией внутреннего состояния**: принятые частичные
+фрагменты могут остаться после последующей ошибки, конфликт удаляется, завершённые
+пакеты отклонённого envelope отбрасываются. Гарантия относится к выдаче callback.
+Целые пакеты продолжают заимствовать authenticated record; завершённые фрагменты
+передают своё существующее allocation. Single-packet completion не выделяет список.
+
+Проверки этого кандидата:
+
+- **2365 Linux PASS / 60 ignored**, шесть новых тестов, full/minimal Clippy и fmt.
+- **17 проверок production INI/profile validator**:NaN/Inf отклоняются и при выключенной функции,конечные dormant значения сохраняются через INI roundtrip.
+- Shipping rlib campaign: **714373 assertions**, 10000 roundtrips,
+  40000 inner packets, 40000 malformed records, **18000 combined padding cases**,
+  **10000 rejected callback cases** и 64 simultaneous fragment completions.
+  Peak RSS **11144 KiB**; это bounded invariant campaign, не coverage-guided fuzzing.
+- **6 TCP/UDP cases / 62 fixture checks**: legacy и required recordizer,
+  normalization с padding on/off и три bonded TCP flows. В каждой стороне одинаковый
+  iperf workload и ping после нагрузки; snapshots и рабочий сервис сохранены.
+- Свежая матрица **18/18 / 327 assertions**, aggregate IPv4/IPv6 leak,
+  **100 TCP + 100 QUIC path flips / 33 checks**, отдельно **24 REALITY-TLS/H2 checks**.
+- На .10 raw snapshot=false сохранён: допускается только точно проверенная разница известных legacy firewall rules; сервис и executable не менялись. .11 snapshots совпадают.
+- Четыре native A/B артефакта, copies, exports и provenance PASS. Это не новый
+  installed-app E2E; Mac/router/Windows VM runtime исключены пользователем.
+
+Plaintext bucket targets включают data+padding, но не AEAD/carrier headers.
+Кампания проверяет composition и обратное декодирование; header PCAP сам по себе не
+доказывает encrypted plaintext bucket. Предыдущие shaping-rate замеры ниже сохраняют
+свой исходный кандидат; новый универсальный benchmark/DPI-resistance не заявляется.
+
+Review sender batching, flush/PMTU raise, caps, duplicate/conflict/expiry, cancellation
+на carrier boundaries и общих бюджетов выполнен. Предполагаемый wrap millisecond
+таймеров не подтвердился: helper conversions saturate, select-ветви выключенных
+scheduler gated. Оставшаяся работа Q13: удаление и проверка двух выключенных в production
+UDP stealth ветвей; документированная TCP-only политика должна сохраниться.
+
+## Предыдущий пакет shaping
+
 
 **4 октября 2026. Пакет: PASS. Раздел Q13: IN_PROGRESS.**
 Общий план: **12/37 DONE/PASS (32,4%)**. Полный аудит этим пакетом не завершён.

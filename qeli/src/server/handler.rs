@@ -2243,7 +2243,7 @@ pub(crate) fn encrypt_server_stream_payload(
         pad_cfg.probability,
         padding,
     );
-    if normalization_padding != 0 {
+    if norm_cfg.enabled && !norm_cfg.round_sizes.is_empty() {
         obf.append_normalization_padding_into(
             data.len(),
             &norm_cfg.round_sizes,

@@ -1,6 +1,61 @@
-# Q13: recordizer, padding and shaping — shaping fix batch
+# Q13: recordizer, padding and shaping
 
-<!-- normative-sync: audit-q13-shaping-v1 -->
+<!-- normative-sync: audit-q13-morphology-v2 -->
+
+## 4 October: padding, normalization and mux error handling
+
+**New batch PASS; Q13 IN_PROGRESS.** Core `97cbe865a8a196e203bc6b3416d2e066ab6e6ebf`,
+Linux candidate `0e51469f3a879e1c2061bcbf02b5ece223d600fce5fea6cddbc9aba4fa852b68`. Evidence:
+`release/certification/evidence/q13-morphology-r2-20261004.json`.
+Overall remains **12/37 DONE/PASS (32.4%)**.
+
+| ID | Correction |
+|---|---|
+| Q13-M001, P2 | Normalization rounded payload alone then added existing random padding:70+3 bytes became131 instead of128. The shared helper now targets data+all padding, including when payload already equals a bucket. TCP client/server and both UDP client paths updated; UDP server uses the common server helper. |
+| Q13-M002, P2 | Disabled padding accepted NaN/Inf; AuthOK serialized null and the client could not deserialize it. Padding probability and recordizer ratios must remain finite even while disabled. Finite dormant tuning is retained without resets. |
+| Q13-M003, P2 | decode_with called back on a valid prefix before a later frame error, allowing client management side effects. No callback now runs until the entire envelope succeeds, including conflict and resource checks. |
+| Q13-M004, P3 | sample > probability allowed padding when probability=0 and draw=0. Strict sample < probability now enforces the endpoint and rejects nonfinite public API values. |
+
+The first three differences were reproduced against the previous shipping release rlib.
+Zero probability is a deterministic RNG boundary check; no rare random baseline failure
+is claimed.
+
+Reassembly **does not transact internal state**: accepted partial fragments may remain
+following a later error, conflicting state is removed and completed packets in rejected
+envelopes are dropped. The guarantee applies to callbacks. Whole packets still borrow
+the authenticated record; completed fragments transfer their existing allocation.
+The single-packet completion path needs no completion-list allocation.
+
+This candidate's checks:
+
+- **2365 Linux PASS / 60 ignored**, six new tests, full/minimal Clippy and fmt.
+- **17 production INI/profile-validator checks**:NaN/Inf rejected even while disabled;finite dormant tuning survives INI roundtrip.
+- Shipping rlib campaign: **714373 assertions**, 10000 roundtrips,
+  40000 inner packets,40000 malformed records,**18000 combined padding cases**,
+  **10000 rejected callback cases**,64 simultaneous fragment completions.
+  Peak RSS **11144 KiB**;bounded invariant campaign,not coverage-guided fuzzing.
+- **6 TCP/UDP cases / 62 fixture checks**:legacy/required recordizer,
+  normalization with padding on/off and three bonded TCP flows. Identical directional
+  iperf plus post-load ping;snapshots and working service preserved.
+- Fresh **18/18 matrix / 327 assertions**,aggregate IPv4/IPv6 leak,
+  **100 TCP + 100 QUIC path flips / 33 checks**,separate **24 REALITY-TLS/H2 checks**.
+- Desktop .10 retains raw snapshot=false:only the exact verified known legacy firewall-rule delta is accepted;service and executable unchanged. .11 snapshots match.
+- Four native A/B artifacts,copies,exports and provenance PASS. No fresh installed-app
+  E2E;Mac/router/Windows VM runtime excluded by the user.
+
+Plaintext bucket targets include data+padding,not AEAD/carrier headers. The campaign
+verifies composition and inverse decoding;header PCAP alone cannot prove encrypted
+plaintext buckets. Earlier shaping-rate measurements below retain their original
+candidate;no universal new benchmark/DPI resistance claim.
+
+Sender batching,flush/PMTU raise,caps,duplicates/conflicts/expiry,cancellation at carrier
+boundaries and shared budgets reviewed. Suspected millisecond wrapping was not confirmed:
+helper conversions saturate and disabled scheduler select arms are gated.
+Remaining Q13 work:remove and verify two production-disabled UDP stealth branches while
+preserving the documented TCP-only policy.
+
+## Previous shaping batch
+
 
 **4 October 2026. Batch: PASS. Q13: IN_PROGRESS.** Overall **12/37 DONE/PASS (32.4%)**.
 This does not complete the entire audit. Source: `82c1ad770a6fa43302263babd67dab4e41043e9b`; Linux candidate: `d68bb6dab55234454821a22da1342469759a5d39aaa2c6915781acddddf4d10b`.

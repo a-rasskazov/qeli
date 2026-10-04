@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v29 -->
+<!-- normative-sync: full-system-audit-v30 -->
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -490,6 +490,9 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 **Статус: DONE/PASS.**
 
 ### 13. Recordizer, padding и shaping
+
+**4 октября, morphology batch PASS:** ещё четыре исправления padding/normalization/mux,2365 Linux PASS,6 combined TCP/UDP cases,свежие matrix/soak/native A/B. [Evidence и оставшиеся две UDP ветви](../reports/AUDIT-Q13-MORPHOLOGY.md).
+
 
 **4 октября, shaping batch PASS:** [пять исправлений и замеры](../reports/AUDIT-Q13-MORPHOLOGY.md):5 baseline FAIL,7 новых тестов,2359 Linux PASS,10 network cases/102 assertions,recordizer campaign,свежие matrix/soak/native A/B. Review recordizer/padding/normalization продолжается;общий итог остаётся12/37 (32,4%).
 

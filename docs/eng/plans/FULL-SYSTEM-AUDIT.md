@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v29 -->
+<!-- normative-sync: full-system-audit-v30 -->
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -485,6 +485,9 @@ Derive supported runtime/Quick Start combinations: plain/fake-tls/reality/realit
 **Status: DONE/PASS.**
 
 ### 13. Recordizer, padding and shaping
+
+**4 October,morphology batch PASS:** four more padding/normalization/mux corrections,2365 Linux PASS,6 combined TCP/UDP cases,fresh matrix/soak/native A/B. [Evidence and remaining two UDP branches](../reports/AUDIT-Q13-MORPHOLOGY.md).
+
 
 **4 October, shaping batch PASS:** [five fixes and measurements](../reports/AUDIT-Q13-MORPHOLOGY.md):5 baseline FAIL,7 new tests,2359 Linux PASS,10 network cases/102 assertions,recordizer campaign,fresh matrix/soak/native A/B. Recordizer/padding/normalization review continues;overall remains12/37 (32.4%).
 

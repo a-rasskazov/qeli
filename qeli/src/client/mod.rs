@@ -4863,7 +4863,7 @@ fn encrypt_client_payload(
             cfg.padding_prob,
             padding,
         );
-        if normalization_padding != 0 {
+        if cfg.norm_enabled && !cfg.norm_sizes.is_empty() {
             obf.append_normalization_padding_into(
                 data.len(),
                 &cfg.norm_sizes,
@@ -8810,7 +8810,9 @@ async fn send_client_udp_payloads(
             obfuscation.padding.probability,
             padding,
         );
-        if normalization_padding != 0 {
+        if obfuscation.traffic_normalization.enabled
+            && !obfuscation.traffic_normalization.round_sizes.is_empty()
+        {
             obf.append_normalization_padding_into(
                 payload.len(),
                 &obfuscation.traffic_normalization.round_sizes,
@@ -11369,7 +11371,7 @@ pub(crate) async fn run_udp_tunnel(
                         padding_prob,
                         &mut padding,
                     );
-                    if normalization_padding != 0 {
+                    if eff_obf.traffic_normalization.enabled && !norm_sizes.is_empty() {
                         obf.append_normalization_padding_into(
                             ip_packet.len(),
                             norm_sizes,

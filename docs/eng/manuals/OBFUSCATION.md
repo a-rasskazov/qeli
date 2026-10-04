@@ -215,3 +215,24 @@ checks positive, ordered saved ranges when shaping is disabled.
 `budget_bytes_per_sec` meters requested cover-padding bytes. AEAD and outer
 carrier headers increase actual interface traffic; this is not a total wire-rate
 limit. Shaping and recordization do not guarantee DPI evasion.
+
+
+## Combined padding targets and malformed mux-record handling
+
+<!-- normative-sync: morphology-contract-v1 -->
+
+`obf.traffic_normalization.round_sizes` targets **data + all padding** before encryption.
+Random padding is generated first;the nearest fitting target includes those bytes:
+payload70 + padding3 with target128 gets55 additional bytes,not58. AEAD and the outer
+carrier add their own overhead. With no target below the carrier budget,normalization
+adds nothing;existing padding remains.
+
+`obf.padding.probability = 0` means exactly no random padding;normalization can add its
+own bytes independently. NaN/Inf are rejected even with padding disabled or
+`obf.recordizer.policy = off` because service API/AuthOK cannot preserve them. Other
+finite dormant tuning is retained;active features validate their ranges.
+
+If any mux-envelope frame errors,no completed packet from that record reaches the
+callback. Internal reassembly state remains incremental:accepted partial fragments may
+remain until timeout;conflicting state is removed. This promises neither full receiver
+state rollback nor a wire-format change.

@@ -339,6 +339,11 @@ impl PushedObf {
     /// and the client AuthOK parser from silently accepting different value domains.
     pub fn validate(&self, label: &str) -> anyhow::Result<()> {
         let padding = &self.padding;
+        // Disabled tuning still crosses AuthOK/service JSON. Nonfinite floats become
+        // null on serialization and cannot deserialize back into f64.
+        if !padding.probability.is_finite() {
+            anyhow::bail!("{label}.padding.probability must be finite even when disabled");
+        }
         if padding.enabled {
             if padding.min_bytes > padding.max_bytes {
                 anyhow::bail!("{label}.padding.min_bytes must be <= max_bytes");
@@ -517,6 +522,12 @@ impl RecordizerConfig {
         // `policy = off` selects the legacy packet-per-record path. Keep the dormant
         // tuning losslessly in the config so an operator can switch back later, but do
         // not let values hidden by every editor block an unrelated save/startup.
+        if !self.record.small_min_ratio.is_finite()
+            || !self.record.small_max_ratio.is_finite()
+            || !self.record.full_probability.is_finite()
+        {
+            anyhow::bail!("{label}.record ratios and probability must be finite even when off");
+        }
         if self.is_off() {
             return Ok(());
         }
@@ -1040,6 +1051,38 @@ enabled = true
         assert!(out.contains("brute_force.max_attempts = 4"));
         // Input had no trailing newline → output has none either.
         assert!(!out.ends_with('\n'));
+    }
+
+    #[test]
+    fn disabled_obfuscation_rejects_nonfinite_json_values_but_keeps_finite_tuning() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut pushed = super::PushedObf::default();
+            pushed.padding.enabled = false;
+            pushed.padding.probability = value;
+            assert!(pushed.validate("obf").is_err());
+            for field in 0..3 {
+                let mut cfg = super::RecordizerConfig::default();
+                match field {
+                    0 => cfg.record.small_min_ratio = value,
+                    1 => cfg.record.small_max_ratio = value,
+                    _ => cfg.record.full_probability = value,
+                }
+                assert!(cfg.validate("recordizer").is_err());
+            }
+        }
+        let mut pushed = super::PushedObf::default();
+        pushed.padding.enabled = false;
+        pushed.padding.probability = -10.0;
+        let mut recordizer = super::RecordizerConfig::default();
+        recordizer.record.small_min_ratio = -10.0;
+        recordizer.record.small_max_ratio = 42.0;
+        recordizer.record.full_probability = 3.0;
+        pushed.recordizer = Some(recordizer);
+        pushed.validate("obf").unwrap();
+        let wire = serde_json::to_string(&pushed).unwrap();
+        let restored: super::PushedObf = serde_json::from_str(&wire).unwrap();
+        assert_eq!(restored.padding.probability, -10.0);
+        assert_eq!(restored.recordizer.unwrap().record.small_max_ratio, 42.0);
     }
 
     #[test]

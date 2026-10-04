@@ -215,3 +215,24 @@ carrier/path budget. Эти проверки общие для локально�
 `budget_bytes_per_sec` считает запрошенные байты cover-padding; заголовки AEAD и
 внешнего carrier увеличивают фактический трафик. Это не полный лимит трафика на
 сетевой интерфейс. Shaping и recordizer не дают гарантии обхода DPI.
+
+
+## Совместное округление padding и обработка повреждённых mux-records
+
+<!-- normative-sync: morphology-contract-v1 -->
+
+`obf.traffic_normalization.round_sizes` задаёт размер **data + всего padding** перед
+шифрованием. Сначала создаётся random padding, затем выбирается ближайшая подходящая
+цель с учётом этих байт: payload70 + padding3 при цели128 получает ещё55, а не58 байт.
+AEAD и внешний carrier добавляют собственный overhead. Если цели под carrier budget
+нет, normalization ничего не добавляет; уже созданный padding сохраняется.
+
+`obf.padding.probability = 0` означает точное отсутствие random padding; normalization
+может независимо добавить свои байты. NaN/Inf запрещены даже при выключенном padding
+или `obf.recordizer.policy = off`: service API/AuthOK не могут сохранить такие значения.
+Остальные конечные dormant значения сохраняются, активная функция проверяет свой диапазон.
+
+При ошибке любого frame mux-envelope ни один завершённый пакет этой записи не выдаётся
+callback. Внутреннее reassembly-состояние остаётся incremental: принятые частичные
+фрагменты могут сохраняться до timeout, конфликтующие удаляются. Это не обещание rollback
+всего receiver state и не изменение wire format.
