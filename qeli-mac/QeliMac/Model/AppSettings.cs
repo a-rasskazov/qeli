@@ -34,6 +34,9 @@ public sealed class AppSettings
 
     public static AppSettings Load() => AppSettingsStore.Load<AppSettings>(FilePath, Options);
 
+    internal static AppSettings Snapshot(AppSettings source) =>
+        JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(source, Options), Options)!;
+
     public void Save()
     {
         AppSettingsStore.Save(this, FilePath, Options);

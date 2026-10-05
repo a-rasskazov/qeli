@@ -2,6 +2,7 @@ using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
 using QeliMac.Model;
+using QeliMac.Service;
 using QeliMac.Vpn;
 using Qeli.Shared.Model;
 
@@ -22,6 +23,7 @@ public static class CliRunner
         return verb.ToLowerInvariant() switch
         {
             "selftest" => SelfTest(),
+            "control-selftest" => ControlSelfTest(),
             "storage-selftest" => rest is ["--key-probe", var directory]
                 ? MacStorageSelfTest.RunKeyProbe(directory) : StorageSelfTest(),
             "pf-selftest-rules" => PfSelfTestRules(rest),
@@ -35,7 +37,7 @@ public static class CliRunner
 
     private static int Usage()
     {
-        Console.WriteLine("Usage: QeliMac [selftest | storage-selftest | pf-selftest-rules <path> | handshake <link|ini|file> | connect <link|ini|file> [seconds] | genassets <dir> | genicns <out.icns>]");
+        Console.WriteLine("Usage: QeliMac [selftest | storage-selftest | control-selftest | pf-selftest-rules <path> | handshake <link|ini|file> | connect <link|ini|file> [seconds] | genassets <dir> | genicns <out.icns>]");
         return 2;
     }
 
@@ -48,6 +50,18 @@ public static class CliRunner
         }
         KillSwitch.WriteRuntimeSelfTestRules(args[0]);
         return 0;
+    }
+
+    private static int ControlSelfTest()
+    {
+        int count = 0, failed = 0;
+        void Check(string name, bool ok)
+        {
+            count++; Console.WriteLine($"  [{(ok ? "PASS" : "FAIL")}] {name}"); if (!ok) failed++;
+        }
+        ServiceControlSelfTest.Run(Check);
+        Console.WriteLine($"MAC_CONTROL_CHECKS={count}; FAILED={failed}");
+        return failed == 0 ? 0 : 1;
     }
 
     private static int StorageSelfTest()
@@ -78,6 +92,7 @@ public static class CliRunner
         Console.WriteLine("qeli-mac platform self-test");
         EncryptedEnvelope.RunSelfTests(Check);
         MacStorageSelfTest.Run(Check);
+        ServiceControlSelfTest.Run(Check);
         DnsJournal.RunSelfTests(Check);
         NetworkConfigurator.RunRouteLifecycleSelfTest(Check);
         NetworkConfigurator.RunRoamingRouteSelfTest(Check);

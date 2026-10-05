@@ -12,15 +12,7 @@ using Qeli.Shared.Vpn;
 namespace QeliWin.Service;
 
 /// <summary>Status snapshot the service writes and the GUI polls.</summary>
-public sealed class ServiceStatus
-{
-    public string Status { get; set; } = "Disconnected";
-    public string? Extra { get; set; }
-    public DateTime Time { get; set; }
-    public long BytesUp { get; set; }
-    public long BytesDown { get; set; }
-    public DateTime? Since { get; set; }
-}
+public sealed class ServiceStatus : DesktopServiceStatus { }
 
 /// <summary>
 /// Shared state between the Windows Service (writer) and the GUI (reader), stored under
@@ -283,16 +275,7 @@ public static class ServiceState
         catch (FileNotFoundException) { return null; }
     }
 
-    internal static ServiceStatus DecodeStatus(byte[] bytes)
-    {
-        var snapshot = JsonSerializer.Deserialize<ServiceStatus>(StrictUtf8.GetString(bytes))
-            ?? throw new InvalidDataException("Service status is empty");
-        if (!Enum.TryParse<VpnStatus>(snapshot.Status, out var status) || !Enum.IsDefined(status)
-            || snapshot.Status != status.ToString() || snapshot.Time == default
-            || snapshot.BytesUp < 0 || snapshot.BytesDown < 0 || snapshot.Extra?.Length > 2048)
-            throw new InvalidDataException("Invalid service status snapshot");
-        return snapshot;
-    }
+    internal static ServiceStatus DecodeStatus(byte[] bytes) => DesktopServiceStatus.Decode<ServiceStatus>(bytes);
 
     public static string ReadLog()
     {

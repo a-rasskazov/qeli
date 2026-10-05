@@ -1,6 +1,6 @@
 using Qeli.Shared.Model;
 
-namespace QeliWin.Service;
+namespace QeliMac.Service;
 
 // Only OS adapters live here; transition decisions are shared by both desktop clients.
 internal sealed class ServiceProfileTransition(
@@ -15,7 +15,11 @@ internal sealed class ServiceProfileTransition(
     private readonly DesktopServiceProfileTransition Transition = new(
         installed, desiredConnected, readProfile, stop, publish, install, start, uninstall,
         ServiceState.EncodeProfile, validateRegistration);
-    internal void Apply(VpnConfig? profile, bool connectRequested) => Transition.Apply(profile, connectRequested);
+    internal void Apply(VpnConfig? profile, bool connectRequested)
+    {
+        using var control = ServiceState.EnterControl();
+        Transition.Apply(profile, connectRequested);
+    }
     internal bool UsesProfile(string id) => Transition.UsesProfile(id);
     internal static VpnConfig Snapshot(VpnConfig profile, string logLevel) => DesktopServiceProfileTransition.Snapshot(profile, logLevel);
 }

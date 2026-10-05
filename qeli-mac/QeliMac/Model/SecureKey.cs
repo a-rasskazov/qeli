@@ -36,37 +36,13 @@ public static class SecureKey
         return code == 0;
     }
 
-    private static (int, string) Run(string args, string? stdin = null)
+    private static (int, string) Run(string args)
     {
         try
         {
-            var psi = new ProcessStartInfo("/usr/bin/security", args)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                RedirectStandardInput = stdin != null,
-                UseShellExecute = false,
-            };
-            using var p = Process.Start(psi)!;
-            // Drain both pipes concurrently and bound the wait: reading stdout to EOF and
-            // only then stderr deadlocks if `security` fills the stderr buffer first, and
-            // an unbounded WaitForExit lets a Keychain prompt hang the app. (C-19/C-24)
-            var so = p.StandardOutput.ReadToEndAsync();
-            var se = p.StandardError.ReadToEndAsync();
-            if (stdin != null)
-            {
-                p.StandardInput.Write(stdin);
-                p.StandardInput.Close();
-            }
-            if (!p.WaitForExit(20_000))
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                return (-1, "");
-            }
-            _ = se.GetAwaiter().GetResult();
-            return (p.ExitCode, so.GetAwaiter().GetResult());
+            var result = ToolProcess.Run(new ProcessStartInfo("/usr/bin/security", args));
+            return (result.ExitCode, result.Output);
         }
         catch { return (-1, ""); }
     }
-
 }

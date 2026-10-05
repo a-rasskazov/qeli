@@ -16,8 +16,7 @@ internal readonly record struct ServiceObservation(VpnStatus Status, string? Ext
         if (state != ServiceControllerStatus.Running)
             return new(VpnStatus.Error, $"Service state: {state}", null);
         if (snapshot == null) return new(VpnStatus.Error, "Service status is unavailable", null);
-        var age = now.ToUniversalTime() - snapshot.Time.ToUniversalTime();
-        if (age > TimeSpan.FromSeconds(10) || age < TimeSpan.FromSeconds(-5))
+        if (!Qeli.Shared.Model.DesktopServiceStatus.Fresh(snapshot, now, TimeSpan.FromSeconds(10)))
             return new(VpnStatus.Error, "Service status is stale; tunnel state is unknown", null);
         if (!Enum.TryParse<VpnStatus>(snapshot.Status, out var status) || !Enum.IsDefined(status)
             || snapshot.Status != status.ToString())

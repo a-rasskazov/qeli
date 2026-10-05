@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v50 -->
+<!-- normative-sync: full-system-audit-v51 -->
 
 **Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: этап хранения завершён.**
 
@@ -1848,6 +1848,8 @@ Daemon IPC/owner/mode, Keychain, selected profile, Intel/ARM ABI и DNS journal.
 **Статус: IN_PROGRESS.**
 
 **5 октября: этап хранения PASS.** [F240–F242](../reports/AUDIT-Q28-MACOS-STORAGE.md): 54 storage PASS, 5 baseline FAIL; Keychain errors/duplicate/key creation concurrency, strict key files/growth limits, no quarantine on key-provider failures. Реальный Mac USER SKIPPED. Далее daemon/helper/selected profile/utun/pf/Swift; полный раздел не закрыт. План 27/37 (73,0%).
+
+**5 октября: этап daemon/control PASS.** [F243–F248](../reports/AUDIT-Q28-MACOS-CONTROL.md):83 control +54 storage +325 Windows +549 shared PASS;5 ожидаемых baseline FAIL. Реальный Mac USER SKIPPED. Далее utun/pf/DNS/Swift. План27/37(73,0%).
 
 ### 29. Android: VpnService, JNI и lifecycle
 

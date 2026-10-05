@@ -12,15 +12,7 @@ using Qeli.Shared.Vpn;
 namespace QeliMac.Service;
 
 /// <summary>Status snapshot the daemon writes and the GUI polls.</summary>
-public sealed class ServiceStatus
-{
-    public string Status { get; set; } = "Disconnected";
-    public string? Extra { get; set; }
-    public DateTime Time { get; set; }
-    public long BytesUp { get; set; }
-    public long BytesDown { get; set; }
-    public DateTime? Since { get; set; }
-}
+public sealed class ServiceStatus : DesktopServiceStatus { }
 
 /// <summary>
 /// Shared state between the launchd daemon (writer, runs as root) and the GUI (reader),
@@ -36,6 +28,30 @@ public static class ServiceState
     public static string DesiredConnectionFile => Path.Combine(Dir, "service-connect.enabled");
 
     private static readonly object _logLock = new();
+    private static readonly ServiceControlLock ControlLock = new(OpenControlLock);
+    internal static IDisposable EnterControl() => ControlLock.Enter();
+
+    private static IDisposable OpenControlLock()
+    {
+        EnsureDir();
+        if (!OperatingSystem.IsMacOS())
+            return new FileStream(Path.Combine(Dir, ".service-control.lock"),
+                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using var directory = OpenValidatedDirectory();
+        int fd = openat(directory.DangerousGetHandle().ToInt32(), ".service-control.lock",
+            0x2 | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0x180); // O_RDWR, 0600
+        if (fd < 0) throw new IOException($"Cannot open daemon control lock: errno {Marshal.GetLastPInvokeError()}");
+        var handle = new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+        try
+        {
+            if (FStat(fd, out var stat) != 0) throw new IOException("Cannot inspect daemon control lock");
+            ValidateChild(stat, ".service-control.lock", privateRead: true);
+            if (flock(fd, 0x2 | 0x4) != 0) // LOCK_EX | LOCK_NB (XNU sys/fcntl.h)
+                throw new IOException($"Daemon control is busy: errno {Marshal.GetLastPInvokeError()}");
+            return handle; // closing this exact fd releases the advisory lock
+        }
+        catch { handle.Dispose(); throw; }
+    }
     private const long MaxLogBytes = 256 * 1024;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -67,6 +83,7 @@ public static class ServiceState
 
     private const int O_RDONLY = 0x0000;
     private const int O_WRONLY = 0x0001;
+    private const int O_NONBLOCK = 0x0004;
     private const int O_NOFOLLOW = 0x0100;
     private const int O_CREAT = 0x0200;
     private const int O_EXCL = 0x0800;
@@ -76,6 +93,7 @@ public static class ServiceState
     private const int S_IFDIR = 0x4000;
     private const int S_IFREG = 0x8000;
 
+    [DllImport("libc", SetLastError = true)] private static extern int flock(int fd, int operation);
     [DllImport("libc")] private static extern uint geteuid();
     [DllImport("libc", EntryPoint = "open", SetLastError = true)]
     private static extern int open(string path, int flags, uint mode);
@@ -89,6 +107,8 @@ public static class ServiceState
     private static extern int fchmod(int fd, uint mode);
     [DllImport("libc", EntryPoint = "renameat", SetLastError = true)]
     private static extern int renameat(int oldDirectory, string oldPath, int newDirectory, string newPath);
+    [DllImport("libc", EntryPoint = "renameatx_np", SetLastError = true)]
+    private static extern int renameatx_np(int oldDirectory, string oldPath, int newDirectory, string newPath, uint flags);
     [DllImport("libc", EntryPoint = "unlinkat", SetLastError = true)]
     private static extern int unlinkat(int directory, string path, int flags);
     [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
@@ -187,6 +207,22 @@ public static class ServiceState
                 $"links={stat.LinkCount}, mode={Convert.ToString(mode & 0x1FF, 8)}).");
     }
 
+    // Registration uses a separate root-owned path, but the same fd/type/mode/size checks.
+    internal static byte[]? ReadTrustedFile(string path, int maximum)
+    {
+        int fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0);
+        if (fd < 0)
+        {
+            if (Marshal.GetLastPInvokeError() == 2) return null;
+            throw new IOException($"Cannot open daemon registration: errno {Marshal.GetLastPInvokeError()}");
+        }
+        using var handle = new SafeFileHandle((IntPtr)fd, ownsHandle: true);
+        if (FStat(fd, out var stat) != 0) throw new IOException("Cannot inspect daemon registration");
+        ValidateChild(stat, path, privateRead: false);
+        using var stream = new FileStream(handle, FileAccess.Read);
+        return BoundedStorage.Read(stream, maximum);
+    }
+
     private static byte[]? ReadChild(string name, bool privateRead, long maxBytes)
     {
         if (!OperatingSystem.IsMacOS())
@@ -202,7 +238,7 @@ public static class ServiceState
         }
         using var directory = OpenValidatedDirectory();
         int dirfd = directory.DangerousGetHandle().ToInt32();
-        int fd = openat(dirfd, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC, 0);
+        int fd = openat(dirfd, name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0);
         if (fd < 0)
         {
             if (Marshal.GetLastPInvokeError() == 2) return null; // ENOENT
@@ -221,13 +257,22 @@ public static class ServiceState
         return BoundedStorage.Read(stream, checked((int)maxBytes));
     }
 
-    private static void AtomicWriteChild(string name, ReadOnlySpan<byte> data, uint mode)
+    private static bool AtomicWriteChild(string name, ReadOnlySpan<byte> data, uint mode, bool replace = true)
     {
         EnsureDir();
         if (!OperatingSystem.IsMacOS())
         {
-            File.WriteAllBytes(Path.Combine(Dir, name), data.ToArray());
-            return;
+            string path = Path.Combine(Dir, name);
+            if (!replace) return ServiceKeySelection.PublishExclusiveFile(path, data.ToArray());
+            string temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.WriteAllBytes(temporary, data.ToArray());
+                try { File.Move(temporary, path, overwrite: replace); }
+                catch (IOException) when (!replace && File.Exists(path)) { return false; }
+                return true;
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
         using var directory = OpenValidatedDirectory();
         int dirfd = directory.DangerousGetHandle().ToInt32();
@@ -253,10 +298,17 @@ public static class ServiceState
                 stream.Flush(flushToDisk: true);
             }
             fd = -1; // SafeFileHandle closed it.
-            if (renameat(dirfd, temp, dirfd, name) != 0)
-                throw new InvalidOperationException(
-                    $"Cannot publish service state file '{name}': errno {Marshal.GetLastPInvokeError()}.");
+            // RENAME_EXCL is 0x4 in XNU sys/stdio.h. Never replace a racing winner.
+            int published = replace ? renameat(dirfd, temp, dirfd, name)
+                : renameatx_np(dirfd, temp, dirfd, name, 0x4);
+            if (published != 0)
+            {
+                int error = Marshal.GetLastPInvokeError();
+                if (!replace && error == 17) return false; // EEXIST
+                throw new InvalidOperationException($"Cannot publish service state file '{name}': errno {error}.");
+            }
             _ = fsync(dirfd);
+            return true;
         }
         finally
         {
@@ -270,52 +322,30 @@ public static class ServiceState
     // Both writer (GUI as root) and reader (daemon as root) live in the system domain,
     // so the key is a root-only 0600 file in the shared dir (not the per-user Keychain).
 
-    private static byte[] ServiceKey()
-    {
-        EnsureDir();
-        var existing = ReadChild(".service.key", privateRead: true, maxBytes: 32);
-        if (existing != null)
-        {
-            if (existing.Length != 32)
-                throw new CryptographicException(
-                    "daemon service key is corrupt; refusing to replace it and lose the encrypted profile");
-            return existing;
-        }
-        var key = RandomNumberGenerator.GetBytes(32);
-        // Persist before returning. Returning a new but unsaved key made the profile
-        // immediately undecryptable after the daemon restarted.
-        AtomicWriteChild(".service.key", key, 0x180); // 0600
-        return key;
-    }
+    private static byte[] ServiceKey(bool allowCreate) => ServiceKeySelection.Get(
+        () => { EnsureDir(); return ReadChild(".service.key", privateRead: true, maxBytes: 32); },
+        bytes => AtomicWriteChild(".service.key", bytes, 0x180, replace: false), allowCreate);
 
-    public static void SaveProfile(VpnConfig cfg)
+    internal static byte[] EncodeProfile(VpnConfig cfg)
     {
-        EnsureDir();
-        var pt = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cfg));
-        var key = ServiceKey();
-        var blob = EncryptedEnvelope.Seal(pt, key);
-        AtomicWriteChild("service-profile.json", blob, 0x180); // 0600
+        // Validate before touching the key or an existing daemon.
+        ProfileStorePayload.Validate(cfg);
+        return ServiceProfileCodec.Encode(cfg, () => ServiceKey(allowCreate: true));
     }
+    internal static void PublishProfile(byte[] bytes)
+    {
+        if (bytes.Length > ServiceProfileCodec.MaximumBytes) throw new InvalidDataException("Daemon profile exceeds 4 MiB");
+        AtomicWriteChild("service-profile.json", bytes, 0x180);
+    }
+    public static void SaveProfile(VpnConfig cfg) => PublishProfile(EncodeProfile(cfg));
 
     public static VpnConfig? LoadProfile()
     {
-        try
-        {
-            var raw = ReadChild(
-                "service-profile.json",
-                privateRead: true,
-                maxBytes: 4 * 1024 * 1024
-            );
-            if (raw == null) return null;
-            var plaintext = EncryptedEnvelope.Open(
-                raw, ServiceKey(), allowLegacyArray: false, out bool needsMigration);
-            string json = Encoding.UTF8.GetString(plaintext);
-
-            var cfg = JsonSerializer.Deserialize<VpnConfig>(json);
-            if (needsMigration && cfg != null) SaveProfile(cfg);
-            return cfg;
-        }
-        catch { return null; }
+        var raw = ReadChild("service-profile.json", privateRead: true, maxBytes: ServiceProfileCodec.MaximumBytes);
+        if (raw is null) return null; // Only absence means "no profile".
+        var cfg = ServiceProfileCodec.Decode(raw, ServiceKey(allowCreate: false), out bool migrate);
+        if (migrate) SaveProfile(cfg); // A migration write failure is observable.
+        return cfg;
     }
 
     /// <summary>
@@ -346,7 +376,7 @@ public static class ServiceState
             AtomicWriteChild("service-status.json", JsonSerializer.SerializeToUtf8Bytes(new ServiceStatus
             {
                 Status = status.ToString(),
-                Extra = extra,
+                Extra = extra is { Length: > 2048 } ? extra[..2048] : extra,
                 Time = DateTime.Now,
                 BytesUp = bytesUp,
                 BytesDown = bytesDown,
@@ -358,12 +388,23 @@ public static class ServiceState
 
     public static ServiceStatus? ReadStatus()
     {
-        try
+        var raw = ReadChild("service-status.json", privateRead: false, maxBytes: 1024 * 1024);
+        return raw is null ? null : DesktopServiceStatus.Decode<ServiceStatus>(raw);
+    }
+    public static string ReadLog()
+    {
+        var raw = ReadChild("service.log", privateRead: false, maxBytes: MaxLogBytes);
+        return raw is null ? "" : new UTF8Encoding(false, true).GetString(raw);
+    }
+    internal static byte[] EncodeLogLine(string line, DateTime now)
+    {
+        if (line.Length > 16 * 1024)
         {
-            var raw = ReadChild("service-status.json", privateRead: false, maxBytes: 1024 * 1024);
-            return raw == null ? null : JsonSerializer.Deserialize<ServiceStatus>(raw);
+            int end = 16 * 1024;
+            if (char.IsHighSurrogate(line[end - 1])) end--;
+            line = line[..end] + " [truncated]";
         }
-        catch { return null; }
+        return Encoding.UTF8.GetBytes($"{now:yyyy-MM-ddTHH:mm:ss'Z'}  {line}{Environment.NewLine}");
     }
 
     public static void ResetLog()
@@ -382,11 +423,8 @@ public static class ServiceState
                     privateRead: false,
                     maxBytes: MaxLogBytes * 4
                 ) ?? Array.Empty<byte>();
-                if (previous.LongLength > MaxLogBytes) previous = Array.Empty<byte>();
-                if (line.Length > 16 * 1024) line = line[..(16 * 1024)] + "…";
-                var suffix = Encoding.UTF8.GetBytes(
-                    $"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ss'Z'}  {line}{Environment.NewLine}"
-                );
+                var suffix = EncodeLogLine(line, DateTime.UtcNow);
+                if (previous.LongLength > MaxLogBytes - suffix.Length) previous = Array.Empty<byte>();
                 var combined = new byte[previous.Length + suffix.Length];
                 Buffer.BlockCopy(previous, 0, combined, 0, previous.Length);
                 Buffer.BlockCopy(suffix, 0, combined, previous.Length, suffix.Length);

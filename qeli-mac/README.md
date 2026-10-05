@@ -206,6 +206,8 @@ Rust-ядро ABI 1.16. Невыбранные потоки остаются н�
 ## Headless-режимы (отладка/CI)
 
 ```bash
+QeliMac control-selftest                 # изолированные daemon/codec/plist/child-process проверки без root
+QeliMac storage-selftest                 # изолированные ключи/архивы, без настоящего Keychain
 QeliMac selftest                         # DNS/routes/pf/utun platform checks (без root)
 QeliMac pf-selftest-rules /tmp/qeli.pf    # CI: production rules для pfctl parse/load/flush
 QeliMac handshake <link|ini|file>        # TCP/UDP + полное рукопожатие, печатает выданный IP
@@ -244,3 +246,21 @@ INI/URI, проверки, defaults и переносимые политики �
 Подробности: [единая конфигурация](../docs/ru/plans/CLIENT-CONFIG-CORE.md).
 
 Сверка store 2 октября: [Q25-F210](../docs/ru/plans/AUDIT-DEBT.md). Прямая запись внешнего процесса в encrypted store в обход координации не поддерживается; после правки активного INI требуется явное переподключение.
+
+## Daemon: выбранный профиль и ошибки управления
+
+Connect передаёт снимок точно выбранного профиля и явное намерение подключения.
+Обычный Save настроек сохраняет Disconnect; смена профиля сначала завершает Stop,
+затем публикует зашифрованную DTO и возобновляет подключение согласно намерению.
+Ошибки cleanup сохраняются в Error; до рестарта требуется успешная очистка.
+Внешние конфиги только INI; JSON файлов обмена — служебные DTO.
+
+Load daemon не генерирует ключ при отсутствии и не скрывает повреждение профиля.
+При утраченном ключе требуется явное повторное сохранение выбранного профиля;
+повреждённый ключ/чужая регистрация требуют ремонта администратором. Автоматическая
+замена неизвестного ключа запрещена. Устаревший статус означает неизвестное состояние,
+а не подтверждённое отключение. Изменение текста launchctl может дать безопасный отказ.
+
+[Проверки и границы Q28 daemon/control](../docs/ru/reports/AUDIT-Q28-MACOS-CONTROL.md).
+Windows host selftests не подтверждают launchd, Darwin locks, utun/pf, Keychain или
+Swift Network Extension на Mac; runtime исключён пользователем из текущего аудита.

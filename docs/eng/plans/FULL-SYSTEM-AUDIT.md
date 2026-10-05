@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v50 -->
+<!-- normative-sync: full-system-audit-v51 -->
 
-**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage stage complete.**
+**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage and daemon/control stages complete.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1837,6 +1837,8 @@ Daemon IPC/ownership/modes, Keychain, selected profiles, Intel/ARM ABI and DNS j
 **Status: IN_PROGRESS.**
 
 **5 October: storage stage PASS.** [F240–F242](../reports/AUDIT-Q28-MACOS-STORAGE.md):54 storage PASS,5 baseline FAIL; Keychain errors/duplicate/key creation races,strict key files/growth budgets,no quarantine on key-provider failures. Actual Mac USER SKIPPED. Next daemon/helper/selected profile/utun/pf/Swift; section remains open. Plan27/37(73.0%).
+
+**5 October: daemon/control stage PASS.** [F243–F248](../reports/AUDIT-Q28-MACOS-CONTROL.md):83 control +54 storage +325 Windows +549 shared PASS;5 baseline expected FAIL. Actual Mac USER SKIPPED. Next utun/pf/DNS/Swift. Plan27/37(73.0%).
 
 ### 29. Android VpnService, JNI and lifecycle
 
