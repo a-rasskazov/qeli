@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v74 -->
+<!-- normative-sync: full-system-audit-v75 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2221,3 +2221,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q29 IPv6-only/NAT64:** [отчёт](../reports/AUDIT-Q29-ANDROID-NAT64.md): TCP/UDP/QUIC masking, три Release UI-импорта, 12 dual-stack TCP/UDP payload-проб и 18 receipts PASS. SLAAC/RDNSS WLAN без IPv4, A-only сервер, DNS64 и реальная двусторонняя трансляция подтверждены pcap; revoke/cleanup и состояние стенда PASS. Все 296 inputs и APK/JNI/managed неизменны. Три ошибки стенда сохранены, NAT64 handover на fixed-IPv4 Cellular не квалифицирован. Leak-матрица, долгий power/flapping, остальные lifecycle и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).
 
 **5 октября, Q29 переходы/stop leak probes:** [отчёт](../reports/AUDIT-Q29-ANDROID-LEAK-BURSTS.md): четыре Release runs, 1 056 проб, шесть handover и четыре force-stop. Все четыре физических исходящих пути положительно калиброваны sink/pcap; timeout короткого baseline не назван блокировкой. Нет новых физических SYN/data/UDP в проверенном окне; post-baseline маркированные запросы только через TUN, 192 post-stop пробы без ответа/receipt/capture. Ручное восстановление 16 payload-проб и revoke/cleanup PASS. Product APK/native/managed прежние; один test receiver изменён, свежий test R8 build. DNS/cold-start/split/per-app, долгие сценарии и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).
+
+**5 октября, Q29 DNS/cold start:** [отчёт](../reports/AUDIT-Q29-ANDROID-STARTUP-DNS.md): TCP/UDP/QUIC, 864 socket samples, 21 DNS operations с уникальными именами, A/AAAA через TUN; шесть DNS operations и 144 socket samples без VPN заблокированы. 12 manual recovery payloads/revoke/cleanup PASS, восемь попыток/538 echo receipts. Немедленная доставка после APPLIED FAIL на всех трёх транспортах (27–247 ms); следующее 48/48 не закрывает readiness. Generic DnsResolver ENONET и пять неуспешных попыток сохранены; QUIC test-only journal устраняет зависимость доказательств от потери logcat, TCP/UDP не повторялись. Product APK/native/managed прежние, свежие test APK; источник/пара каждого прогона закреплены. Cold publication, split/per-app/Private DNS, долгие сценарии и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).

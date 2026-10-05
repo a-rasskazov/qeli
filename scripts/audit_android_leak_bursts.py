@@ -9,9 +9,12 @@ class LeakBursts:
     def __init__(self, arun, evidence, echo, result):
         self.arun,self.evidence,self.echo,self.result=arun,evidence,echo,result
         self.rows=result['leak_bursts']=[]
+        result['probe_evidence_source']='TEST_APK_PRIVATE_JOURNAL_ROOT_READ_ONLY; TRAFFIC_ORDINARY_UID'
         self.next_run=1
 
-    def logs(self):return self.arun('shell','logcat','-d','-s','Q29Probe:I','Q29Trigger:I').stdout
+    def logs(self):
+        journal=self.arun('shell','su','0','cat','/data/user/0/com.qeli.test/files/q29-probes.log',check=False)
+        return journal.stdout+'\n'+self.arun('shell','logcat','-d','-s','Q29Trigger:I').stdout
 
     def run(self, label, action=None, tag='Q29PROTECTED'):
         run=self.next_run;self.next_run+=1
@@ -54,7 +57,7 @@ class LeakBursts:
         print('BURST_COMPLETE '+label+' samples=48 replies='+str(sum(v['success'] for v in selected)),flush=True)
         return row
 
-    def force_stop(self, open_settings, switch, logs, probe):
+    def force_stop(self, open_settings, switch, logs, probe, *, dns_probe=None):
         row=self.run('force-stop',lambda:self.arun('shell','am','force-stop','com.qeli'))
         wait_until(lambda:not re.search(r'^\d+: tun\d',self.arun('shell','su','0','ip','-o','link','show').stdout,re.M),'force-stop retained TUN',15)
         assert not self.arun('shell','pidof','com.qeli',check=False).stdout.strip()
@@ -62,6 +65,7 @@ class LeakBursts:
         assert policy=={'always_on_vpn_app':'com.qeli','always_on_vpn_lockdown':'1'},policy
         blocked=self.run('stopped-lockdown',tag='Q29BLOCKED')
         assert not any(v['success'] for v in blocked['samples']),blocked
+        if dns_probe is not None:dns_probe("blocked", False)
         # A user force-stop intentionally marks the package stopped. Explicitly
         # reopen and re-enable the OS policy; do not infer automatic redelivery.
         old=logs().count('Auth OK:')
@@ -70,5 +74,6 @@ class LeakBursts:
         switch('Always-on VPN',True);switch('Block connections without VPN',True)
         wait_until(lambda:logs().count('Auth OK:')>old and 'Native NetworkPlan' in logs(),'manual recovery after force-stop failed',35)
         self.result['leak_manual_recovery']=[probe('Q29MANUAL',True,label='burst-recovery-'+f+'-'+p,family=f,protocol=p,payload_bytes=16384 if p=='tcp' else 257) for f in ('ipv4','ipv6') for p in ('tcp','udp')]
+        if dns_probe is not None:dns_probe("manual-recovery", True)
         self.result['leak_force_stop_policy']=policy
         open_settings()

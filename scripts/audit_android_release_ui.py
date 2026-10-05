@@ -4,7 +4,7 @@ import time
 from android_lab_ui import AndroidVpnSettings
 
 
-def import_release_profile(arun, evidence, result, keys, transport, *, server=None):
+def import_release_profile(arun, evidence, result, keys, transport, *, server=None, tunnel_dns=False):
     ui=AndroidVpnSettings(arun,evidence,result,"Qeli",prefix="release-")
     arun("shell","am","start","-n","com.qeli/.MainActivity")
     def stable_ui(label):
@@ -32,6 +32,7 @@ def import_release_profile(arun, evidence, result, keys, transport, *, server=No
                 quic=str(transport=="quic").lower(),gateway="true",kill_switch="true",ipv6="required",dns="off",
                 roaming="off" if profile=="tcp" else "required",mtu_probe="false",reconnect="true",
                 reconnect_base_delay="1",reconnect_max_delay="2",timeout="15")
+    if tunnel_dns:fields.update(dns="tunnel",dns_servers="198.19.0.53")
     ini="# Release fixture\n[qeli]\n"+"".join(k+" = "+v+"\n" for k,v in fields.items())+"[logging]\nlevel = debug\n"
     path=evidence/"release-fixture.ini";path.write_text(ini)
     arun("push",str(path),"/sdcard/Download/q29-release-fixture.ini")
