@@ -820,8 +820,10 @@ public abstract class VpnTunnelBase
             try { NativeTransportCore.Stop(unchecked((ulong)native)); } catch { }
         }
         if (keepTun) return;  // persist-tun: keep _tun + routes alive for the next attempt
-        try { BeforeTunDispose(); } catch (Exception e) { Log($"platform pre-dispose error: {e.Message}"); }
-        try { _tun?.Dispose(); } catch { }
+        // A refused restore/dispose must retain ownership for Stop retry. Never
+        // replace a still-live driver generation or lift the egress guard on failure.
+        BeforeTunDispose();
+        _tun?.Dispose();
         CleanupPlatform();
         _tun = null;
         _persistedClientIp = null;
@@ -873,8 +875,10 @@ public abstract class VpnTunnelBase
             throw new InvalidOperationException(
                 "the retained per-app adapter cannot apply the authenticated network plan in place");
         }
-        try { BeforeTunDispose(); } catch (Exception e) { Log($"platform pre-dispose error: {e.Message}"); }
-        try { _tun?.Dispose(); } catch { }
+        // A refused restore/dispose must retain ownership for Stop retry. Never
+        // replace a still-live driver generation or lift the egress guard on failure.
+        BeforeTunDispose();
+        _tun?.Dispose();
         CleanupPlatform();
         _tun = null;
         _persistedClientIp = null;

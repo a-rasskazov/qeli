@@ -393,3 +393,5 @@
 - [Q27: переходы службы и автозапуск — этап PASS](reports/AUDIT-Q27-WINDOWS-CONTROL.md)
 
 - [Q27: регистрация службы, статус и логи — этап PASS](reports/AUDIT-Q27-WINDOWS-OBSERVATION.md)
+
+- [Q27: Windows GUI, служба и драйверы — DONE/PASS](reports/AUDIT-Q27-WINDOWS-FINAL.md)

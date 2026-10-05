@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v48 -->
+<!-- normative-sync: full-system-audit-v49 -->
 
-**Current total, 5 October: 26/37 sections DONE/PASS (70.3%), 11 remaining. Q26 complete; next Q27.**
+**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; next Q28.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -168,7 +168,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 24 | Multipath, bonding and shared budgets | H04, H06, H08 | DONE/PASS |
 | 25 | Linux CLI and network recovery | H01, H04, H08 | DONE / PASS |
 | 26 | Shared C# and managed/native boundary | H04, H06, H08 | TODO |
-| 27 | Windows GUI, service and drivers | H01, H04, H08 | IN_PROGRESS |
+| 27 | Windows GUI, service and drivers | H01, H04, H08 | DONE / PASS |
 | 28 | macOS daemon, utun, pf and Network Extension | H04, H08 | TODO |
 | 29 | Android VpnService, JNI and lifecycle | H04, H06, H08 | TODO |
 | 30 | iOS PacketTunnel, Swift and MDM | H04, H06, H08 | TODO |
@@ -470,7 +470,7 @@ was cross-compiled only. Other section scenarios and live Linux E2E remain open.
 
 **4 October,Q12 DONE/PASS:** Close/controls and wire-matrix review complete;8 baseline FAIL,17 new tests,2352 Linux PASS,13 fresh wire cases,64 probes,two frame/QUIC ASan campaigns,fresh matrix/soak/four native A/B PASS. [Evidence and scope](../reports/AUDIT-Q12-TRANSPORTS.md). Overall **12/37 (32.4%)**;next Q13.
 
-**4 October,WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): four shared writer/read fixes,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,fresh matrix/soak/native A/B PASS. At that batch,HTTP/inbound frame/fuzz remained;Q12 was IN_PROGRESS,overall11/37 (29.7%).
+**4 October,WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): four shared writer/read fixes,5 baseline FAIL,7 new tests,2325 Linux PASS,10prior +3fresh wire-mode cases,fresh matrix/soak/native A/B PASS. At that batch,HTTP/inbound frame/fuzz remained;Q12 was IN_PROGRESS,overall11/37 (29.7%).
 
 **Source:** `qeli/src/protocol/tls.rs`, `qeli/src/protocol/obfs.rs`, `qeli/src/protocol/quic.rs`, `qeli/src/transport`.
 
@@ -1787,13 +1787,13 @@ LocalSystem IPC/ACL/SIDs, DPAPI, protected directories, atomic service profiles 
 
 **Existing harness/fixtures:** `scripts/e2e_windows_native.py`, `scripts/verify_windows_drivers.ps1`.
 
-- [ ] Review and dead code.
-- [ ] Positive, boundary and negative scenarios.
-- [ ] Failures and concurrency.
-- [ ] Integration and target platform.
-- [ ] Fixes, retesting and evidence.
+- [x] Review and dead code.
+- [x] Positive, boundary and negative scenarios.
+- [x] Failures and concurrency.
+- [x] Integration and target platform.
+- [x] Fixes, retesting and evidence.
 
-**Status: IN_PROGRESS.**
+**Status: DONE / PASS within agreed scope; VM runtime user SKIPPED.**
 
 **Cancelled TUN shutdown, 23 September 2026:** [Q25-F014](../reports/AUDIT-Q25-TUN-WORKERS.md).
 Shared TunWorkers retains Unix TUN/Wintun thread ownership through joining, including
@@ -1816,6 +1816,9 @@ managed Git-SHA metadata changed, so the current DLL was tested again. Q27 IN_PR
 trust and recovery/status/log/driver adapters next; user runtime SKIPPED retained.
 
 **5 October, service observation:** [Q27-F229–F232](../reports/AUDIT-Q27-WINDOWS-OBSERVATION.md): Registration command/account/type/owner/DACL and filesystem recheck before changes; stale/unknown status and terminal cleanup Error, bounded trusted log snapshots/atomic rotation. 273 Windows + 543 shared PASS,49 new assertions,7 baseline FAIL. Q27 IN_PROGRESS; next native loader/driver adapters and final reconciliation. Plan26/37 (70.3%).
+
+
+**5 October, Q27 complete:** [Windows final](../reports/AUDIT-Q27-WINDOWS-FINAL.md): F233–F239,325 Windows +549 shared PASS,52+6 new checks,12 baseline FAIL. Actual VM driver/network/LocalSystem boot/sleep/service reload user-excluded,not PASS. Available criteria reconciled with the three previous stages. Plan27/37 (73.0%); next Q28.
 
 ### 28. macOS daemon, utun, pf and Network Extension
 

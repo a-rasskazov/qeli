@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v48 -->
+<!-- normative-sync: full-system-audit-v49 -->
 
-**Текущий итог, 5 октября: 26/37 разделов DONE/PASS (70,3%), осталось 11. Q26 завершён; далее Q27.**
+**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; далее Q28.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -173,7 +173,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 24 | Multipath, bonding и общий бюджет | H04, H06, H08 | DONE/PASS |
 | 25 | Linux CLI и восстановление сети | H01, H04, H08 | DONE / PASS |
 | 26 | Общий C# и managed/native граница | H04, H06, H08 | TODO |
-| 27 | Windows: GUI, служба и драйверы | H01, H04, H08 | IN_PROGRESS |
+| 27 | Windows: GUI, служба и драйверы | H01, H04, H08 | DONE / PASS |
 | 28 | macOS: daemon, utun, pf и Network Extension | H04, H08 | TODO |
 | 29 | Android: VpnService, JNI и lifecycle | H04, H06, H08 | TODO |
 | 30 | iOS: PacketTunnel, Swift и MDM | H04, H06, H08 | TODO |
@@ -475,7 +475,7 @@ teardown; flush отказа сохраняет pre-auth slot до освобо�
 
 **4 октября, Q12 DONE/PASS:** Close/control и wire-матрица завершены; 8 baseline FAIL,17 новых тестов,2352 Linux PASS,13 fresh wire cases,64 probes,два frame/QUIC ASan прогона,свежие matrix/soak/четыре native A/B PASS. [Evidence и границы](../reports/AUDIT-Q12-TRANSPORTS.md). Общий план **12/37 (32,4%)**; далее Q13.
 
-**4 октября, WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): четыре исправления общего writer/read,5 baseline FAIL,7 new tests,2324 Linux PASS,10prior +3fresh wire-mode cases,свежие matrix/soak/native A/B PASS. На момент того пакета HTTP/inbound frame/fuzz оставались впереди; тогда Q12 IN_PROGRESS,план11/37 (29,7%).
+**4 октября, WS writer batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): четыре исправления общего writer/read,5 baseline FAIL,7 new tests,2325 Linux PASS,10prior +3fresh wire-mode cases,свежие matrix/soak/native A/B PASS. На момент того пакета HTTP/inbound frame/fuzz оставались впереди; тогда Q12 IN_PROGRESS,план11/37 (29,7%).
 
 **Код:** `qeli/src/protocol/tls.rs`, `qeli/src/protocol/obfs.rs`, `qeli/src/protocol/quic.rs`, `qeli/src/transport`.
 
@@ -1798,13 +1798,13 @@ LocalSystem IPC/ACL/SID, DPAPI, protected directories, atomic service profile и
 
 **Имеющаяся обвязка/fixtures:** `scripts/e2e_windows_native.py`, `scripts/verify_windows_drivers.ps1`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE / PASS в согласованном объёме; VM runtime SKIPPED пользователем.**
 
 **Отмена shutdown TUN, 23 сентября 2026:** [Q25-F014](../reports/AUDIT-Q25-TUN-WORKERS.md).
 Общий TunWorkers сохраняет владение Unix TUN/Wintun потоками до join, включая отмену
@@ -1827,6 +1827,9 @@ managed metadata поменялись с Git SHA, поэтому текущая 
 trust и recovery/status/log/driver adapters далее; user runtime SKIPPED сохранён.
 
 **5 октября, наблюдение службы:** [Q27-F229–F232](../reports/AUDIT-Q27-WINDOWS-OBSERVATION.md): Регистрация command/account/type/owner/DACL и filesystem recheck перед изменениями; stale/unknown status и terminal cleanup Error, bounded trusted log snapshot/atomic rotation. 273 Windows + 543 shared PASS, 49 новых assertions, 7 baseline FAIL. Q27 IN_PROGRESS; далее native loader/driver adapters и итоговая сверка. План 26/37 (70,3%).
+
+
+**5 октября, Q27 завершён:** [итог Windows](../reports/AUDIT-Q27-WINDOWS-FINAL.md): F233–F239, 325 Windows + 549 shared PASS, 52+6 новых проверок, 12 baseline FAIL. Реальные VM driver/network/LocalSystem boot/sleep/service reload исключены пользователем; не PASS. Остальные доступные критерии сверены с тремя предыдущими этапами. План 27/37 (73,0%); далее Q28.
 
 ### 28. macOS: daemon, utun, pf и Network Extension
 

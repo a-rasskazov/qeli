@@ -28,7 +28,7 @@ public static class KillSwitch
     private const string OperationMutexName = @"Global\Qeli.KillSwitch.Operation.v1";
     private static readonly object StrictGateLock = new();
     private static readonly object OwnerLock = new();
-    private static WinDivertKillSwitchGate? _strictGate;
+    private static readonly RetainedDriverGates StrictGates = new();
     private static EventWaitHandle? _ownerMarker;
     private static string? _strictTunAlias;
     private static string[] _strictServers = Array.Empty<string>();
@@ -134,9 +134,7 @@ public static class KillSwitch
             {
                 if (prior != null && firewallTouched)
                     RestoreFirewall(prior);
-                DeleteState();
-                CloseStrictGate();
-                ReleaseOwnership();
+                CompleteRecovery(CloseStrictGate, DeleteState, ReleaseOwnership);
             }
             catch (Exception restoreError)
             {
@@ -236,9 +234,7 @@ public static class KillSwitch
         RestoreFirewall(prior);
         // Restore firewall policy first. Until that is done the kernel gate remains
         // active, so stopping the tunnel cannot create a transient egress window.
-        DeleteState();
-        CloseStrictGate();
-        ReleaseOwnership();
+        CompleteRecovery(CloseStrictGate, DeleteState, ReleaseOwnership);
         log?.Invoke("Kill-switch disengaged (egress restored)");
     }
 
@@ -332,21 +328,14 @@ public static class KillSwitch
             // Open the complete immutable filter before publishing it or closing the current
             // handle. A failed Open leaves the old gate and its metadata untouched. While both
             // filters coexist they can briefly block a carrier, but cannot create a leak.
-            var nextGate = WinDivertKillSwitchGate.Open(tunAlias, nextServers, nextDns);
-            var oldGate = _strictGate;
-            try
-            {
-                _strictGate = nextGate;
-                _strictTunAlias = tunAlias;
-                _strictServers = nextServers;
-                _strictDns = nextDns;
-            }
-            catch
-            {
-                nextGate.Dispose();
-                throw;
-            }
-            oldGate?.Dispose();
+            StrictGates.Replace(
+                () => WinDivertKillSwitchGate.Open(tunAlias, nextServers, nextDns),
+                () =>
+                {
+                    _strictTunAlias = tunAlias;
+                    _strictServers = nextServers;
+                    _strictDns = nextDns;
+                });
         }
     }
 
@@ -354,12 +343,18 @@ public static class KillSwitch
     {
         lock (StrictGateLock)
         {
-            _strictGate?.Dispose();
-            _strictGate = null;
+            StrictGates.Close();
             _strictTunAlias = null;
             _strictServers = Array.Empty<string>();
             _strictDns = Array.Empty<string>();
         }
+    }
+
+    internal static void CompleteRecovery(Action closeGates, Action deleteJournal, Action releaseOwner)
+    {
+        closeGates();
+        deleteJournal();
+        releaseOwner();
     }
 
     private static void AcquireOwnership()

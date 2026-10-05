@@ -43,6 +43,7 @@ internal static class NativeLifecycleConformance
         check("lifecycle: drop observers are isolated individually", dropped == 1);
         check("lifecycle: completion observers are isolated individually", completed == 1);
 
+        CheckCleanup(check);
         CheckWorkers(check);
         NativeTransportCore.RequireCompatible();
         const string ini = "[qeli]\nserver = 127.0.0.1:1\nproto = tcp\nmode = plain\nuser = fixture\npass = fixture-only\nkey = 1111111111111111111111111111111111111111111111111111111111111111\nroaming = off\n";
@@ -183,6 +184,40 @@ internal static class NativeLifecycleConformance
         public void SendPacket(byte[] source, int offset, int length)
             => throw new IOException("fixture send error");
         public void Dispose() { }
+    }
+
+    private static void CheckCleanup(Action<string, bool> check)
+    {
+        var tunnel = new CleanupTunnel(); var tun = new FailingDisposeTun(); tunnel.Attach(tun);
+        int disconnected = 0, errors = 0;
+        tunnel.StatusChanged += (state, _) => { if (state == VpnStatus.Disconnected) disconnected++; if (state == VpnStatus.Error) errors++; };
+        bool Failed() { try { tunnel.Stop(); return false; } catch (IOException) { return true; } }
+        tunnel.FailRestore = true;
+        check("TUN cleanup: failed pre-dispose restore retains adapter", Failed() && tun.Attempts == 0 && tunnel.Owns(tun) && tunnel.PlatformCalls == 0);
+        tunnel.FailRestore = false; tun.Fail = true;
+        check("TUN cleanup: failed Dispose retains adapter for retry", Failed() && tun.Attempts == 1 && tunnel.Owns(tun) && tunnel.PlatformCalls == 0);
+        check("TUN cleanup: failed cleanup never publishes Disconnected", disconnected == 0 && errors == 2);
+        tun.Fail = false; tunnel.FailPlatform = true;
+        check("TUN cleanup: platform failure remains observable after adapter stop", Failed() && tun.Attempts == 2 && tunnel.Owns(tun));
+        tunnel.FailPlatform = false; tunnel.Stop();
+        check("TUN cleanup: retry releases retained ownership and publishes Disconnected", tun.Attempts == 3 && !tunnel.Owns(tun) && disconnected == 1);
+        tunnel.Stop(); check("TUN cleanup: completed adapter is not disposed twice", tun.Attempts == 3);
+    }
+    private sealed class FailingDisposeTun : ITunDevice
+    {
+        internal bool Fail; internal int Attempts;
+        public void Dispose() { Attempts++; if (Fail) throw new IOException("retained adapter"); }
+    }
+    private sealed class CleanupTunnel : VpnTunnelBase
+    {
+        internal bool FailRestore, FailPlatform; internal int PlatformCalls;
+        internal void Attach(ITunDevice tun) => _tun = tun;
+        internal bool Owns(ITunDevice tun) => ReferenceEquals(_tun, tun);
+        protected override void BeforeTunDispose() { if (FailRestore) throw new IOException("DNS restore"); }
+        protected override void CleanupPlatform() { PlatformCalls++; if (FailPlatform) throw new IOException("platform restore"); }
+        protected override void SetupTun(VpnConfig config, Session session, IPAddress serverIp,
+            IReadOnlyList<IPAddress> carrierCandidates, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("fixture does not change host networking");
     }
 
     private sealed class TrackedTun : ITunDevice

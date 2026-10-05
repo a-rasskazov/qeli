@@ -315,8 +315,17 @@ public sealed class VpnTunnel : VpnTunnelBase
         _prewarmId = id;
         _prewarm = Task.Run(() =>
         {
-            try { var w = new WintunAdapter(); w.Open(id.name, id.guid); return (WintunAdapter?)w; }
-            catch (Exception e) { Log($"Wintun prewarm failed ({e.Message}); will open in SetupTun"); return null; }
+            var w = new WintunAdapter();
+            try { w.Open(id.name, id.guid); return (WintunAdapter?)w; }
+            catch (Exception e)
+            {
+                Log($"Wintun prewarm failed ({e.Message}); will retry or clean up in SetupTun");
+                // A failure after CreateAdapter still owns a native handle. Return the
+                // incomplete object to SetupTun/unused-prewarm cleanup, never lose it.
+                if (w.HasHandle) return w;
+                w.Dispose();
+                return null;
+            }
         });
     }
 
@@ -389,10 +398,10 @@ public sealed class VpnTunnel : VpnTunnelBase
                 log: Log,
                 physicalLocalRoutes:
                     RouteLocalPolicy.DiscoverConnectedRfc1918Prefixes(log: Log));
+            _tun = adapter; // Cleanup owns partial Open and cancellation after Open.
             adapter.Open();
             cancellationToken.ThrowIfCancellationRequested();
             adapter.SetTunnelUp(true);
-            _tun = adapter;
             Log($"Per-app split tunnel ACTIVE: mode={config.AppsMode}, apps={config.Apps.Count}; "
                 + "WinDivert packet path is attached to the common Rust transport core");
             return;
@@ -443,11 +452,13 @@ public sealed class VpnTunnel : VpnTunnelBase
         if (wintun == null)
         {
             wintun = new WintunAdapter();
+            _tun = wintun;
             wintun.Open(adapterName, adapterGuid);
         }
+        _tun = wintun; // Includes a consumed prewarm, before ResolveInterface/log can fail.
+        wintun.RequireReady();
         var (tunIndex, alias) = _net.ResolveInterface(wintun.Luid);
         Log($"Wintun adapter '{alias}' (if {tunIndex}, driver {drv >> 16}.{drv & 0xFF})");
-        _tun = wintun;
         var localCaptureRoutes = config.RouteLocalNetworks
             && assigned.Any(address => address.Family == "ipv4")
             ? RouteLocalPolicy.BuildCapturePrefixes(
@@ -904,6 +915,7 @@ public sealed class VpnTunnel : VpnTunnelBase
         // WintunAdapter.Open may have resolved a name/GUID collision by creating name-0,
         // name-1, ... . Firewall and WinDivert rules must use this actual alias, never the
         // precomputed profile identity that collided.
+        warmed.RequireReady();
         return warmed.AdapterName;
     }
 
@@ -911,7 +923,7 @@ public sealed class VpnTunnel : VpnTunnelBase
     {
         var prewarm = _prewarm;
         if (prewarm == null) return;
-        try { prewarm.GetAwaiter().GetResult()?.Dispose(); } catch { }
+        prewarm.GetAwaiter().GetResult()?.Dispose();
         if (ReferenceEquals(_prewarm, prewarm)) _prewarm = null;
     }
 
