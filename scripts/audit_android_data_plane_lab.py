@@ -20,6 +20,7 @@ import time
 import traceback
 import xml.etree.ElementTree as ET
 from audit_udp_handshake_contracts import hashed, stop
+from android_lab_ui import AndroidVpnSettings, wait_until
 
 
 def sha(path):
@@ -168,70 +169,10 @@ class DnsFixture:
         assert not self.thread.is_alive(), "DNS worker remained"
 
 
-def system_lifecycle(arun, evidence, echo, keys, result):
+def system_lifecycle(arun, evidence, echo, result):
     """Use real Settings and externally kill the product process, outside instrumentation."""
-    sequence = 0
-    def ui(label):
-        nonlocal sequence
-        sequence += 1
-        arun("shell", "uiautomator", "dump", "/sdcard/q29-vpn-ui.xml", timeout=30)
-        value = arun("shell", "cat", "/sdcard/q29-vpn-ui.xml").stdout
-        (evidence / f"ui-{sequence:02}-{label}.xml").write_text(value)
-        return ET.fromstring(value)
-    def tap(node):
-        coords = [int(v) for v in re.findall(r"[0-9]+", node.attrib["bounds"])]
-        assert len(coords) == 4 and coords[2] > coords[0] and coords[3] > coords[1]
-        arun("shell", "input", "tap", str((coords[0] + coords[2]) // 2), str((coords[1] + coords[3]) // 2))
-    def text_node(tree, text):
-        return next((n for n in tree.iter("node") if n.get("text", "").lower() == text.lower()), None)
-    def open_settings():
-        arun("shell", "am", "start", "-a", "android.settings.VPN_SETTINGS")
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            tree = ui("vpn-list")
-            waiting = next((n for n in tree.iter("node") if n.get("resource-id") == "android:id/aerr_wait"), None)
-            if waiting is not None:
-                # Record the real emulator ANR dialog, let System UI recover, and retry.
-                result.setdefault("system_ui_anr_waits", []).append(sequence)
-                tap(waiting)
-                continue
-            if text_node(tree, "Always-on VPN") is not None and text_node(tree, "Forget VPN") is not None:
-                # VPN_SETTINGS can reuse the already-open provider management screen.
-                return tree
-            gear = next((n for n in tree.iter("node") if n.get("resource-id", "").endswith("settings_button") or
-                         n.get("content-desc", "").lower() in ("settings", "qeli settings")), None)
-            if gear is not None:
-                tap(gear)
-                return ui("vpn-management")
-            time.sleep(.5)
-        raise AssertionError("Qeli VPN Settings gear not found within 60 seconds; UI retained")
-    def switch(label, enabled):
-        tree = ui("switch-before")
-        node = text_node(tree, label)
-        assert node is not None, (label, "switch label absent; UI retained")
-        parents = {child: parent for parent in tree.iter() for child in parent}
-        row = node
-        while not any(n.get("checkable") == "true" for n in row.iter("node")):
-            assert row in parents, (label, "switch widget absent")
-            row = parents[row]
-        widget = next(n for n in row.iter("node") if n.get("checkable") == "true")
-        if (widget.get("checked") == "true") != enabled:
-            tap(node)
-            tree = ui("switch-toggled")
-            positive = next((n for n in tree.iter("node") if n.get("resource-id") == "android:id/button1"), None)
-            if positive is not None and text_node(tree, label) is None:
-                tap(positive); tree = ui("switch-confirmed")
-            node = text_node(tree, label); assert node is not None
-            parents = {child: parent for parent in tree.iter() for child in parent}; row = node
-            while not any(n.get("checkable") == "true" for n in row.iter("node")):row = parents[row]
-            widget = next(n for n in row.iter("node") if n.get("checkable") == "true")
-            assert (widget.get("checked") == "true") == enabled, (label, enabled)
-    def wait_until(predicate, message, seconds=30):
-        until = time.monotonic() + seconds
-        while time.monotonic() < until:
-            if predicate():return
-            time.sleep(.25)
-        raise AssertionError(message)
+    settings = AndroidVpnSettings(arun, evidence, result, "Qeli")
+    open_settings, switch = settings.open, settings.switch
     def logs():
         return arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29System:I").stdout
     def probe(tag, expect_reply):
@@ -259,7 +200,6 @@ def system_lifecycle(arun, evidence, echo, keys, result):
     probe_uid = uid_rows["com.qeli.test"]
     assert int(probe_uid) >= 10000 and probe_uid != uid_rows["com.qeli"]
     result["probe_uids"] = uid_rows
-    (evidence / "nc-help.txt").write_text(arun("shell", "toybox", "nc", "--help", check=False).stdout)
     result["app_probe_baseline"] = probe("Q29BASELINE", True)
     policy_applied = logs().count("Native NetworkPlan 1 APPLIED:")
     # Finishing instrumentation force-stops its target. Start the saved profile via the real OS.
@@ -319,15 +259,7 @@ def system_lifecycle(arun, evidence, echo, keys, result):
     result["app_probe_manual_recovery"] = probe("Q29MANUAL", True)
     before_revoke = logs().count("Android revoked the VPN service")
     switch("Block connections without VPN", False); switch("Always-on VPN", False)
-    tree = ui("before-forget"); forget = text_node(tree, "Forget VPN")
-    if forget is None:forget = text_node(tree, "Forget")
-    assert forget is not None, "Forget VPN control absent; UI retained"
-    tap(forget); tree = ui("forget-confirmation")
-    confirm_forget = text_node(tree, "FORGET")
-    assert confirm_forget is not None, "Forget confirmation control absent; UI retained"
-    # This Android dialog uses button2 for FORGET and button1 for DISMISS.
-    tap(confirm_forget)
-    ui("after-forget")
+    settings.forget()
     wait_until(lambda: logs().count("Android revoked the VPN service") > before_revoke, "system Settings did not invoke onRevoke")
     wait_until(lambda: "VpnServiceImpl" not in arun("shell", "dumpsys", "activity", "services", "com.qeli").stdout,
                "revoked service remained")
@@ -353,8 +285,10 @@ def main():
     ap.add_argument("--qeli", type=Path, required=True)
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
+    ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
     ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system"), default="explicit")
     args = ap.parse_args()
+    assert not args.restart_control or args.suite == "system"
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
     assert re.fullmatch(r"/var/tmp/qeli-q29-data-[a-z0-9-]+", str(root)), root
@@ -365,7 +299,8 @@ def main():
             env["Q29_PARENT_" + kind.upper()] = os.readlink("/proc/self/ns/" + kind)
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
-                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite], env=env, timeout=650).returncode
+                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite,
+                               *(["--restart-control"] if args.restart_control else [])], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
@@ -487,7 +422,17 @@ perf.connection.handshake_timeout_secs = 12
             if re.search(r"^package:" + re.escape(package) + r"$", stale, re.M):
                 arun("uninstall", package, timeout=60)
         result["environment"] = {name: arun("shell", "getprop", name).stdout.strip()
-                                 for name in ("ro.build.version.sdk", "ro.build.version.release", "ro.product.cpu.abi")}
+                                 for name in ("ro.build.version.sdk", "ro.build.version.release", "ro.product.cpu.abi",
+                                       "ro.build.fingerprint", "ro.build.id", "ro.build.version.incremental")}
+        if args.restart_control:
+            from audit_android_restart_control import restart_control
+            control_manifest = json.loads((root / "control/manifest.json").read_text())
+            control_apk = root / "control/restart-control.apk"
+            assert sha(control_apk) == control_manifest["apks"]["restart-control.apk"]
+            (evidence / "control-install.log").write_text(arun("install", "-t", str(control_apk), timeout=90).stdout)
+            result["restart_control_apk"] = control_manifest
+            restart_control(arun, evidence, result)
+            print("PLATFORM_CONTROL_COMPLETE", flush=True)
         methods = ["tcpDualStackPayloadAndCompletedRestart", "udpDualStackPayload", "quicDualStackPayload"]
         phases = [("baseline", "com.qeli.VpnDataPlaneInstrumentedTest#" + methods[0]),
                   ("fixed", ",".join("com.qeli.VpnDataPlaneInstrumentedTest#" + method for method in methods))]
@@ -531,7 +476,7 @@ perf.connection.handshake_timeout_secs = 12
                 assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
         if args.suite == "system":
-            system_lifecycle(arun, evidence, echo, keys, result)
+            system_lifecycle(arun, evidence, echo, result)
         assert not any("error" in row for row in echo.rows), echo.rows
         if dns is not None:
             assert not any("error" in row for row in dns.rows), dns.rows

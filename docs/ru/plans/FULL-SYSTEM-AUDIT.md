@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v64 -->
+<!-- normative-sync: full-system-audit-v65 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2200,3 +2200,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 
 
 **5 октября,Q29 системный lifecycle (частично):** [Always-on/lockdown и внешнее завершение процесса](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):настоящая OS-политика,независимый UID,блокировка после SIGKILL/force-stop, ручное восстановление и системный revoke подтверждены. Автоматическая redelivery после SIGKILL FAIL (вопрос открыт) несмотря на startCommandResult=3;полный system gate не PASS. Q29 IN_PROGRESS,28/37(75,7%).
+
+
+**5 октября,Q29 независимый Android-контроль:** [минимальный Java VpnService](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):без TUN перезапущен за17,40s с flags=1;с TUN нет нового PID за45s как при lockdown=0,так и при lockdown=1. Отказ воспроизведён без JNI/ядра Qeli;при одинаковом lockdown=0 отличается только создание TUN. Точная framework реализация/другие устройства не квалифицированы;продуктовый recovery gate остаётся FAIL,Q29 IN_PROGRESS,28/37(75,7%).

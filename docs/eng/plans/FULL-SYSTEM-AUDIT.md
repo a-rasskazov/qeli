@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v64 -->
+<!-- normative-sync: full-system-audit-v65 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2187,3 +2187,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 
 
 **5 October,Q29 system lifecycle(partial):** [Always-on/lockdown and external process death](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):actual OS policy,separate UID,blocking after SIGKILL/force-stop, manual recovery and system revoke confirmed. Automatic SIGKILL redelivery FAIL (issue OPEN) despite startCommandResult=3;complete system gate is not PASS. Q29 IN_PROGRESS,28/37(75.7%).
+
+
+**5 October,Q29 independent Android control:** [minimal Java VpnService](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):without TUN,restarted after17.40s with flags=1;with TUN,no new PID within45s at both lockdown=0 and lockdown=1. Failure reproduces without Qeli JNI/core;only TUN creation differs at the same lockdown=0. Exact framework implementation/other devices remain unqualified.Product recovery gate remains FAIL,Q29 IN_PROGRESS,28/37(75.7%).

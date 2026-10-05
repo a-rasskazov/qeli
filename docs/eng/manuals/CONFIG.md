@@ -2309,6 +2309,15 @@ firewall because it remains in force if the app crashes, stops, or reconnects. T
 API exists on Android 10+, so Android 9 refuses a profile that requests `kill_switch = true`.
 As on desktop, split-tunnel does not engage this key and the client logs that fact explicitly.
 
+<!-- normative-sync: android-platform-restart-q29-v1 -->
+
+System blocking and automatic VPN restart are separate properties. On the tested
+Android14/API34 image,external SIGKILL prevented automatic restart even for a
+minimal Java VpnService without Qeli core;negative IPv4 UDP probes remained
+blocked under lockdown. This is a boundary of that fixture,not established behavior
+for every device. Details and exact fingerprint:
+[Android system lifecycle audit](../reports/AUDIT-Q29-ANDROID-SYSTEM.md).
+
 On iOS `kill_switch` is **not supported**; the system on-demand plays the fail-closed role
 (see the iOS footnotes in the client-keys table above).
 
