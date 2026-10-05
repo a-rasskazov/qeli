@@ -213,7 +213,7 @@ DEX-проверка проверяет три метода Trace и досту�
 Private DNS off/Automatic и отрицательный strict-provider сценарий. Профиль этой
 матрицы использует `kill_switch=false`, чтобы пользователь мог менять OS lockdown;
 это отдельная проверка от `kill_switch=true`. Прямой трафик исключённого UID без
-lockdown ожидаем; с lockdown он блокируется. Доверенный strict DoT не квалифицирован.
+lockdown ожидаем; с lockdown он блокируется. Доверенный strict DoT проверяется отдельной матрицей ниже.
 [Q29: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-APP-POLICY.md).
 
 
@@ -228,3 +228,15 @@ IPv4/IPv6 TCP/UDP и системный DNS после пробуждений/п
 IDLE/экран наблюдаются каждые15s; receiver не запускается во сне. Это ограниченная
 проверка AVD, без гарантии physical suspend, многочасового сна или всех API/OEM.
 [Q29: результаты и оставшиеся ограничения](../docs/ru/reports/AUDIT-Q29-ANDROID-ENDURANCE.md).
+
+
+## Доверенный strict Private DNS / DoT: лабораторная проверка
+
+`audit_android_data_plane_lab.py --suite private-dns --variant release --leak-bursts`
+с `--transport tcp|udp|quic`, `apps_mode=all`, `kill_switch=true` и закреплёнными fixed APK
+проверяет untrusted CA, trusted CA, несовпадение SAN и восстановление. OpenSSL создаёт
+короткоживущий CA только для root readonly AVD в частных namespaces; исходные CA stores
+и Private DNS settings восстанавливаются. Product trust/TLS не меняются.
+System lookup подтверждается A/AAAA, правильным SNI и TUN peer в TLS receipts; raw UDP
+проверяется отдельно и не заменяет DoT. Bootstrap provider не смешивается с app nonce.
+[Q29: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md).

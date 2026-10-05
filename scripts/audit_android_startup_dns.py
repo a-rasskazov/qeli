@@ -48,7 +48,7 @@ class StartupDns:
                 return self.arun("shell", "su", "0", "cat", "/data/user/0/com.qeli.test/files/q29-probes.log", check=False).stdout
             wait_until(lambda: any(f"name={name} " in line and "done_ms=" in line for line in records().splitlines()), "resolver diagnostic did not complete", 12)
             selected = [line for line in records().splitlines() if f"name={name} " in line]
-            assert selected and all("uid=10148 " in line for line in selected), selected
+            assert selected and all("uid=" + self.result["probe_uids"]["com.qeli.test"] + " " in line for line in selected), selected
             self.result["resolver_diagnostics"].append(dict(mode=mode, name=name, records=selected))
             (self.evidence / f"resolver-{mode}.log").write_text(command.stdout + command.stderr + "\n" + "\n".join(selected) + "\n")
         for label, args in (("connectivity", ("dumpsys", "connectivity")), ("vpn", ("dumpsys", "vpn_management")), ("routes", ("su", "0", "ip", "route", "show", "table", "all"))):

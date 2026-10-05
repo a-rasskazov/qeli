@@ -135,27 +135,10 @@ class DnsFixture:
                     data, peer = self.sock.recvfrom(4096)
                 except socket.timeout:
                     continue
-                assert len(data) >= 17 and struct.unpack("!H", data[4:6])[0] == 1
-                offset = 12
-                labels = []
-                while data[offset]:
-                    length = data[offset]
-                    assert length <= 63 and offset + 1 + length < len(data)
-                    labels.append(data[offset + 1:offset + 1 + length].decode("ascii"))
-                    offset += length + 1
-                offset += 1
-                kind, klass = struct.unpack("!HH", data[offset:offset + 4])
-                question = data[12:offset + 4]
-                name = ".".join(labels).lower()
-                answer = b""
-                if re.fullmatch(r"q29-[0-9]+\.test", name) and klass == 1 and kind in (1, 28):
-                    address = "198.19.0.1" if kind == 1 else "2001:db8:29::1"
-                    value = socket.inet_pton(socket.AF_INET if kind == 1 else socket.AF_INET6, address)
-                    answer = b"\xc0\x0c" + struct.pack("!HHIH", kind, 1, 0, len(value)) + value
-                flags = 0x8180 if answer else 0x8183
-                response = data[:2] + struct.pack("!HHHHH", flags, 1, bool(answer), 0, 0) + question + answer
-                self.sock.sendto(response, peer)
-                self.rows.append(dict(name=name, qtype=kind, peer=peer[0], answered=bool(answer)))
+                from audit_android_dns_fixture import response
+                reply, row = response(data)
+                self.sock.sendto(reply, peer)
+                self.rows.append(dict(row, peer=peer[0]))
                 self.output.write_text(json.dumps(self.rows, indent=2) + "\n")
         except BaseException:
             if not self.closing.is_set():
@@ -169,7 +152,7 @@ class DnsFixture:
         assert not self.thread.is_alive(), "DNS worker remained"
 
 
-def system_lifecycle(arun, evidence, echo, result):
+def system_lifecycle(arun, evidence, echo, result, *, dot=None):
     """Use real Settings and externally kill the product process, outside instrumentation."""
     settings = AndroidVpnSettings(arun, evidence, result, "Qeli")
     open_settings, switch = settings.open, settings.switch
@@ -197,7 +180,7 @@ def system_lifecycle(arun, evidence, echo, result):
         seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest and row.get("protocol") == protocol and (":" in row["peer"]) == (family == "ipv6")]
         if expect_reply:
             assert "reply=Q29:" + tag in line and len(seen) == 1, (line, seen)
-            udp_profile = result["suite"] in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") and result["recovery_transport"] != "tcp"
+            udp_profile = result["suite"] in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") and result["recovery_transport"] != "tcp"
             assert f"sha256={digest}" in line and f"reply_sha256={hashlib.sha256(expected).hexdigest()}" in line and seen[0]["bytes"] == payload_bytes, (line, seen)
             if tag != "Q29BASELINE":
                 prefix = ("fd86:29:2:" if udp_profile else "fd86:29:1:") if family == "ipv6" else ("10.87.0." if udp_profile else "10.86.0.")
@@ -229,7 +212,7 @@ def system_lifecycle(arun, evidence, echo, result):
         dns_probe("physical-baseline", True, modes=("raw",))
         startup.enable_lockdown(settings, bursts)
     else:
-        if result["suite"] == "endurance":
+        if result["suite"] in ("endurance","private-dns"):
             from audit_android_startup_dns import StartupDns
             startup = StartupDns(arun, evidence, result);dns_probe = startup.probe
         switch("Block connections without VPN", True)
@@ -275,6 +258,11 @@ def system_lifecycle(arun, evidence, echo, result):
         from audit_android_network_handover import network_handover
         power_lifecycle(arun,evidence,probe,result,endurance=True,tcp_fault=False,dns_probe=dns_probe)
         network_handover(arun,evidence,probe,result,bursts=bursts,cycles=3,dns_probe=dns_probe)
+        open_settings()
+    elif result["suite"] == "private-dns":
+        from audit_android_private_dns import private_dns_matrix
+        assert dot is not None
+        private_dns_matrix(arun,evidence,result,startup,dot,probe)
         open_settings()
     elif result["suite"] == "power":
         from audit_android_power_lifecycle import power_lifecycle
@@ -358,7 +346,7 @@ def main():
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
-    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance"), default="explicit")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns"), default="explicit")
     ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
     ap.add_argument("--carrier", choices=("default", "nat64"), default="default", help="private IPv6-only TAP/SLAAC/DNS64/NAT64 backend; Release nat64 suite only")
     ap.add_argument("--startup-state", action="store_true", help="24-sample cold-start burst with ordinary-UID network snapshots; startup only")
@@ -375,9 +363,10 @@ def main():
     if args.suite == "recovery" and args.transport == "tcp":ap.error("recovery requires udp/quic")
     if args.carrier == "nat64" and (args.variant != "release" or args.suite != "nat64"):ap.error("nat64 requires Release nat64 suite")
     if args.suite == "nat64" and args.carrier != "nat64":ap.error("nat64 suite requires nat64 carrier")
-    if args.leak_bursts and (args.variant != "release" or args.suite not in ("handover", "nat64", "startup", "endurance")):ap.error("leak bursts require Release handover/nat64/startup/endurance suite")
+    if args.leak_bursts and (args.variant != "release" or args.suite not in ("handover", "nat64", "startup", "endurance", "private-dns")):ap.error("leak bursts require Release handover/nat64/startup/endurance/private-dns suite")
     if args.suite == "startup" and (args.variant != "release" or not args.leak_bursts):ap.error("startup requires Release and leak bursts")
     if args.suite == "endurance" and (args.variant != "release" or not args.leak_bursts):ap.error("endurance requires Release and leak bursts")
+    if args.suite == "private-dns" and (args.variant != "release" or not args.leak_bursts):ap.error("private-dns requires Release and leak bursts")
     if args.suite == "app-policy" and (args.variant != "release" or args.apps_mode not in ("include", "exclude")):ap.error("app-policy requires Release include/exclude")
     assert not args.restart_control or args.suite == "system"
     assert os.geteuid() == 0
@@ -397,7 +386,7 @@ def main():
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") else None)
+    result = dict(require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):
@@ -444,7 +433,7 @@ perf.connection.idle_timeout_secs = 0
 perf.connection.max_clients = 8
 perf.connection.handshake_timeout_secs = 12
 """
-        if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") and profile == "udp":
+        if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") and profile == "udp":
             config += f"roaming.enabled = true\nroaming.grace_secs = 15\nobf.quic.enabled = {str(args.transport == 'quic').lower()}\n"
     (root / "server.ini").write_text(config)
     (root / "server.ini").chmod(0o600)
@@ -463,8 +452,8 @@ perf.connection.handshake_timeout_secs = 12
         if check:
             assert proc.returncode == 0, (argv, proc.stdout, proc.stderr)
         return proc
-    server = emulator = echo = capture = dns = nat64 = leak_capture = None
-    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance") else []
+    server = emulator = echo = capture = dns = nat64 = leak_capture = dot = None
+    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else []
     started = time.monotonic()
     fixture_installed = []
     try:
@@ -475,7 +464,7 @@ perf.connection.handshake_timeout_secs = 12
         for address, ipv6 in fixture_addresses:
             cmd("ip", *(["-6"] if ipv6 else []), "addr", "add", address, "dev", "lo")
             fixture_installed.append((address, ipv6))
-        if args.suite in ("routed", "startup", "app-policy", "endurance"):
+        if args.suite in ("routed", "startup", "app-policy", "endurance", "private-dns"):
             dns = DnsFixture(evidence / "dns-receipts.json")
         cmd(str(args.qeli), "check-config", "-c", str(root / "server.ini"))
         public = cmd(str(args.qeli), "show-identity", "-c", str(root / "server.ini"))
@@ -493,16 +482,19 @@ perf.connection.handshake_timeout_secs = 12
             time.sleep(.1)
         else:
             raise AssertionError("server TUN setup timeout")
-        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") and args.transport != "tcp" else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
+        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") and args.transport != "tcp" else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
                                    stdout=(evidence / "tcpdump.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
-        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance") else None
+        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else None
+        if args.suite == "private-dns":
+            from audit_android_private_dns import DnsTlsFixture
+            dot = DnsTlsFixture(root,evidence)
         echo = Echo(evidence / "echo-receipts.json", echo_hosts)
         if args.leak_bursts or args.suite == "app-policy":
             leak_capture = subprocess.Popen(["tcpdump", "-i", "any", "-U", "-s", "0", "-w", str(evidence / "leak-any.pcap"), "port", "26000", "or", "port", "53", "or", "port", "853"], stdout=(evidence / "leak-capture.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
         command = ["/root/android-sdk/emulator/emulator", "-avd", "test", "-port", "5560", "-read-only",
                    "-no-snapshot-load", "-no-snapshot-save", "-no-window", "-no-audio", "-no-boot-anim",
                    "-gpu", "swiftshader", "-memory", "768", "-cores", "1"]
-        if args.suite == "app-policy":command.extend(["-dns-server", "198.19.0.53"])
+        if args.suite in ("app-policy","private-dns"):command.extend(["-dns-server", "198.19.0.53"])
         if nat64 is not None:
             command.extend(nat64.emulator_options())
         dump("emulator-command.json", command)
@@ -558,7 +550,7 @@ perf.connection.handshake_timeout_secs = 12
                 if label == "system-vpn-policy":
                     value = "\n".join(line for line in value.splitlines() if "vpn" in line or "private_dns" in line)
                 (evidence / (label + ".txt")).write_text(value)
-        if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance"):
+        if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns"):
             phases = [("fixed", "com.qeli.VpnSystemLifecycleInstrumentedTest#bootstrapSavedProfileAndLeaveConnected")]
             expected_tests = 1
         for folder, selector in phases:
@@ -578,18 +570,18 @@ perf.connection.handshake_timeout_secs = 12
                 assert not re.search(r"(?:pkgFlags|flags)=\[[^\]]*\bDEBUGGABLE\b", package), package
             arun("shell", "appops", "set", "com.qeli", "ACTIVATE_VPN", "allow")
             arun("shell", "pm", "grant", "com.qeli", "android.permission.POST_NOTIFICATIONS")
-            if args.variant == "release" and args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance"):
+            if args.variant == "release" and args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns"):
                 from audit_android_release_ui import import_release_profile
                 # Power/system fixtures are TCP; --transport selects only recovery/handover/nat64.
-                ui_transport = args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") else "tcp"
-                import_release_profile(arun, evidence, result, keys, ui_transport, server="q29-v4-only.test" if nat64 is not None else None, tunnel_dns=args.suite in ("startup", "app-policy", "endurance"), apps_mode=args.apps_mode, policy_fixture=args.suite == "app-policy")
+                ui_transport = args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else "tcp"
+                import_release_profile(arun, evidence, result, keys, ui_transport, server="q29-v4-only.test" if nat64 is not None else None, tunnel_dns=args.suite in ("startup", "app-policy", "endurance", "private-dns"), apps_mode=args.apps_mode, policy_fixture=args.suite == "app-policy")
                 result[folder + "_output"]="UI_IMPORT_PASS; INSTRUMENTATION_NOT_RUN"
                 result[folder + "_echo_receipts"]=len(echo.rows)
             else:
                 proc = arun("shell", "am", "instrument", "-w", "-r", "-e", "class", selector,
                             "-e", "q29_private_fixture", "1", "-e", "q29_key_tcp", keys["tcp"],
                             "-e", "q29_key_udp", keys["udp"],
-                            *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") else []),
+                            *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else []),
                             "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
                 (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
                 result[folder + "_output"] = proc.stdout
@@ -606,8 +598,8 @@ perf.connection.handshake_timeout_secs = 12
             result["second_probe_apk"]=probe_manifest
             from audit_android_app_policy import app_policy_lifecycle
             app_policy_lifecycle(arun,evidence,echo,dns,result)
-        elif args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "endurance"):
-            system_lifecycle(arun, evidence, echo, result)
+        elif args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "endurance", "private-dns"):
+            system_lifecycle(arun, evidence, echo, result, dot=dot)
         if nat64 is not None:
             result["nat64_final_carrier"] = nat64.verify_carrier(arun, "nat64-final")
         assert not any("error" in row for row in echo.rows), echo.rows
@@ -617,6 +609,14 @@ perf.connection.handshake_timeout_secs = 12
             if args.suite == "routed":
                 assert len({row["name"] for row in accepted}) == 6, accepted
                 assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted), accepted
+            elif args.suite == "private-dns":
+                names={p["name"] for p in result["dns_probes"]}
+                accepted=[row for row in accepted if row["name"] in names]
+                encrypted=[row for row in dot.rows if row["kind"]=="DNS" and row["answered"] and row["name"] in names]
+                baseline={p["name"] for p in result["dns_probes"] if p["stage"]=="physical-baseline"}
+                assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted+encrypted if row["name"] not in baseline)
+                result["dns_plaintext_answers"]=len(accepted);result["dns_tls_answers"]=len(encrypted)
+                accepted+=encrypted
             elif args.suite == "endurance":
                 assert result["dns_probes"] and all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted)
             elif args.suite != "app-policy":
@@ -624,8 +624,8 @@ perf.connection.handshake_timeout_secs = 12
                 assert len(baseline)==1
                 assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted if row["name"] not in baseline), accepted
             result["dns_answered_questions"] = len(accepted)
-        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
-        if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
+        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
+        if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
         for profile, subnet, v6 in profiles:
             for family_prefix in (subnet, v6):
                 for protocol in ("tcp", "udp"):
@@ -649,6 +649,10 @@ perf.connection.handshake_timeout_secs = 12
         except Exception:
             pass
     finally:
+        if dot is not None:
+            try:dot.close()
+            except BaseException:
+                result["status"]="FAIL";result["dot_cleanup_error"]=traceback.format_exc()
         if dns is not None:
             try:
                 dns.close()

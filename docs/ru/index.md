@@ -437,3 +437,4 @@
 - [Q29: per-app UID / Private DNS](reports/AUDIT-Q29-ANDROID-APP-POLICY.md)
 
 - [Q29: Doze / repeated carrier handover](reports/AUDIT-Q29-ANDROID-ENDURANCE.md)
+- [Q29: authenticated Private DNS / DoT](reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md)

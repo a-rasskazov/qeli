@@ -4,7 +4,7 @@ from unittest.mock import patch
 from audit_android_startup_dns import StartupDns
 
 class ResolverDiagnosticsTest(unittest.TestCase):
-    def run_helper(self, uid=10148):
+    def run_helper(self, uid=10148, expected_uid=10148):
         journal=[];names=[]
         def arun(*args,**kwargs):
             if "broadcast" in args:
@@ -17,7 +17,7 @@ class ResolverDiagnosticsTest(unittest.TestCase):
             elif "cat" in args:output="DNS uid=999 name=q29-old.test done_ms=1\n"+"\n".join(journal)
             else:output="state snapshot"
             return types.SimpleNamespace(stdout=output,stderr="")
-        result={}
+        result={"probe_uids":{"com.qeli.test":str(expected_uid)}}
         with tempfile.TemporaryDirectory() as tmp:
             with patch("audit_android_startup_dns.time.time_ns",side_effect=range(100,108)):
                 StartupDns(arun,Path(tmp),result).diagnose()
@@ -31,6 +31,10 @@ class ResolverDiagnosticsTest(unittest.TestCase):
         auto=next(row for row in result["resolver_diagnostics"] if row["mode"]=="auto")
         self.assertTrue(any("ENONET" in line for line in auto["records"]))
         self.assertTrue(all("q29-old" not in line for row in result["resolver_diagnostics"] for line in row["records"]))
+
+    def test_package_manager_uid_may_differ_between_readonly_installs(self):
+        result,names=self.run_helper(uid=10149,expected_uid=10149)
+        self.assertEqual(len(result["resolver_diagnostics"]),7)
 
     def test_foreign_uid_cannot_qualify_as_an_ordinary_app_probe(self):
         with self.assertRaises(AssertionError):self.run_helper(uid=0)

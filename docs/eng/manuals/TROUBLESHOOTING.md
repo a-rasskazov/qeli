@@ -2698,3 +2698,5 @@ with VPN active, with no clear-DNS fallback. Ensure the provider is reachable
 outside and inside the VPN. `Automatic` permits ordinary DNS; a successful raw
 UDP probe does not prove that Private DNS/DoT works.
 [Matrix, exact artifacts and limits](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md).
+Trusted CA, invalid CA/SAN rejection and recovery were checked on API34
+for TCP/UDP/QUIC: [strict DoT](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md).

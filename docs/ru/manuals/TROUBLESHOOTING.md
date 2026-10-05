@@ -2709,3 +2709,5 @@ Cloud/device-transfer не копируют app state по явным прави
 provider доступен и вне VPN, и внутри него. `Automatic` допускает обычный DNS,
 а успешная raw UDP-проба не доказывает работоспособность Private DNS/DoT.
 [Матрица, точные артефакты и ограничения](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md).
+Проверка доверенного CA, отказа при неверном CA/SAN и восстановления выполнена
+на API34 для TCP/UDP/QUIC: [strict DoT](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md).

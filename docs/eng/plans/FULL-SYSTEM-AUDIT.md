@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v81 -->
+<!-- normative-sync: full-system-audit-v82 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2222,3 +2222,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q29 per-app/Private DNS:** [report](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md):include/TCP and exclude/QUIC on productionR8,112socket/80reply/32expectedblocked,52DNSops/48answers,7states×2UID. No selected-UID physical DNS/fallback after strict-negative;2PCAP/drop0,cleanup/settings/host/userdata PASS. Strict trustedDoT/longpower/flapping/SIGKILL/ENONET remain;Q29IN_PROGRESS28/37(75.7%).
 
 **5 October, Q29 bounded Doze/flapping:** [report](../reports/AUDIT-Q29-ANDROID-ENDURANCE.md):TCP/UDP/QUIC,9power phases(30s+2×120s),18WiFiCellulartransitions,36wake/72posthandover payloads,1440burst samples/144poststopblocked,45DNSops/72answers;3PCAP/protectedphysical0/drop0. PID/TUN retained;settings/host/userdata/recovery/revoke PASS. Historical commit false-positive fixed in harness,5regression tests. Bounded AVD matrix covered;physical/OEM longsoak,strict trustedDoT/SIGKILLFAIL/ENONET remain,Q29IN_PROGRESS28/37(75.7%).
+
+
+**5 October, Q29 trusted DoT:** [Report](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md): TCP/UDP/QUIC strict untrusted/trusted/mismatch/recovery PASS;39DNS/12authenticated answers,36payloads,576bursts/144poststopblocked;3PCAP physicalleaks0/drop0. Temporary labCA/settings/host/userdata cleanup5attempts PASS;2harnessFAIL preserved;dynamicUID fixed/12helper3CLI fresh,product/native/managed unchanged. SIGKILLFAIL/ENONET/otherAPI-OEM-arm64 open;Q29 IN_PROGRESS28/37(75.7%).
