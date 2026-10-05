@@ -1,6 +1,6 @@
 # Q29: Android VPN payload and post-auth lifecycle
 
-<!-- normative-sync: q29-android-data-v2 -->
+<!-- normative-sync: q29-android-data-v3 -->
 
 **5 October 2026. Stage PASS; Q29 IN_PROGRESS. Plan28/37(75.7%),9 sections remain.**
 
@@ -38,3 +38,21 @@ A readiness window was observed: in **5/6 starts the first IPv4 socket after obs
 Product APK/JNI unchanged,no product fix. Fresh test APK build and six debug cases; preceding results are reused only within original scopes,no fresh combined37Android run. New six cases skip without private fixture arguments. scripts/audit_android_data_plane_lab.py adds --suite ordinary; default explicit selects only the original three methods.
 
 One run took109.19s,tests18.913s. Readonly API34x86_64,fresh NET/MNT/PID on.11,serverexit0,namespace addresses restored,userdata SHA/mtime/size and working network/service unchanged,no app service/TUN,no AndroidRuntimeFATAL. .10 untouched. Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-default-20261005; evidence: release/certification/evidence/q29-android-default-20261005.json. Q29 remains IN_PROGRESS; next external routes/DNS/kill-switch,early first-packet readiness and system lifecycle.
+
+## Off-pool routes, system DNS and kill-switch rejection
+
+Next batch: **7/7 new debug instrumented cases PASS**. Six cover TCP fake-tls,UDP fake-tls and UDP QUIC in split/full; the seventh rejects full-tunnel kill_switch=true without system lockdown. No fresh combined44Android suite was run; prior results retain their original scopes.
+
+Destinations198.19.0.1 and2001:db8:29::1 are outside both VPN pools. Full profiles have no includeRoutes: delivery requires default routes0.0.0.0/0 and::/0,both checked in LinkProperties. Split profiles have explicit /32,/128 and no defaults. Ordinary unbound Socket/DatagramSocket carry TCP16KiB andUDP32/257/1024; the server records72 replies with TUN sources and payload hashes. This proves client off-pool capture. Targets belong to private server loopback: no external Internet,serverFORWARD/NAT/NAT66 or production connectivity test.
+
+Each profile installs tunnel DNS198.19.0.53; its /32 route is checked independently from user includeRoutes. Ordinary InetAddress.getAllByName resolves six unique q29-*.test names. The client receives A andAAAA in all six cases; the independent DNS sink records12 answered questions from TUN sources and pcap confirms the path. Other Android queries get NXDOMAIN; no external uplink. Private DNS/DoT and resolver restoration after system process-death are outside scope.
+
+The negative kill-switch case uses a valid profile: without OS lockdown Qeli publishes ERROR,finishes the foreground service and leaves no TUN/connection properties. Positive Always-on+lockdown and process-death packet blocking are **not yet qualified**. Editing secure settings alone does not count as enabling system policy.
+
+Initial attempt retained:1negativePASS,6UDP receive timeouts. Pcap shows request198.19.0.1:26000 and reply10.86.0.1:26000: the fixture wildcard UDP socket selected the wrong source,so connected DatagramSocket rejected replies. Binding the sink to each destination address yields7PASS. IPv6 default assertion was additionally changed from text to address family; original::/0 formatting worked and did not cause those six failures. No new product defect or APK/JNI change in this stage.
+
+Final run105.94s,tests21.149s; Android14/API34x86_64,readonly AVD and server in fresh NET/MNT/PID on.11. Both runs preserve userdata SHA/mtime/size and working hostnetwork/qeli.service;serverexit0,namespace addresses restored,no app service/TUN after stop,no AndroidRuntimeFATAL. Product APK,289priorinputs,14nativehashes and7managedDLL unchanged. Fresh test APK build only; prior167JVM/28Android/1248NET/Release-lint reused in original scope. New seven cases skip without private fixture arguments; gate --suite routed.
+
+The gap between observed CONNECTED and actual source selection persists in route-readiness.json; payload still waits for bounded unsent preflight. Qeli publishes CONNECTED after native ACK without waiting for framework default network. [AOSP Vpn source](https://android.googlesource.com/platform/frameworks/base/+/b8e604452076/services/core/java/com/android/server/connectivity/Vpn.java) establish creates/registers NetworkAgent and returns TUN. This supports a hypothesis of separate state publication; this source is not the emulator's exact build source and does not prove netd timing. Early-status semantic decision remains open.
+
+Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-routes-dns-20261005. Evidence: release/certification/evidence/q29-android-routes-dns-20261005.json. Q29IN_PROGRESS,plan28/37(75.7%). Next positive lockdown,revoke/process-death/redelivery/always-on/Doze,Release and remaining platform scenarios.

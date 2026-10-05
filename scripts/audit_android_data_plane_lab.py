@@ -41,14 +41,14 @@ def userdata():
 
 class Echo:
     """Independent framed TCP/reversed payload and UDP tagged reply sinks."""
-    def __init__(self, output):
+    def __init__(self, output, hosts=None):
         self.output = output
         self.sockets = []
         self.threads = []
         self.closing = threading.Event()
         self.lock = threading.Lock()
         self.rows = []
-        for family, host in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")):
+        for family, host in (hosts or ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::"))):
             for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
                 sock = socket.socket(family, kind)
                 if family == socket.AF_INET6:
@@ -114,13 +114,66 @@ class Echo:
             assert not thread.is_alive(), "echo worker remained"
 
 
+class DnsFixture:
+    """Tiny offline A/AAAA authority; only unique q29-*.test questions get answers."""
+    def __init__(self, output):
+        self.output = output
+        self.rows = []
+        self.closing = threading.Event()
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("198.19.0.53", 53))
+        self.sock.settimeout(.5)
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        try:
+            while not self.closing.is_set():
+                try:
+                    data, peer = self.sock.recvfrom(4096)
+                except socket.timeout:
+                    continue
+                assert len(data) >= 17 and struct.unpack("!H", data[4:6])[0] == 1
+                offset = 12
+                labels = []
+                while data[offset]:
+                    length = data[offset]
+                    assert length <= 63 and offset + 1 + length < len(data)
+                    labels.append(data[offset + 1:offset + 1 + length].decode("ascii"))
+                    offset += length + 1
+                offset += 1
+                kind, klass = struct.unpack("!HH", data[offset:offset + 4])
+                question = data[12:offset + 4]
+                name = ".".join(labels).lower()
+                answer = b""
+                if re.fullmatch(r"q29-[0-9]+\.test", name) and klass == 1 and kind in (1, 28):
+                    address = "198.19.0.1" if kind == 1 else "2001:db8:29::1"
+                    value = socket.inet_pton(socket.AF_INET if kind == 1 else socket.AF_INET6, address)
+                    answer = b"\xc0\x0c" + struct.pack("!HHIH", kind, 1, 0, len(value)) + value
+                flags = 0x8180 if answer else 0x8183
+                response = data[:2] + struct.pack("!HHHHH", flags, 1, bool(answer), 0, 0) + question + answer
+                self.sock.sendto(response, peer)
+                self.rows.append(dict(name=name, qtype=kind, peer=peer[0], answered=bool(answer)))
+                self.output.write_text(json.dumps(self.rows, indent=2) + "\n")
+        except BaseException:
+            if not self.closing.is_set():
+                self.rows.append(dict(error=traceback.format_exc()))
+                self.output.write_text(json.dumps(self.rows, indent=2) + "\n")
+
+    def close(self):
+        self.closing.set()
+        self.sock.close()
+        self.thread.join(2)
+        assert not self.thread.is_alive(), "DNS worker remained"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--qeli", type=Path, required=True)
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
-    ap.add_argument("--suite", choices=("explicit", "ordinary"), default="explicit")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed"), default="explicit")
     args = ap.parse_args()
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
@@ -201,9 +254,16 @@ perf.connection.handshake_timeout_secs = 12
         if check:
             assert proc.returncode == 0, (argv, proc.stdout, proc.stderr)
         return proc
-    server = emulator = echo = capture = None
+    server = emulator = echo = capture = dns = None
+    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite == "routed" else []
     started = time.monotonic()
+    fixture_installed = []
     try:
+        for address, ipv6 in fixture_addresses:
+            cmd("ip", *(["-6"] if ipv6 else []), "addr", "add", address, "dev", "lo")
+            fixture_installed.append((address, ipv6))
+        if args.suite == "routed":
+            dns = DnsFixture(evidence / "dns-receipts.json")
         cmd(str(args.qeli), "check-config", "-c", str(root / "server.ini"))
         public = cmd(str(args.qeli), "show-identity", "-c", str(root / "server.ini"))
         (evidence / "server-public-keys.txt").write_text(public)
@@ -222,7 +282,8 @@ perf.connection.handshake_timeout_secs = 12
             raise AssertionError("server TUN setup timeout")
         capture = subprocess.Popen(["tcpdump", "-i", "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
                                    stdout=(evidence / "tcpdump.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
-        echo = Echo(evidence / "echo-receipts.json")
+        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite == "routed" else None
+        echo = Echo(evidence / "echo-receipts.json", echo_hosts)
         command = ["/root/android-sdk/emulator/emulator", "-avd", "test", "-port", "5560", "-read-only",
                    "-no-snapshot-load", "-no-snapshot-save", "-no-window", "-no-audio", "-no-boot-anim",
                    "-gpu", "swiftshader", "-memory", "768", "-cores", "1"]
@@ -256,6 +317,17 @@ perf.connection.handshake_timeout_secs = 12
                        for mode in ("Split", "Full")]
             phases = [("fixed", ",".join("com.qeli.VpnDataPlaneInstrumentedTest#" + method for method in methods))]
             expected_tests = 6
+        if args.suite == "routed":
+            methods = [transport + "Routed" + mode + "PayloadDns" for transport in ("tcp", "udp", "quic")
+                       for mode in ("Split", "Full")] + ["fullKillSwitchRefusesWithoutSystemLockdown"]
+            phases = [("fixed", ",".join("com.qeli.VpnDataPlaneInstrumentedTest#" + method for method in methods))]
+            expected_tests = 7
+            for label, argv in [("connectivity-command-help", ["shell", "cmd", "connectivity", "help"]),
+                                ("system-vpn-policy", ["shell", "settings", "list", "secure"])]:
+                value = arun(*argv, check=False).stdout
+                if label == "system-vpn-policy":
+                    value = "\n".join(line for line in value.splitlines() if "vpn" in line or "private_dns" in line)
+                (evidence / (label + ".txt")).write_text(value)
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             result[folder + "_apks"] = manifest
@@ -276,6 +348,12 @@ perf.connection.handshake_timeout_secs = 12
                 assert f"OK ({expected_tests} tests)" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
         assert not any("error" in row for row in echo.rows), echo.rows
+        if dns is not None:
+            assert not any("error" in row for row in dns.rows), dns.rows
+            accepted = [row for row in dns.rows if row["answered"]]
+            assert len({row["name"] for row in accepted}) == 6, accepted
+            assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted), accepted
+            result["dns_answered_questions"] = len(accepted)
         for profile, subnet, v6 in (("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")):
             for family_prefix in (subnet, v6):
                 for protocol in ("tcp", "udp"):
@@ -299,6 +377,8 @@ perf.connection.handshake_timeout_secs = 12
         except Exception:
             pass
     finally:
+        if dns is not None:
+            dns.close()
         if echo is not None:
             try:
                 echo.close()
@@ -314,6 +394,8 @@ perf.connection.handshake_timeout_secs = 12
             except subprocess.TimeoutExpired:
                 stop(server)
         result["server_exit_code"] = None if server is None else server.returncode
+        for address, ipv6 in reversed(fixture_installed):
+            cmd("ip", *(["-6"] if ipv6 else []), "addr", "del", address, "dev", "lo")
         namespace_after = cmd("ip", "-br", "addr")
         (evidence / "namespace-network-after.txt").write_text(namespace_after)
         result["namespace_addresses_restored"] = namespace_after == namespace_before

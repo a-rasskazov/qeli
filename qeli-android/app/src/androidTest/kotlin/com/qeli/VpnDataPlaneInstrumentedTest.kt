@@ -114,7 +114,7 @@ class VpnDataPlaneInstrumentedTest {
             }
         }
     }
-    private fun exercise(protocol: String, quic: Boolean, profile: String, explicitNetwork: Boolean = true, fullTunnel: Boolean = false) {
+    private fun exercise(protocol: String, quic: Boolean, profile: String, explicitNetwork: Boolean = true, fullTunnel: Boolean = false, routed: Boolean = false) {
         val key = requireNotNull(args.getString("q29_key_$profile"))
         assertTrue(key.matches(Regex("[0-9a-f]{64}")))
         val config = VpnConfig(serverAddress = "10.0.2.2", port = if (profile == "tcp") 24966 else 24967,
@@ -122,8 +122,11 @@ class VpnDataPlaneInstrumentedTest {
             password = "fixture-password", serverPublicKeyHex = key, bindStaticToSession = true,
             connectionTimeoutSecs = 15, reconnectEnabled = false, killSwitch = false,
             mtuProbe = false, ipv6 = "required", roaming = "off", routingMode = if (fullTunnel) "full-tunnel" else "split-tunnel",
-            addDefaultGateway = fullTunnel, dnsMode = "off", heartbeatEnabled = true,
-            includeRoutes = if (profile == "tcp") listOf("10.86.0.0/24", "fd86:29:1::/120")
+            addDefaultGateway = fullTunnel, dnsMode = if (routed) "tunnel" else "off",
+            dnsServers = if (routed) listOf("198.19.0.53") else emptyList(), heartbeatEnabled = true,
+            includeRoutes = if (routed) {
+                if (fullTunnel) emptyList() else listOf("198.19.0.1/32", "2001:db8:29::1/128")
+            } else if (profile == "tcp") listOf("10.86.0.0/24", "fd86:29:1::/120")
                 else listOf("10.87.0.0/24", "fd86:29:2::/120"),
             loggingLevel = "debug")
         config.validate()
@@ -138,7 +141,7 @@ class VpnDataPlaneInstrumentedTest {
             val connectedObserved = System.nanoTime()
             if (!explicitNetwork) {
                 assertNull("default socket test must not bind the process", cm.boundNetworkForProcess)
-                val destinations = if (profile == "tcp") listOf("10.86.0.1", "fd86:29:1::1")
+                val destinations = if (routed) listOf("198.19.0.1", "2001:db8:29::1") else if (profile == "tcp") listOf("10.86.0.1", "fd86:29:1::1")
                     else listOf("10.87.0.1", "fd86:29:2::1")
                 for (address in destinations) {
                     var firstSource: String? = null
@@ -161,11 +164,23 @@ class VpnDataPlaneInstrumentedTest {
                         cm.getLinkProperties(network)?.linkAddresses?.any { it.address.hostAddress == VpnServiceImpl.liveIp } == true
                 } == true
             }
+            if (routed) {
+                val links = requireNotNull(cm.getLinkProperties(requireNotNull(cm.activeNetwork)))
+                assertEquals(listOf("198.19.0.53"), links.dnsServers.map { it.hostAddress })
+                val defaultRoutes = links.routes.filter { it.isDefaultRoute }
+                val defaults = defaultRoutes.map { it.destination.toString() }.toSet()
+                if (fullTunnel) assertTrue("both default routes missing: $defaults", defaultRoutes.any { it.destination.address is java.net.Inet4Address } && defaultRoutes.any { it.destination.address is java.net.Inet6Address })
+                else assertTrue("split tunnel has a default route: $defaults", defaults.isEmpty())
+                val name = "q29-${System.nanoTime()}.test"
+                val resolved = InetAddress.getAllByName(name).map { it.hostAddress }.toSet()
+                assertTrue("system DNS did not return fixture A: $resolved", "198.19.0.1" in resolved)
+                Log.i("Q29Traffic", "SYSTEM_DNS name=$name answers=$resolved routes=${links.routes}")
+            }
             val properties = VpnServiceImpl.liveConnectionProperties
             assertNotNull(properties)
             assertTrue(VpnServiceImpl.liveIp.startsWith(if (profile == "tcp") "10.86.0." else "10.87.0."))
-            traffic(if (profile == "tcp") "10.86.0.1" else "10.87.0.1", explicitNetwork)
-            traffic(if (profile == "tcp") "fd86:29:1::1" else "fd86:29:2::1", explicitNetwork)
+            traffic(if (routed) "198.19.0.1" else if (profile == "tcp") "10.86.0.1" else "10.87.0.1", explicitNetwork)
+            traffic(if (routed) "2001:db8:29::1" else if (profile == "tcp") "fd86:29:1::1" else "fd86:29:2::1", explicitNetwork)
             // Verify F278 on CONNECTED after real traffic, with receipt of the rejected command.
             val precedingErrors = shell("logcat -d -s VpnSvc:E").split("Invalid profile:").size
             context.startForegroundService(Intent(context, VpnServiceImpl::class.java)
@@ -176,7 +191,7 @@ class VpnDataPlaneInstrumentedTest {
             assertSame("rejected command replaced negotiated properties", properties, VpnServiceImpl.liveConnectionProperties)
             assertTrue(service()?.foreground == true)
             assertTrue(prefs.getBoolean(MainActivity.PREF_CONNECTION_DESIRED, false))
-            traffic(if (profile == "tcp") "10.86.0.1" else "10.87.0.1", explicitNetwork)
+            traffic(if (routed) "198.19.0.1" else if (profile == "tcp") "10.86.0.1" else "10.87.0.1", explicitNetwork)
             disconnect()
         }
     }
@@ -189,5 +204,28 @@ class VpnDataPlaneInstrumentedTest {
     @Test fun tcpOrdinaryFullPayload() = exercise("tcp", false, "tcp", explicitNetwork = false, fullTunnel = true)
     @Test fun udpOrdinaryFullPayload() = exercise("udp", false, "udp", explicitNetwork = false, fullTunnel = true)
     @Test fun quicOrdinaryFullPayload() = exercise("udp", true, "udp", explicitNetwork = false, fullTunnel = true)
+
+    @Test fun tcpRoutedSplitPayloadDns() = exercise("tcp", false, "tcp", explicitNetwork = false, routed = true)
+    @Test fun udpRoutedSplitPayloadDns() = exercise("udp", false, "udp", explicitNetwork = false, routed = true)
+    @Test fun quicRoutedSplitPayloadDns() = exercise("udp", true, "udp", explicitNetwork = false, routed = true)
+    @Test fun tcpRoutedFullPayloadDns() = exercise("tcp", false, "tcp", explicitNetwork = false, fullTunnel = true, routed = true)
+    @Test fun udpRoutedFullPayloadDns() = exercise("udp", false, "udp", explicitNetwork = false, fullTunnel = true, routed = true)
+    @Test fun quicRoutedFullPayloadDns() = exercise("udp", true, "udp", explicitNetwork = false, fullTunnel = true, routed = true)
+    @Test fun fullKillSwitchRefusesWithoutSystemLockdown() {
+        val before = shell("logcat -d -s VpnSvc:E").split("Refusing unprotected kill-switch connection:").size
+        val config = VpnConfig(serverAddress = "10.0.2.2", port = 24966, protocol = "tcp",
+            username = "fixture", password = "fixture-password", serverPublicKeyHex = args.getString("q29_key_tcp"),
+            bindStaticToSession = true, killSwitch = true, routingMode = "full-tunnel", addDefaultGateway = true)
+        config.validate()
+        context.startForegroundService(Intent(context, VpnServiceImpl::class.java)
+            .setAction(VpnServiceImpl.ACTION_CONNECT).putExtra(VpnServiceImpl.EXTRA_CONFIG, config))
+        waitFor("unprotected kill-switch request was not rejected") {
+            shell("logcat -d -s VpnSvc:E").split("Refusing unprotected kill-switch connection:").size > before
+        }
+        waitFor("rejected foreground service did not stop") { service() == null }
+        assertEquals(VpnServiceImpl.STATUS_ERROR, VpnServiceImpl.liveStatus)
+        assertNull(VpnServiceImpl.liveConnectionProperties)
+        assertFalse("refusal left a TUN", Regex("(?m)^\\d+: tun\\d").containsMatchIn(shell("su 0 ip -o link show")))
+    }
 
 }

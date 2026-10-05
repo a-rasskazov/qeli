@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v62 -->
+<!-- normative-sync: full-system-audit-v63 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2181,3 +2181,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 
 
 **5 October, ordinary Android sockets:** [split/full × three transports](../reports/AUDIT-Q29-ANDROID-DATA.md):6freshPASS,72replies.5/6initialIPv4sources physical after observedCONNECTED;TUNready1–111ms,payload guarded bypreflight. Immediate first-packet andexternal/default routes unqualified;DNS/kill-switch/lifecycle next. ProductAPK/JNI unchanged,Q29IN_PROGRESS,28/37(75.7%).
+
+
+**5 October,Q29 off-pool/DNS:** [seven cases](../reports/AUDIT-Q29-ANDROID-DATA.md):7newPASS,72off-poolreplies and12systemDNS A/AAAA replies;full without includeRoutes,split without defaults. Valid full kill-switch rejected without OSlockdown. Initial wildcardUDPsink caused6timeouts,pcap confirms fixture wrongsource,fixedsinkPASS. ProductAPK/JNI unchanged;positive lockdown/systemlifecycle open,Q29IN_PROGRESS,28/37(75.7%).

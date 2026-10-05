@@ -1,6 +1,6 @@
 # Q29: Android VPN-трафик и lifecycle после Auth
 
-<!-- normative-sync: q29-android-data-v2 -->
+<!-- normative-sync: q29-android-data-v3 -->
 
 **5 октября 2026. Этап PASS; Q29 IN_PROGRESS. План: 28/37 (75,7%), осталось 9 разделов.**
 
@@ -38,3 +38,21 @@ Evidence: release/certification/evidence/q29-android-data-20261005.json.
 Product APK/JNI неизменны, новых исправлений продукта нет. Свежая сборка test APK и шесть debug-тестов; прежние результаты используются только в исходных областях, общего нового запуска37Android нет. Без private fixture новые шесть тестов skip. Для scripts/audit_android_data_plane_lab.py добавлен --suite ordinary; стандартный explicit выбирает только прежние три метода.
 
 Один прогон занял109,19s, тесты18,913s. Readonly API34 x86_64, отдельные NET/MNT/PID на.11, серверexit0, namespace addresses восстановлены, userdata SHA/mtime/size и рабочая сеть/service неизменны, app service/TUN отсутствуют, AndroidRuntime безFATAL. .10 не затронут. Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-default-20261005; evidence: release/certification/evidence/q29-android-default-20261005.json. Q29 остаётся IN_PROGRESS; далее внешние маршруты/DNS/kill-switch, ранний первый пакет и системный lifecycle.
+
+## Маршруты вне пула, системный DNS и отказ kill-switch
+
+Следующий пакет: **7/7 новых debug instrumented тестов PASS**. Шесть проверяют TCP fake-tls, UDP fake-tls и UDP QUIC в split/full; седьмой проверяет отказ full-tunnel с kill_switch=true при выключенном системном lockdown. Новый полный запуск всех 44 Android-тестов не выполнялся; прежние результаты сохраняют исходные области проверки.
+
+Назначения198.19.0.1 и2001:db8:29::1 находятся вне обоих VPN-пулов. Full-профили не имеют includeRoutes: доставка требует default routes0.0.0.0/0 и::/0, наличие обеих проверяется в LinkProperties. Split-профили имеют явные /32 и/128 и не содержат default routes. Обычные Socket/DatagramSocket без привязки передают TCP16KiB и UDP32/257/1024; сервер подтверждает72 ответа с адресами TUN и хешами payload. Это доказывает захват off-pool трафика клиентом. Адреса принадлежат loopback изолированного сервера: внешний Интернет, серверный FORWARD/NAT/NAT66 и доступность production-сети не проверяются.
+
+В каждом профиле устанавливается tunnel DNS198.19.0.53; его /32-маршрут проверяется отдельно от пользовательских includeRoutes. Обычный InetAddress.getAllByName разрешает шесть уникальных q29-*.test имён. Клиент получил A иAAAA во всех шести случаях; отдельный DNS-ответчик сохранил12 отвеченных вопросов с source из TUN, а pcap подтверждает путь. Посторонним запросам Android ответчик возвращает NXDOMAIN; внешнего uplink нет. Private DNS/DoT и DNS-восстановление после системного process-death не входят в этот этап.
+
+Отрицательный kill-switch сценарий использует валидный профиль: без OS lockdown клиент публикует ERROR, завершает foreground service и не оставляет TUN/connection properties. Положительная работа с Always-on+lockdown и блокировка пакетов при смерти процесса **ещё не квалифицированы**. Подмена secure settings сама по себе не считается включением системной политики.
+
+Первый прогон сохранён:1 негативный тест PASS,6 UDP receive timeout. Pcap показал запрос198.19.0.1:26000 и ответ10.86.0.1:26000 — wildcard-ответчик стенда выбрал неверный source, поэтому connected DatagramSocket отверг ответ. После bind ответчика к каждому адресу назначения все7PASS. Проверка IPv6 default route дополнительно переведена со строки на семейство адреса; исходное форматирование::/0 работало и не было причиной шести отказов. Новых дефектов продукта или правок APK/JNI в этом этапе нет.
+
+Финальный прогон105,94s, тесты21,149s; Android14/API34 x86_64, readonly AVD и сервер в новых NET/MNT/PID на.11. Оба прогона сохранили userdata SHA/mtime/size и рабочие host network/qeli.service; серверexit0, адреса namespace восстановлены, app service/TUN отсутствуют после stop, AndroidRuntime без FATAL. Product APK,289 прежних входов,14 native hashes и7 managed DLL неизменны. Свежая сборка только test APK; старые167JVM/28Android/1248.NET/Release-lint используются в прежнем scope. Без private fixture семь новых тестов skip; команда стенда --suite routed.
+
+Окно между наблюдаемым CONNECTED и фактическим source selection сохраняется в route-readiness.json; отправка payload по-прежнему ждёт bounded unsent preflight. CONNECTED в Qeli публикуется после native ACK, без ожидания framework default network. В [исходнике AOSP Vpn](https://android.googlesource.com/platform/frameworks/base/+/b8e604452076/services/core/java/com/android/server/connectivity/Vpn.java) establish создаёт/регистрирует NetworkAgent и возвращает TUN. Это поддерживает гипотезу о раздельной публикации состояния; данный исходник не является точным build исходником эмулятора и не доказывает длительность netd. Решение о семантике раннего статуса остаётся открытым.
+
+Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-routes-dns-20261005. Evidence: release/certification/evidence/q29-android-routes-dns-20261005.json. Q29 IN_PROGRESS; план28/37(75,7%). Далее положительный lockdown, revoke/process-death/redelivery/always-on/Doze, Release и оставшиеся платформенные сценарии.
