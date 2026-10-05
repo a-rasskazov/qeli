@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application>
+        <!-- Disposable private-lab sender; this component exists only in the test APK. -->
+        <receiver android:name="com.qeli.SystemNetworkProbeReceiver" android:exported="true" />
+    </application>
+</manifest>

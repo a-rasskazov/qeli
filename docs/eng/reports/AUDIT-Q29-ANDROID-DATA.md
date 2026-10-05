@@ -56,3 +56,6 @@ Final run105.94s,tests21.149s; Android14/API34x86_64,readonly AVD and server in 
 The gap between observed CONNECTED and actual source selection persists in route-readiness.json; payload still waits for bounded unsent preflight. Qeli publishes CONNECTED after native ACK without waiting for framework default network. [AOSP Vpn source](https://android.googlesource.com/platform/frameworks/base/+/b8e604452076/services/core/java/com/android/server/connectivity/Vpn.java) establish creates/registers NetworkAgent and returns TUN. This supports a hypothesis of separate state publication; this source is not the emulator's exact build source and does not prove netd timing. Early-status semantic decision remains open.
 
 Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-routes-dns-20261005. Evidence: release/certification/evidence/q29-android-routes-dns-20261005.json. Q29IN_PROGRESS,plan28/37(75.7%). Next positive lockdown,revoke/process-death/redelivery/always-on/Doze,Release and remaining platform scenarios.
+
+
+The subsequent [system lifecycle stage](AUDIT-Q29-ANDROID-SYSTEM.md) confirms positive lockdown and tested blocking after process death;automatic SIGKILL redelivery remains FAIL (issue OPEN). This is a separate partial qualification;Q29 stays open.

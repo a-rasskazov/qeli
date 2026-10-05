@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v63 -->
+<!-- normative-sync: full-system-audit-v64 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2197,3 +2197,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 
 
 **5 октября, Q29 off-pool/DNS:** [семь сценариев](../reports/AUDIT-Q29-ANDROID-DATA.md):7 новых PASS,72 ответа вне пула и12 системных DNS A/AAAA ответов;full без includeRoutes,split без default routes. Валидный full kill-switch отказал без OS lockdown. Первый wildcard UDP sink дал6 timeout;pcap подтверждает wrong-source стенда,исправленный sinkPASS. ProductAPK/JNI неизменны;положительный lockdown/system lifecycle ещё открыт,Q29IN_PROGRESS,28/37(75,7%).
+
+
+**5 октября,Q29 системный lifecycle (частично):** [Always-on/lockdown и внешнее завершение процесса](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):настоящая OS-политика,независимый UID,блокировка после SIGKILL/force-stop, ручное восстановление и системный revoke подтверждены. Автоматическая redelivery после SIGKILL FAIL (вопрос открыт) несмотря на startCommandResult=3;полный system gate не PASS. Q29 IN_PROGRESS,28/37(75,7%).

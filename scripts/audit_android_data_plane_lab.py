@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import traceback
+import xml.etree.ElementTree as ET
 from audit_udp_handshake_contracts import hashed, stop
 
 
@@ -167,13 +168,192 @@ class DnsFixture:
         assert not self.thread.is_alive(), "DNS worker remained"
 
 
+def system_lifecycle(arun, evidence, echo, keys, result):
+    """Use real Settings and externally kill the product process, outside instrumentation."""
+    sequence = 0
+    def ui(label):
+        nonlocal sequence
+        sequence += 1
+        arun("shell", "uiautomator", "dump", "/sdcard/q29-vpn-ui.xml", timeout=30)
+        value = arun("shell", "cat", "/sdcard/q29-vpn-ui.xml").stdout
+        (evidence / f"ui-{sequence:02}-{label}.xml").write_text(value)
+        return ET.fromstring(value)
+    def tap(node):
+        coords = [int(v) for v in re.findall(r"[0-9]+", node.attrib["bounds"])]
+        assert len(coords) == 4 and coords[2] > coords[0] and coords[3] > coords[1]
+        arun("shell", "input", "tap", str((coords[0] + coords[2]) // 2), str((coords[1] + coords[3]) // 2))
+    def text_node(tree, text):
+        return next((n for n in tree.iter("node") if n.get("text", "").lower() == text.lower()), None)
+    def open_settings():
+        arun("shell", "am", "start", "-a", "android.settings.VPN_SETTINGS")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            tree = ui("vpn-list")
+            waiting = next((n for n in tree.iter("node") if n.get("resource-id") == "android:id/aerr_wait"), None)
+            if waiting is not None:
+                # Record the real emulator ANR dialog, let System UI recover, and retry.
+                result.setdefault("system_ui_anr_waits", []).append(sequence)
+                tap(waiting)
+                continue
+            if text_node(tree, "Always-on VPN") is not None and text_node(tree, "Forget VPN") is not None:
+                # VPN_SETTINGS can reuse the already-open provider management screen.
+                return tree
+            gear = next((n for n in tree.iter("node") if n.get("resource-id", "").endswith("settings_button") or
+                         n.get("content-desc", "").lower() in ("settings", "qeli settings")), None)
+            if gear is not None:
+                tap(gear)
+                return ui("vpn-management")
+            time.sleep(.5)
+        raise AssertionError("Qeli VPN Settings gear not found within 60 seconds; UI retained")
+    def switch(label, enabled):
+        tree = ui("switch-before")
+        node = text_node(tree, label)
+        assert node is not None, (label, "switch label absent; UI retained")
+        parents = {child: parent for parent in tree.iter() for child in parent}
+        row = node
+        while not any(n.get("checkable") == "true" for n in row.iter("node")):
+            assert row in parents, (label, "switch widget absent")
+            row = parents[row]
+        widget = next(n for n in row.iter("node") if n.get("checkable") == "true")
+        if (widget.get("checked") == "true") != enabled:
+            tap(node)
+            tree = ui("switch-toggled")
+            positive = next((n for n in tree.iter("node") if n.get("resource-id") == "android:id/button1"), None)
+            if positive is not None and text_node(tree, label) is None:
+                tap(positive); tree = ui("switch-confirmed")
+            node = text_node(tree, label); assert node is not None
+            parents = {child: parent for parent in tree.iter() for child in parent}; row = node
+            while not any(n.get("checkable") == "true" for n in row.iter("node")):row = parents[row]
+            widget = next(n for n in row.iter("node") if n.get("checkable") == "true")
+            assert (widget.get("checked") == "true") == enabled, (label, enabled)
+    def wait_until(predicate, message, seconds=30):
+        until = time.monotonic() + seconds
+        while time.monotonic() < until:
+            if predicate():return
+            time.sleep(.25)
+        raise AssertionError(message)
+    def logs():
+        return arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29System:I").stdout
+    def probe(tag, expect_reply):
+        before = len(echo.rows)
+        broadcast = arun("shell", "am", "broadcast", "--include-stopped-packages", "--receiver-foreground",
+                         "-n", "com.qeli.test/com.qeli.SystemNetworkProbeReceiver", "--es", "tag", tag)
+        (evidence / (tag + "-broadcast.txt")).write_text(broadcast.stdout + broadcast.stderr)
+        needle = f"COMPLETE tag={tag} uid={probe_uid} "
+        wait_until(lambda: needle in arun("shell", "logcat", "-d", "-s", "Q29Probe:I").stdout, "independent probe did not finish", 8)
+        output = arun("shell", "logcat", "-d", "-s", "Q29Probe:I").stdout
+        line = next(line for line in output.splitlines() if needle in line)
+        (evidence / (tag + "-probe.txt")).write_text(line + "\n")
+        time.sleep(.2)
+        digest = hashlib.sha256(tag.encode()).hexdigest()
+        seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest]
+        if expect_reply:
+            assert "reply=Q29:" + tag in line and len(seen) == 1, (line, seen)
+            if tag != "Q29BASELINE":assert seen[0]["peer"].startswith("10.86.0."), seen
+        else:
+            assert "reply=Q29:" + tag not in line and "error=" in line and not seen, (line, seen)
+        return dict(uid=int(probe_uid), echoed=len(seen), expected_reply=expect_reply)
+    uid_text = arun("shell", "cmd", "package", "list", "packages", "-U", "com.qeli").stdout
+    uid_rows = dict(re.findall(r"package:(com\.qeli(?:\.test)?) uid:([0-9]+)", uid_text))
+    assert set(uid_rows) == {"com.qeli", "com.qeli.test"}, uid_text
+    probe_uid = uid_rows["com.qeli.test"]
+    assert int(probe_uid) >= 10000 and probe_uid != uid_rows["com.qeli"]
+    result["probe_uids"] = uid_rows
+    (evidence / "nc-help.txt").write_text(arun("shell", "toybox", "nc", "--help", check=False).stdout)
+    result["app_probe_baseline"] = probe("Q29BASELINE", True)
+    policy_applied = logs().count("Native NetworkPlan 1 APPLIED:")
+    # Finishing instrumentation force-stops its target. Start the saved profile via the real OS.
+    arun("shell", "am", "start", "-n", "com.qeli/.MainActivity")
+    open_settings(); switch("Always-on VPN", True); switch("Block connections without VPN", True)
+    wait_until(lambda: "kill_switch=true" in logs() and logs().count("Native NetworkPlan 1 APPLIED:") > policy_applied,
+               "system-owned saved kill-switch profile did not start", 30)
+    policy = {key: arun("shell", "settings", "get", "secure", key).stdout.strip()
+              for key in ("always_on_vpn_app", "always_on_vpn_lockdown")}
+    assert policy == {"always_on_vpn_app": "com.qeli", "always_on_vpn_lockdown": "1"}, policy
+    result["system_policy"] = policy
+    result["app_probe_lockdown_connected"] = probe("Q29PROTECTED", True)
+    old_pid = arun("shell", "pidof", "com.qeli").stdout.strip(); assert re.fullmatch(r"[0-9]+", old_pid)
+    before_applied = logs().count("Native NetworkPlan 1 APPLIED:")
+    (evidence / "before-sigkill-services.txt").write_text(arun("shell", "dumpsys", "activity", "services", "com.qeli").stdout)
+    (evidence / "before-sigkill-vpn.txt").write_text(arun("shell", "dumpsys", "vpn_management").stdout)
+    arun("shell", "su", "0", "kill", "-9", old_pid)
+    recovery_error = None
+    try:
+        wait_until(lambda: logs().count("Native NetworkPlan 1 APPLIED:") > before_applied, "OS did not restore authenticated VPN after SIGKILL", 45)
+    except AssertionError as error:
+        recovery_error = str(error)
+    finally:
+        for name, command in (("after-sigkill-services.txt", ["dumpsys", "activity", "services", "com.qeli"]),
+                              ("after-sigkill-exit-info.txt", ["dumpsys", "activity", "exit-info", "com.qeli"]),
+                              ("after-sigkill-vpn.txt", ["dumpsys", "vpn_management"]),
+                              ("after-sigkill-system-logcat.log", ["logcat", "-d"])):
+            (evidence / name).write_text(arun("shell", *command, check=False).stdout)
+    new_pid = arun("shell", "pidof", "com.qeli", check=False).stdout.strip()
+    if recovery_error is None:
+        assert new_pid and new_pid != old_pid
+        assert "Android redelivered" in logs(), "missing actual redelivery evidence"
+        result["sigkill_recovery"] = dict(status="PASS", old_pid=old_pid, new_pid=new_pid, redelivery=True)
+        state = arun("shell", "dumpsys", "activity", "services", "com.qeli").stdout
+        assert "isForeground=true" in state, state
+        (evidence / "sigkill-services.txt").write_text(state)
+        result["app_probe_lockdown_recovered"] = probe("Q29RECOVERED", True)
+    else:
+        result["sigkill_recovery"] = dict(status="FAIL", old_pid=old_pid, new_pid=new_pid, error=recovery_error)
+        # Complete independent safety/revoke checks even when OS recovery fails.
+        result["app_probe_lockdown_process_dead"] = probe("Q29DEAD", False)
+    (evidence / "sigkill-logcat.log").write_text(logs())
+    arun("shell", "am", "force-stop", "com.qeli")
+    wait_until(lambda: not re.search(r"^\d+: tun\d", arun("shell", "su", "0", "ip", "-o", "link", "show").stdout, re.M), "force-stop retained TUN")
+    result["app_probe_lockdown_without_VPN"] = probe("Q29BLOCKED", False)
+    # Force-stop is a user stop; clear the package's stopped state by an explicit launch.
+    arun("shell", "am", "start", "-n", "com.qeli/.MainActivity")
+    recovery_applied = logs().count("Native NetworkPlan 1 APPLIED:")
+    open_settings(); switch("Block connections without VPN", False); switch("Always-on VPN", False)
+    switch("Always-on VPN", True); switch("Block connections without VPN", True)
+    wait_until(lambda: logs().count("Native NetworkPlan 1 APPLIED:") > recovery_applied,
+               "manual re-enable did not restore authenticated VPN")
+    state = arun("shell", "dumpsys", "activity", "services", "com.qeli").stdout
+    assert "isForeground=true" in state, state
+    (evidence / "manual-recovery-services.txt").write_text(state)
+    result["manual_recovery_after_force_stop"] = "PASS"
+    result["app_probe_manual_recovery"] = probe("Q29MANUAL", True)
+    before_revoke = logs().count("Android revoked the VPN service")
+    switch("Block connections without VPN", False); switch("Always-on VPN", False)
+    tree = ui("before-forget"); forget = text_node(tree, "Forget VPN")
+    if forget is None:forget = text_node(tree, "Forget")
+    assert forget is not None, "Forget VPN control absent; UI retained"
+    tap(forget); tree = ui("forget-confirmation")
+    confirm_forget = text_node(tree, "FORGET")
+    assert confirm_forget is not None, "Forget confirmation control absent; UI retained"
+    # This Android dialog uses button2 for FORGET and button1 for DISMISS.
+    tap(confirm_forget)
+    ui("after-forget")
+    wait_until(lambda: logs().count("Android revoked the VPN service") > before_revoke, "system Settings did not invoke onRevoke")
+    wait_until(lambda: "VpnServiceImpl" not in arun("shell", "dumpsys", "activity", "services", "com.qeli").stdout,
+               "revoked service remained")
+    links = arun("shell", "su", "0", "ip", "-o", "link", "show").stdout
+    assert not re.search(r"^\d+: tun\d", links, re.M), links
+    prefs = arun("shell", "run-as", "com.qeli", "cat", "shared_prefs/app_state.xml").stdout
+    (evidence / "revoked-prefs.xml").write_text(prefs)
+    tree = ET.fromstring(prefs)
+    assert any(n.get("name") == "connection_desired" and n.get("value") == "false" for n in tree), prefs
+    wait_until(lambda: any(mode in arun("shell", "appops", "get", "com.qeli", "ACTIVATE_VPN").stdout
+                          for mode in ("ignore", "deny")), "Forget did not revoke VPN consent", 15)
+    consent = arun("shell", "appops", "get", "com.qeli", "ACTIVATE_VPN").stdout
+    (evidence / "revoked-consent.txt").write_text(consent)
+    assert "ignore" in consent or "deny" in consent, consent
+    result["system_revoke"] = "PASS"
+    (evidence / "system-lifecycle-logcat.log").write_text(logs())
+    result["system_echo_receipts"] = len(echo.rows)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--qeli", type=Path, required=True)
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
-    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed"), default="explicit")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system"), default="explicit")
     args = ap.parse_args()
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
@@ -255,7 +435,7 @@ perf.connection.handshake_timeout_secs = 12
             assert proc.returncode == 0, (argv, proc.stdout, proc.stderr)
         return proc
     server = emulator = echo = capture = dns = None
-    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite == "routed" else []
+    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system") else []
     started = time.monotonic()
     fixture_installed = []
     try:
@@ -282,7 +462,7 @@ perf.connection.handshake_timeout_secs = 12
             raise AssertionError("server TUN setup timeout")
         capture = subprocess.Popen(["tcpdump", "-i", "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
                                    stdout=(evidence / "tcpdump.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
-        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite == "routed" else None
+        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system") else None
         echo = Echo(evidence / "echo-receipts.json", echo_hosts)
         command = ["/root/android-sdk/emulator/emulator", "-avd", "test", "-port", "5560", "-read-only",
                    "-no-snapshot-load", "-no-snapshot-save", "-no-window", "-no-audio", "-no-boot-anim",
@@ -328,6 +508,9 @@ perf.connection.handshake_timeout_secs = 12
                 if label == "system-vpn-policy":
                     value = "\n".join(line for line in value.splitlines() if "vpn" in line or "private_dns" in line)
                 (evidence / (label + ".txt")).write_text(value)
+        if args.suite == "system":
+            phases = [("fixed", "com.qeli.VpnSystemLifecycleInstrumentedTest#bootstrapSavedProfileAndLeaveConnected")]
+            expected_tests = 1
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             result[folder + "_apks"] = manifest
@@ -343,10 +526,12 @@ perf.connection.handshake_timeout_secs = 12
             (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
             result[folder + "_output"] = proc.stdout
             result[folder + "_echo_receipts"] = len(echo.rows)
-            (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "AndroidRuntime:E").stdout)
+            (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "Q29System:I", "AndroidRuntime:E").stdout)
             if folder == "fixed":
-                assert f"OK ({expected_tests} tests)" in proc.stdout, proc.stdout
+                assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
+        if args.suite == "system":
+            system_lifecycle(arun, evidence, echo, keys, result)
         assert not any("error" in row for row in echo.rows), echo.rows
         if dns is not None:
             assert not any("error" in row for row in dns.rows), dns.rows
@@ -354,7 +539,8 @@ perf.connection.handshake_timeout_secs = 12
             assert len({row["name"] for row in accepted}) == 6, accepted
             assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted), accepted
             result["dns_answered_questions"] = len(accepted)
-        for profile, subnet, v6 in (("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")):
+        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite == "system" else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
+        for profile, subnet, v6 in profiles:
             for family_prefix in (subnet, v6):
                 for protocol in ("tcp", "udp"):
                     assert any(row.get("peer", "").startswith(family_prefix) and row.get("protocol") == protocol
@@ -367,18 +553,22 @@ perf.connection.handshake_timeout_secs = 12
                               ("android-runtime.log", ["shell", "logcat", "-d", "-s", "AndroidRuntime:E"])):
             (evidence / name).write_text(arun(*command).stdout)
         assert "FATAL EXCEPTION" not in (evidence / "android-runtime.log").read_text()
-        result["status"] = "PASS"
+        result["status"] = "FAIL" if result.get("sigkill_recovery", {}).get("status") == "FAIL" else "PASS"
     except BaseException:
         result["status"] = "FAIL"
         result["error"] = traceback.format_exc()
         print(result["error"], flush=True)
         try:
-            (evidence / "failure-vpn-logcat.log").write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "AndroidRuntime:E", timeout=20, check=False).stdout)
+            (evidence / "failure-vpn-logcat.log").write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Probe:I", "ActivityManager:I", "AndroidRuntime:E", timeout=20, check=False).stdout)
         except Exception:
             pass
     finally:
         if dns is not None:
-            dns.close()
+            try:
+                dns.close()
+            except BaseException:
+                result["status"] = "FAIL"
+                result["cleanup_error"] = traceback.format_exc()
         if echo is not None:
             try:
                 echo.close()

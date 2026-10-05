@@ -56,3 +56,6 @@ Product APK/JNI неизменны, новых исправлений проду
 Окно между наблюдаемым CONNECTED и фактическим source selection сохраняется в route-readiness.json; отправка payload по-прежнему ждёт bounded unsent preflight. CONNECTED в Qeli публикуется после native ACK, без ожидания framework default network. В [исходнике AOSP Vpn](https://android.googlesource.com/platform/frameworks/base/+/b8e604452076/services/core/java/com/android/server/connectivity/Vpn.java) establish создаёт/регистрирует NetworkAgent и возвращает TUN. Это поддерживает гипотезу о раздельной публикации состояния; данный исходник не является точным build исходником эмулятора и не доказывает длительность netd. Решение о семантике раннего статуса остаётся открытым.
 
 Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-routes-dns-20261005. Evidence: release/certification/evidence/q29-android-routes-dns-20261005.json. Q29 IN_PROGRESS; план28/37(75,7%). Далее положительный lockdown, revoke/process-death/redelivery/always-on/Doze, Release и оставшиеся платформенные сценарии.
+
+
+Следующий [системный lifecycle этап](AUDIT-Q29-ANDROID-SYSTEM.md) подтверждает положительный lockdown и блокировку проверяемого трафика после смерти процесса;автоматическая SIGKILL redelivery остаётся FAIL (вопрос открыт). Это отдельная частичная проверка,Q29 не закрыт.
