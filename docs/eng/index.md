@@ -416,3 +416,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 
 - [Q29: concurrent TUN/JNI teardown](reports/AUDIT-Q29-ANDROID-LIFECYCLE.md)
 - [Q29: foreground service commands and lifecycle](reports/AUDIT-Q29-ANDROID-SERVICE.md)
+- [Q29: VPN payload and post-auth lifecycle](reports/AUDIT-Q29-ANDROID-DATA.md)

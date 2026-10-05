@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v60 -->
+<!-- normative-sync: full-system-audit-v61 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -175,7 +175,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 26 | Общий C# и managed/native граница | H04, H06, H08 | TODO |
 | 27 | Windows: GUI, служба и драйверы | H01, H04, H08 | DONE / PASS |
 | 28 | macOS: daemon, utun, pf и Network Extension | H04, H08 | IN_PROGRESS |
-| 29 | Android: VpnService, JNI и lifecycle | H04, H06, H08 | TODO |
+| 29 | Android: VpnService, JNI и lifecycle | H04, H06, H08 | IN_PROGRESS |
 | 30 | iOS: PacketTunnel, Swift и MDM | H04, H06, H08 | TODO |
 | 31 | OpenWrt, LuCI и Keenetic | H04, H06, H08 | TODO |
 | 32 | Метрики, usage, логи и уведомления | H02–H03, H08, H10 | IN_PROGRESS |
@@ -1860,6 +1860,8 @@ Daemon IPC/owner/mode, Keychain, selected profile, Intel/ARM ABI и DNS journal.
 **5 октября, Q29 lifecycle:** [F277 и проверки](../reports/AUDIT-Q29-ANDROID-LIFECYCLE.md). Установка TUN и остановка сериализованы; join вне монитора. Q29 остаётся IN_PROGRESS, полный VPN/lifecycle ещё не подтверждён. Общий итог 28/37 (75,7%). **167 JVM +23 Android PASS;2 ожидаемых baseline FAIL.**
 
 **5 октября, Q29 framework service:** [F278 и проверки](../reports/AUDIT-Q29-ANDROID-SERVICE.md): отклонённый конфиг сохраняет текущий статус; пять настоящих lifecycle-сценариев до Auth. 167 JVM +28 Android PASS;1 baseline FAIL. Q29 IN_PROGRESS, план28/37(75,7%).
+
+**5 октября, Q29 data plane:** [три режима и dual-stack](../reports/AUDIT-Q29-ANDROID-DATA.md):3 свежих integration PASS,48 ответов через TUN;1 F278 baseline FAIL после Auth. Product APK/JNI неизменны;167 JVM/28 Android/1248.NET повторно используются, не свежие. Явный VPN Network + kernel source preflight; обычный default-network выбор остаётся открыт. Q29 IN_PROGRESS,28/37(75,7%).
 
 **Код:** `qeli-android/app`.
 

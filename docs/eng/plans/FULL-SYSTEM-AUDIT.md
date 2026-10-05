@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v60 -->
+<!-- normative-sync: full-system-audit-v61 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -170,7 +170,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 26 | Shared C# and managed/native boundary | H04, H06, H08 | TODO |
 | 27 | Windows GUI, service and drivers | H01, H04, H08 | DONE / PASS |
 | 28 | macOS daemon, utun, pf and Network Extension | H04, H08 | IN_PROGRESS |
-| 29 | Android VpnService, JNI and lifecycle | H04, H06, H08 | TODO |
+| 29 | Android VpnService, JNI and lifecycle | H04, H06, H08 | IN_PROGRESS |
 | 30 | iOS PacketTunnel, Swift and MDM | H04, H06, H08 | TODO |
 | 31 | OpenWrt, LuCI and Keenetic | H04, H06, H08 | TODO |
 | 32 | Metrics, usage, logs and notifications | H02–H03, H08, H10 | IN_PROGRESS |
@@ -1849,6 +1849,8 @@ Daemon IPC/ownership/modes, Keychain, selected profiles, Intel/ARM ABI and DNS j
 **5 October, Q29 lifecycle:** [F277 and checks](../reports/AUDIT-Q29-ANDROID-LIFECYCLE.md). TUN apply and teardown serialized; join outside monitor. Q29 remains IN_PROGRESS, full VPN/lifecycle not yet qualified. Full plan28/37(75.7%). **167 JVM +23 Android PASS;2 expected baseline FAIL.**
 
 **5 October, Q29 framework service:** [F278 and checks](../reports/AUDIT-Q29-ANDROID-SERVICE.md): rejected config preserves current status; five actual lifecycle cases before Auth.167 JVM +28 Android PASS;1baseline FAIL. Q29 IN_PROGRESS,plan28/37(75.7%).
+
+**5 October, Q29 data plane:** [three modes anddual-stack](../reports/AUDIT-Q29-ANDROID-DATA.md):3freshintegrationPASS,48TUN replies;1post-authF278baselineFAIL. ProductAPK/JNI unchanged;167JVM/28Android/1248.NET reused,not fresh. ExplicitVPNNetwork +kernel-source preflight;ordinary default-network selection still open. Q29IN_PROGRESS,28/37(75.7%).
 
 **Source:** `qeli-android/app`.
 

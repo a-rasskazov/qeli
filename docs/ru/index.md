@@ -416,3 +416,4 @@
 
 - [Q29: конкурентная остановка TUN/JNI](reports/AUDIT-Q29-ANDROID-LIFECYCLE.md)
 - [Q29: команды и lifecycle foreground-сервиса](reports/AUDIT-Q29-ANDROID-SERVICE.md)
+- [Q29: VPN-трафик и lifecycle после Auth](reports/AUDIT-Q29-ANDROID-DATA.md)
