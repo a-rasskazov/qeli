@@ -420,3 +420,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: system lockdown, process death and revoke](reports/AUDIT-Q29-ANDROID-SYSTEM.md)
 - [Q29: screen, deep idle and TCP recovery](reports/AUDIT-Q29-ANDROID-POWER.md)
 - [Q29: UDP/QUIC recovery and grace expiry](reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md)
+- [Q29: Wi-Fi/Cellular switching and TUN retention](reports/AUDIT-Q29-ANDROID-HANDOVER.md)

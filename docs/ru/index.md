@@ -420,3 +420,4 @@
 - [Q29: системный lockdown, смерть процесса и revoke](reports/AUDIT-Q29-ANDROID-SYSTEM.md)
 - [Q29: экран, deep idle и восстановление TCP](reports/AUDIT-Q29-ANDROID-POWER.md)
 - [Q29: восстановление UDP/QUIC и истечение grace](reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md)
+- [Q29: переключение Wi-Fi/Cellular и сохранение TUN](reports/AUDIT-Q29-ANDROID-HANDOVER.md)
