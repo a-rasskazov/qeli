@@ -418,3 +418,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: foreground service commands and lifecycle](reports/AUDIT-Q29-ANDROID-SERVICE.md)
 - [Q29: VPN payload and post-auth lifecycle](reports/AUDIT-Q29-ANDROID-DATA.md)
 - [Q29: system lockdown, process death and revoke](reports/AUDIT-Q29-ANDROID-SYSTEM.md)
+- [Q29: screen, deep idle and TCP recovery](reports/AUDIT-Q29-ANDROID-POWER.md)

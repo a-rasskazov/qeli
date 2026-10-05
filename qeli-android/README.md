@@ -60,9 +60,9 @@ app/src/main/kotlin/com/qeli/
 | `NEARBY_WIFI_DEVICES`, `ACCESS_FINE_LOCATION` | чтение текущего SSID для доверенного Wi-Fi; без runtime-разрешения SSID считается неизвестным и VPN остаётся включённым |
 | `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE` + `FOREGROUND_SERVICE_LOCATION` | туннель и проверка доверенного SSID продолжают работать в foreground-сервисе без открытой Activity; location-тип включается только при активной функции и выданном разрешении |
 | `POST_NOTIFICATIONS` | уведомление активного туннеля (Android 13+) |
-| `WAKE_LOCK` | не терять соединение в глубоком сне |
+| `WAKE_LOCK` | ограниченный partial wake lock активного туннеля; системный Doze может игнорировать его |
 | `RECEIVE_BOOT_COMPLETED` | автоподключение после перезагрузки (если включено) |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | чтобы система не убивала туннель |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | запрос исключения из оптимизации батареи; решение принимает пользователь, автоматический перезапуск зависит от Android |
 | `CAMERA` | сканирование QR с профилем |
 | `QUERY_ALL_PACKAGES` | список приложений для per-app split tunnel |
 
