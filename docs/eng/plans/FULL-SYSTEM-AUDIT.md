@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v49 -->
+<!-- normative-sync: full-system-audit-v50 -->
 
-**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; next Q28.**
+**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage stage complete.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -169,7 +169,7 @@ to section 1 and denote historical review/tests, not current PASS. Cross-cutting
 | 25 | Linux CLI and network recovery | H01, H04, H08 | DONE / PASS |
 | 26 | Shared C# and managed/native boundary | H04, H06, H08 | TODO |
 | 27 | Windows GUI, service and drivers | H01, H04, H08 | DONE / PASS |
-| 28 | macOS daemon, utun, pf and Network Extension | H04, H08 | TODO |
+| 28 | macOS daemon, utun, pf and Network Extension | H04, H08 | IN_PROGRESS |
 | 29 | Android VpnService, JNI and lifecycle | H04, H06, H08 | TODO |
 | 30 | iOS PacketTunnel, Swift and MDM | H04, H06, H08 | TODO |
 | 31 | OpenWrt, LuCI and Keenetic | H04, H06, H08 | TODO |
@@ -1834,7 +1834,9 @@ Daemon IPC/ownership/modes, Keychain, selected profiles, Intel/ARM ABI and DNS j
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
+
+**5 October: storage stage PASS.** [F240–F242](../reports/AUDIT-Q28-MACOS-STORAGE.md):54 storage PASS,5 baseline FAIL; Keychain errors/duplicate/key creation races,strict key files/growth budgets,no quarantine on key-provider failures. Actual Mac USER SKIPPED. Next daemon/helper/selected profile/utun/pf/Swift; section remains open. Plan27/37(73.0%).
 
 ### 29. Android VpnService, JNI and lifecycle
 

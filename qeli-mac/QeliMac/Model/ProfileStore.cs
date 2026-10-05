@@ -13,28 +13,40 @@ namespace QeliMac.Model;
 /// See docs/*/archive/plans/RELEASE-FIXES.md E1.</summary>
 public static class ProfileStore
 {
-    private static readonly string Dir = Paths.UserDir;
-    private static readonly string FilePath = Path.Combine(Dir, "profiles.json");
+    private static readonly MacProfileArchive Archive = new(
+        Path.Combine(Paths.UserDir, "profiles.json"), SecureKey.GetOrCreate);
+
+    public static List<VpnConfig> Load() => Archive.Load();
+    public static void Save(IEnumerable<VpnConfig> profiles) => Archive.Save(profiles);
+}
+
+// Uses production encryption/parsing/atomic writes with a path-scoped key provider.
+internal sealed class MacProfileArchive(string filePath, Func<byte[]> getKey)
+{
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
-    private static readonly ProfileStoreFile StoreFile = new(FilePath);
+    private readonly ProfileStoreFile StoreFile = new(filePath);
 
-    public static List<VpnConfig> Load()
+    public List<VpnConfig> Load()
     {
         // Absent file = normal first run. Only a PRESENT-but-unreadable file is dangerous.
         var stored = StoreFile.Read();
         if (stored is null) return new List<VpnConfig>();
+        // Keychain/permission failures are not damaged profile bytes. Do not quarantine.
+        var key = getKey();
         List<VpnConfig> profiles;
         bool needsMigration;
         try
         {
             var raw = stored;
             var plaintext = EncryptedEnvelope.Open(
-                raw, SecureKey.GetOrCreate(), allowLegacyArray: true, out bool needsEnvelopeMigration);
-            string json = StrictUtf8.GetString(plaintext);
-            // Persist missing legacy IDs once, including a mixed old/new profile list.
-            profiles = ProfileStorePayload.Decode(json, out bool needsIdMigration, Options);
-            needsMigration = needsEnvelopeMigration || needsIdMigration;
+                raw, key, allowLegacyArray: true, out bool needsEnvelopeMigration);
+            try
+            {
+                profiles = ProfileStorePayload.Decode(StrictUtf8.GetString(plaintext), out bool needsIdMigration, Options);
+                needsMigration = needsEnvelopeMigration || needsIdMigration;
+            }
+            finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintext); }
         }
         catch (Exception ex)
         {
@@ -49,12 +61,13 @@ public static class ProfileStore
             List<VpnConfig>? recovered = null;
             try
             {
-                var backup = FilePath + ".bak";
+                var backup = filePath + ".bak";
                 if (File.Exists(backup))
                 {
                     var plaintext = EncryptedEnvelope.Open(
-                        ProfileStoreFile.ReadBounded(backup), SecureKey.GetOrCreate(), true, out _);
-                    recovered = ProfileStorePayload.Decode(StrictUtf8.GetString(plaintext), Options);
+                        ProfileStoreFile.ReadBounded(backup), key, true, out _);
+                    try { recovered = ProfileStorePayload.Decode(StrictUtf8.GetString(plaintext), Options); }
+                    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintext); }
                 }
             }
             catch (Exception backupError)
@@ -74,12 +87,12 @@ public static class ProfileStore
         return profiles;
     }
 
-    public static void Save(IEnumerable<VpnConfig> profiles)
+    public void Save(IEnumerable<VpnConfig> profiles)
     {
-        Directory.CreateDirectory(Dir);
-        var key = SecureKey.GetOrCreate();
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        var key = getKey();
         var pt = Encoding.UTF8.GetBytes(ProfileStorePayload.Encode(profiles, Options));
-        var blob = EncryptedEnvelope.Seal(pt, key);
-        StoreFile.Write(blob);
+        try { StoreFile.Write(EncryptedEnvelope.Seal(pt, key)); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(pt); }
     }
 }

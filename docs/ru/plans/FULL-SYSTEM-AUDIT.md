@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v49 -->
+<!-- normative-sync: full-system-audit-v50 -->
 
-**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; далее Q28.**
+**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: этап хранения завершён.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -174,7 +174,7 @@ actual `3deb3da9d8306e0eaf4fd3d3505a7ad8f4e822b7bd502e8e748f632a852baa52`.
 | 25 | Linux CLI и восстановление сети | H01, H04, H08 | DONE / PASS |
 | 26 | Общий C# и managed/native граница | H04, H06, H08 | TODO |
 | 27 | Windows: GUI, служба и драйверы | H01, H04, H08 | DONE / PASS |
-| 28 | macOS: daemon, utun, pf и Network Extension | H04, H08 | TODO |
+| 28 | macOS: daemon, utun, pf и Network Extension | H04, H08 | IN_PROGRESS |
 | 29 | Android: VpnService, JNI и lifecycle | H04, H06, H08 | TODO |
 | 30 | iOS: PacketTunnel, Swift и MDM | H04, H06, H08 | TODO |
 | 31 | OpenWrt, LuCI и Keenetic | H04, H06, H08 | TODO |
@@ -1845,7 +1845,9 @@ Daemon IPC/owner/mode, Keychain, selected profile, Intel/ARM ABI и DNS journal.
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
+
+**5 октября: этап хранения PASS.** [F240–F242](../reports/AUDIT-Q28-MACOS-STORAGE.md): 54 storage PASS, 5 baseline FAIL; Keychain errors/duplicate/key creation concurrency, strict key files/growth limits, no quarantine on key-provider failures. Реальный Mac USER SKIPPED. Далее daemon/helper/selected profile/utun/pf/Swift; полный раздел не закрыт. План 27/37 (73,0%).
 
 ### 29. Android: VpnService, JNI и lifecycle
 

@@ -395,3 +395,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q27: service registration, status and logs — stage PASS](reports/AUDIT-Q27-WINDOWS-OBSERVATION.md)
 
 - [Q27: Windows GUI, service and drivers — DONE/PASS](reports/AUDIT-Q27-WINDOWS-FINAL.md)
+
+- [Q28: macOS storage and keys — stage PASS](reports/AUDIT-Q28-MACOS-STORAGE.md)

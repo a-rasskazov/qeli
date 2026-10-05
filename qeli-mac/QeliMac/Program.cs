@@ -13,7 +13,7 @@ namespace QeliMac;
 public static class Program
 {
     private static readonly string[] CliVerbs = { "selftest", "handshake", "connect", "genassets", "genicns",
-        "pf-selftest-rules" };
+        "pf-selftest-rules", "storage-selftest" };
 
     // Darwin's sigset_t is a bare uint32 with signal N in bit N-1, and SIG_SETMASK is 3.
     // Both read out of the macOS SDK headers rather than assumed: Linux's sigset_t is
@@ -101,7 +101,8 @@ public static class Program
         // before startup recovery so CI cannot restore host DNS/firewall state merely by
         // validating the binary.
         if (args.Length > 0 &&
-            string.Equals(args[0], "selftest", StringComparison.OrdinalIgnoreCase))
+            (string.Equals(args[0], "selftest", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(args[0], "storage-selftest", StringComparison.OrdinalIgnoreCase)))
             return CliRunner.Run(args[0], args.Skip(1).ToArray());
 
         // Before the elevated helper spawns a child process — see the method above.

@@ -192,7 +192,13 @@ public static class ServiceState
         if (!OperatingSystem.IsMacOS())
         {
             string path = Path.Combine(Dir, name);
-            return File.Exists(path) ? File.ReadAllBytes(path) : null;
+            try
+            {
+                using var snapshot = File.OpenRead(path);
+                return BoundedStorage.Read(snapshot, checked((int)maxBytes));
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
         }
         using var directory = OpenValidatedDirectory();
         int dirfd = directory.DangerousGetHandle().ToInt32();
@@ -212,9 +218,7 @@ public static class ServiceState
             throw new InvalidOperationException(
                 $"Service state file '{name}' exceeds its {maxBytes}-byte limit.");
         using var stream = new FileStream(handle, FileAccess.Read, 4096, isAsync: false);
-        using var output = new MemoryStream((int)stat.Size);
-        stream.CopyTo(output);
-        return output.ToArray();
+        return BoundedStorage.Read(stream, checked((int)maxBytes));
     }
 
     private static void AtomicWriteChild(string name, ReadOnlySpan<byte> data, uint mode)

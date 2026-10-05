@@ -22,6 +22,8 @@ public static class CliRunner
         return verb.ToLowerInvariant() switch
         {
             "selftest" => SelfTest(),
+            "storage-selftest" => rest is ["--key-probe", var directory]
+                ? MacStorageSelfTest.RunKeyProbe(directory) : StorageSelfTest(),
             "pf-selftest-rules" => PfSelfTestRules(rest),
             "handshake" => Handshake(rest),
             "connect" => Connect(rest),
@@ -33,7 +35,7 @@ public static class CliRunner
 
     private static int Usage()
     {
-        Console.WriteLine("Usage: QeliMac [selftest | pf-selftest-rules <path> | handshake <link|ini|file> | connect <link|ini|file> [seconds] | genassets <dir> | genicns <out.icns>]");
+        Console.WriteLine("Usage: QeliMac [selftest | storage-selftest | pf-selftest-rules <path> | handshake <link|ini|file> | connect <link|ini|file> [seconds] | genassets <dir> | genicns <out.icns>]");
         return 2;
     }
 
@@ -48,6 +50,21 @@ public static class CliRunner
         return 0;
     }
 
+    private static int StorageSelfTest()
+    {
+        int count = 0, failed = 0;
+        void Check(string name, bool ok)
+        {
+            count++;
+            Console.WriteLine($"  [{(ok ? "PASS" : "FAIL")}] {name}");
+            if (!ok) failed++;
+        }
+        EncryptedEnvelope.RunSelfTests(Check);
+        MacStorageSelfTest.Run(Check);
+        Console.WriteLine($"MAC_STORAGE_CHECKS={count}; FAILED={failed}");
+        return failed == 0 ? 0 : 1;
+    }
+
     // ── platform self-test ──────────────────────────────────────────────────────
     private static int SelfTest()
     {
@@ -60,6 +77,7 @@ public static class CliRunner
 
         Console.WriteLine("qeli-mac platform self-test");
         EncryptedEnvelope.RunSelfTests(Check);
+        MacStorageSelfTest.Run(Check);
         DnsJournal.RunSelfTests(Check);
         NetworkConfigurator.RunRouteLifecycleSelfTest(Check);
         NetworkConfigurator.RunRoamingRouteSelfTest(Check);

@@ -395,3 +395,5 @@
 - [Q27: регистрация службы, статус и логи — этап PASS](reports/AUDIT-Q27-WINDOWS-OBSERVATION.md)
 
 - [Q27: Windows GUI, служба и драйверы — DONE/PASS](reports/AUDIT-Q27-WINDOWS-FINAL.md)
+
+- [Q28: хранилища macOS и ключи — этап PASS](reports/AUDIT-Q28-MACOS-STORAGE.md)
