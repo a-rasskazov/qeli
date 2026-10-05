@@ -440,3 +440,5 @@
 - [Q29: authenticated Private DNS / DoT](reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md)
 
 - [Q29: владение запросом разрешений подключения](reports/AUDIT-Q29-ANDROID-PERMISSIONS.md)
+
+- [Q29: сервис на доверенном Wi-Fi](reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md)

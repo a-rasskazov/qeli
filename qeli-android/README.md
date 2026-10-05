@@ -258,3 +258,16 @@ Activity удерживает первоначально проверенный 
 Нужны закреплённые APK/manifest и частные namespaces; остальные suites/варианты
 отклоняют этот opt-in до изменения стенда.
 [Q29: результаты и ограничения](../docs/ru/reports/AUDIT-Q29-ANDROID-PERMISSIONS.md).
+
+
+## Доверенный Wi-Fi: проверка сервиса в лабе
+
+`audit_android_data_plane_lab.py --suite trusted-wifi --variant debug --transport tcp`
+использует закреплённые fixed APK/manifest, реальный SSID readonly AVD, private
+namespaces и off-pool TCP/UDP ответчики. Location/nearby Wi-Fi permissions выдаются
+до instrumentation; настройки доверенной сети записываются тестом локально.
+Проверяются пауза без TUN, фактический Wi-Fi/Cellular цикл, возврат payload-трафика,
+отмена отложенного resume и отказ kill-switch без OS lockdown. Сокеты явно используют
+VPN Network; это не Release/default-network/leak проверка. Другие варианты/транспорт
+и несовместимые opt-in отклоняются до изменения стенда.
+[Q29: результаты и открытые границы](../docs/ru/reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md).

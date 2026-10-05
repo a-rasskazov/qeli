@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v83 -->
+<!-- normative-sync: full-system-audit-v84 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2240,3 +2240,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q29 trusted DoT:** [Report](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md): TCP/UDP/QUIC strict untrusted/trusted/mismatch/recovery PASS;39DNS/12authenticated answers,36payloads,576bursts/144poststopblocked;3PCAP physicalleaks0/drop0. Temporary labCA/settings/host/userdata cleanup5attempts PASS;2harnessFAIL preserved;dynamicUID fixed/12helper3CLI fresh,product/native/managed unchanged. SIGKILLFAIL/ENONET/otherAPI-OEM-arm64 open;Q29 IN_PROGRESS28/37(75.7%).
 
 **6 октября, Q29 F280:** [владение запросом разрешений](../reports/AUDIT-Q29-ANDROID-PERMISSIONS.md): один корректный профиль/набор адаптерных тестов, старый3FAIL/новый3PASS; исправлены отмена/снимок профиля/пересоздание Activity. Свежие179JVM(7новых), lint0ошибок55предупреждений; defaultR8 TCP обычная UI-кнопка,16payload/192burst/13DNS/strictDoT/capturephysical0drop0 PASS. Стадия разрешения и ответ инъецированы; Release instrumentation NOT RUN; четыре предварительных запуска не засчитаны, все семь cleanupPASS. Native/server/managed неизменны; SIGKILL/ENONET/другиеAPI-OEM-arm64 остаются,Q29IN_PROGRESS28/37(75.7%).
+
+**6 октября, Q29 доверенный Wi-Fi:** [runtime сервиса](../reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md):3новых instrumented PASS,реальныйSSID/фон1,2s/WiFiCellularцикл/livepause/отменаresume250ms/отказkill-switch,16полных IPv4IPv6TCPUDP payload receipts. Product/native/managed неизменны;JVM/lint/R8 сохраняют прежнюю область. 2harnessFAIL сохранены,3runtime cleanup/host/userdata PASS;свежие4helper/4CLI. Active-lockdown trustedSSID handover/оставшиесяlifecycle/SIGKILL/ENONET/другиеAPI-OEM-arm64 открыты,Q29IN_PROGRESS28/37(75,7%).

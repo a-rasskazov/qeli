@@ -440,3 +440,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: authenticated Private DNS / DoT](reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md)
 
 - [Q29: connection permission ownership](reports/AUDIT-Q29-ANDROID-PERMISSIONS.md)
+
+- [Q29: trusted Wi-Fi runtime](reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md)

@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v83 -->
+<!-- normative-sync: full-system-audit-v84 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2227,3 +2227,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q29 trusted DoT:** [Report](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md): TCP/UDP/QUIC strict untrusted/trusted/mismatch/recovery PASS;39DNS/12authenticated answers,36payloads,576bursts/144poststopblocked;3PCAP physicalleaks0/drop0. Temporary labCA/settings/host/userdata cleanup5attempts PASS;2harnessFAIL preserved;dynamicUID fixed/12helper3CLI fresh,product/native/managed unchanged. SIGKILLFAIL/ENONET/otherAPI-OEM-arm64 open;Q29 IN_PROGRESS28/37(75.7%).
 
 **6 October, Q29 F280:** [permission ownership](../reports/AUDIT-Q29-ANDROID-PERMISSIONS.md): same valid-profile adapter suite old3FAIL/fixed3PASS; cancel/profile snapshot/Activity recreation fixed. Fresh179JVM(7new), lint0errors55warnings; defaultR8 TCP real UI connect/reconnect,16payloads/192bursts/13DNS/strictDoT/capturephysical0drop0 PASS. Pending permission phase/result injected; Release instrumentation NOT RUN; four preliminary attempts unqualified, all seven cleanupPASS. Native/server/managed unchanged; SIGKILL/ENONET/otherAPI-OEM-arm64 remain,Q29IN_PROGRESS28/37(75.7%).
+
+**6 October, Q29 trusted Wi-Fi:** [service runtime](../reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md):3new instrumented PASS,realSSID/background1.2s/WiFiCellularcycle/livepause/250msresume cancellation/kill-switch refusal,16full IPv4IPv6TCPUDP payload receipts. Product/native/managed unchanged;JVM/lint/R8 prior scope retained. 2harnessFAIL preserved,3runtime cleanup/host/userdata PASS;4helper/4CLI fresh. Active-lockdown trustedSSID handover/remaining lifecycle/SIGKILL/ENONET/otherAPI-OEM-arm64 open,Q29IN_PROGRESS28/37(75.7%).

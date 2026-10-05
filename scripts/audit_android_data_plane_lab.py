@@ -369,8 +369,8 @@ def main():
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
-    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns"), default="explicit")
-    ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns", "trusted-wifi"), default="explicit")
+    ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic; trusted-wifi requires tcp")
     ap.add_argument("--carrier", choices=("default", "nat64"), default="default", help="private IPv6-only TAP/SLAAC/DNS64/NAT64 backend; Release nat64 suite only")
     ap.add_argument("--startup-state", action="store_true", help="24-sample cold-start burst with ordinary-UID network snapshots; startup only")
     ap.add_argument("--apps-mode", choices=("all", "include", "exclude"), default="all", help="Release startup/handover per-app fixture; include captures only test UID and excludes VPN owner")
@@ -380,6 +380,7 @@ def main():
     ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
     ap.add_argument("--ui-connect-restart", action="store_true", help="verify real Release Activity disconnect/connect after OS lockdown bootstrap; private-dns only")
     args = ap.parse_args()
+    if args.suite == "trusted-wifi" and args.variant != "debug":ap.error("trusted Wi-Fi fixture requires debug instrumentation")
     if args.ui_connect_restart and (args.variant != "release" or args.suite != "private-dns"):ap.error("UI connect restart requires Release private-dns suite")
     if args.apps_mode != "all" and (args.variant != "release" or args.suite not in ("startup", "handover", "app-policy")):ap.error("per-app fixture requires Release startup/handover/app-policy")
     if args.require_published_start and (args.variant != "release" or args.suite != "startup" or not args.startup_state):ap.error("published start requires Release startup state")
@@ -393,6 +394,7 @@ def main():
     if args.suite == "endurance" and (args.variant != "release" or not args.leak_bursts):ap.error("endurance requires Release and leak bursts")
     if args.suite == "private-dns" and (args.variant != "release" or not args.leak_bursts):ap.error("private-dns requires Release and leak bursts")
     if args.suite == "app-policy" and (args.variant != "release" or args.apps_mode not in ("include", "exclude")):ap.error("app-policy requires Release include/exclude")
+    if args.suite == "trusted-wifi" and args.transport != "tcp":ap.error("trusted Wi-Fi fixture requires TCP")
     assert not args.restart_control or args.suite == "system"
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
@@ -478,7 +480,7 @@ perf.connection.handshake_timeout_secs = 12
             assert proc.returncode == 0, (argv, proc.stdout, proc.stderr)
         return proc
     server = emulator = echo = capture = dns = nat64 = leak_capture = dot = None
-    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else []
+    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns", "trusted-wifi") else []
     started = time.monotonic()
     fixture_installed = []
     try:
@@ -513,6 +515,7 @@ perf.connection.handshake_timeout_secs = 12
         if args.suite == "private-dns":
             from audit_android_private_dns import DnsTlsFixture
             dot = DnsTlsFixture(root,evidence)
+        if args.suite == "trusted-wifi":echo_hosts=[(socket.AF_INET,"198.19.0.1"),(socket.AF_INET6,"2001:db8:29::1")]
         echo = Echo(evidence / "echo-receipts.json", echo_hosts)
         if args.leak_bursts or args.suite == "app-policy":
             leak_capture = subprocess.Popen(["tcpdump", "-i", "any", "-U", "-s", "0", "-w", str(evidence / "leak-any.pcap"), "port", "26000", "or", "port", "53", "or", "port", "853"], stdout=(evidence / "leak-capture.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -578,6 +581,9 @@ perf.connection.handshake_timeout_secs = 12
         if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns"):
             phases = [("fixed", "com.qeli.VpnSystemLifecycleInstrumentedTest#bootstrapSavedProfileAndLeaveConnected")]
             expected_tests = 1
+        if args.suite == "trusted-wifi":
+            phases=[("fixed","com.qeli.TrustedWifiInstrumentedTest")]
+            expected_tests=3
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             assert manifest.get("build_type", "debug") == args.variant, "APK manifest does not match requested variant"
@@ -595,6 +601,10 @@ perf.connection.handshake_timeout_secs = 12
                 assert not re.search(r"(?:pkgFlags|flags)=\[[^\]]*\bDEBUGGABLE\b", package), package
             arun("shell", "appops", "set", "com.qeli", "ACTIVATE_VPN", "allow")
             arun("shell", "pm", "grant", "com.qeli", "android.permission.POST_NOTIFICATIONS")
+            if args.suite == "trusted-wifi":
+                for permission in ("ACCESS_COARSE_LOCATION","ACCESS_FINE_LOCATION","NEARBY_WIFI_DEVICES"):
+                    arun("shell","pm","grant","com.qeli","android.permission."+permission)
+                arun("shell","cmd","location","set-location-enabled","true")
             if args.variant == "release" and args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns"):
                 from audit_android_release_ui import import_release_profile
                 # Power/system fixtures are TCP; --transport selects only recovery/handover/nat64.
@@ -611,7 +621,7 @@ perf.connection.handshake_timeout_secs = 12
                 (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
                 result[folder + "_output"] = proc.stdout
                 result[folder + "_echo_receipts"] = len(echo.rows)
-                (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "Q29System:I", "AndroidRuntime:E").stdout)
+                (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "Q29System:I", "Q29Trusted:I", "AndroidRuntime:E").stdout)
                 if folder == "fixed":
                     assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
@@ -649,7 +659,7 @@ perf.connection.handshake_timeout_secs = 12
                 assert len(baseline)==1
                 assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted if row["name"] not in baseline), accepted
             result["dns_answered_questions"] = len(accepted)
-        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
+        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns", "trusted-wifi") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
         if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
         for profile, subnet, v6 in profiles:
             for family_prefix in (subnet, v6):
