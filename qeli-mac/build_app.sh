@@ -22,13 +22,21 @@ case "$ARCH" in
   *) echo "unknown arch '$ARCH' (use arm64 or x86_64)"; exit 1 ;;
 esac
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd -P)"
+if [[ -L "$ROOT/dist" ]]; then
+  echo "refusing symlinked dist directory" >&2; exit 1
+fi
 PROJ="$ROOT/QeliMac/QeliMac.csproj"
 OUT="$ROOT/dist/$RID"
 APP="$ROOT/dist/Qeli.app"
 ARCHIVE="$ROOT/dist/Qeli-macos-$ARCH.tar.gz"
 PER_APP_OUT="$ROOT/dist/per-app-$ARCH"
 SIGNED_PER_APP=0
+for output in "$OUT" "$APP" "$ARCHIVE" "$PER_APP_OUT" "$ROOT/dist/Qeli.icns"; do
+  if [[ -L "$output" ]]; then
+    echo "refusing symlinked app output: $output" >&2; exit 1
+  fi
+done
 
 # 1. Native whole-client core (current ABI 1.15, compatibility floor 1.11 + realtls FFI) —
 #    universal libqeli.dylib. Built once

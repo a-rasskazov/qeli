@@ -401,3 +401,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q28: macOS daemon, helper and observation — PASS](reports/AUDIT-Q28-MACOS-CONTROL.md)
 
 - [Q28: macOS network cleanup — PASS](reports/AUDIT-Q28-MACOS-NETWORK.md)
+
+- [Q28: per-app bridge / Swift / build paths](reports/AUDIT-Q28-MACOS-PERAPP.md)

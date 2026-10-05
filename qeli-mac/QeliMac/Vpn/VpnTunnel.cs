@@ -382,10 +382,10 @@ public sealed partial class VpnTunnel : VpnTunnelBase
         {
             failures.Add(error);
         }
-        finally
-        {
-            _perApp = null;
-        }
+        // BeforeTunDispose already confirmed proxy stop. Do not forget a controller
+        // whose cleanup still owns a live guardian.
+        if (_perApp is { Started: true }) failures.Add(new InvalidOperationException("per-app cleanup remains active"));
+        else _perApp = null;
         if (failures.Count == 1) throw failures[0];
         if (failures.Count > 1)
             throw new AggregateException("macOS platform cleanup is incomplete", failures);

@@ -13,7 +13,7 @@ namespace QeliMac;
 public static class Program
 {
     private static readonly string[] CliVerbs = { "selftest", "handshake", "connect", "genassets", "genicns",
-        "pf-selftest-rules", "storage-selftest", "control-selftest", "network-selftest" };
+        "pf-selftest-rules", "storage-selftest", "control-selftest", "network-selftest", "perapp-selftest" };
 
     // Darwin's sigset_t is a bare uint32 with signal N in bit N-1, and SIG_SETMASK is 3.
     // Both read out of the macOS SDK headers rather than assumed: Linux's sigset_t is
@@ -105,6 +105,7 @@ public static class Program
              string.Equals(args[0], "storage-selftest", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(args[0], "control-selftest", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(args[0], "network-selftest", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(args[0], "perapp-selftest", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(args[0], "pf-selftest-rules", StringComparison.OrdinalIgnoreCase)))
             return CliRunner.Run(args[0], args.Skip(1).ToArray());
 

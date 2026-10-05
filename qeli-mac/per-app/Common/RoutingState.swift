@@ -226,7 +226,9 @@ private struct CIDR {
     let prefix: Int
 
     init?(_ text: String) {
-        let fields = text.split(separator: "/", maxSplits: 1).map(String.init)
+        let fields = text.split(separator: "/", maxSplits: 1,
+                                omittingEmptySubsequences: false).map(String.init)
+        guard !fields[0].isEmpty else { return nil }
         guard let ip = IPAddress(fields[0]) else { return nil }
         let maximum = ip.isIPv6 ? 128 : 32
         let parsed = fields.count == 2 ? Int(fields[1]) : maximum

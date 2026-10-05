@@ -281,3 +281,15 @@ DNS journal сериализует recovery/claim/release, сохраняет б
 ownership/отсутствие; ошибка запроса не означает отсутствие.
 [Отчёт Q28 network и границы проверки](../docs/ru/reports/AUDIT-Q28-MACOS-NETWORK.md).
 Генератор pf-selftest-rules не выполняет startup recovery и не трогает firewall.
+
+## per-app: ошибки остановки и handoff
+
+Ошибки down/stop и join guardian сохраняют ответственность за cleanup и выходят
+наружу; закрытие utun требует успешного stop. Исчезновение QeliPerAppCtl не означает
+успешную очистку: восстановите подписанную сборку или вручную отключите Qeli managers.
+Временная служебная DTO передаётся через закрытый каталог; конфиги остаются INI.
+perapp-selftest проверяет C# controller/fake helper и настоящие локальные child
+processes, не запускает NetworkExtension. Для запуска native policy/registry tests
+нужен Mac/Xcode; в текущем аудите это USER SKIPPED.
+Сборка per-app принимает только точный dist/per-app-ARCH и отказывает при symlink paths.
+[Проверки и оставшийся scope](../docs/ru/reports/AUDIT-Q28-MACOS-PERAPP.md).

@@ -23,7 +23,39 @@ internal sealed class PerAppController
     private bool _started;
     private Process? _guardian;
 
-    public PerAppController(Action<string> log) => _log = log;
+    private readonly string _helperPath;
+    private readonly Action _validatePlatform;
+    private readonly Action<string[]> _invoke;
+    private readonly Action<string> _ensureGuardian;
+    private readonly Func<bool> _guardianAlive;
+    private readonly Action _stopGuardian;
+    internal bool Started => _started;
+    internal const int MaximumStateBytes = 1024 * 1024;
+
+    public PerAppController(Action<string> log)
+    {
+        _log = log; _helperPath = Path.Combine(AppContext.BaseDirectory, HelperName);
+        _validatePlatform = ValidatePlatform;
+        _invoke = args => Run(_helperPath, args);
+        _ensureGuardian = state => EnsureGuardian(_helperPath, state);
+        _guardianAlive = () => _guardian is { HasExited: false };
+        _stopGuardian = StopGuardian;
+    }
+
+    internal PerAppController(Action<string> log, string helperPath, Action validatePlatform,
+        Action<string[]> invoke, Action<string> ensureGuardian, Func<bool> guardianAlive,
+        Action stopGuardian)
+    {
+        _log = log; _helperPath = helperPath; _validatePlatform = validatePlatform;
+        _invoke = invoke; _ensureGuardian = ensureGuardian;
+        _guardianAlive = guardianAlive; _stopGuardian = stopGuardian;
+    }
+
+    private static void ValidatePlatform()
+    {
+        if (!OperatingSystem.IsMacOS() || !OperatingSystem.IsMacOSVersionAtLeast(13))
+            throw new PlatformNotSupportedException("macOS per-app routing requires macOS 13 or newer");
+    }
 
     /// <summary>Ask macOS to activate/approve the embedded system extension from the
     /// interactive GUI session before a root LaunchDaemon attempts to start the profile.</summary>
@@ -55,15 +87,10 @@ internal sealed class PerAppController
         bool tunnelIpv6,
         bool tunnelUp)
     {
-        string helper = Path.Combine(AppContext.BaseDirectory, HelperName);
-        if (!OperatingSystem.IsMacOS())
-            throw new PlatformNotSupportedException("macOS per-app routing can only run on macOS");
-        if (!OperatingSystem.IsMacOSVersionAtLeast(13))
-            throw new PlatformNotSupportedException("macOS per-app routing requires macOS 13 or newer");
-        if (!File.Exists(helper))
-            throw new InvalidOperationException(
-                "per-app routing requires the signed Qeli transparent-proxy system extension; "
-                + $"{HelperName} is not present in this build. Use the Developer-ID macOS build.");
+        string helper = _helperPath;
+        _validatePlatform();
+        if (!File.Exists(helper)) throw new InvalidOperationException(
+            $"per-app routing requires the signed {HelperName} helper");
         if (!config.Apps.Any(IsMacSigningIdentifier))
             throw new InvalidOperationException(
                 "per-app profile contains no macOS bundle signing identifiers; add at least "
@@ -77,7 +104,7 @@ internal sealed class PerAppController
             // rolling five-second lease, including while macOS waits for user approval.
             LeaseExpiresAtUnixMs = DateTimeOffset.UtcNow.AddSeconds(10).ToUnixTimeMilliseconds(),
             InterfaceName = interfaceName,
-            Mode = config.AppsMode,
+            Mode = config.AppsMode.ToLowerInvariant(),
             Apps = config.Apps.Distinct(StringComparer.Ordinal).ToArray(),
             DnsServers = dnsServers.ToArray(),
             CarrierAddress = carrierIp.ToString(),
@@ -101,25 +128,29 @@ internal sealed class PerAppController
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         });
-        string stateFile = Path.Combine(Path.GetTempPath(),
-            $"qeli-per-app-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
+        // Unix shared temp is not a handoff trust boundary: use an exclusive owner-only
+        // directory and file. Keep recovery rewrites in that same private directory.
+        byte[] payload = System.Text.Encoding.UTF8.GetBytes(json);
+        if (payload.Length > MaximumStateBytes) throw new InvalidDataException("per-app state exceeds its budget");
+        var stateDirectory = Directory.CreateTempSubdirectory("qeli-per-app-");
+        string stateFile = Path.Combine(stateDirectory.FullName, "state.json");
         try
         {
-            File.WriteAllText(stateFile, json);
+            WriteState(stateFile, payload, createNew: true);
             bool wasStarted = _started;
             try
             {
                 // Pass the pending state to a new guardian so it can start renewing before
                 // activation blocks on System Settings approval. No multi-minute stale lease
                 // is needed even if power is lost in that window.
-                EnsureGuardian(helper, stateFile);
-                Run(helper, _started ? "update" : "start", stateFile);
-                if (_guardian is not { HasExited: false })
+                _ensureGuardian(stateFile);
+                _invoke(new[] { _started ? "update" : "start", stateFile });
+                if (!_guardianAlive())
                     throw new InvalidOperationException(
                         $"{HelperName} guardian exited before activation completed");
                 _started = true;
             }
-            catch
+            catch (Exception startError)
             {
                 if (wasStarted)
                 {
@@ -131,19 +162,16 @@ internal sealed class PerAppController
                     state.TunnelUp = false;
                     try
                     {
-                        File.WriteAllText(stateFile, JsonSerializer.Serialize(state,
-                            new JsonSerializerOptions
-                            {
-                                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                            }));
-                        Run(helper, "update", stateFile);
+                        WriteState(stateFile, JsonSerializer.SerializeToUtf8Bytes(state,
+                            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }), false);
+                        _invoke(new[] { "update", stateFile });
                     }
                     catch (Exception recoveryError)
                     {
                         _log("WARN: could not publish fail-closed per-app recovery state: "
                             + recoveryError.Message);
                     }
-                    try { EnsureGuardian(helper, stateFile); }
+                    try { _ensureGuardian(stateFile); }
                     catch (Exception guardianError)
                     {
                         _log("WARN: could not restart the per-app guardian: "
@@ -153,9 +181,13 @@ internal sealed class PerAppController
                 }
                 else
                 {
-                    _started = false;
-                    try { Run(helper, "stop"); } catch { }
-                    StopGuardian();
+                    // Activation may have succeeded partially. Retain cleanup ownership
+                    // and the lease until both proxy stop and guardian join are confirmed.
+                    _started = true;
+                    try { Stop(); }
+                    catch (Exception cleanupError) {
+                        throw new AggregateException("per-app start and rollback failed", startError, cleanupError);
+                    }
                 }
                 throw;
             }
@@ -164,7 +196,8 @@ internal sealed class PerAppController
         }
         finally
         {
-            try { File.Delete(stateFile); } catch { }
+            try { File.Delete(stateFile); stateDirectory.Delete(); }
+            catch (Exception error) { _log("WARN: could not remove private per-app handoff: " + error.Message); }
         }
     }
 
@@ -177,29 +210,32 @@ internal sealed class PerAppController
     public void SetTunnelDown()
     {
         if (!_started) return;
-        string helper = Path.Combine(AppContext.BaseDirectory, HelperName);
-        if (!File.Exists(helper)) return;
-        try { Run(helper, "down"); }
-        catch (Exception error) { _log($"WARN: could not fail-close per-app proxy: {error.Message}"); }
+        RequireHelper();
+        _invoke(new[] { "down" }); // A refusal must stop reconnect before TUN mutation.
     }
 
     public void Stop()
     {
         if (!_started) return;
-        _started = false;
-        string helper = Path.Combine(AppContext.BaseDirectory, HelperName);
-        try
-        {
-            if (File.Exists(helper)) Run(helper, "stop");
-            else _log("WARN: per-app helper disappeared; expiring its guardian lease");
-        }
-        catch (Exception error) { _log($"WARN: could not stop per-app proxy: {error.Message}"); }
-        finally
-        {
-            // Even if NetworkExtension preferences could not be disabled, providers fail
-            // open within five seconds once this process stops renewing their lease.
-            StopGuardian();
-        }
+        RequireHelper();
+        _invoke(new[] { "stop" });
+        _stopGuardian();
+        _started = false; // Failed stop/join stays active and can be retried.
+    }
+
+    private void RequireHelper()
+    {
+        if (!File.Exists(_helperPath)) throw new IOException(
+            "per-app helper disappeared; cleanup cannot be confirmed");
+    }
+
+    private static void WriteState(string path, byte[] payload, bool createNew)
+    {
+        if (payload.Length > MaximumStateBytes) throw new InvalidDataException("per-app state exceeds its budget");
+        var options = new FileStreamOptions { Mode = createNew ? FileMode.CreateNew : FileMode.Create,
+            Access = FileAccess.Write, Share = FileShare.Read };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        using var file = new FileStream(path, options); file.Write(payload); file.Flush(true);
     }
 
     private void EnsureGuardian(string helper, string stateFile)
@@ -225,39 +261,25 @@ internal sealed class PerAppController
     private void StopGuardian()
     {
         var guardian = _guardian;
-        _guardian = null;
         if (guardian == null) return;
-        try { if (!guardian.HasExited) guardian.Kill(entireProcessTree: true); } catch { }
+        JoinGuardian(guardian);
         guardian.Dispose();
+        _guardian = null;
     }
 
-    private static void Run(string helper, params string[] arguments)
+    internal static void JoinGuardian(Process guardian)
     {
-        var psi = new ProcessStartInfo(helper)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            WorkingDirectory = AppContext.BaseDirectory,
-        };
-        foreach (string argument in arguments) psi.ArgumentList.Add(argument);
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"could not start {HelperName}");
-        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
-        Task<string> stderr = process.StandardError.ReadToEndAsync();
-        // First activation may wait while the user approves the system extension in
-        // System Settings. Subsequent start/update calls normally finish immediately.
-        if (!process.WaitForExit(190_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"{HelperName} timed out");
-        }
-        string output = stdout.GetAwaiter().GetResult().Trim();
-        string error = stderr.GetAwaiter().GetResult().Trim();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"{HelperName} failed ({process.ExitCode}): " + (error.Length > 0 ? error : output));
+        if (!guardian.HasExited) guardian.Kill(entireProcessTree: true);
+        if (!guardian.WaitForExit(5_000)) throw new TimeoutException("per-app guardian did not exit");
+    }
+
+    internal static void Run(string helper, params string[] arguments)
+    {
+        var start = new ProcessStartInfo(helper) { WorkingDirectory = AppContext.BaseDirectory };
+        foreach (string argument in arguments) start.ArgumentList.Add(argument);
+        // Activation may await user approval. Pipe EOF shares this deadline and both
+        // streams are capped; a descendant cannot keep an exited helper waiting forever.
+        ToolProcess.RequireSuccess(ToolProcess.Run(start, 190_000), HelperName);
     }
 
     private sealed class RoutingState

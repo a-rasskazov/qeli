@@ -130,5 +130,31 @@ expect(isBypass(makeState(routeLocal: true, tunnelIPv6: false, allowIPv6: true,
                           fullTunnel: false).destinationDecision("fd00::1")),
        "route_local does not change split-tunnel IPv6 policy")
 
+for malformed in ["", "/", "/24", "10.1.2.3/", "10.1.2.3//24"] {
+    expect(isTunnel(makeState(exclude: [malformed]).destinationDecision("10.1.2.3")),
+           "malformed CIDR never crashes or invents bypass: \(malformed)")
+}
+
+final class FixtureRelay: RelayClosable {
+    var stops = 0
+    func stop(_ error: Error?) { stops += 1 }
+}
+let registry = RelayRegistry()
+let retiredEpoch = registry.generation
+let firstRelay = FixtureRelay()
+expect(registry.add(firstRelay, id: UUID(), generation: retiredEpoch),
+       "current policy accepts relay registration")
+registry.closeAll()
+expect(firstRelay.stops == 1, "policy retirement closes registered relay")
+let lateRelay = FixtureRelay()
+expect(!registry.add(lateRelay, id: UUID(), generation: retiredEpoch),
+       "delayed old-policy relay cannot register after retirement")
+let nextRelay = FixtureRelay()
+expect(registry.add(nextRelay, id: UUID(), generation: registry.generation),
+       "new policy accepts its own relay")
+registry.closeAll(); registry.closeAll()
+expect(firstRelay.stops == 1 && nextRelay.stops == 1,
+       "repeat retirement never closes a released relay twice")
+
 if failures > 0 { exit(1) }
 print("ALL PASS")

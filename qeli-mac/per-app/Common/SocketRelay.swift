@@ -8,6 +8,7 @@ enum RelayError: LocalizedError {
     case socketFailed(String)
     case noTunnelDNS
     case destinationBlocked
+    case stalePolicy
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ enum RelayError: LocalizedError {
         case .socketFailed(let step): return "socket \(step) failed (errno \(errno))"
         case .noTunnelDNS: return "hostname flow has no tunnel DNS server"
         case .destinationBlocked: return "destination blocked by qeli routing policy"
+        case .stalePolicy: return "flow routing policy was retired"
         }
     }
 }
@@ -125,26 +127,6 @@ private func makeSocket(family: Int32, type: Int32, interface: String?) throws -
     }
 }
 
-private final class FlowLifetime {
-    private let lock = NSLock()
-    private var flows: [UUID: AnyObject] = [:]
-    func retain(_ flow: AnyObject, id: UUID) { lock.lock(); flows[id] = flow; lock.unlock() }
-    func release(id: UUID) { lock.lock(); flows.removeValue(forKey: id); lock.unlock() }
-    func closeAll() {
-        lock.lock(); let values = flows.values; flows.removeAll(); lock.unlock()
-        for case let closable as RelayClosable in values { closable.stop(nil) }
-    }
-}
-
-protocol RelayClosable: AnyObject { func stop(_ error: Error?) }
-
-final class RelayRegistry {
-    private let lifetime = FlowLifetime()
-    func add(_ relay: RelayClosable, id: UUID) { lifetime.retain(relay, id: id) }
-    func remove(_ id: UUID) { lifetime.release(id: id) }
-    func closeAll() { lifetime.closeAll() }
-}
-
 final class TCPRelay: RelayClosable {
     let id = UUID()
     private let flow: NEAppProxyTCPFlow
@@ -154,6 +136,7 @@ final class TCPRelay: RelayClosable {
     private let overrideHosts: [String]
     private let destinationPolicy: ((String) -> DestinationDecision)?
     private let registry: RelayRegistry
+    private let generation: UInt64
     private let writeQueue = DispatchQueue(label: "ru.qeli.perapp.tcp.write", qos: .userInitiated)
     private let stateLock = NSLock()
     private var fd: Int32 = -1
@@ -164,14 +147,17 @@ final class TCPRelay: RelayClosable {
     init(flow: NEAppProxyTCPFlow, remote: NetworkExtension.NWEndpoint, interface: String?,
          dnsServers: [String], overrideHosts: [String],
          destinationPolicy: ((String) -> DestinationDecision)? = nil,
-         registry: RelayRegistry) {
+         registry: RelayRegistry, generation: UInt64) {
         self.flow = flow; self.remote = remote; self.interface = interface
         self.dnsServers = dnsServers; self.overrideHosts = overrideHosts
         self.destinationPolicy = destinationPolicy; self.registry = registry
+        self.generation = generation
     }
 
     func start() {
-        registry.add(self, id: id)
+        guard registry.add(self, id: id, generation: generation) else {
+            stop(RelayError.stalePolicy); return
+        }
         flow.open(withLocalEndpoint: nil) { [weak self] error in
             guard let self else { return }
             if let error { self.stop(error); return }
@@ -297,6 +283,7 @@ final class UDPRelay: RelayClosable {
     private let overrideHosts: [String]
     private let destinationPolicy: ((String) -> DestinationDecision)?
     private let registry: RelayRegistry
+    private let generation: UInt64
     private let queue = DispatchQueue(label: "ru.qeli.perapp.udp", qos: .userInitiated)
     private let lock = NSLock()
     private var sockets: [Int64: Int32] = [:]
@@ -306,14 +293,17 @@ final class UDPRelay: RelayClosable {
 
     init(flow: NEAppProxyUDPFlow, interface: String?, dnsServers: [String],
          overrideHosts: [String], destinationPolicy: ((String) -> DestinationDecision)? = nil,
-         registry: RelayRegistry) {
+         registry: RelayRegistry, generation: UInt64) {
         self.flow = flow; self.interface = interface; self.dnsServers = dnsServers
         self.overrideHosts = overrideHosts; self.destinationPolicy = destinationPolicy
         self.registry = registry
+        self.generation = generation
     }
 
     func start() {
-        registry.add(self, id: id)
+        guard registry.add(self, id: id, generation: generation) else {
+            stop(RelayError.stalePolicy); return
+        }
         flow.open(withLocalEndpoint: nil) { [weak self] error in
             guard let self else { return }
             if let error { self.stop(error) } else { self.readFromFlow() }

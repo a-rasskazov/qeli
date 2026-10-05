@@ -47,6 +47,7 @@ targets:
     platform: macOS
     sources:
       - path: Common/RoutingState.swift
+      - path: Common/RelayRegistry.swift
       - path: Tests
     settings:
       base:
