@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v76 -->
+<!-- normative-sync: full-system-audit-v77 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2225,3 +2225,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q29 DNS/cold start:** [отчёт](../reports/AUDIT-Q29-ANDROID-STARTUP-DNS.md): TCP/UDP/QUIC, 864 socket samples, 21 DNS operations с уникальными именами, A/AAAA через TUN; шесть DNS operations и 144 socket samples без VPN заблокированы. 12 manual recovery payloads/revoke/cleanup PASS, восемь попыток/538 echo receipts. Немедленная доставка после APPLIED FAIL на всех трёх транспортах (27–247 ms); следующее 48/48 не закрывает readiness. Generic DnsResolver ENONET и пять неуспешных попыток сохранены; QUIC test-only journal устраняет зависимость доказательств от потери logcat, TCP/UDP не повторялись. Product APK/native/managed прежние, свежие test APK; источник/пара каждого прогона закреплены. Cold publication, split/per-app/Private DNS, долгие сценарии и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).
 
 **5 октября,Q29 DNS API:** [отчёт](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md):7диагностических вариантов,8no-payload socket checks,288socket samples/48blocked,4manual recovery/revoke/cleanupPASS. Ошибки и4failed attempts сохранены;productAPK/JNI/managed прежние,testAPKновый. ENONET/rootcause и прежние readiness/SIGKILL/runnerFAIL остаются;Q29IN_PROGRESS,28/37(75,7%).
+
+**5 октября,Q29 startup state:** [отчёт](../reports/AUDIT-Q29-ANDROID-STARTUP-STATE.md):336socket samples/96network snapshots,callback timeline;послеAPPLIED56,activeVPN/tun0/dual48,ошибоквэтойгруппе4. ТочныйCONNECTEDнеизмерен,историческиеFAILсохранены. UI dumpперенесёнв/data/local/tmpпослеabsent-sdcard-XMLFAIL,тотжеAPK,cleanupPASSобеихпопыток;48blocked/4manualrecovery/revokePASS. Q29IN_PROGRESS,28/37(75,7%).

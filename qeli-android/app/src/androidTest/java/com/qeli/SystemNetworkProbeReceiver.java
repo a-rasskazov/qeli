@@ -8,6 +8,9 @@ import android.os.CancellationSignal;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.DnsResolver;
+import android.net.LinkProperties;
+import android.net.LinkAddress;
+import android.net.NetworkCapabilities;
 import java.util.List;
 import java.io.FileDescriptor;
 import android.system.Os;
@@ -64,10 +67,26 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
         if ((!"ipv4".equals(family) && !"ipv6".equals(family)) || (!"tcp".equals(protocol) && !"udp".equals(protocol)) || (size != tag.length() && size != 257 && size != 16384)) return;
         final int run = intent.getIntExtra("burst_run", 0);
         final int count = intent.getIntExtra("burst_count", 0);
-        if (run < 0 || (run != 0 && (count < 1 || count > 12)) || (run == 0 && count != 0)) return;
+        final boolean observe = intent.getBooleanExtra("observe_network", false);
+        if (run < 0 || (run != 0 && (count < 1 || count > (observe ? 24 : 12))) || (run == 0 && count != 0)) return;
         final PendingResult pending = goAsync();
         Thread worker = new Thread(() -> {
+            ConnectivityManager cm = context.getSystemService(ConnectivityManager.class);
+            ConnectivityManager.NetworkCallback observer = new ConnectivityManager.NetworkCallback() {
+                private void event(String kind, Network network) {
+                    record("BURST_NETWORK run=" + run + " uid=" + Process.myUid() + " event=" + kind + " network=" + network + " device_ms=" + System.currentTimeMillis());
+                }
+                @Override public void onAvailable(Network network) { event("AVAILABLE", network); }
+                @Override public void onLost(Network network) { event("LOST", network); }
+                @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) { event("CAPABILITIES_vpn_" + caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN), network); }
+                @Override public void onLinkPropertiesChanged(Network network, LinkProperties links) { event("LINKS_" + links.getInterfaceName(), network); }
+            };
+            boolean registered = false;
             try {
+                if (observe) {
+                    cm.registerDefaultNetworkCallback(observer);registered = true;
+                    record("BURST_WATCH_READY run=" + run + " uid=" + Process.myUid() + " device_ms=" + System.currentTimeMillis());
+                }
                 if (run == 0) {
                     probe(tag, family, protocol, size, 0, 0, "COMPLETE tag=" + tag + " uid=" + Process.myUid() + " family=" + family + " protocol=" + protocol + " bytes=" + size);
                 } else {
@@ -79,6 +98,7 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
                             children[at] = new Thread(() -> {
                                 record("BURST_BEGIN run=" + run + " uid=" + Process.myUid() + " family=" + selectedFamily + " protocol=" + selectedProtocol + " count=" + count);
                                 for (int sample = 0; sample < count; sample++) {
+                                    if (observe) networkState(cm, run, sample, selectedFamily, selectedProtocol);
                                     String prefix = "BURST run=" + run + " sample=" + sample + " tag=" + tag + " uid=" + Process.myUid() + " family=" + selectedFamily + " protocol=" + selectedProtocol + " bytes=257 started_ms=" + System.currentTimeMillis();
                                     probe(tag, selectedFamily, selectedProtocol, 257, run, sample, prefix);
                                     try { Thread.sleep(150); }
@@ -98,11 +118,29 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
                     if (interrupted) Thread.currentThread().interrupt();
                     record("BURST_FINISHED run=" + run + " uid=" + Process.myUid());
                 }
-            } finally { pending.finish(); }
+            } finally {
+                if (registered) cm.unregisterNetworkCallback(observer);
+                pending.finish();
+            }
         }, "q29-independent-socket");
         worker.setDaemon(true); worker.start();
     }
 
+
+    private static void networkState(ConnectivityManager cm, int run, int sample, String family, String protocol) {
+        long before = System.currentTimeMillis();
+        Network active = cm.getActiveNetwork();
+        NetworkCapabilities caps = active == null ? null : cm.getNetworkCapabilities(active);
+        LinkProperties links = active == null ? null : cm.getLinkProperties(active);
+        boolean v4 = false, v6 = false;
+        if (links != null) for (LinkAddress address : links.getLinkAddresses()) {
+            if (address.getAddress() instanceof java.net.Inet4Address) v4 = true;
+            if (address.getAddress() instanceof java.net.Inet6Address) v6 = true;
+        }
+        record("BURST_STATE run=" + run + " sample=" + sample + " uid=" + Process.myUid() + " family=" + family + " protocol=" + protocol +
+            " before_ms=" + before + " after_ms=" + System.currentTimeMillis() + " network=" + active + " vpn=" + (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) +
+            " iface=" + (links == null ? "null" : links.getInterfaceName()) + " v4=" + v4 + " v6=" + v6);
+    }
 
     private static boolean modeAllowed(String mode) {
         return "connectivity".equals(mode) || "auto".equals(mode) || "a".equals(mode) || "aaaa".equals(mode) || "auto-active".equals(mode) || "a-active".equals(mode) || "aaaa-active".equals(mode);

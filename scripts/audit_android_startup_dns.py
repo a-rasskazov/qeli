@@ -71,7 +71,7 @@ class StartupDns:
         for family in ('ipv4','ipv6'):
             for protocol in ('tcp','udp'):
                 samples=[v for v in row['samples'] if v['family']==family and v['protocol']==protocol and v['started_ms']>=epoch*1000]
-                if not samples and self.result.get('resolver_diagnostics_enabled'):
+                if not samples and (self.result.get('resolver_diagnostics_enabled') or self.result.get('startup_state_enabled')):
                     first[family+'-'+protocol]=dict(status='NOT_SAMPLED_AFTER_PLAN')
                     continue
                 assert samples,('burst ended before NetworkPlan',family,protocol)

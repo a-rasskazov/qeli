@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v76 -->
+<!-- normative-sync: full-system-audit-v77 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2212,3 +2212,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q29 DNS/cold start:** [report](../reports/AUDIT-Q29-ANDROID-STARTUP-DNS.md): TCP/UDP/QUIC, 864 socket samples, 21 unique-name DNS operations, A/AAAA through TUN; six DNS operations and 144 socket samples without VPN blocked. Twelve manual recovery payloads/revoke/cleanup PASS, eight attempts/538 echo receipts. Immediate delivery after APPLIED FAIL on all three transports (27–247 ms); follow-up 48/48 does not close readiness. Generic DnsResolver ENONET and five failed attempts retained; QUIC test-only journal removes dependence on a missing logcat record, TCP/UDP not repeated. Product APK/native/managed unchanged, fresh test APKs; each run exact pair/source pinned. Cold publication, split/per-app/Private DNS, long scenarios and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).
 
 **October5,Q29 DNS APIs:** [report](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md):7diagnostic variants,8no-payload checks,288socket samples/48blocked,4manual recovery/revoke/cleanupPASS. Errors and4failed attempts retained;productAPK/JNI/managed unchanged,newtestAPK. ENONET localized to auto/null;reference points to secureVPN app_netid. Priorreadiness/SIGKILL/runnerFAIL open;Q29IN_PROGRESS,28/37(75.7%).
+
+**October5,Q29 startup state:** [report](../reports/AUDIT-Q29-ANDROID-STARTUP-STATE.md):336socket/96network samples,callbacktimeline;postAPPLIED56,activeVPN/tun0/dual48,errorsingroup4. ExactCONNECTEDnotmeasured,priorFAILretained.UI XMLmovedto/data/local/tmpafterpreservedFAIL,sameAPK,bothcleanupPASS;48blocked/4manualrecovery/revokePASS.Q29IN_PROGRESS28/37(75.7%).

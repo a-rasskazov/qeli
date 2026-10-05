@@ -21,7 +21,8 @@ class AndroidVpnSettings:
 
     def ui(self, label):
         self.sequence += 1
-        remote = f"/sdcard/q29-{self.prefix}vpn-ui-{self.sequence:02}.xml"
+        # Shell-owned temporary storage avoids early-boot external-storage publication.
+        remote = f"/data/local/tmp/q29-{self.prefix}vpn-ui-{self.sequence:02}.xml"
         diagnostic = []
         for attempt in range(3):
             try:
