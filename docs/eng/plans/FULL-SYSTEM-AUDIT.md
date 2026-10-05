@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v59 -->
+<!-- normative-sync: full-system-audit-v60 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -1847,6 +1847,8 @@ Daemon IPC/ownership/modes, Keychain, selected profiles, Intel/ARM ABI and DNS j
 ### 29. Android VpnService, JNI and lifecycle
 
 **5 October, Q29 lifecycle:** [F277 and checks](../reports/AUDIT-Q29-ANDROID-LIFECYCLE.md). TUN apply and teardown serialized; join outside monitor. Q29 remains IN_PROGRESS, full VPN/lifecycle not yet qualified. Full plan28/37(75.7%). **167 JVM +23 Android PASS;2 expected baseline FAIL.**
+
+**5 October, Q29 framework service:** [F278 and checks](../reports/AUDIT-Q29-ANDROID-SERVICE.md): rejected config preserves current status; five actual lifecycle cases before Auth.167 JVM +28 Android PASS;1baseline FAIL. Q29 IN_PROGRESS,plan28/37(75.7%).
 
 **Source:** `qeli-android/app`.
 

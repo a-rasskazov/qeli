@@ -669,16 +669,19 @@ class VpnServiceImpl : VpnService() {
     /** Satisfy startForegroundService's promotion contract even when the final config gate
      * rejects the request before a tunnel generation exists. A live/waiting controller must
      * remain untouched; only a fresh, otherwise-idle service instance is stopped here. */
+    @Synchronized
     private fun rejectForegroundConnect(message: String) {
         Log.e("VpnSvc", message)
-        broadcastStatus(STATUS_ERROR, message)
-        if (transportCore == null && vpnInterface == null && transportJob?.isActive != true &&
-            !pausedByTrustedWifi && !trustedPauseInFlight) {
-            showNotification(message)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopping = true
-            stopSelf()
+        if (transportCore != null || vpnInterface != null || transportJob?.isActive == true ||
+            pausedByTrustedWifi || trustedPauseInFlight || stopping || teardownJob?.isActive == true) {
+            broadcastLog("Connect request rejected: $message", level = "warn")
+            return
         }
+        broadcastStatus(STATUS_ERROR, message)
+        showNotification(message)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopping = true
+        stopSelf()
     }
 
     private data class TrustedWifiSettings(val enabled: Boolean, val ssids: List<String>)

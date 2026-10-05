@@ -415,3 +415,4 @@
 - [Q29: Android — store, manifest и Release](reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md)
 
 - [Q29: конкурентная остановка TUN/JNI](reports/AUDIT-Q29-ANDROID-LIFECYCLE.md)
+- [Q29: команды и lifecycle foreground-сервиса](reports/AUDIT-Q29-ANDROID-SERVICE.md)
