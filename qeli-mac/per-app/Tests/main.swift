@@ -218,5 +218,19 @@ expect(writes.stop(writeTicket: nextWrite), "pending framework write timeout ret
 expect(!writes.completeWrite(nextWrite), "late completion cannot resume a retired source")
 expect(writes.beginWrite() == nil, "retired relay cannot admit another framework write")
 
+// Production directional EOF state; native execution remains a Mac requirement.
+var appFirst = RelayDuplex()
+expect(!appFirst.finished, "new TCP flow has two active directions")
+expect(appFirst.end(.outbound) && !appFirst.finished && !appFirst.inboundEnded,
+       "app FIN preserves server response direction")
+expect(!appFirst.end(.outbound) && !appFirst.finished, "duplicate app FIN is idempotent")
+expect(appFirst.end(.inbound) && appFirst.finished, "server FIN after response completes TCP flow")
+var serverFirst = RelayDuplex()
+expect(serverFirst.end(.inbound) && !serverFirst.finished && !serverFirst.outboundEnded,
+       "server FIN preserves app outbound direction")
+expect(!serverFirst.end(.inbound) && !serverFirst.finished, "duplicate server FIN is idempotent")
+expect(serverFirst.end(.outbound) && serverFirst.finished, "app FIN completes server-first flow")
+expect(!serverFirst.end(.outbound) && serverFirst.finished, "terminal EOF state remains stable")
+
 if failures > 0 { exit(1) }
 print("ALL PASS")

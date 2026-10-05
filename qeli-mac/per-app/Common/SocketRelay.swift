@@ -185,6 +185,7 @@ final class TCPRelay: RelayClosable {
     private var fd: Int32 = -1
     private var readSource: DispatchSourceRead?
     private var readPaused = false
+    private var directions = RelayDuplex()
     private var writeWatchdog: DispatchSourceTimer?
     private let releases = DispatchGroup()
 
@@ -258,7 +259,14 @@ final class TCPRelay: RelayClosable {
             if errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR { stop(socketError("recv")) }
             return
         }
-        if count == 0 { stop(nil); return }
+        if count == 0 {
+            // Keep the socket/source owned for app-to-server traffic. A suspended
+            // EOF source avoids a busy loop and is resumed only for final cancel.
+            readPaused = true; readSource?.suspend()
+            directions.end(.inbound); flow.closeWriteWithError(nil)
+            if directions.finished { stop(nil) }
+            return
+        }
         readPaused = true; readSource?.suspend()
         guard let serial = lifetime.beginWrite() else { return }
         ensureWriteWatchdog()
@@ -267,18 +275,25 @@ final class TCPRelay: RelayClosable {
             if let error { self.stop(error); return }
             guard self.lifetime.completeWrite(serial) else { return }
             self.queue.async {
-                guard !self.lifetime.isStopped, self.readPaused else { return }
+                guard !self.lifetime.isStopped, !self.directions.inboundEnded, self.readPaused else { return }
                 self.readPaused = false; self.readSource?.resume()
             }
         }
     }
     private func readFromFlow() {
-        guard !lifetime.isStopped else { return }
+        guard !lifetime.isStopped, !directions.outboundEnded else { return }
         flow.readData { [weak self] data, error in
             guard let self else { return }
             if let error { self.stop(error); return }
-            guard let data, !data.isEmpty else { self.stop(nil); return }
             self.queue.async {
+                guard !self.lifetime.isStopped, !self.directions.outboundEnded else { return }
+                guard let data, !data.isEmpty else {
+                    // Propagate app EOF as FIN, preserving the server response.
+                    if shutdown(self.fd, SHUT_WR) != 0 { self.stop(socketError("shutdown write")); return }
+                    self.directions.end(.outbound); self.flow.closeReadWithError(nil)
+                    if self.directions.finished { self.stop(nil) }
+                    return
+                }
                 do { try self.sendAll(data); self.readFromFlow() }
                 catch { self.stop(error) }
             }
@@ -327,7 +342,8 @@ final class TCPRelay: RelayClosable {
                 if self.readPaused { self.readPaused = false; source.resume() }
                 self.readSource = nil // fd closes in the cancellation handler only.
             }
-            self.flow.closeReadWithError(error); self.flow.closeWriteWithError(error)
+            if !self.directions.outboundEnded { self.flow.closeReadWithError(error) }
+            if !self.directions.inboundEnded { self.flow.closeWriteWithError(error) }
             self.releases.notify(queue: self.queue) { self.registry.remove(self.id) }
         }
     }

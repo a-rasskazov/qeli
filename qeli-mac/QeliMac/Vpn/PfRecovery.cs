@@ -8,8 +8,11 @@ internal sealed class PfRecovery(Func<byte[]?> read, Action flush, Action delete
     Action deleteState, Func<DnsJournal.Owner, bool> ownerAlive, DnsJournal.Owner self)
 {
     internal readonly record struct Stamp(DnsJournal.Owner Owner, bool WasEnabled);
-    internal static byte[] Encode(DnsJournal.Owner owner, bool enabled) =>
-        Encoding.UTF8.GetBytes($"pid={owner.Pid}\nstart={owner.StartTicks}\nenabled={(enabled ? 1 : 0)}\n");
+    internal static byte[] Encode(DnsJournal.Owner owner, bool enabled)
+    {
+        if (owner.LegacyLocalTime) throw new InvalidDataException("New pf owners must use UTC");
+        return Encoding.UTF8.GetBytes($"pid={owner.Pid}\nstart={owner.StartTicks}\nenabled={(enabled ? 1 : 0)}\nclock=utc\n");
+    }
 
     internal static Stamp Decode(byte[] bytes)
     {
@@ -19,14 +22,15 @@ internal sealed class PfRecovery(Func<byte[]?> read, Action flush, Action delete
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             var pair = line.Trim().Split('=', 2);
-            if (pair.Length != 2 || pair[0] is not ("pid" or "start" or "enabled") || !fields.TryAdd(pair[0], pair[1]))
+            if (pair.Length != 2 || pair[0] is not ("pid" or "start" or "enabled" or "clock") || !fields.TryAdd(pair[0], pair[1]))
                 throw new InvalidDataException("Invalid/duplicate pf recovery field");
         }
-        if (fields.Count != 3 || !int.TryParse(fields.GetValueOrDefault("pid"), out int pid) || pid <= 0
-            || !long.TryParse(fields.GetValueOrDefault("start"), out long start) || start <= 0
+        if (fields.Count is not (3 or 4) || (fields.ContainsKey("clock") && fields["clock"] != "utc")
+            || !int.TryParse(fields.GetValueOrDefault("pid"), out int pid) || pid <= 0
+            || !long.TryParse(fields.GetValueOrDefault("start"), out long start) || start <= 0 || start > DateTime.MaxValue.Ticks
             || fields.GetValueOrDefault("enabled") is not ("0" or "1"))
             throw new InvalidDataException("Invalid pf recovery owner/state; administrator repair required");
-        return new(new(pid, start), fields["enabled"] == "1");
+        return new(new(pid, start, !fields.ContainsKey("clock")), fields["enabled"] == "1");
     }
 
     internal void RequireCurrentOwner()

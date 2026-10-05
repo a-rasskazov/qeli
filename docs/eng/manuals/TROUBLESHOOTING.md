@@ -2656,3 +2656,16 @@ returning from stop does not prove completed kernel release. Empty UDP datagrams
 are not EOF. No new INI settings. These changes were reviewed by source;
 Swift/macOS runtime is user-excluded and managed tests do not replace it.
 [Checks and limits](../reports/AUDIT-Q28-MACOS-SOCKETS.md).
+
+
+<!-- normative-sync: q28-macos-identity-halfclose-v1 -->
+
+### macOS: legacy DNS/PF journals and TCP EOF
+
+New DNS journals use schema2/UTC; PF stamps use clock=utc. A live legacy PID is not
+stale solely because local ticks mismatch. Stop old profiles/guardians before upgrade.
+If another process occupies a legacy PID, inspect ownership manually; never blindly
+remove journals. Downgrade with active new state is unsupported. TCP EOF ends only
+its direction: app FIN preserves server response; remote FIN preserves app-to-server.
+Both EOF or error/cancel/write timeout retire the relay.
+[Criteria, checks and exclusions](../reports/AUDIT-Q28-MACOS-INTEGRATION.md).

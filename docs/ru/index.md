@@ -409,3 +409,5 @@
 - [Q28: guardian — готовность и владение поколением](reports/AUDIT-Q28-MACOS-GUARDIAN.md)
 
 - [Q28: native sockets — время жизни и I/O budgets](reports/AUDIT-Q28-MACOS-SOCKETS.md)
+
+- [Q28: итоговая интеграция macOS](reports/AUDIT-Q28-MACOS-INTEGRATION.md)

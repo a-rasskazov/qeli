@@ -325,3 +325,16 @@ DNS query — 2 внутри внешнего бюджета; framework-write wa
 Пустые UDP датаграммы сохраняются. После частичной TCP отправки с timeout нужен новый
 stream. Новых INI-ключей нет. [Проверка и ограничения](../docs/ru/reports/AUDIT-Q28-MACOS-SOCKETS.md).
 Swift/Xcode/runtime USER SKIPPED: 20 новых native cases добавлены, но не исполнены.
+
+
+## DNS/PF identity upgrade и TCP half-close
+
+Новые DNS journals используют schema 2 и UTC start ticks; PF stamps — clock=utc.
+Legacy state с живым PID сохраняется даже при изменении timezone; сначала остановите
+старые профили/guardian. PID reuse для legacy неоднозначен — требуется ручная проверка,
+не слепое удаление journal. Downgrade с активным новым state не поддержан.
+TCP app EOF передаёт SHUT_WR, сохраняя server response; remote EOF завершает flow write,
+сохраняя outbound. Полный stop — оба EOF или error/cancel/write timeout. Idle timeout
+не добавлен. [Итог Q28 и проверки](../docs/ru/reports/AUDIT-Q28-MACOS-INTEGRATION.md):
+1248 managed PASS;8 новых Swift directional cases добавлены, но не исполнены.
+Mac/Xcode/NE runtime USER SKIPPED;managed selftest не подтверждает физический half-close.

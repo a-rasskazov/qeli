@@ -18,7 +18,9 @@ namespace QeliMac.Vpn;
 /// </summary>
 internal sealed class DnsJournal
 {
-    internal readonly record struct Owner(int Pid, long StartTicks);
+    // Version 1 recorded local ticks. A live legacy PID cannot safely be declared
+    // stale after a timezone change; only new UTC identities prove PID reuse.
+    internal readonly record struct Owner(int Pid, long StartTicks, bool LegacyLocalTime = false);
     internal readonly record struct ReadResult(bool Ok, IReadOnlyList<string> Servers, string Error);
     internal readonly record struct WriteResult(bool Ok, string Error);
 
@@ -42,7 +44,8 @@ internal sealed class DnsJournal
         public long OwnerStartTicks { get; set; }
     }
 
-    private const int StateVersion = 1;
+    private const int StateVersion = 2;
+    private static Owner StateOwner(State state) => new(state.OwnerPid, state.OwnerStartTicks, state.Version == 1);
     private const long MaxStateBytes = 64 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -69,6 +72,7 @@ internal sealed class DnsJournal
         Action? deleteState = null,
         Func<IDisposable>? acquireOperation = null)
     {
+        if (owner.LegacyLocalTime) throw new ArgumentException("New DNS owners must use UTC", nameof(owner));
         _statePath = statePath;
         _read = read;
         _write = write;
@@ -106,7 +110,7 @@ internal sealed class DnsJournal
             return RecoveryResult.NothingToDo;
         }
 
-        var owner = new Owner(state.OwnerPid, state.OwnerStartTicks);
+        var owner = StateOwner(state);
         if (owner == _owner)
         {
             // A clean-stop restore may fail transiently while the GUI/daemon process stays
@@ -237,7 +241,7 @@ internal sealed class DnsJournal
             return RecoveryResult.NothingToDo;
         }
 
-        if (state.OwnerPid != expectedOwner.Pid || state.OwnerStartTicks != expectedOwner.StartTicks)
+        if (StateOwner(state) != expectedOwner)
         {
             _log("DNS journal ownership changed; refusing to restore another qeli process's state");
             return RecoveryResult.LiveOwner;
@@ -384,10 +388,10 @@ internal sealed class DnsJournal
 
     private static void Validate(State state)
     {
-        if (state.Version != StateVersion) throw new InvalidDataException($"unsupported version {state.Version}");
+        if (state.Version is not (1 or StateVersion)) throw new InvalidDataException($"unsupported version {state.Version}");
         if (string.IsNullOrWhiteSpace(state.Service) || state.Service.Length > 256 || state.Service.Contains('\0'))
             throw new InvalidDataException("invalid network service name");
-        if (state.OwnerPid <= 0 || state.OwnerStartTicks <= 0)
+        if (state.OwnerPid <= 0 || state.OwnerStartTicks <= 0 || state.OwnerStartTicks > DateTime.MaxValue.Ticks)
             throw new InvalidDataException("invalid owner identity");
         if (state.PreviousServers is null || state.AppliedServers is null
             || state.PreviousServers.Any(value => value is null) || state.AppliedServers.Any(value => value is null)
@@ -417,7 +421,7 @@ internal sealed class DnsJournal
     internal static Owner CurrentOwner()
     {
         using var process = Process.GetCurrentProcess();
-        return new Owner(process.Id, process.StartTime.Ticks);
+        return new Owner(process.Id, process.StartTime.ToUniversalTime().Ticks);
     }
 
     internal static bool IsOwnerAlive(Owner owner)
@@ -425,7 +429,7 @@ internal sealed class DnsJournal
         try
         {
             using var process = Process.GetProcessById(owner.Pid);
-            return process.StartTime.Ticks == owner.StartTicks && !process.HasExited;
+            return !process.HasExited && (owner.LegacyLocalTime || process.StartTime.ToUniversalTime().Ticks == owner.StartTicks);
         }
         catch (ArgumentException) { return false; } // PID no longer exists
         catch { return true; } // Unknown/access failure is not proof of death.

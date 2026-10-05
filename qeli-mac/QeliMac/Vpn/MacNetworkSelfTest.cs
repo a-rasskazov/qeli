@@ -129,7 +129,39 @@ internal static class MacNetworkSelfTest
         foreach (string name in new[] { "utun", "utun+1", "utun-1", "utun 1", "en0", "utun1\npass all" })
             Check("noncanonical utun name rejected", !UtunDevice.ValidName(name));
 
+        RunOwnerIdentity(Check);
         RunDns(Check);
+    }
+
+    private static void RunOwnerIdentity(Action<string, bool> check)
+    {
+        var current = DnsJournal.CurrentOwner();
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        check("current DNS/PF identity is explicitly UTC", !current.LegacyLocalTime
+            && current.StartTicks == process.StartTime.ToUniversalTime().Ticks);
+        check("current UTC generation is alive", DnsJournal.IsOwnerAlive(current));
+        var shifted = new DnsJournal.Owner(current.Pid, current.StartTicks - TimeSpan.TicksPerHour * 3);
+        check("UTC generation mismatch detects PID reuse", !DnsJournal.IsOwnerAlive(shifted));
+        byte[] Legacy(long ticks) => Encoding.UTF8.GetBytes($"pid={current.Pid}\nstart={ticks}\nenabled=0\n");
+        var legacy = PfRecovery.Decode(Legacy(shifted.StartTicks));
+        check("legacy local stamp keeps clock ambiguity", legacy.Owner.LegacyLocalTime);
+        check("timezone-shifted legacy PID remains protected", DnsJournal.IsOwnerAlive(legacy.Owner));
+        check("same numeric ticks do not claim legacy ownership", PfRecovery.Decode(Legacy(current.StartTicks)).Owner != current);
+        int mutations = 0; byte[]? state = Legacy(shifted.StartTicks);
+        var recovery = new PfRecovery(() => state, () => mutations++, () => mutations++, () => state = null,
+            DnsJournal.IsOwnerAlive, current);
+        check("legacy live pf owner survives startup sweep", !recovery.Release(true) && mutations == 0);
+        check("legacy live pf owner refuses explicit release", Reject(recovery, false) && mutations == 0);
+        check("legacy live pf owner refuses refresh", RejectRefresh(recovery) && mutations == 0);
+        foreach (string suffix in new[] { "clock=local\n", "clock=utc\nclock=utc\n", "extra=1\n" })
+            check("invalid pf clock marker rejected", RejectDecode(Legacy(1).Concat(Encoding.UTF8.GetBytes(suffix)).ToArray()));
+        check("out-of-range pf start rejected", RejectDecode(Legacy(DateTime.MaxValue.Ticks + 1)));
+        state = PfRecovery.Encode(shifted, false);
+        check("tagged stale pf generation can be recovered", recovery.Release(true) && mutations == 2 && state is null);
+        check("legacy missing PID can be recovered", !DnsJournal.IsOwnerAlive(new(int.MaxValue, 1, true)));
+        static bool Reject(PfRecovery r, bool stale) { try { r.Release(stale); return false; } catch (InvalidOperationException) { return true; } }
+        static bool RejectRefresh(PfRecovery r) { try { r.RequireCurrentOwner(); return false; } catch (InvalidOperationException) { return true; } }
+        static bool RejectDecode(byte[] bytes) { try { PfRecovery.Decode(bytes); return false; } catch (InvalidDataException) { return true; } }
     }
 
     private static void RunDns(Action<string, bool> check)
@@ -147,6 +179,39 @@ internal static class MacNetworkSelfTest
                 check("invalid/oversized/UTF8 DNS journal retained without writes", New(path).RecoverStale() == DnsJournal.RecoveryResult.Failed && File.ReadAllBytes(path).SequenceEqual(data) && writes == 0);
             }
             check("read failure never looks like missing DNS journal", New(Path.Combine(dir, "unreadable"), () => throw new IOException("denied")).RecoverStale() == DnsJournal.RecoveryResult.Failed && writes == 0);
+
+            string clockPath = Path.Combine(dir, "clock.json");
+            var currentOwner = DnsJournal.CurrentOwner();
+            byte[]? clockState = null;
+            var clockDns = new List<string> { "192.0.2.53" }; int clockWrites = 0;
+            DnsJournal ClockJournal(DnsJournal.Owner claimant) => new(clockPath,
+                _ => new(true, clockDns.ToArray(), ""), (_, servers) => { clockWrites++; clockDns = servers.ToList(); return new(true, ""); },
+                DnsJournal.IsOwnerAlive, claimant, _ => { }, readState: () => clockState,
+                publishState: bytes => { clockState = bytes; return true; }, deleteState: () => clockState = null);
+            var clock = ClockJournal(currentOwner);
+            check("UTC DNS claim succeeds", clock.TryTakeOver("Wi-Fi", new[] { "10.9.0.1" }, out var clockRelease, out _));
+            var json = System.Text.Json.Nodes.JsonNode.Parse(clockState!)!;
+            check("new DNS snapshot persists schema 2 UTC", json["Version"]!.GetValue<int>() == 2
+                && json["OwnerStartTicks"]!.GetValue<long>() == currentOwner.StartTicks);
+            json["Version"] = 1; json["OwnerStartTicks"] = currentOwner.StartTicks - TimeSpan.TicksPerHour * 3;
+            clockState = Encoding.UTF8.GetBytes(json.ToJsonString());
+            check("legacy live DNS PID survives simulated timezone change", clock.RecoverStale() == DnsJournal.RecoveryResult.LiveOwner
+                && clockWrites == 1 && clockState is not null && clockDns.SequenceEqual(new[] { "10.9.0.1" }));
+            json["OwnerStartTicks"] = currentOwner.StartTicks; clockState = Encoding.UTF8.GetBytes(json.ToJsonString());
+            bool refused = false; try { clockRelease!(); } catch (InvalidOperationException) { refused = true; }
+            check("release cannot equate UTC lease with legacy numeric ticks", refused && clockWrites == 1 && clockState is not null);
+            json["OwnerPid"] = int.MaxValue; clockState = Encoding.UTF8.GetBytes(json.ToJsonString());
+            check("legacy dead DNS PID restores exact prior servers", clock.RecoverStale() == DnsJournal.RecoveryResult.Restored
+                && clockWrites == 2 && clockState is null && clockDns.SequenceEqual(new[] { "192.0.2.53" }));
+            json["Version"] = 2; json["OwnerPid"] = currentOwner.Pid; json["OwnerStartTicks"] = currentOwner.StartTicks - 1;
+            clockDns = new() { "10.9.0.1" }; clockState = Encoding.UTF8.GetBytes(json.ToJsonString());
+            check("UTC DNS reused PID generation restores", clock.RecoverStale() == DnsJournal.RecoveryResult.Restored
+                && clockWrites == 3 && clockState is null);
+            foreach (int version in new[] { 0, 3 })
+            {
+                json["Version"] = version; clockState = Encoding.UTF8.GetBytes(json.ToJsonString());
+                check("unknown DNS clock schema refuses mutation", clock.RecoverStale() == DnsJournal.RecoveryResult.Failed && clockWrites == 3 && clockState is not null);
+            }
 
             string throwingPath = Path.Combine(dir, "throwing.json");
             var throwingCurrent = new List<string> { "192.0.2.53" };

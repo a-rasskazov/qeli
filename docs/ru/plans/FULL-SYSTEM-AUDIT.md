@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v56 -->
+<!-- normative-sync: full-system-audit-v57 -->
 
-**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: C# storage/control/network/forwarding/guardian PASS; Swift guardian/sockets SOURCE REVIEW, runtime USER SKIPPED. Остался итоговый integration review.**
+**Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Далее Q29 Android.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1839,19 +1839,21 @@ Daemon IPC/owner/mode, Keychain, selected profile, Intel/ARM ABI и DNS journal.
 
 **Имеющаяся обвязка/fixtures:** `qeli-mac/README.md`, `.github/workflows/ci.yml`.
 
-- [ ] Review и мёртвый код.
-- [ ] Штатные, граничные и негативные сценарии.
-- [ ] Отказы и конкуренция.
-- [ ] Интеграция и целевая платформа.
-- [ ] Исправления, повторная проверка и evidence.
+- [x] Review и мёртвый код.
+- [x] Штатные, граничные и негативные сценарии.
+- [x] Отказы и конкуренция.
+- [x] Интеграция и целевая платформа.
+- [x] Исправления, повторная проверка и evidence.
 
-**Статус: IN_PROGRESS.**
+**Статус: DONE — доступный объём PASS; Mac/Xcode/runtime USER SKIPPED.**
 
 **5 октября: этап хранения PASS.** [F240–F242](../reports/AUDIT-Q28-MACOS-STORAGE.md): 54 storage PASS, 5 baseline FAIL; Keychain errors/duplicate/key creation concurrency, strict key files/growth limits, no quarantine on key-provider failures. Реальный Mac USER SKIPPED. Далее daemon/helper/selected profile/utun/pf/Swift; полный раздел не закрыт. План 27/37 (73,0%).
 
 **5 октября: этап daemon/control PASS.** [F243–F248](../reports/AUDIT-Q28-MACOS-CONTROL.md):83 control +54 storage +325 Windows +549 shared PASS;5 ожидаемых baseline FAIL. Реальный Mac USER SKIPPED. Далее utun/pf/DNS/Swift. План27/37(73,0%).
 
 **5 октября: этап сетевой очистки PASS.** [F249–F255](../reports/AUDIT-Q28-MACOS-NETWORK.md):117 network +83 control +54 storage +325 Windows +549 shared PASS;10 ожидаемых baseline FAIL. Реальный Mac USER SKIPPED. Остаток: Swift/per-app/build contracts, forwarding ownership/crash recovery и финальный обзор интеграции. Q28 IN_PROGRESS;27/37.
+
+**5 октября, итог:** [интеграция F271/F272](../reports/AUDIT-Q28-MACOS-INTEGRATION.md):1248 managed PASS,23 новых network checks,4 baseline FAIL;8 новых Swift cases не исполнены. Все доступные критерии сверены с предыдущими этапами; реальные Mac/Swift исключения не стали PASS. План28/37(75,7%),9 осталось;далее Q29.
 
 ### 29. Android: VpnService, JNI и lifecycle
 

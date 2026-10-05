@@ -2667,3 +2667,16 @@ Stop сначала отказывает новому I/O, затем очере
 не означает EOF. Новых INI-параметров нет. Эти изменения проверены по исходникам;
 Swift/macOS runtime исключён пользователем, managed tests его не заменяют.
 [Объём проверки и ограничения](../reports/AUDIT-Q28-MACOS-SOCKETS.md).
+
+
+<!-- normative-sync: q28-macos-identity-halfclose-v1 -->
+
+### macOS: старые DNS/PF journals и TCP EOF
+
+Новые DNS journals: schema 2/UTC; PF stamps: clock=utc. Старые stamps с живым PID не
+считаются stale только из-за несовпадения локальных ticks. Перед upgrade остановите
+старые профили/guardian. Если legacy PID занят другим процессом, проверьте ownership
+вручную; не удаляйте journal вслепую. Downgrade с активным новым state не поддержан.
+TCP EOF завершает только соответствующее направление: app FIN сохраняет ответ сервера,
+remote FIN сохраняет app-to-server. Полный stop — оба EOF или error/cancel/write timeout.
+[Сверка критериев, проверки и исключения](../reports/AUDIT-Q28-MACOS-INTEGRATION.md).

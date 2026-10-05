@@ -61,3 +61,22 @@ struct RelayDeadline {
         if now >= expiry { throw RelayWorkError.timedOut }
     }
 }
+
+// Queue-confined TCP EOF state: one direction may finish while its peer drains.
+struct RelayDuplex {
+    enum Direction { case inbound, outbound }
+    private(set) var inboundEnded = false
+    private(set) var outboundEnded = false
+    var finished: Bool { inboundEnded && outboundEnded }
+    @discardableResult mutating func end(_ direction: Direction) -> Bool {
+        switch direction {
+        case .inbound:
+            guard !inboundEnded else { return false }
+            inboundEnded = true
+        case .outbound:
+            guard !outboundEnded else { return false }
+            outboundEnded = true
+        }
+        return true
+    }
+}
