@@ -84,6 +84,7 @@ class TrustedWifiInstrumentedTest {
         assertTrue(prefs.edit().putBoolean(MainActivity.PREF_CONNECTION_DESIRED, false)
             .putBoolean(MainActivity.PREF_TRUSTED_WIFI_ENABLED, false).commit())
         scenario?.close(); scenario = null
+        shell("cmd location set-location-enabled true")
         shell("svc wifi enable")
     }
     private fun config(killSwitch: Boolean = false) = VpnConfig(
@@ -186,5 +187,29 @@ class TrustedWifiInstrumentedTest {
         }
         assertFalse(hasTun())
         assertNotEquals(VpnServiceImpl.STATUS_WAITING_TRUSTED, VpnServiceImpl.liveStatus)
+    }
+
+    @Test fun actualLocationRedactionRestoresTunAndReadableSsidCanPauseAgain() {
+        trust(true); start(); waiting()
+        shell("cmd location set-location-enabled false")
+        waitFor("Android did not redact the SSID") { observedSsid() == null }
+        reevaluate(); connected(); traffic("ssid-redacted")
+        shell("cmd location set-location-enabled true")
+        waitFor("SSID visibility did not return") { observedSsid() == ssid }
+        reevaluate(); waiting()
+        trust(false); reevaluate(); connected(); traffic("ssid-readable-restored")
+        disconnect()
+    }
+    @Test fun queuedPauseThenDisconnectDoesNotResurrectConnection() {
+        start(); connected()
+        trust(true); reevaluate()
+        context.startService(Intent(context, VpnServiceImpl::class.java)
+            .setAction(VpnServiceImpl.ACTION_DISCONNECT))
+        waitFor("queued disconnect did not remove the controller") { service() == null }
+        Thread.sleep(1200)
+        assertNull(service()); assertFalse(hasTun())
+        assertFalse(prefs.getBoolean(MainActivity.PREF_CONNECTION_DESIRED, true))
+        trust(false); start(); connected(); traffic("queued-stop-explicit-restart")
+        disconnect()
     }
 }

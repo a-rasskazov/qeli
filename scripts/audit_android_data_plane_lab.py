@@ -588,8 +588,13 @@ perf.connection.handshake_timeout_secs = 12
             phases = [("fixed", "com.qeli.VpnSystemLifecycleInstrumentedTest#bootstrapSavedProfileAndLeaveConnected")]
             expected_tests = 1
         if args.suite == "trusted-wifi":
-            phases=[("fixed","com.qeli.TrustedWifiInstrumentedTest")]
-            expected_tests=3
+            protection_methods = ["stoppedServiceRejectsLateProtectBeforeCarrierMutation",
+                                  "replacedCoreCannotProtectOnBehalfOfCurrentConnection",
+                                  "protectionWaitsAtOwnerCheckWhileLifecycleOwnsMonitor"]
+            selector = "com.qeli.TrustedWifiInstrumentedTest," + ",".join(
+                "com.qeli.TransportLifecycleInstrumentedTest#" + name for name in protection_methods)
+            phases=[("fixed",selector)]
+            expected_tests=8
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             assert manifest.get("build_type", "debug") == args.variant, "APK manifest does not match requested variant"

@@ -1210,7 +1210,7 @@ class VpnServiceImpl : VpnService() {
             TransportCoreEventCodec.KIND_SOCKET_PROTECT -> {
                 val outcome = TransportCoreEventDispatcher.protectSocket(
                     event,
-                    attempt = { fd -> protectAndBindCarrierSocket(fd) },
+                    attempt = { fd -> protectAndBindCarrierSocket(core, fd) },
                     beforeRetry = {
                         try {
                             Thread.sleep(100)
@@ -2481,7 +2481,12 @@ class VpnServiceImpl : VpnService() {
         }
     }
 
-    private fun protectAndBindCarrierSocket(fd: Int): Boolean {
+    @Synchronized
+    private fun protectAndBindCarrierSocket(core: TransportCore, fd: Int): Boolean {
+        // A polled protect request may outlive cancellation or replacement of its owner.
+        // Serialize each attempt with stop/revoke/plan application, before any carrier or
+        // socket mutation. Retry sleeps and the JNI acknowledgement remain outside the lock.
+        if (stopping || transportCore !== core || activeConfig == null) return false
         val cm = getSystemService(ConnectivityManager::class.java) ?: return false
         val network = selectPhysicalCarrierNetwork(cm) ?: return false
         if (!bindProtectedCandidateSocket(network, fd)) return false

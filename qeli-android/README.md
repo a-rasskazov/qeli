@@ -289,3 +289,19 @@ VPN Network; это не Release/default-network/leak проверка. Друг
 APK/manifest, private namespaces и временный readonly AVD. Несовместимые suites,
 варианты и per-app режимы отклоняются до изменений.
 [Q29 F281: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md).
+
+
+## Владелец protect и потеря видимости SSID
+
+Уже взятый из JNI-очереди protect request проверяет текущий core/config и отсутствие
+остановки под монитором службы до выбора carrier, bind/protect и публикации upstream.
+Retry sleeps и JNI ACK выполняются вне монитора. Отключение Android location visibility
+не должно оставлять VPN на доверенной паузе: неизвестный SSID требует восстановления TUN.
+
+`--suite trusted-wifi --variant debug --transport tcp` теперь объединяет пять
+framework trusted-Wi-Fi сценариев и три protect owner/stop/monitor adapter проверки
+с настоящими JNI socket requests. Всего восемь тестов; location/nearby permissions
+выдаются извне, SSID settings задаются локально тестом. Location-switch redaction
+не равна отзыву permission с возможным убийством процесса; queued pause/disconnect
+не подтверждает точную точку внутри native join.
+[Q29 F282: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-CONTROLLER.md).

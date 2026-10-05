@@ -147,4 +147,81 @@ class TransportLifecycleInstrumentedTest {
             } finally { core.close(); worker.join(5000); assertFalse(worker.isAlive) }
         }
     }
+
+    /** Native socket request is real; service attachment/state are explicit adapter fixtures. */
+    private fun withProtectRequest(block: (TransportCore, TransportCoreEvent) -> Unit) {
+        val core = core(protect = true)
+        val finished = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val runner = Thread {
+            try { core.runTransport(carrierAddresses = listOf("198.51.100.17")) }
+            catch (error: Throwable) { failure.set(error) }
+            finally { finished.countDown() }
+        }
+        try {
+            runner.start()
+            var request: TransportCoreEvent? = null
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (request == null && System.nanoTime() < until) {
+                val next = core.pollEvent()
+                if (next?.kind == TransportCoreEventCodec.KIND_SOCKET_PROTECT) request = next
+                else Thread.sleep(10)
+            }
+            block(core, requireNotNull(request) { "native protection request absent" })
+        } finally {
+            core.stop()
+            assertTrue("native protection runner remained", finished.await(5, TimeUnit.SECONDS))
+            runner.join(5000); assertFalse(runner.isAlive)
+            core.close()
+            failure.get()?.let { throw it }
+        }
+    }
+    private val dispatch = VpnServiceImpl::class.java.getDeclaredMethod("dispatchTransportCoreEvent",
+        TransportCore::class.java, TransportCoreEvent::class.java).apply { isAccessible = true }
+    private fun selectedCarrier(service: VpnServiceImpl) = VpnServiceImpl::class.java
+        .getDeclaredField("currentNetwork").apply { isAccessible = true }.get(service)
+
+    @Test fun stoppedServiceRejectsLateProtectBeforeCarrierMutation() = withProtectRequest { core, request ->
+        val service = fixture(core)
+        try {
+            dispatch.invoke(service, core, request)
+            assertNull("late protect selected a carrier after stop", selectedCarrier(service))
+        } finally { clean(service, core) }
+    }
+    @Test fun replacedCoreCannotProtectOnBehalfOfCurrentConnection() = withProtectRequest { oldCore, request ->
+        val current = core()
+        val service = fixture(current)
+        field(service, "stopping", false)
+        try {
+            dispatch.invoke(service, oldCore, request)
+            assertNull("stale core mutated the current carrier", selectedCarrier(service))
+        } finally { clean(service, current) }
+    }
+    @Test fun protectionWaitsAtOwnerCheckWhileLifecycleOwnsMonitor() = withProtectRequest { core, request ->
+        val service = fixture(core)
+        val entered = CountDownLatch(1); val finished = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val worker = Thread {
+            entered.countDown()
+            try { dispatch.invoke(service, core, request) }
+            catch (error: Throwable) { failure.set(error) }
+            finally { finished.countDown() }
+        }
+        try {
+            synchronized(service) {
+                worker.start(); assertTrue(entered.await(2, TimeUnit.SECONDS))
+                val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+                while (worker.state != Thread.State.BLOCKED && finished.count > 0 &&
+                    System.nanoTime() < until) Thread.sleep(10)
+                assertEquals(Thread.State.BLOCKED, worker.state)
+                assertEquals("protect must wait before selecting/binding a carrier",
+                    "protectAndBindCarrierSocket", worker.stackTrace.firstOrNull {
+                        it.className == VpnServiceImpl::class.java.name }?.methodName)
+            }
+            assertTrue(finished.await(5, TimeUnit.SECONDS)); failure.get()?.let { throw it }
+            assertNull(selectedCarrier(service))
+        } finally {
+            worker.join(5000); assertFalse(worker.isAlive); clean(service, core)
+        }
+    }
 }
