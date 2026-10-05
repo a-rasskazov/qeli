@@ -12,6 +12,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -71,6 +72,7 @@ class VpnServiceImpl : VpnService() {
     @Volatile private var transportJob: Job? = null
     @Volatile private var activeConfig: VpnConfig? = null
     @Volatile private var activePlanGeneration = 0L
+    private var vpnPublicationJob: Job? = null // guarded by the service monitor
     private val pathUpdateSequence = AtomicLong(0)
     @Volatile private var nativeFatalError: Throwable? = null
     @Volatile private var attemptConnectedAt = -1L
@@ -1483,11 +1485,7 @@ class VpnServiceImpl : VpnService() {
                     "pushed_routes=$pushedRoutesInstalled/${plan.pushedRoutes.size} " +
                     "plan_routes=${plan.routes.size}; Rust owns the TUN payload"
             )
-            announceConnected(
-                plan.tunnelAddress,
-                plan.tunnelGateway,
-                plan.addresses.joinToString { "${it.address}/${it.prefixLength}" },
-            )
+            waitForVpnPublication(core, plan, tun)
         } catch (error: Throwable) {
             if (!acknowledged) {
                 pushedRoutesInstalled = previousPushedRoutesInstalled
@@ -1507,7 +1505,134 @@ class VpnServiceImpl : VpnService() {
             } else {
                 broadcastLog("Preserving the reusable Android TUN for the next generation")
             }
+            if (acknowledged) {
+                activePlanGeneration = 0L
+                vpnPublicationJob?.cancel()
+                vpnPublicationJob = null
+                runCatching { core.stop() }
+            }
             broadcastLog("ERROR: Native NetworkPlan ${plan.generation} failed: ${error.message}")
+        }
+    }
+
+    /** ACK starts Rust's packet pump, but does not publish app routing in Android. A fresh
+     * passive VPN callback also reports an already published, reused TUN. The VPN owner can
+     * observe its own VPN even when per-app include mode excludes the owner's UID. */
+    @Synchronized
+    private fun waitForVpnPublication(
+        core: TransportCore,
+        plan: TransportCoreNetworkPlan,
+        tun: ParcelFileDescriptor,
+    ) {
+        vpnPublicationJob?.cancel()
+        val scope = coroutineScope ?: error("VPN session scope is unavailable")
+        check(scope.isActive) { "VPN session scope is stopping" }
+        val timeoutMs = activeConfig!!.connectionTimeoutSecs.coerceIn(1, 30) * 1000L
+        val publicationJob = scope.launch(start = CoroutineStart.LAZY) {
+            val ownerJob = currentCoroutineContext()[Job]
+            try {
+                val network = awaitAndroidVpnPublication(plan, timeoutMs)
+                    ?: throw TimeoutException("Android VPN publication timed out")
+                synchronized(this@VpnServiceImpl) {
+                    if (ownerJob?.isActive != true || stopping || transportCore !== core ||
+                        activePlanGeneration != plan.generation || vpnInterface !== tun ||
+                        liveStatus != STATUS_CONNECTING
+                    ) return@synchronized
+                    announceConnected(
+                        plan.tunnelAddress,
+                        plan.tunnelGateway,
+                        plan.addresses.joinToString { "${it.address}/${it.prefixLength}" },
+                    )
+                    broadcastLog(
+                        "Android VPN CONNECTED: generation=${plan.generation} " +
+                            "network=$network device_ms=${liveConnectedAt}"
+                    )
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                synchronized(this@VpnServiceImpl) {
+                    if (stopping || transportCore !== core ||
+                        activePlanGeneration != plan.generation || vpnInterface !== tun
+                    ) return@synchronized
+                    // Keep the Java TUN and system lockdown policy while the normal retry
+                    // loop replaces this generation. Never report a publication timeout as
+                    // a second failed ACK after Rust already accepted the plan.
+                    activePlanGeneration = 0L
+                    nativeFatalError = error
+                    broadcastLog("ERROR: Android VPN publication failed: ${error.message}")
+                    runCatching { core.stop() }
+                }
+            } finally {
+                synchronized(this@VpnServiceImpl) {
+                    if (vpnPublicationJob === ownerJob) vpnPublicationJob = null
+                }
+            }
+        }
+        vpnPublicationJob = publicationJob
+        publicationJob.start()
+    }
+
+    private suspend fun awaitAndroidVpnPublication(
+        plan: TransportCoreNetworkPlan,
+        timeoutMs: Long,
+    ): Long? {
+        val cm = getSystemService(ConnectivityManager::class.java)
+            ?: error("ConnectivityManager is unavailable")
+        val expectedAddresses = plan.addresses.mapTo(HashSet()) {
+            "${InetAddress.getByName(it.address).hostAddress}/${it.prefixLength}"
+        }
+        val publication = AndroidVpnPublicationState(expectedAddresses, plan.mtu)
+        val changes = Channel<Unit>(Channel.CONFLATED)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                publication.available(network.networkHandle)
+                changes.trySend(Unit)
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                publication.capabilities(network.networkHandle,
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))
+                changes.trySend(Unit)
+            }
+            override fun onLinkPropertiesChanged(network: Network, links: LinkProperties) {
+                publication.links(network.networkHandle, links.interfaceName,
+                    if (Build.VERSION.SDK_INT >= 29) links.mtu else null,
+                    links.linkAddresses.mapTo(HashSet()) {
+                        "${it.address.hostAddress}/${it.prefixLength}"
+                    })
+                changes.trySend(Unit)
+            }
+            override fun onLost(network: Network) {
+                publication.lost(network.networkHandle)
+                changes.trySend(Unit)
+            }
+        }
+        // NetworkRequest's defaults include NOT_VPN; clear them and do not require INTERNET
+        // or VALIDATED, which are not guaranteed for split/private VPNs. Query no synchronous
+        // ConnectivityManager snapshots from callbacks: their state can already be newer.
+        val request = NetworkRequest.Builder().apply {
+            if (Build.VERSION.SDK_INT >= 30) {
+                clearCapabilities()
+            } else {
+                removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                removeCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
+                removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+            }
+            addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+        }.build()
+        cm.registerNetworkCallback(request, callback)
+        try {
+            return withTimeoutOrNull(timeoutMs) {
+                var ready: Long? = null
+                while (ready == null) {
+                    changes.receive()
+                    ready = publication.readyNetwork()
+                }
+                ready
+            }
+        } finally {
+            runCatching { cm.unregisterNetworkCallback(callback) }
+            changes.close()
         }
     }
 
@@ -1671,7 +1796,11 @@ class VpnServiceImpl : VpnService() {
                     roamingUpdateJob?.cancel()
                     roamingUpdateJob = null
                     cancelCarrierReplacementWait()
-                    activePlanGeneration = 0L
+                    synchronized(this@VpnServiceImpl) {
+                        activePlanGeneration = 0L
+                        vpnPublicationJob?.cancel()
+                        vpnPublicationJob = null
+                    }
                 }
             }
             nativeFatalError?.let { fatal ->
@@ -1888,6 +2017,8 @@ class VpnServiceImpl : VpnService() {
         cancelCarrierReplacementWait()
         val (core, runner) = synchronized(this) {
             activePlanGeneration = 0L
+            vpnPublicationJob?.cancel()
+            vpnPublicationJob = null
             pathUpdateSequence.set(0)
             val core = transportCore
             val runner = transportJob

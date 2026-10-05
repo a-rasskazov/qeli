@@ -78,6 +78,26 @@ class StartupDns:
                 sample=min(samples,key=lambda v:v['started_ms'])
                 first[family+'-'+protocol]=dict(sample=sample['sample'],delay_ms=round(sample['started_ms']-epoch*1000,3),success=sample['success'],detail=sample['detail'])
         self.result['cold_start']=dict(immediate_first_socket_status='FAIL_POST_PLAN_BLOCKING' if any(v.get('success') is False for v in first.values()) else 'NOT_SAMPLED_AFTER_PLAN' if any('success' not in v for v in first.values()) else 'PASS',network_plan_applied_device_epoch=epoch,first_post_plan=first,coverage='First fresh sampled sockets after APPLIED; bounded sampling, not synchronous CONNECTED observation')
+        if self.result.get('require_published_start'):
+            published=[line for line in logs.splitlines() if 'Android VPN CONNECTED: generation=1 ' in line]
+            assert len(published)==1,('product did not publish CONNECTED',published)
+            connected_ms=int(published[0].split('device_ms=')[1].split()[0])
+            assert connected_ms>=epoch*1000,('CONNECTED precedes plan ACK',epoch,connected_ms)
+            post=[v for v in row['samples'] if v['started_ms']>=connected_ms]
+            first_connected={}
+            for family in ('ipv4','ipv6'):
+                for protocol in ('tcp','udp'):
+                    chosen=[v for v in post if v['family']==family and v['protocol']==protocol]
+                    assert chosen,('no fresh samples after CONNECTED',family,protocol)
+                    sample=min(chosen,key=lambda v:v['started_ms'])
+                    first_connected[family+'-'+protocol]=sample
+            observation=dict(status='PASS' if all(v['success'] for v in post) else 'FAIL_POST_CONNECTED_BLOCKING',
+                             device_ms=connected_ms,delay_after_plan_ms=round(connected_ms-epoch*1000,3),
+                             post_connected_samples=len(post),errors=sum(not v['success'] for v in post),
+                             first_post_connected=first_connected,product_log=published[0])
+            self.result['cold_start']['published_start']=observation
+            (self.evidence/'published-start.json').write_text(json.dumps(observation,indent=2)+'\n')
+            assert observation['status']=='PASS',observation
         (self.evidence/'leak-bursts.json').write_text(json.dumps(self.result['leak_bursts'],indent=2)+'\n')
         tail=bursts.run('startup-followup')
         assert all(v['success'] for v in tail['samples']),('bounded startup follow-up failed',tail)

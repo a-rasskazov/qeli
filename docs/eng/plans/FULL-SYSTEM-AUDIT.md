@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v77 -->
+<!-- normative-sync: full-system-audit-v78 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2214,3 +2214,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **October5,Q29 DNS APIs:** [report](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md):7diagnostic variants,8no-payload checks,288socket samples/48blocked,4manual recovery/revoke/cleanupPASS. Errors and4failed attempts retained;productAPK/JNI/managed unchanged,newtestAPK. ENONET localized to auto/null;reference points to secureVPN app_netid. Priorreadiness/SIGKILL/runnerFAIL open;Q29IN_PROGRESS,28/37(75.7%).
 
 **October5,Q29 startup state:** [report](../reports/AUDIT-Q29-ANDROID-STARTUP-STATE.md):336socket/96network samples,callbacktimeline;postAPPLIED56,activeVPN/tun0/dual48,errorsingroup4. ExactCONNECTEDnotmeasured,priorFAILretained.UI XMLmovedto/data/local/tmpafterpreservedFAIL,sameAPK,bothcleanupPASS;48blocked/4manualrecovery/revokePASS.Q29IN_PROGRESS28/37(75.7%).
+
+**5 October,Q29 F279:** [CONNECTED gate](../reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md):172unit/5new PASS,lint0errors;3finalRelease runs,960samples,80freshpostCONNECTED/0errors,TCPinclude retainedTUN2transitions. ImmediateACK,UIwaitsforAndroidcallback;historicalAPPLIED/SIGKILL/runnerFAILretained.Q29IN_PROGRESS28/37(75.7%).

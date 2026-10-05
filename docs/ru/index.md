@@ -430,3 +430,4 @@
 - [Q29: системный DNS и холодное включение Android Release](reports/AUDIT-Q29-ANDROID-STARTUP-DNS.md)
 - [Q29: сравнение Android DNS API](reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md)
 - [Q29: публикация VPN при холодном запуске](reports/AUDIT-Q29-ANDROID-STARTUP-STATE.md)
+- [Q29: CONNECTED после публикации Android VPN](reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md)

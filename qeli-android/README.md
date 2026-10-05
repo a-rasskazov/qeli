@@ -145,3 +145,18 @@ minSdk28 сохраняется; active index использует совмес�
 167 JVM,18 debug instrumentation PASS;Release/R8 build иlint с0errors/55warnings.
 Debug test APK не является подходящим тестовым variant для minified Release. Production
 signing,полный Release VPN и другие lifecycle режимы проверяются отдельно.
+
+
+## Android VPN publication
+
+Native NetworkPlan ACK starts the TUN packet pump; CONNECTED waits for Android's
+VPN NetworkCallback matching plan addresses (and MTU on API29+). A fresh observer
+also handles reconnect with a retained TUN and an owner excluded by per-app include.
+Publication failure stops the native generation and retries while retaining
+TUN/system lockdown. minSdk28 is preserved; API28 runtime is not qualified here.
+
+ACK запускает native packet pump, а CONNECTED ждёт Android NetworkCallback с
+адресами текущего плана и MTU на API29+. Новый observer работает и на прежнем TUN,
+в том числе при исключённом UID владельца. При timeout генерация останавливается
+для retry; TUN/системный lockdown сохраняются.
+[Q29 F279: проверки и ограничения](../docs/ru/reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md).

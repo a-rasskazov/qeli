@@ -34,7 +34,7 @@ def network_handover(arun,evidence,probe,result, *, bursts=None):
     def logs():return arun("shell","logcat","-d","-s","VpnSvc:D").stdout
     def counts():
         text=logs()
-        return dict(auth=text.count("Auth OK:"),plans=len(re.findall(r"Native NetworkPlan [0-9]+ APPLIED:",text)),commits=text.count("Roaming path committed:"))
+        return dict(published=text.count("Android VPN CONNECTED:"),auth=text.count("Auth OK:"),plans=len(re.findall(r"Native NetworkPlan [0-9]+ APPLIED:",text)),commits=text.count("Roaming path committed:"))
     def carrier():return default_carrier(arun("shell","dumpsys","connectivity").stdout)
     def snapshot(label):
         conn=save(label+"-connectivity.txt",arun("shell","dumpsys","connectivity").stdout)
@@ -82,6 +82,8 @@ def network_handover(arun,evidence,probe,result, *, bursts=None):
             new=carrier();assert new and new["handle"]!=old["handle"]
             if tcp:
                 wait_until(lambda:counts()["plans"]>oldcounts["plans"] and counts()["auth"]>oldcounts["auth"],"TCP did not reconnect/apply a fresh plan",40)
+                if oldcounts["published"]:
+                    wait_until(lambda:counts()["published"]>oldcounts["published"],"TCP did not publish fresh CONNECTED",20)
                 assert "reconnecting on the current network" in logs()[len(initial_logs):],logs()
             else:
                 wait_until(lambda:logs().count("Roaming path committed: android:"+new["handle"])>0,"Android did not commit the new actual carrier token",35)

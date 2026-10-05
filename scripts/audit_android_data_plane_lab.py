@@ -352,10 +352,14 @@ def main():
     ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
     ap.add_argument("--carrier", choices=("default", "nat64"), default="default", help="private IPv6-only TAP/SLAAC/DNS64/NAT64 backend; Release nat64 suite only")
     ap.add_argument("--startup-state", action="store_true", help="24-sample cold-start burst with ordinary-UID network snapshots; startup only")
+    ap.add_argument("--apps-mode", choices=("all", "include", "exclude"), default="all", help="Release startup/handover per-app fixture; include captures only test UID and excludes VPN owner")
+    ap.add_argument("--require-published-start", action="store_true", help="require first fresh sockets after product CONNECTED log to succeed; Release startup only")
     ap.add_argument("--resolver-diagnostics", action="store_true", help="observe Android async DNS variants; startup suite only")
     ap.add_argument("--leak-bursts", action="store_true", help="ordinary-UID probe bursts crossing handover/force-stop; Release only")
     ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
     args = ap.parse_args()
+    if args.apps_mode != "all" and (args.variant != "release" or args.suite not in ("startup", "handover")):ap.error("per-app fixture requires Release startup/handover")
+    if args.require_published_start and (args.variant != "release" or args.suite != "startup" or not args.startup_state):ap.error("published start requires Release startup state")
     if args.startup_state and args.suite != "startup":ap.error("startup state requires startup suite")
     if args.resolver_diagnostics and args.suite != "startup":ap.error("resolver diagnostics require startup suite")
     if args.suite == "recovery" and args.transport == "tcp":ap.error("recovery requires udp/quic")
@@ -374,13 +378,14 @@ def main():
             env["Q29_PARENT_" + kind.upper()] = os.readlink("/proc/self/ns/" + kind)
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
-                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant, "--carrier", args.carrier,
+                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant, "--carrier", args.carrier, "--apps-mode", args.apps_mode,
+                               *(["--require-published-start"] if args.require_published_start else []),
                                *(["--startup-state"] if args.startup_state else []), *(["--resolver-diagnostics"] if args.resolver_diagnostics else []), *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else [])], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup") else None)
+    result = dict(require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):
@@ -564,7 +569,7 @@ perf.connection.handshake_timeout_secs = 12
                 from audit_android_release_ui import import_release_profile
                 # Power/system fixtures are TCP; --transport selects only recovery/handover/nat64.
                 ui_transport = args.transport if args.suite in ("recovery", "handover", "nat64", "startup") else "tcp"
-                import_release_profile(arun, evidence, result, keys, ui_transport, server="q29-v4-only.test" if nat64 is not None else None, tunnel_dns=args.suite == "startup")
+                import_release_profile(arun, evidence, result, keys, ui_transport, server="q29-v4-only.test" if nat64 is not None else None, tunnel_dns=args.suite == "startup", apps_mode=args.apps_mode)
                 result[folder + "_output"]="UI_IMPORT_PASS; INSTRUMENTATION_NOT_RUN"
                 result[folder + "_echo_receipts"]=len(echo.rows)
             else:

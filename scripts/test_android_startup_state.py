@@ -35,4 +35,42 @@ class StartupStateTest(unittest.TestCase):
         self.assertEqual(row['network_states'],[])
         self.assertIn('--receiver-foreground',argv)
         self.assertEqual(kwargs['timeout'],20)
+
+class PublishedStartTest(unittest.TestCase):
+    def run_start(self, missing=False, failed=False):
+        from audit_android_startup_dns import StartupDns
+        def node(**values):return types.SimpleNamespace(get=lambda k,d=None:values.get(k,d))
+        class Settings:
+            ui=lambda self,label:None
+            widget=lambda self,tree,label:(object(),node(checked="true" if self.enabled else "false"))
+            text_node=lambda self,tree,label:object()
+            enabled=False
+            def tap(self,n):self.enabled=True
+        class Bursts:
+            def run(self,label,*args,**kwargs):
+                if args:args[0]()
+                samples=[]
+                for family in ("ipv4","ipv6"):
+                    for protocol in ("tcp","udp"):
+                        for sample,at,ok in ((0,1010,False),(1,1510,not failed),(2,1700,True)):
+                            samples.append(dict(family=family,protocol=protocol,sample=sample,started_ms=at,success=ok,detail="fixture"))
+                row={'samples':samples if label=='cold-lockdown-start' else [dict(success=True)]}
+                result['leak_bursts'].append(row)
+                return row
+        log='1.000 Native NetworkPlan 1 APPLIED: fixture\n'
+        if not missing:log+='1.501 Android VPN CONNECTED: generation=1 network=102 device_ms=1500\n'
+        result={'require_published_start':True,'startup_state_enabled':True,'leak_bursts':[]}
+        with tempfile.TemporaryDirectory() as temp:
+            startup=StartupDns(lambda *a,**k:types.SimpleNamespace(stdout=log),Path(temp),result)
+            startup.enable_lockdown(Settings(),Bursts())
+        return result
+    def test_pre_connected_errors_remain_fail_but_post_connected_must_pass(self):
+        r=self.run_start()
+        self.assertEqual(r['cold_start']['immediate_first_socket_status'],'FAIL_POST_PLAN_BLOCKING')
+        self.assertEqual(r['cold_start']['published_start']['status'],'PASS')
+        self.assertEqual(r['cold_start']['published_start']['post_connected_samples'],8)
+    def test_missing_connected_and_post_connected_errors_are_rejected(self):
+        with self.assertRaisesRegex(AssertionError,'did not publish CONNECTED'):self.run_start(missing=True)
+        with self.assertRaisesRegex(AssertionError,'FAIL_POST_CONNECTED_BLOCKING'):self.run_start(failed=True)
+
 if __name__=='__main__':unittest.main()
