@@ -71,6 +71,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (qeliTestBuildType == "release") proguardFiles("instrumentation-abi.pro")
             // Sign the release only when a keystore is configured; otherwise the
             // APK is left unsigned (so CI / fresh clones still build).
             if (qeliLabReleaseSigning) {
@@ -139,5 +140,18 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (hostCore.isPresent) {
         inputs.file(hostCore).withPropertyName("hostConfigCore")
         systemProperty("qeli.config.nativeLibrary", hostCore.get())
+    }
+}
+
+
+// Export resolved classpaths for the pre-R8 instrumentation ABI generator.
+// Compile/assemble the matching releaseAndroidTest variant before using them.
+tasks.register("printInstrumentationAbiClasspaths") {
+    doLast {
+        check(qeliTestBuildType == "release") { "Select -PqeliTestBuildType=release" }
+        listOf("releaseRuntimeClasspath", "releaseAndroidTestRuntimeClasspath").forEach { name ->
+            val paths = configurations.getByName(name).files.map { it.absolutePath }.sorted()
+            println("Q29_CP $name " + groovy.json.JsonOutput.toJson(paths))
+        }
     }
 }

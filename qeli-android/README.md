@@ -160,3 +160,40 @@ ACK запускает native packet pump, а CONNECTED ждёт Android Network
 в том числе при исключённом UID владельца. При timeout генерация останавливается
 для retry; TUN/системный lockdown сохраняются.
 [Q29 F279: проверки и ограничения](../docs/ru/reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md).
+
+
+## Инструментированный Release с R8
+
+Для отдельного test APK R8 должен сохранить API общих библиотек, к которым
+обращаются AndroidJUnitRunner и тесты. Matching mapping сам по себе не возвращает
+удалённые классы. `-PqeliTestBuildType=release` подключает `app/instrumentation-abi.pro`:
+это явно выбранный тестовый вариант, с minification/resource shrinking и дополнительным
+сохранением ABI. Обычный Release без этого параметра использует прежние production-правила.
+`-PqeliLabReleaseSigning=true` разрешён только для лаборатории; он подписывает APK
+debug-ключом и не делает приложение debuggable.
+
+После изменения AndroidTest или зависимостей соберите оба APK, получите classpaths,
+перегенерируйте правила из pre-R8 классов и повторно соберите оба APK:
+
+```bash
+./gradlew -PqeliTestBuildType=release -PqeliLabReleaseSigning=true assembleRelease assembleReleaseAndroidTest
+./gradlew -PqeliTestBuildType=release :app:printInstrumentationAbiClasspaths --console=plain > ../abi-classpaths.log
+cd ..
+python scripts/generate_android_instrumentation_abi.py --classpath-log abi-classpaths.log --r8-jar "$ANDROID_HOME/build-tools/36.0.0/lib/d8.jar" --android-jar "$ANDROID_HOME/platforms/android-37.0/android.jar" --evidence-dir abi-generation
+cd qeli-android
+./gradlew -PqeliTestBuildType=release -PqeliLabReleaseSigning=true assembleRelease assembleReleaseAndroidTest
+cd ..
+python scripts/generate_android_instrumentation_abi.py --classpath-log abi-classpaths.log --r8-jar "$ANDROID_HOME/build-tools/36.0.0/lib/d8.jar" --android-jar "$ANDROID_HOME/platforms/android-37.0/android.jar" --evidence-dir abi-verification --check
+python scripts/check_android_instrumentation_abi.py --app qeli-android/app/build/outputs/apk/release/app-release.apk --test qeli-android/app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
+```
+
+Каталоги evidence должны быть новыми; нужен JDK в `JAVA_HOME` или `PATH`.
+Для другого SDK/R8 укажите фактические пути. Генератор отклоняет неизвестные
+unresolved references; разрешены только известные отсутствующие platform stubs
+runner и D8 bootstrap. Правила сохраняют имена ABI и разрешают R8 расширять
+доступность классов: иначе перенос дочернего класса в другой пакет ломает наследование.
+DEX-проверка проверяет три метода Trace и доступность superclass, но не заменяет
+запуск тестов. Запускайте `connectedReleaseAndroidTest` на выделенном устройстве;
+сетевым сценариям Q29 дополнительно нужен изолированный серверный fixture.
+
+[Q29: проверка Release runner и границы результата](../docs/ru/reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md).

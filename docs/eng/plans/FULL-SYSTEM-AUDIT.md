@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v78 -->
+<!-- normative-sync: full-system-audit-v79 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2216,3 +2216,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **October5,Q29 startup state:** [report](../reports/AUDIT-Q29-ANDROID-STARTUP-STATE.md):336socket/96network samples,callbacktimeline;postAPPLIED56,activeVPN/tun0/dual48,errorsingroup4. ExactCONNECTEDnotmeasured,priorFAILretained.UI XMLmovedto/data/local/tmpafterpreservedFAIL,sameAPK,bothcleanupPASS;48blocked/4manualrecovery/revokePASS.Q29IN_PROGRESS28/37(75.7%).
 
 **5 October,Q29 F279:** [CONNECTED gate](../reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md):172unit/5new PASS,lint0errors;3finalRelease runs,960samples,80freshpostCONNECTED/0errors,TCPinclude retainedTUN2transitions. ImmediateACK,UIwaitsforAndroidcallback;historicalAPPLIED/SIGKILL/runnerFAILretained.Q29IN_PROGRESS28/37(75.7%).
+
+**5 October, Q29 Release runner:** [report](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md):7/7 instrumentation PASS,TCP/UDP/QUIC×split/full,72receipts/12DNS. Opt-in R8 ABI rules inferred from pre-R8 references;default production rules unchanged. Trace/LazyKt and Kotlin access FAIL retained;3attempts cleanup/host/userdata PASS. PrivateDNS/per-app/longlifecycle/SIGKILL remain;Q29IN_PROGRESS28/37(75.7%).

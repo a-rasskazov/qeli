@@ -431,3 +431,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: comparing Android DNS APIs](reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md)
 - [Q29: VPN publication during cold startup](reports/AUDIT-Q29-ANDROID-STARTUP-STATE.md)
 - [Q29: CONNECTED after Android VPN publication](reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md)
+
+- [Q29: instrumented Release runner](reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md)
