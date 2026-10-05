@@ -4,6 +4,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Process;
+import android.os.CancellationSignal;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.DnsResolver;
+import java.util.List;
+import java.io.FileDescriptor;
+import android.system.Os;
+import android.system.OsConstants;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.io.ByteArrayOutputStream;
@@ -43,10 +51,10 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
         if (intent.hasExtra("dns_name")) {
             final String name = intent.getStringExtra("dns_name");
             final String mode = intent.getStringExtra("dns_mode");
-            if (name == null || !name.matches("q29-[0-9]+\\.test") || (!"raw".equals(mode) && !"system".equals(mode))) return;
+            if (name == null || !name.matches("q29-[0-9]+\\.test") || (!"raw".equals(mode) && !"system".equals(mode) && !modeAllowed(mode))) return;
             final PendingResult pending = goAsync();
             Thread worker = new Thread(() -> {
-                try { dnsProbe(name, mode); } finally { pending.finish(); }
+                try { dnsProbe(context, name, mode); } finally { pending.finish(); }
             }, "q29-independent-dns");
             worker.setDaemon(true); worker.start(); return;
         }
@@ -96,10 +104,59 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
     }
 
 
-    private static void dnsProbe(String name, String mode) {
+    private static boolean modeAllowed(String mode) {
+        return "connectivity".equals(mode) || "auto".equals(mode) || "a".equals(mode) || "aaaa".equals(mode) || "auto-active".equals(mode) || "a-active".equals(mode) || "aaaa-active".equals(mode);
+    }
+
+    private static void dnsProbe(Context context, String name, String mode) {
         String prefix = "DNS uid=" + Process.myUid() + " mode=" + mode + " name=" + name + " started_ms=" + System.currentTimeMillis();
         try {
-            if ("system".equals(mode)) {
+            if (modeAllowed(mode)) {
+                ConnectivityManager cm = context.getSystemService(ConnectivityManager.class);
+                Network active = cm.getActiveNetwork();
+                record(prefix + " active=" + active + " capabilities=" + cm.getNetworkCapabilities(active) + " links=" + cm.getLinkProperties(active));
+                if ("connectivity".equals(mode)) {
+                    for (Network network : new Network[]{null, active}) {
+                        for (String target : new String[]{"8.8.8.8", "2000::", "198.19.0.53", "2001:db8:29::1"}) {
+                            String phase = "create";
+                            FileDescriptor fd = null;
+                            try {
+                                InetAddress address = InetAddress.getByName(target);
+                                fd = Os.socket(target.contains(":") ? OsConstants.AF_INET6 : OsConstants.AF_INET, OsConstants.SOCK_DGRAM, OsConstants.IPPROTO_UDP);
+                                phase = "bind";
+                                if (network != null) network.bindSocket(fd);
+                                phase = "connect";
+                                Os.connect(fd, address, 0);
+                                record(prefix + " network=" + network + " target=" + target + " phase=connected source=" + Os.getsockname(fd));
+                            } catch (Exception error) { record(prefix + " network=" + network + " target=" + target + " phase=" + phase + " error=" + error); }
+                            finally { if (fd != null) try { Os.close(fd); } catch (Exception error) { record(prefix + " close_error=" + error); } }
+                        }
+                    }
+                    record(prefix + " done_ms=" + System.currentTimeMillis() + " diagnostic=COMPLETE");
+                    return;
+                }
+                Network selected = mode.endsWith("-active") ? active : null;
+                if (mode.endsWith("-active") && selected == null) throw new IllegalStateException("active network absent");
+                CompletableFuture<List<InetAddress>> answer = new CompletableFuture<>();
+                CancellationSignal cancel = new CancellationSignal();
+                DnsResolver.Callback<List<InetAddress>> callback = new DnsResolver.Callback<List<InetAddress>>() {
+                    public void onAnswer(List<InetAddress> values, int rcode) {
+                        if (rcode == 0) answer.complete(values);
+                        else answer.completeExceptionally(new IllegalStateException("DNS rcode=" + rcode));
+                    }
+                    public void onError(DnsResolver.DnsException error) { answer.completeExceptionally(error); }
+                };
+                try {
+                    int flags = DnsResolver.FLAG_NO_CACHE_LOOKUP | DnsResolver.FLAG_NO_CACHE_STORE;
+                    if (mode.startsWith("auto")) DnsResolver.getInstance().query(selected, name, flags, Runnable::run, cancel, callback);
+                    else DnsResolver.getInstance().query(selected, name, mode.startsWith("aaaa") ? DnsResolver.TYPE_AAAA : DnsResolver.TYPE_A, flags, Runnable::run, cancel, callback);
+                    List<InetAddress> values = answer.get(7, TimeUnit.SECONDS);
+                    String[] addresses = new String[values.size()];
+                    for (int i = 0; i < values.size(); i++) addresses[i] = values.get(i).getHostAddress();
+                    Arrays.sort(addresses);
+                    record(prefix + " done_ms=" + System.currentTimeMillis() + " answers=" + String.join(",", addresses));
+                } finally { cancel.cancel(); }
+            } else if ("system".equals(mode)) {
                 CompletableFuture<InetAddress[]> answer = new CompletableFuture<>();
                 Thread lookup = new Thread(() -> {
                     try { answer.complete(InetAddress.getAllByName(name)); }

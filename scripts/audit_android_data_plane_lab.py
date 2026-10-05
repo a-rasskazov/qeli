@@ -235,7 +235,9 @@ def system_lifecycle(arun, evidence, echo, result):
               for key in ("always_on_vpn_app", "always_on_vpn_lockdown")}
     assert policy == {"always_on_vpn_app": "com.qeli", "always_on_vpn_lockdown": "1"}, policy
     result["system_policy"] = policy
-    if dns_probe is not None:dns_probe("connected", True)
+    if dns_probe is not None:
+        dns_probe("connected", True)
+        if result["resolver_diagnostics_enabled"]:startup.diagnose()
     result["app_probe_lockdown_connected"] = probe("Q29PROTECTED", True)
     if result["android_build_type"] == "release" and result["suite"] != "handover":
         # Release UI import has no instrumented bootstrap. Exercise both families and
@@ -349,9 +351,11 @@ def main():
     ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup"), default="explicit")
     ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
     ap.add_argument("--carrier", choices=("default", "nat64"), default="default", help="private IPv6-only TAP/SLAAC/DNS64/NAT64 backend; Release nat64 suite only")
+    ap.add_argument("--resolver-diagnostics", action="store_true", help="observe Android async DNS variants; startup suite only")
     ap.add_argument("--leak-bursts", action="store_true", help="ordinary-UID probe bursts crossing handover/force-stop; Release only")
     ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
     args = ap.parse_args()
+    if args.resolver_diagnostics and args.suite != "startup":ap.error("resolver diagnostics require startup suite")
     if args.suite == "recovery" and args.transport == "tcp":ap.error("recovery requires udp/quic")
     if args.carrier == "nat64" and (args.variant != "release" or args.suite != "nat64"):ap.error("nat64 requires Release nat64 suite")
     if args.suite == "nat64" and args.carrier != "nat64":ap.error("nat64 suite requires nat64 carrier")
@@ -369,12 +373,12 @@ def main():
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
                                "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant, "--carrier", args.carrier,
-                               *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else [])], env=env, timeout=650).returncode
+                               *(["--resolver-diagnostics"] if args.resolver_diagnostics else []), *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else [])], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup") else None)
+    result = dict(resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):

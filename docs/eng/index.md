@@ -428,3 +428,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: Android Release on an IPv6-only DNS64/NAT64 network](reports/AUDIT-Q29-ANDROID-NAT64.md)
 - [Q29: packets crossing carrier transitions and force-stop](reports/AUDIT-Q29-ANDROID-LEAK-BURSTS.md)
 - [Q29: system DNS and cold Android Release enable](reports/AUDIT-Q29-ANDROID-STARTUP-DNS.md)
+- [Q29: comparing Android DNS APIs](reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md)

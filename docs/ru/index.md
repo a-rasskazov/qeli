@@ -428,3 +428,4 @@
 - [Q29: Android Release в сети IPv6-only с DNS64/NAT64](reports/AUDIT-Q29-ANDROID-NAT64.md)
 - [Q29: пакеты на границе переключения сети и force-stop](reports/AUDIT-Q29-ANDROID-LEAK-BURSTS.md)
 - [Q29: системный DNS и холодное включение Android Release](reports/AUDIT-Q29-ANDROID-STARTUP-DNS.md)
+- [Q29: сравнение Android DNS API](reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md)

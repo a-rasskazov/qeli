@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cold system-policy start and uncached ordinary-UID DNS in an isolated Release AVD."""
 import ipaddress,json,re,time
+from android_lab_ui import wait_until
 
 
 class StartupDns:
@@ -35,6 +36,24 @@ class StartupDns:
             (self.evidence/'dns-probes.json').write_text(json.dumps(self.rows,indent=2)+'\n')
             print('DNS_COMPLETE '+stage+' '+mode+' success='+str(success),flush=True)
 
+    def diagnose(self):
+        """Observe API variants without turning an expected diagnostic failure into a gate PASS."""
+        self.result["resolver_diagnostics"] = []
+        for mode in ("connectivity", "auto", "a", "aaaa", "auto-active", "a-active", "aaaa-active"):
+            name = f"q29-{time.time_ns()}.test"
+            command = self.arun("shell", "am", "broadcast", "--include-stopped-packages", "--receiver-foreground",
+                                "-n", "com.qeli.test/com.qeli.SystemNetworkProbeReceiver",
+                                "--es", "tag", "Q29PROTECTED", "--es", "dns_name", name, "--es", "dns_mode", mode, timeout=15)
+            def records():
+                return self.arun("shell", "su", "0", "cat", "/data/user/0/com.qeli.test/files/q29-probes.log", check=False).stdout
+            wait_until(lambda: any(f"name={name} " in line and "done_ms=" in line for line in records().splitlines()), "resolver diagnostic did not complete", 12)
+            selected = [line for line in records().splitlines() if f"name={name} " in line]
+            assert selected and all("uid=10148 " in line for line in selected), selected
+            self.result["resolver_diagnostics"].append(dict(mode=mode, name=name, records=selected))
+            (self.evidence / f"resolver-{mode}.log").write_text(command.stdout + command.stderr + "\n" + "\n".join(selected) + "\n")
+        for label, args in (("connectivity", ("dumpsys", "connectivity")), ("vpn", ("dumpsys", "vpn_management")), ("routes", ("su", "0", "ip", "route", "show", "table", "all"))):
+            (self.evidence / f"resolver-{label}-state.txt").write_text(self.arun("shell", *args).stdout)
+
     def enable_lockdown(self, settings, bursts):
         # Observe the real confirmation first so UI dump latency is outside the
         # short burst. The only action crossing the burst is tapping TURN ON.
@@ -52,10 +71,13 @@ class StartupDns:
         for family in ('ipv4','ipv6'):
             for protocol in ('tcp','udp'):
                 samples=[v for v in row['samples'] if v['family']==family and v['protocol']==protocol and v['started_ms']>=epoch*1000]
+                if not samples and self.result.get('resolver_diagnostics_enabled'):
+                    first[family+'-'+protocol]=dict(status='NOT_SAMPLED_AFTER_PLAN')
+                    continue
                 assert samples,('burst ended before NetworkPlan',family,protocol)
                 sample=min(samples,key=lambda v:v['started_ms'])
                 first[family+'-'+protocol]=dict(sample=sample['sample'],delay_ms=round(sample['started_ms']-epoch*1000,3),success=sample['success'],detail=sample['detail'])
-        self.result['cold_start']=dict(immediate_first_socket_status='PASS' if all(v['success'] for v in first.values()) else 'FAIL_POST_PLAN_BLOCKING',network_plan_applied_device_epoch=epoch,first_post_plan=first,coverage='First fresh sampled sockets after APPLIED; bounded sampling, not synchronous CONNECTED observation')
+        self.result['cold_start']=dict(immediate_first_socket_status='FAIL_POST_PLAN_BLOCKING' if any(v.get('success') is False for v in first.values()) else 'NOT_SAMPLED_AFTER_PLAN' if any('success' not in v for v in first.values()) else 'PASS',network_plan_applied_device_epoch=epoch,first_post_plan=first,coverage='First fresh sampled sockets after APPLIED; bounded sampling, not synchronous CONNECTED observation')
         (self.evidence/'leak-bursts.json').write_text(json.dumps(self.result['leak_bursts'],indent=2)+'\n')
         tail=bursts.run('startup-followup')
         assert all(v['success'] for v in tail['samples']),('bounded startup follow-up failed',tail)
