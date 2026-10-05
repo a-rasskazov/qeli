@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v80 -->
+<!-- normative-sync: full-system-audit-v81 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2233,3 +2233,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q29 Release runner:** [отчёт](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md):7/7 instrumentation PASS,TCP/UDP/QUIC×split/full,72receipts/12DNS. Opt-in R8 ABI rules выведены из pre-R8 references;default production rules неизменны. Trace/LazyKt и Kotlin access FAIL сохранены;3attempts cleanup/host/userdata PASS. PrivateDNS/per-app/longlifecycle/SIGKILL остаются;Q29IN_PROGRESS28/37(75,7%).
 
 **5 октября, Q29 per-app/Private DNS:** [отчёт](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md):include/TCP иexclude/QUIC наproductionR8,112socket/80reply/32expectedblocked,52DNSops/48answers,7states×2UID. Нетphysical DNS выбранногоUID/fallback после strict-negative;2PCAP/drop0,cleanup/settings/host/userdata PASS. Strict trustedDoT/longpower/flapping/SIGKILL/ENONET остаются;Q29IN_PROGRESS28/37(75,7%).
+
+**5 октября, Q29 ограниченный Doze/flapping:** [отчёт](../reports/AUDIT-Q29-ANDROID-ENDURANCE.md):TCP/UDP/QUIC,9power phases(30s+2×120s),18WiFiCellulartransitions,36wake/72posthandover payloads,1440burst samples/144poststopblocked,45DNSops/72answers;3PCAP/protectedphysical0/drop0. PID/TUN сохранены;settings/host/userdata/recovery/revoke PASS. Исправлен исторический commit false-positive в обвязке,5regression tests. Bounded AVD матрица закрыта;physical/OEM longsoak,strict trustedDoT/SIGKILLFAIL/ENONET остаются,Q29IN_PROGRESS28/37(75,7%).

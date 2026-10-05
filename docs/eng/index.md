@@ -435,3 +435,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: instrumented Release runner](reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md)
 
 - [Q29: per-app UID / Private DNS](reports/AUDIT-Q29-ANDROID-APP-POLICY.md)
+
+- [Q29: Doze / repeated carrier handover](reports/AUDIT-Q29-ANDROID-ENDURANCE.md)

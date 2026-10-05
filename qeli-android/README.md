@@ -215,3 +215,16 @@ Private DNS off/Automatic и отрицательный strict-provider сцен
 это отдельная проверка от `kill_switch=true`. Прямой трафик исключённого UID без
 lockdown ожидаем; с lockdown он блокируется. Доверенный strict DoT не квалифицирован.
 [Q29: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-APP-POLICY.md).
+
+
+## Doze и повторные переключения сети: ограниченный прогон
+
+`audit_android_data_plane_lab.py --suite endurance --variant release --leak-bursts`
+с `--transport tcp|udp|quic` использует закреплённые `fixed/` APK/manifest в собственном
+`/var/tmp/qeli-q29-data-*`: private namespaces, readonly AVD, root только на стенде.
+Профиль `apps_mode=all`, `kill_switch=true`; per-app и NAT64 проверяются отдельными suites.
+Три power-фазы (screen-off30s, два forcedDoze120s) и три Wi-Fi/Cellular цикла включают
+IPv4/IPv6 TCP/UDP и системный DNS после пробуждений/переходов, stop/lockdown/recovery/revoke.
+IDLE/экран наблюдаются каждые15s; receiver не запускается во сне. Это ограниченная
+проверка AVD, без гарантии physical suspend, многочасового сна или всех API/OEM.
+[Q29: результаты и оставшиеся ограничения](../docs/ru/reports/AUDIT-Q29-ANDROID-ENDURANCE.md).

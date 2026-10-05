@@ -24,8 +24,18 @@ def default_carrier(text):
     raise AssertionError("default network absent from current network agents: "+netid)
 
 
-def network_handover(arun,evidence,probe,result, *, bursts=None):
-    checks=result["network_handover"]={"cells":[]}
+def carrier_committed_since(before, current, handle):
+    """Require a fresh commit, even when a carrier handle appeared in an earlier cycle."""
+    marker = "Roaming path committed: android:" + handle
+    # A delimiter prevents handle 12 matching handle 123. No log rotation can
+    # increase this count without a new record; a loss of evidence fails closed.
+    pattern = re.compile(re.escape(marker) + r"(?=\s|$)")
+    return len(pattern.findall(current)) > len(pattern.findall(before))
+
+
+def network_handover(arun,evidence,probe,result, *, bursts=None, cycles=1, dns_probe=None):
+    if not isinstance(cycles, int) or not 1 <= cycles <= 5:raise ValueError("cycles must be 1..5")
+    checks=result["network_handover"]={"cells":[], "requested_cycles":cycles}
     tcp = result["recovery_transport"] == "tcp"
     checks["contract"] = "TCP_FULL_RECONNECT_RETAINED_TUN" if tcp else "UDP_SOFT_ROAMING_RETAINED_SESSION_TUN"
     def save(name,value):
@@ -74,6 +84,7 @@ def network_handover(arun,evidence,probe,result, *, bursts=None):
             actions=[("away",["svc","wifi","disable"],"CELLULAR"),("return",["svc","wifi","enable"],"WIFI")]
         else:
             actions=[("away",["svc","wifi","enable"],"WIFI"),("return",["svc","wifi","disable"],"CELLULAR")]
+        if cycles > 1:actions=[(f"{label}-{cycle+1:02d}",action,expected) for cycle in range(cycles) for label,action,expected in actions]
         for label,action,expected in actions:
             before,old=snapshot("handover-"+label+"-before");oldcounts=counts();initial_logs=logs();start=time.monotonic()
             if bursts is None:arun("shell",*action)
@@ -86,11 +97,12 @@ def network_handover(arun,evidence,probe,result, *, bursts=None):
                     wait_until(lambda:counts()["published"]>oldcounts["published"],"TCP did not publish fresh CONNECTED",20)
                 assert "reconnecting on the current network" in logs()[len(initial_logs):],logs()
             else:
-                wait_until(lambda:logs().count("Roaming path committed: android:"+new["handle"])>0,"Android did not commit the new actual carrier token",35)
-            reply=[probe("Q29RECOVERED" if label=="away" else "Q29MANUAL",True,
+                wait_until(lambda:carrier_committed_since(initial_logs,logs(),new["handle"]),"Android did not commit the new actual carrier token",35)
+            reply=[probe("Q29RECOVERED" if label.startswith("away") else "Q29MANUAL",True,
                          label="handover-"+label+"-"+family+"-"+protocol,
                          family=family,protocol=protocol,payload_bytes=16384 if protocol=="tcp" else 257)
                    for family in ("ipv4","ipv6") for protocol in ("tcp","udp")]
+            if dns_probe is not None:dns_probe("handover-"+label,True,modes=("system",))
             after,physical=snapshot("handover-"+label+"-after");nowcounts=counts()
             assert after==before==initial and physical==new,(before,after,initial,new,physical)
             committed_handles=re.findall(r"Roaming path committed: android:([0-9]+)",logs()[len(initial_logs):])
@@ -112,5 +124,6 @@ def network_handover(arun,evidence,probe,result, *, bursts=None):
         (evidence/"handover-results.json").write_text(json.dumps(checks,indent=2)+"\n")
     wait_until(lambda:arun("shell","settings","get","global","wifi_on").stdout.strip()==wifi,"Wi-Fi setting not restored",15)
     assert arun("shell","settings","get","global","mobile_data").stdout.strip()==data
+    assert len(checks["cells"]) == cycles * 2
     checks["settings_restored"]="PASS"
     (evidence/"handover-results.json").write_text(json.dumps(checks,indent=2)+"\n")
