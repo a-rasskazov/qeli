@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v72 -->
+<!-- normative-sync: full-system-audit-v73 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2217,3 +2217,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q29 Release runtime:** [отчёт](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md): 24/24 payload-проб, шесть переходов Wi-Fi ↔ Cellular, три UI-импорта INI, 30 receipts. TCP/UDP/QUIC × IPv4/IPv6 TCP/UDP, независимый UID, полные ответы/SHA и TUN pcap. PID/TUN сохранены; revoke/cleanup и состояние стенда PASS. Release/testRelease R8, недебажный клиент, лабораторная подпись; production правила не ослаблены. Matching instrumentation Trace FAIL и четыре неуспешные попытки сохранены; успех UI их не закрывает. IPv6-only/NAT64, полный Release fault suite, leak-матрица, долгий power/flapping и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).
 
 **5 октября, Q29 Release faults:** [отчёт](../reports/AUDIT-Q29-ANDROID-RELEASE-FAULTS.md): семь сценариев PASS (screen-off, forced Doze, TCP reset, UDP/QUIC × soft/grace-expiry), три UI-импорта, 12 стартовых dual-stack payload-проб. PID/TUN сохранены, wake без новой Auth/plan, full recovery с новой Auth/plan; revoke/cleanup и состояние стенда PASS. Та же Release-пара и все 296 inputs без пересборки. Две ошибки обвязки сохранены; DEX объясняет исходные Trace references без определения, runner FAIL не назван PASS. NAT64, leak-матрица, долгий power/flapping, остальные lifecycle и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).
+
+**5 октября, Q29 IPv6-only/NAT64:** [отчёт](../reports/AUDIT-Q29-ANDROID-NAT64.md): TCP/UDP/QUIC masking, три Release UI-импорта, 12 dual-stack TCP/UDP payload-проб и 18 receipts PASS. SLAAC/RDNSS WLAN без IPv4, A-only сервер, DNS64 и реальная двусторонняя трансляция подтверждены pcap; revoke/cleanup и состояние стенда PASS. Все 296 inputs и APK/JNI/managed неизменны. Три ошибки стенда сохранены, NAT64 handover на fixed-IPv4 Cellular не квалифицирован. Leak-матрица, долгий power/flapping, остальные lifecycle и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).

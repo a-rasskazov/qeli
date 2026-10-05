@@ -197,7 +197,7 @@ def system_lifecycle(arun, evidence, echo, result):
         seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest and row.get("protocol") == protocol and (":" in row["peer"]) == (family == "ipv6")]
         if expect_reply:
             assert "reply=Q29:" + tag in line and len(seen) == 1, (line, seen)
-            udp_profile = result["suite"] in ("recovery", "handover") and result["recovery_transport"] != "tcp"
+            udp_profile = result["suite"] in ("recovery", "handover", "nat64") and result["recovery_transport"] != "tcp"
             assert f"sha256={digest}" in line and f"reply_sha256={hashlib.sha256(expected).hexdigest()}" in line and seen[0]["bytes"] == payload_bytes, (line, seen)
             if tag != "Q29BASELINE":
                 prefix = ("fd86:29:2:" if udp_profile else "fd86:29:1:") if family == "ipv6" else ("10.87.0." if udp_profile else "10.86.0.")
@@ -211,7 +211,7 @@ def system_lifecycle(arun, evidence, echo, result):
     probe_uid = uid_rows["com.qeli.test"]
     assert int(probe_uid) >= 10000 and probe_uid != uid_rows["com.qeli"]
     result["probe_uids"] = uid_rows
-    result["app_probe_baseline"] = probe("Q29BASELINE", True)
+    result["app_probe_baseline"] = probe("Q29BASELINE", True, family="ipv6" if result["carrier_fixture"] == "nat64" else "ipv4")
     policy_applied = logs().count("Native NetworkPlan 1 APPLIED:")
     # Start the saved profile through the OS after Debug instrumentation or Release UI import.
     arun("shell", "am", "start", "-n", "com.qeli/.MainActivity")
@@ -232,7 +232,14 @@ def system_lifecycle(arun, evidence, echo, result):
                   payload_bytes=16384 if protocol == "tcp" else 257)
             for family in ("ipv4", "ipv6") for protocol in ("tcp", "udp")
         ]
-    if result["suite"] == "handover":
+    if result["suite"] == "nat64":
+        # The emulator modem publishes a fixed IPv4-only Cellular network even
+        # with -net-tap. Qualify this IPv6-only carrier independently; an invalid
+        # Cellular transition must not be counted as a NAT64 handover PASS.
+        (evidence / "nat64-connected-connectivity.txt").write_text(arun("shell", "dumpsys", "connectivity").stdout)
+        (evidence / "nat64-connected-links.txt").write_text(arun("shell", "su", "0", "ip", "-o", "addr", "show").stdout)
+        result["nat64_payload_matrix"] = "PASS"
+    elif result["suite"] == "handover":
         from audit_android_network_handover import network_handover
         network_handover(arun, evidence, probe, result)
         open_settings()
@@ -321,11 +328,14 @@ def main():
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
-    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover"), default="explicit")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64"), default="explicit")
     ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
+    ap.add_argument("--carrier", choices=("default", "nat64"), default="default", help="private IPv6-only TAP/SLAAC/DNS64/NAT64 backend; Release nat64 suite only")
     ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
     args = ap.parse_args()
     if args.suite == "recovery" and args.transport == "tcp":ap.error("recovery requires udp/quic")
+    if args.carrier == "nat64" and (args.variant != "release" or args.suite != "nat64"):ap.error("nat64 requires Release nat64 suite")
+    if args.suite == "nat64" and args.carrier != "nat64":ap.error("nat64 suite requires nat64 carrier")
     assert not args.restart_control or args.suite == "system"
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
@@ -337,13 +347,13 @@ def main():
             env["Q29_PARENT_" + kind.upper()] = os.readlink("/proc/self/ns/" + kind)
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
-                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant,
+                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant, "--carrier", args.carrier,
                                *(["--restart-control"] if args.restart_control else [])], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(status="RUNNING", android_build_type=args.variant, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover") else None)
+    result = dict(status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):
@@ -368,7 +378,7 @@ def main():
     for profile, port, subnet, v6 in (("tcp", 24966, "10.86.0", "fd86:29:1"), ("udp", 24967, "10.87.0", "fd86:29:2")):
         config += f"""[profile:{profile}]
 identity_key = {root}/{profile}.key
-bind.address = 127.0.0.1
+bind.address = {"192.0.2.10" if args.carrier == "nat64" else "127.0.0.1"}
 bind.port = {port}
 bind.transport = {profile}
 tun.name = q29{profile}
@@ -390,7 +400,7 @@ perf.connection.idle_timeout_secs = 0
 perf.connection.max_clients = 8
 perf.connection.handshake_timeout_secs = 12
 """
-        if args.suite in ("recovery", "handover") and profile == "udp":
+        if args.suite in ("recovery", "handover", "nat64") and profile == "udp":
             config += f"roaming.enabled = true\nroaming.grace_secs = 15\nobf.quic.enabled = {str(args.transport == 'quic').lower()}\n"
     (root / "server.ini").write_text(config)
     (root / "server.ini").chmod(0o600)
@@ -409,11 +419,15 @@ perf.connection.handshake_timeout_secs = 12
         if check:
             assert proc.returncode == 0, (argv, proc.stdout, proc.stderr)
         return proc
-    server = emulator = echo = capture = dns = None
-    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery", "handover") else []
+    server = emulator = echo = capture = dns = nat64 = None
+    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64") else []
     started = time.monotonic()
     fixture_installed = []
     try:
+        if args.carrier == "nat64":
+            from audit_android_nat64 import Nat64Fixture
+            nat64 = Nat64Fixture(root, evidence, cmd)
+            nat64.start()
         for address, ipv6 in fixture_addresses:
             cmd("ip", *(["-6"] if ipv6 else []), "addr", "add", address, "dev", "lo")
             fixture_installed.append((address, ipv6))
@@ -435,13 +449,15 @@ perf.connection.handshake_timeout_secs = 12
             time.sleep(.1)
         else:
             raise AssertionError("server TUN setup timeout")
-        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite in ("recovery", "handover") and args.transport != "tcp" else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
+        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite in ("recovery", "handover", "nat64") and args.transport != "tcp" else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
                                    stdout=(evidence / "tcpdump.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
-        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power", "recovery", "handover") else None
+        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power", "recovery", "handover", "nat64") else None
         echo = Echo(evidence / "echo-receipts.json", echo_hosts)
         command = ["/root/android-sdk/emulator/emulator", "-avd", "test", "-port", "5560", "-read-only",
                    "-no-snapshot-load", "-no-snapshot-save", "-no-window", "-no-audio", "-no-boot-anim",
                    "-gpu", "swiftshader", "-memory", "768", "-cores", "1"]
+        if nat64 is not None:
+            command.extend(nat64.emulator_options())
         dump("emulator-command.json", command)
         cmd(adb, "start-server")
         emulator = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=(evidence / "emulator.log").open("wb"),
@@ -473,6 +489,8 @@ perf.connection.handshake_timeout_secs = 12
             result["restart_control_apk"] = control_manifest
             restart_control(arun, evidence, result)
             print("PLATFORM_CONTROL_COMPLETE", flush=True)
+        if nat64 is not None:
+            result["nat64_initial_carrier"] = nat64.verify_carrier(arun, "nat64-initial")
         methods = ["tcpDualStackPayloadAndCompletedRestart", "udpDualStackPayload", "quicDualStackPayload"]
         phases = [("baseline", "com.qeli.VpnDataPlaneInstrumentedTest#" + methods[0]),
                   ("fixed", ",".join("com.qeli.VpnDataPlaneInstrumentedTest#" + method for method in methods))]
@@ -493,7 +511,7 @@ perf.connection.handshake_timeout_secs = 12
                 if label == "system-vpn-policy":
                     value = "\n".join(line for line in value.splitlines() if "vpn" in line or "private_dns" in line)
                 (evidence / (label + ".txt")).write_text(value)
-        if args.suite in ("system", "power", "recovery", "handover"):
+        if args.suite in ("system", "power", "recovery", "handover", "nat64"):
             phases = [("fixed", "com.qeli.VpnSystemLifecycleInstrumentedTest#bootstrapSavedProfileAndLeaveConnected")]
             expected_tests = 1
         for folder, selector in phases:
@@ -513,18 +531,18 @@ perf.connection.handshake_timeout_secs = 12
                 assert not re.search(r"(?:pkgFlags|flags)=\[[^\]]*\bDEBUGGABLE\b", package), package
             arun("shell", "appops", "set", "com.qeli", "ACTIVATE_VPN", "allow")
             arun("shell", "pm", "grant", "com.qeli", "android.permission.POST_NOTIFICATIONS")
-            if args.variant == "release" and args.suite in ("system", "power", "recovery", "handover"):
+            if args.variant == "release" and args.suite in ("system", "power", "recovery", "handover", "nat64"):
                 from audit_android_release_ui import import_release_profile
-                # Power/system fixtures are TCP; --transport selects only recovery/handover.
-                ui_transport = args.transport if args.suite in ("recovery", "handover") else "tcp"
-                import_release_profile(arun, evidence, result, keys, ui_transport)
+                # Power/system fixtures are TCP; --transport selects only recovery/handover/nat64.
+                ui_transport = args.transport if args.suite in ("recovery", "handover", "nat64") else "tcp"
+                import_release_profile(arun, evidence, result, keys, ui_transport, server="q29-v4-only.test" if nat64 is not None else None)
                 result[folder + "_output"]="UI_IMPORT_PASS; INSTRUMENTATION_NOT_RUN"
                 result[folder + "_echo_receipts"]=len(echo.rows)
             else:
                 proc = arun("shell", "am", "instrument", "-w", "-r", "-e", "class", selector,
                             "-e", "q29_private_fixture", "1", "-e", "q29_key_tcp", keys["tcp"],
                             "-e", "q29_key_udp", keys["udp"],
-                            *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover") else []),
+                            *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover", "nat64") else []),
                             "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
                 (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
                 result[folder + "_output"] = proc.stdout
@@ -533,8 +551,10 @@ perf.connection.handshake_timeout_secs = 12
                 if folder == "fixed":
                     assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
-        if args.suite in ("system", "power", "recovery", "handover"):
+        if args.suite in ("system", "power", "recovery", "handover", "nat64"):
             system_lifecycle(arun, evidence, echo, result)
+        if nat64 is not None:
+            result["nat64_final_carrier"] = nat64.verify_carrier(arun, "nat64-final")
         assert not any("error" in row for row in echo.rows), echo.rows
         if dns is not None:
             assert not any("error" in row for row in dns.rows), dns.rows
@@ -542,8 +562,8 @@ perf.connection.handshake_timeout_secs = 12
             assert len({row["name"] for row in accepted}) == 6, accepted
             assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted), accepted
             result["dns_answered_questions"] = len(accepted)
-        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
-        if args.suite in ("recovery", "handover") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
+        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover", "nat64") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
+        if args.suite in ("recovery", "handover", "nat64") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
         for profile, subnet, v6 in profiles:
             for family_prefix in (subnet, v6):
                 for protocol in ("tcp", "udp"):
@@ -590,6 +610,12 @@ perf.connection.handshake_timeout_secs = 12
         result["server_exit_code"] = None if server is None else server.returncode
         for address, ipv6 in reversed(fixture_installed):
             cmd("ip", *(["-6"] if ipv6 else []), "addr", "del", address, "dev", "lo")
+        if nat64 is not None:
+            try:
+                nat64.close()
+            except BaseException:
+                result["status"] = "FAIL"
+                result["nat64_cleanup_error"] = traceback.format_exc()
         namespace_after = cmd("ip", "-br", "addr")
         (evidence / "namespace-network-after.txt").write_text(namespace_after)
         result["namespace_addresses_restored"] = namespace_after == namespace_before

@@ -4,7 +4,7 @@ import time
 from android_lab_ui import AndroidVpnSettings
 
 
-def import_release_profile(arun, evidence, result, keys, transport):
+def import_release_profile(arun, evidence, result, keys, transport, *, server=None):
     ui=AndroidVpnSettings(arun,evidence,result,"Qeli",prefix="release-")
     arun("shell","am","start","-n","com.qeli/.MainActivity")
     def stable_ui(label):
@@ -27,7 +27,7 @@ def import_release_profile(arun, evidence, result, keys, transport):
         time.sleep(.5)
     else:raise AssertionError("product Activity did not open")
     profile="tcp" if transport=="tcp" else "udp"
-    fields=dict(server="10.0.2.2:"+str(24966 if profile=="tcp" else 24967),proto=profile,
+    fields=dict(server=(server or "10.0.2.2")+":"+str(24966 if profile=="tcp" else 24967),proto=profile,
                 user="fixture",**{"pass":"fixture-password"},key=keys[profile],mode="fake-tls",
                 quic=str(transport=="quic").lower(),gateway="true",kill_switch="true",ipv6="required",dns="off",
                 roaming="off" if profile=="tcp" else "required",mtu_probe="false",reconnect="true",
