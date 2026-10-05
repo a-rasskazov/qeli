@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v66 -->
+<!-- normative-sync: full-system-audit-v67 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2192,3 +2192,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October,Q29 independent Android control:** [minimal Java VpnService](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):without TUN,restarted after17.40s with flags=1;with TUN,no new PID within45s at both lockdown=0 and lockdown=1. Failure reproduces without Qeli JNI/core;only TUN creation differs at the same lockdown=0. Exact framework implementation/other devices remain unqualified.Product recovery gate remains FAIL,Q29 IN_PROGRESS,28/37(75.7%).
 
 **5 October, Q29 power/TCP recovery:** [three fresh scenarios](../reports/AUDIT-Q29-ANDROID-POWER.md): screen5s, forced IDLE20s and TCP reset/reconnect PASS with identical PID/TUN; both wakes without fresh Auth/NetworkPlan. One bootstrap PASS,10 receipts including delayed fault UDP through TUN after recovery Auth (+0.207s),not permanent discard. Revoke/cleanup and host/service/userdata/power restoration PASS. APK/JNI unchanged;only README changed among296 inputs,295 identical. Long/physical Doze,handover,UDP/QUIC remain;SIGKILL recovery still FAIL.Q29 IN_PROGRESS,28/37(75.7%).
+
+**5 October,Q29 UDP/QUIC recovery:** [four fresh scenarios](../reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md):2bootstrap PASS,UDP/QUIC×soft/grace-expiry4/4PASS.Soft:new outer port/epoch1 without fresh Auth/plan;full:ordered fallback and exactly1 fresh Auth/plan;PID/TUN/addresses retained.18receipts including2delayed faultUDP through TUN after recoveryAUTH,0receipts in negative windows.Revoke/cleanup/host/service/userdata PASS.1test source changed,295inputs/productAPK/JNI/managed identical;new testAPK.Same-network does not qualify carrier handover;SIGKILLFAIL remains.Q29IN_PROGRESS,28/37(75.7%).

@@ -44,7 +44,7 @@ class VpnSystemLifecycleInstrumentedTest {
         }
         fail(message)
     }
-    private fun traffic() {
+    private fun traffic(profile: String) {
         val cm = context.getSystemService(ConnectivityManager::class.java)
         await("framework VPN not ready") {
             cm.activeNetwork?.let { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) } == true
@@ -55,7 +55,7 @@ class VpnSystemLifecycleInstrumentedTest {
             await("ordinary source not ready for $address") {
                 DatagramSocket().use { probe ->
                     probe.connect(host, 26000)
-                    probe.localAddress.hostAddress == VpnServiceImpl.liveIp || probe.localAddress.hostAddress?.startsWith("fd86:29:1:") == true
+                    probe.localAddress.hostAddress == VpnServiceImpl.liveIp || probe.localAddress.hostAddress?.startsWith(if (profile == "tcp") "fd86:29:1:" else "fd86:29:2:") == true
                 }
             }
             val payload = ByteArray(16384) { ((it * 31 + 17) % 251).toByte() }
@@ -78,11 +78,16 @@ class VpnSystemLifecycleInstrumentedTest {
     @Test fun bootstrapSavedProfileAndLeaveConnected() {
         fixture()
         assertNull(VpnService.prepare(context))
-        val key = requireNotNull(args.getString("q29_key_tcp"))
-        val config = VpnConfig(serverAddress = "10.0.2.2", port = 24966, protocol = "tcp", wireMode = "fake-tls",
+        val transport = args.getString("q29_transport", "tcp")
+        require(transport in listOf("tcp", "udp", "quic"))
+        val profile = if (transport == "tcp") "tcp" else "udp"
+        val roaming = args.getString("q29_roaming", "off")
+        require(roaming in listOf("off", "required"))
+        val key = requireNotNull(args.getString("q29_key_$profile"))
+        val config = VpnConfig(serverAddress = "10.0.2.2", port = if (profile == "tcp") 24966 else 24967, protocol = profile, quicEnabled = transport == "quic", wireMode = "fake-tls",
             username = "fixture", password = "fixture-password", serverPublicKeyHex = key, bindStaticToSession = true,
             routingMode = "full-tunnel", addDefaultGateway = true, killSwitch = true, ipv6 = "required",
-            dnsMode = "off", roaming = "off", mtuProbe = false, reconnectEnabled = true,
+            dnsMode = "off", roaming = roaming, mtuProbe = false, reconnectEnabled = true,
             reconnectBaseDelaySecs = 1, reconnectMaxDelaySecs = 2, connectionTimeoutSecs = 15, loggingLevel = "debug")
         config.validate()
         val text = config.toIni("system fixture")
@@ -94,6 +99,6 @@ class VpnSystemLifecycleInstrumentedTest {
         context.startForegroundService(Intent(context, VpnServiceImpl::class.java).setAction(VpnServiceImpl.ACTION_CONNECT)
             .putExtra(VpnServiceImpl.EXTRA_CONFIG, config.copy(killSwitch = false)))
         await("bootstrap did not connect") { service()?.foreground == true && VpnServiceImpl.liveStatus == VpnServiceImpl.STATUS_CONNECTED }
-        traffic()
+        traffic(profile)
     }
 }

@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v66 -->
+<!-- normative-sync: full-system-audit-v67 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2205,3 +2205,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября,Q29 независимый Android-контроль:** [минимальный Java VpnService](../reports/AUDIT-Q29-ANDROID-SYSTEM.md):без TUN перезапущен за17,40s с flags=1;с TUN нет нового PID за45s как при lockdown=0,так и при lockdown=1. Отказ воспроизведён без JNI/ядра Qeli;при одинаковом lockdown=0 отличается только создание TUN. Точная framework реализация/другие устройства не квалифицированы;продуктовый recovery gate остаётся FAIL,Q29 IN_PROGRESS,28/37(75,7%).
 
 **5 октября, Q29 power/TCP recovery:** [три свежих сценария](../reports/AUDIT-Q29-ANDROID-POWER.md): экран5s, forced IDLE20s и TCP reset/reconnect PASS с тем же PID/TUN; оба пробуждения без новой Auth/NetworkPlan. Один bootstrap PASS, 10 receipts включая отложенный fault UDP через TUN после recovery Auth (+0,207s), а не вечное отбрасывание. Revoke/cleanup, host/service/userdata/power восстановление PASS. APK/JNI неизменны; из296 source inputs изменён только README,295 идентичны. Длительный/реальный Doze, handover, UDP/QUIC остаются; SIGKILL recovery по-прежнему FAIL. Q29 IN_PROGRESS,28/37(75,7%).
+
+**5 октября,Q29 UDP/QUIC recovery:** [четыре свежих сценария](../reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md):2bootstrap PASS,UDP/QUIC×soft/grace-expiry4/4PASS. Soft:новый внешний порт/epoch1 без новой Auth/plan;full:строгий fallback и ровно1 новая Auth/plan;PID/TUN/адреса сохранены.18receipts включая2отложенных fault UDP через TUN после recovery Auth,0receipts в отрицательных окнах. Revoke/очистка/host/service/userdata PASS.1test source изменён,295inputs/productAPK/JNI/managed идентичны;новый testAPK. Same-network не закрывает carrier handover;SIGKILLFAIL остаётся.Q29IN_PROGRESS,28/37(75,7%).

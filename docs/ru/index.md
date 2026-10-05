@@ -419,3 +419,4 @@
 - [Q29: VPN-трафик и lifecycle после Auth](reports/AUDIT-Q29-ANDROID-DATA.md)
 - [Q29: системный lockdown, смерть процесса и revoke](reports/AUDIT-Q29-ANDROID-SYSTEM.md)
 - [Q29: экран, deep idle и восстановление TCP](reports/AUDIT-Q29-ANDROID-POWER.md)
+- [Q29: восстановление UDP/QUIC и истечение grace](reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md)

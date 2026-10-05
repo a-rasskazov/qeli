@@ -192,7 +192,7 @@ def system_lifecycle(arun, evidence, echo, result):
         seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest]
         if expect_reply:
             assert "reply=Q29:" + tag in line and len(seen) == 1, (line, seen)
-            if tag != "Q29BASELINE":assert seen[0]["peer"].startswith("10.86.0."), seen
+            if tag != "Q29BASELINE":assert seen[0]["peer"].startswith(("10.87.0." if result["suite"] == "recovery" else "10.86.0.")), seen
         else:
             assert "reply=Q29:" + tag not in line and "error=" in line and not seen, (line, seen)
         return dict(uid=int(probe_uid), echoed=len(seen), expected_reply=expect_reply)
@@ -214,7 +214,11 @@ def system_lifecycle(arun, evidence, echo, result):
     assert policy == {"always_on_vpn_app": "com.qeli", "always_on_vpn_lockdown": "1"}, policy
     result["system_policy"] = policy
     result["app_probe_lockdown_connected"] = probe("Q29PROTECTED", True)
-    if result["suite"] == "power":
+    if result["suite"] == "recovery":
+        from audit_android_udp_recovery import udp_recovery
+        udp_recovery(arun, evidence, probe, result)
+        open_settings()
+    elif result["suite"] == "power":
         from audit_android_power_lifecycle import power_lifecycle
         power_lifecycle(arun, evidence, probe, result)
         open_settings()
@@ -293,7 +297,8 @@ def main():
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
-    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power"), default="explicit")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery"), default="explicit")
+    ap.add_argument("--transport", choices=("udp", "quic"), default="udp", help="transport for recovery suite")
     args = ap.parse_args()
     assert not args.restart_control or args.suite == "system"
     assert os.geteuid() == 0
@@ -306,13 +311,13 @@ def main():
             env["Q29_PARENT_" + kind.upper()] = os.readlink("/proc/self/ns/" + kind)
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
-                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite,
+                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport,
                                *(["--restart-control"] if args.restart_control else [])], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(status="RUNNING", namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite)
+    result = dict(status="RUNNING", namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite == "recovery" else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):
@@ -359,6 +364,8 @@ perf.connection.idle_timeout_secs = 0
 perf.connection.max_clients = 8
 perf.connection.handshake_timeout_secs = 12
 """
+        if args.suite == "recovery" and profile == "udp":
+            config += f"roaming.enabled = true\nroaming.grace_secs = 15\nobf.quic.enabled = {str(args.transport == 'quic').lower()}\n"
     (root / "server.ini").write_text(config)
     (root / "server.ini").chmod(0o600)
     (root / "users.ini").write_text("[user:fixture]\npassword_hash = " + hashed() + "\nenabled = true\n")
@@ -377,7 +384,7 @@ perf.connection.handshake_timeout_secs = 12
             assert proc.returncode == 0, (argv, proc.stdout, proc.stderr)
         return proc
     server = emulator = echo = capture = dns = None
-    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power") else []
+    fixture_addresses = [("198.19.0.1/32", False), ("198.19.0.53/32", False), ("2001:db8:29::1/128", True)] if args.suite in ("routed", "system", "power", "recovery") else []
     started = time.monotonic()
     fixture_installed = []
     try:
@@ -402,9 +409,9 @@ perf.connection.handshake_timeout_secs = 12
             time.sleep(.1)
         else:
             raise AssertionError("server TUN setup timeout")
-        capture = subprocess.Popen(["tcpdump", "-i", "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
+        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite == "recovery" else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
                                    stdout=(evidence / "tcpdump.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
-        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power") else None
+        echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power", "recovery") else None
         echo = Echo(evidence / "echo-receipts.json", echo_hosts)
         command = ["/root/android-sdk/emulator/emulator", "-avd", "test", "-port", "5560", "-read-only",
                    "-no-snapshot-load", "-no-snapshot-save", "-no-window", "-no-audio", "-no-boot-anim",
@@ -460,7 +467,7 @@ perf.connection.handshake_timeout_secs = 12
                 if label == "system-vpn-policy":
                     value = "\n".join(line for line in value.splitlines() if "vpn" in line or "private_dns" in line)
                 (evidence / (label + ".txt")).write_text(value)
-        if args.suite in ("system", "power"):
+        if args.suite in ("system", "power", "recovery"):
             phases = [("fixed", "com.qeli.VpnSystemLifecycleInstrumentedTest#bootstrapSavedProfileAndLeaveConnected")]
             expected_tests = 1
         for folder, selector in phases:
@@ -474,7 +481,9 @@ perf.connection.handshake_timeout_secs = 12
             arun("shell", "pm", "grant", "com.qeli", "android.permission.POST_NOTIFICATIONS")
             proc = arun("shell", "am", "instrument", "-w", "-r", "-e", "class", selector,
                         "-e", "q29_private_fixture", "1", "-e", "q29_key_tcp", keys["tcp"],
-                        "-e", "q29_key_udp", keys["udp"], "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
+                        "-e", "q29_key_udp", keys["udp"],
+                        *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "required"] if args.suite == "recovery" else []),
+                        "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
             (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
             result[folder + "_output"] = proc.stdout
             result[folder + "_echo_receipts"] = len(echo.rows)
@@ -482,7 +491,7 @@ perf.connection.handshake_timeout_secs = 12
             if folder == "fixed":
                 assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
-        if args.suite in ("system", "power"):
+        if args.suite in ("system", "power", "recovery"):
             system_lifecycle(arun, evidence, echo, result)
         assert not any("error" in row for row in echo.rows), echo.rows
         if dns is not None:
@@ -491,7 +500,8 @@ perf.connection.handshake_timeout_secs = 12
             assert len({row["name"] for row in accepted}) == 6, accepted
             assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted), accepted
             result["dns_answered_questions"] = len(accepted)
-        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
+        profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
+        if args.suite == "recovery": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
         for profile, subnet, v6 in profiles:
             for family_prefix in (subnet, v6):
                 for protocol in ("tcp", "udp"):
