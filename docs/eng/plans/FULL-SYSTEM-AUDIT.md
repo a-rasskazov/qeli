@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v69 -->
+<!-- normative-sync: full-system-audit-v70 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2198,3 +2198,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October,Q29 carrier handover:** [actual AVD Network switching](../reports/AUDIT-Q29-ANDROID-HANDOVER.md):UDP/QUIC×Wi-Fi↔Cellular4/4targetPASS,2bootstrap in successful runs,16receipts.New systemhandle/outerport/epoch,Auth/plan2/2,TUNretained.InitialUDPFAIL preserved:incorrect exact-one-commit predicate on LinkProperties update;fixed gate verifies alltargethandles,UDPrepeatPASS,initial strictQUICPASS not repeated.3readonlyattempts,host/service/userdata/cleanup unchanged.296inputs/2APK/JNI/managed identical.AVD/privatebackend;TCPhandover,post-switchIPv6/TCP,NAT64/Release remain,SIGKILLFAIL open.Q29IN_PROGRESS,28/37(75.7%).
 
 **5 October,Q29 TCP handover:** [Wi-Fi↔Cellular](../reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md):2/2PASS,1bootstrap/8receipts. Fresh Auth/NetworkPlan and outerports,PID/TUN/addresses retained,ordinary UID payload after recovery;UDPpathcommit0. Revoke/settings/host/service/userdata/cleanup PASS;296inputs/2APK/JNI/managed unchanged. Harness only,no rebuild. Post-switchIPv6/TCP,NAT64/Release,longpower/flapping,SIGKILLFAIL remain.Q29IN_PROGRESS,28/37(75.7%).
+
+**5 October,Q29 post-switch payload:** [full dual-stack matrix](../reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md):TCP/UDP/QUIC×Wi-Fi↔Cellular×IPv4/IPv6TCP/UDP24/24PASS,6transitions,3bootstrap/42receipts.IndependentUID,allreplybytes/SHA,sink+TUNpcap;TCPfreshAuth/plan,TUNretained;UDPsoftcommits/Authunchanged. Revoke/settings/host/service/userdata/cleanupPASS.295inputs/productAPK/JNI/managed identical,1testreceiverchange,newtestAPK.AvailableAVDpost-switchpayloadcovered;IPv6only/NAT64,Release,longpower/flapping,SIGKILLFAILremain,Q29IN_PROGRESS,28/37(75.7%).

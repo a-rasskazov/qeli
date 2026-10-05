@@ -175,28 +175,36 @@ def system_lifecycle(arun, evidence, echo, result):
     open_settings, switch = settings.open, settings.switch
     def logs():
         return arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29System:I").stdout
-    def probe(tag, expect_reply, label=None):
+    def probe(tag, expect_reply, label=None, family="ipv4", protocol="udp", payload_bytes=None):
         label = label or tag
-        needle = f"COMPLETE tag={tag} uid={probe_uid} "
+        assert family in ("ipv4", "ipv6") and protocol in ("tcp", "udp")
+        payload_bytes = payload_bytes or len(tag)
+        payload = bytes((i * 31 + 17) % 251 for i in range(payload_bytes))
+        payload = tag.encode() + payload[len(tag):]
+        expected = payload[::-1] if protocol == "tcp" else b"Q29:" + payload
+        needle = f"COMPLETE tag={tag} uid={probe_uid} family={family} protocol={protocol} bytes={payload_bytes} "
         initial = sum(needle in line for line in arun("shell", "logcat", "-d", "-s", "Q29Probe:I").stdout.splitlines())
         before = len(echo.rows)
         broadcast = arun("shell", "am", "broadcast", "--include-stopped-packages", "--receiver-foreground",
-                         "-n", "com.qeli.test/com.qeli.SystemNetworkProbeReceiver", "--es", "tag", tag)
+                         "-n", "com.qeli.test/com.qeli.SystemNetworkProbeReceiver", "--es", "tag", tag, "--es", "family", family, "--es", "protocol", protocol, "--ei", "payload_bytes", str(payload_bytes))
         (evidence / (label + "-broadcast.txt")).write_text(broadcast.stdout + broadcast.stderr)
         wait_until(lambda: sum(needle in line for line in arun("shell", "logcat", "-d", "-s", "Q29Probe:I").stdout.splitlines()) > initial, "independent probe did not finish", 8)
         output = arun("shell", "logcat", "-d", "-s", "Q29Probe:I").stdout
         line = [line for line in output.splitlines() if needle in line][-1]
         (evidence / (label + "-probe.txt")).write_text(line + "\n")
         time.sleep(.2)
-        digest = hashlib.sha256(tag.encode()).hexdigest()
-        seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest]
+        digest = hashlib.sha256(payload).hexdigest()
+        seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest and row.get("protocol") == protocol and (":" in row["peer"]) == (family == "ipv6")]
         if expect_reply:
             assert "reply=Q29:" + tag in line and len(seen) == 1, (line, seen)
             udp_profile = result["suite"] in ("recovery", "handover") and result["recovery_transport"] != "tcp"
-            if tag != "Q29BASELINE":assert seen[0]["peer"].startswith("10.87.0." if udp_profile else "10.86.0."), seen
+            assert f"sha256={digest}" in line and f"reply_sha256={hashlib.sha256(expected).hexdigest()}" in line and seen[0]["bytes"] == payload_bytes, (line, seen)
+            if tag != "Q29BASELINE":
+                prefix = ("fd86:29:2:" if udp_profile else "fd86:29:1:") if family == "ipv6" else ("10.87.0." if udp_profile else "10.86.0.")
+                assert seen[0]["peer"].startswith(prefix), seen
         else:
             assert "reply=Q29:" + tag not in line and "error=" in line and not seen, (line, seen)
-        return dict(uid=int(probe_uid), echoed=len(seen), expected_reply=expect_reply)
+        return dict(uid=int(probe_uid), echoed=len(seen), expected_reply=expect_reply, family=family, protocol=protocol, payload_bytes=payload_bytes, payload_sha256=digest, reply_sha256=hashlib.sha256(expected).hexdigest())
     uid_text = arun("shell", "cmd", "package", "list", "packages", "-U", "com.qeli").stdout
     uid_rows = dict(re.findall(r"package:(com\.qeli(?:\.test)?) uid:([0-9]+)", uid_text))
     assert set(uid_rows) == {"com.qeli", "com.qeli.test"}, uid_text

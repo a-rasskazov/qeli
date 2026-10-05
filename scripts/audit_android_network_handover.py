@@ -84,7 +84,10 @@ def network_handover(arun,evidence,probe,result):
                 assert "reconnecting on the current network" in logs()[len(initial_logs):],logs()
             else:
                 wait_until(lambda:logs().count("Roaming path committed: android:"+new["handle"])>0,"Android did not commit the new actual carrier token",35)
-            reply=probe("Q29RECOVERED" if label=="away" else "Q29MANUAL",True,label="handover-"+label+"-probe")
+            reply=[probe("Q29RECOVERED" if label=="away" else "Q29MANUAL",True,
+                         label="handover-"+label+"-"+family+"-"+protocol,
+                         family=family,protocol=protocol,payload_bytes=16384 if protocol=="tcp" else 257)
+                   for family in ("ipv4","ipv6") for protocol in ("tcp","udp")]
             after,physical=snapshot("handover-"+label+"-after");nowcounts=counts()
             assert after==before==initial and physical==new,(before,after,initial,new,physical)
             committed_handles=re.findall(r"Roaming path committed: android:([0-9]+)",logs()[len(initial_logs):])

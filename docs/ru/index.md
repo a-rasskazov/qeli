@@ -422,3 +422,4 @@
 - [Q29: восстановление UDP/QUIC и истечение grace](reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md)
 - [Q29: переключение Wi-Fi/Cellular и сохранение TUN](reports/AUDIT-Q29-ANDROID-HANDOVER.md)
 - [Q29: TCP при переключении Android Wi-Fi/Cellular](reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md)
+- [Q29: IPv4/IPv6 TCP/UDP после переключения Android сети](reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md)
