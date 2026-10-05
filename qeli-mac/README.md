@@ -315,3 +315,13 @@ operations проверяют owner generation; завершённый stop ос
 отказал после stop, retry только завершает child; новое подключение ждёт retirement.
 [Upgrade, проверки и ограничения](../docs/ru/reports/AUDIT-Q28-MACOS-GUARDIAN.md).
 Swift/Xcode/runtime текущим C# selftest не подтверждены и остаются USER SKIPPED.
+
+## Per-app relay: sockets и бюджеты I/O
+
+Native fd/source операции сериализованы одной очередью на relay; published fd закрывается
+только cancellation handler. Stop отказывает новой публикации/I/O и завершает release
+асинхронно. TCP connect с DNS/кандидатами — 10 секунд; TCP send и весь UDP batch — 5;
+DNS query — 2 внутри внешнего бюджета; framework-write watchdog — 10 секунд.
+Пустые UDP датаграммы сохраняются. После частичной TCP отправки с timeout нужен новый
+stream. Новых INI-ключей нет. [Проверка и ограничения](../docs/ru/reports/AUDIT-Q28-MACOS-SOCKETS.md).
+Swift/Xcode/runtime USER SKIPPED: 20 новых native cases добавлены, но не исполнены.

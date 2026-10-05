@@ -407,3 +407,5 @@
 - [Q28: forwarding — владение и восстановление](reports/AUDIT-Q28-MACOS-FORWARDING.md)
 
 - [Q28: guardian — готовность и владение поколением](reports/AUDIT-Q28-MACOS-GUARDIAN.md)
+
+- [Q28: native sockets — время жизни и I/O budgets](reports/AUDIT-Q28-MACOS-SOCKETS.md)

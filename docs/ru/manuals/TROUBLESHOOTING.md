@@ -2653,3 +2653,17 @@ reconfiguration до завершения. Чужой живой owner не из
 сохраняется как tombstone; новый token допускается после подтверждённого stop.
 Конфиги остаются INI, JSON state — служебный DTO.
 [Объём проверок и ограничения](../reports/AUDIT-Q28-MACOS-GUARDIAN.md).
+
+<!-- normative-sync: manual-macos-relay-budget-v1 -->
+
+### macOS per-app: relay timeout и остановка sockets
+
+TCP connect имеет общий бюджет 10 секунд с DNS и всеми кандидатами; первый blackhole
+может исчерпать его до fallback. TCP send и весь UDP batch ограничены 5 секундами,
+DNS query — 2 секундами внутри внешнего бюджета. Framework-write watchdog через 10 секунд
+закрывает текущий relay; после частичной TCP отправки требуется новое соединение.
+Stop сначала отказывает новому I/O, затем очередь/cancel handlers освобождают fd;
+сам возврат stop не подтверждает завершённый kernel release. Пустая UDP датаграмма
+не означает EOF. Новых INI-параметров нет. Эти изменения проверены по исходникам;
+Swift/macOS runtime исключён пользователем, managed tests его не заменяют.
+[Объём проверки и ограничения](../reports/AUDIT-Q28-MACOS-SOCKETS.md).

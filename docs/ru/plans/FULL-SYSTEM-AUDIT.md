@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v55 -->
+<!-- normative-sync: full-system-audit-v56 -->
 
-**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app forwarding и C# guardian этапы завершены; Swift guardian SOURCE REVIEW; Swift runtime USER SKIPPED.**
+**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: C# storage/control/network/forwarding/guardian PASS; Swift guardian/sockets SOURCE REVIEW, runtime USER SKIPPED. Остался итоговый integration review.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -2179,3 +2179,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q28 forwarding:** [владение и recovery](../reports/AUDIT-Q28-MACOS-FORWARDING.md): F262–F264;58 новых проверок,1208 managed PASS,6 ожидаемых baseline FAIL. Один Qeli-владелец на Mac, durable snapshot до sysctl, независимые restore/checkpoint/retry. Реальный Mac USER SKIPPED. Q28 IN_PROGRESS;guardian/native socket lifetime и интеграция остаются. План27/37.
 
 **5 октября, Q28 guardian:** [готовность и generation ownership](../reports/AUDIT-Q28-MACOS-GUARDIAN.md): F265–F267;39 per-app (17 новых),1225 managed PASS,9 ожидаемых old C# FAIL. Swift ownership/10 новых cases SOURCE REVIEW / USER SKIPPED. Схема v5, bundle upgrade после stop старых guardian; legacy state не перехватывается. Q28 IN_PROGRESS;native sockets и integration остаются. План27/37.
+
+**5 октября, Q28 sockets:** [fd lifetime и I/O бюджеты](../reports/AUDIT-Q28-MACOS-SOCKETS.md): F268–F270,20 новых Swift cases SOURCE REVIEW / USER SKIPPED. Serial queue + cancel-handler release,nonblocking deadlines,atomic framework-write watchdog,zero UDP datagrams.1225 связанных managed PASS не выполняют Swift. Q28 IN_PROGRESS;финальная интеграция/DNS-PF owner stamps остаются. План27/37.

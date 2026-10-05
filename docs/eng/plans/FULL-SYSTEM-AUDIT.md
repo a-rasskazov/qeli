@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v55 -->
+<!-- normative-sync: full-system-audit-v56 -->
 
-**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app forwarding and C# guardian stages complete; Swift guardian SOURCE REVIEW; Swift runtime USER SKIPPED.**
+**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: C# storage/control/network/forwarding/guardian PASS; Swift guardian/sockets SOURCE REVIEW, runtime USER SKIPPED. Final integration review remains.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -2166,3 +2166,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q28 forwarding:** [ownership and recovery](../reports/AUDIT-Q28-MACOS-FORWARDING.md): F262–F264;58 new checks,1208 managed PASS,6 expected baseline FAIL. One Qeli owner per Mac,durable snapshot before sysctl,independent restore/checkpoint/retry. Actual Mac USER SKIPPED. Q28 IN_PROGRESS;guardian/native socket lifetime and integration remain. Plan27/37.
 
 **5 October, Q28 guardian:** [readiness and generation ownership](../reports/AUDIT-Q28-MACOS-GUARDIAN.md): F265–F267;39 per-app (17 new),1225 managed PASS,9 expected old C# FAIL. Swift ownership/10 new cases SOURCE REVIEW / USER SKIPPED. Schema v5,bundle upgrade after joining old guardians;no legacy-state takeover. Q28 IN_PROGRESS;native sockets and integration remain. Plan27/37.
+
+**5 October, Q28 sockets:** [fd lifetime and I/O budgets](../reports/AUDIT-Q28-MACOS-SOCKETS.md): F268–F270,18 new Swift cases SOURCE REVIEW / USER SKIPPED. Serial queue + cancel-handler release,nonblocking deadlines,atomic framework-write watchdog,zero UDP datagrams.1225 related managed PASS do not execute Swift. Q28 IN_PROGRESS;final integration/DNS-PF owner stamps remain. Plan27/37.

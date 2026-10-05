@@ -185,5 +185,38 @@ registry.closeAll(); registry.closeAll()
 expect(firstRelay.stops == 1 && nextRelay.stops == 1,
        "repeat retirement never closes a released relay twice")
 
+// Production latch/deadline cases. Require Swift/Xcode; not Windows runtime PASS.
+let lifetime = RelayLifetime()
+var publications = 0
+expect((try? lifetime.publish { publications += 1; return true }) == true,
+       "live relay can publish one owned descriptor")
+expect(lifetime.stop(), "first stop retires the relay")
+expect(!lifetime.stop(), "repeat stop is idempotent")
+expect((try? lifetime.publish { publications += 1 }) == nil && publications == 1,
+       "retired relay cannot publish another descriptor")
+expect((try? lifetime.check()) == nil, "retired relay refuses queued I/O")
+let deadline = RelayDeadline(milliseconds: 500, now: 1_000_000)
+expect(deadline.waitSlice(now: 1_000_000) == 100, "poll slice caps cancellation latency")
+expect(deadline.waitSlice(now: 500_500_000) == 1, "last partial millisecond remains pollable")
+expect(deadline.waitSlice(now: 501_000_000) == 0, "expired deadline cannot extend a retry")
+expect((try? deadline.check(now: 501_000_000)) == nil, "deadline expiry refuses work")
+expect(deadline.capped(milliseconds: 2000, now: 1_000_000).expiry == deadline.expiry,
+       "DNS sub-budget cannot extend the connect budget")
+expect(deadline.capped(milliseconds: 100, now: 1_000_000).expiry == 101_000_000,
+       "shorter DNS budget is honored")
+
+let writes = RelayLifetime()
+let writeTicket = writes.beginWrite(now: 0)!
+expect(writes.expiredWrite(now: 9_999_999_999) == nil, "watchdog does not expire a progressing write early")
+expect(writes.expiredWrite(now: 10_000_000_000) == writeTicket, "one watchdog sees the current expired write")
+expect(!writes.stop(writeTicket: writeTicket + 1), "unrelated write timer cannot retire the relay")
+expect(writes.completeWrite(writeTicket), "matching write completion clears its timeout")
+expect(!writes.stop(writeTicket: writeTicket), "completed write timer cannot close an active relay")
+let nextWrite = writes.beginWrite()!
+expect(nextWrite != writeTicket, "next framework write has a distinct timeout ticket")
+expect(writes.stop(writeTicket: nextWrite), "pending framework write timeout retires the relay")
+expect(!writes.completeWrite(nextWrite), "late completion cannot resume a retired source")
+expect(writes.beginWrite() == nil, "retired relay cannot admit another framework write")
+
 if failures > 0 { exit(1) }
 print("ALL PASS")

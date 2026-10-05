@@ -2642,3 +2642,17 @@ A join error after confirmed stop retries join only and blocks reconfiguration u
 finishes. Foreign live owners are preserved. Completed owner state remains as a tombstone;
 a new token may claim after confirmed stop. Configs remain INI; JSON state is internal DTO.
 [Checks and limits](../reports/AUDIT-Q28-MACOS-GUARDIAN.md).
+
+<!-- normative-sync: manual-macos-relay-budget-v1 -->
+
+### macOS per-app: relay timeout and socket stop
+
+TCP connect shares a 10-second budget across DNS and all candidates; a first blackhole
+can consume it before fallback. TCP send and the entire UDP batch have 5-second budgets,
+DNS queries 2 seconds within the caller's budget. Framework-write's 10-second watchdog
+closes its current relay; partial TCP transmission requires a fresh connection.
+Stop first refuses new I/O, then queued cleanup/cancel handlers release fd;
+returning from stop does not prove completed kernel release. Empty UDP datagrams
+are not EOF. No new INI settings. These changes were reviewed by source;
+Swift/macOS runtime is user-excluded and managed tests do not replace it.
+[Checks and limits](../reports/AUDIT-Q28-MACOS-SOCKETS.md).

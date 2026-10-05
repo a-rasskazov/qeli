@@ -407,3 +407,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q28: forwarding ownership and recovery](reports/AUDIT-Q28-MACOS-FORWARDING.md)
 
 - [Q28: guardian readiness and generation ownership](reports/AUDIT-Q28-MACOS-GUARDIAN.md)
+
+- [Q28: native socket lifetime and I/O budgets](reports/AUDIT-Q28-MACOS-SOCKETS.md)

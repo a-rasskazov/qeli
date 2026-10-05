@@ -48,6 +48,7 @@ targets:
     sources:
       - path: Common/RoutingState.swift
       - path: Common/RelayRegistry.swift
+      - path: Common/RelayWork.swift
       - path: Tests
     settings:
       base:
