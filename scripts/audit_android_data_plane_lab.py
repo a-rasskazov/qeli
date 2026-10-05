@@ -192,7 +192,8 @@ def system_lifecycle(arun, evidence, echo, result):
         seen = [row for row in echo.rows[before:] if row.get("payload_sha256") == digest]
         if expect_reply:
             assert "reply=Q29:" + tag in line and len(seen) == 1, (line, seen)
-            if tag != "Q29BASELINE":assert seen[0]["peer"].startswith(("10.87.0." if result["suite"] in ("recovery", "handover") else "10.86.0.")), seen
+            udp_profile = result["suite"] in ("recovery", "handover") and result["recovery_transport"] != "tcp"
+            if tag != "Q29BASELINE":assert seen[0]["peer"].startswith("10.87.0." if udp_profile else "10.86.0."), seen
         else:
             assert "reply=Q29:" + tag not in line and "error=" in line and not seen, (line, seen)
         return dict(uid=int(probe_uid), echoed=len(seen), expected_reply=expect_reply)
@@ -302,8 +303,9 @@ def main():
     ap.add_argument("--inside", action="store_true")
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
     ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover"), default="explicit")
-    ap.add_argument("--transport", choices=("udp", "quic"), default="udp", help="transport for recovery suite")
+    ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
     args = ap.parse_args()
+    if args.suite == "recovery" and args.transport == "tcp":ap.error("recovery requires udp/quic")
     assert not args.restart_control or args.suite == "system"
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
@@ -413,7 +415,7 @@ perf.connection.handshake_timeout_secs = 12
             time.sleep(.1)
         else:
             raise AssertionError("server TUN setup timeout")
-        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite in ("recovery", "handover") else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
+        capture = subprocess.Popen(["tcpdump", "-i", "q29udp" if args.suite in ("recovery", "handover") and args.transport != "tcp" else "q29tcp", "-U", "-s", "0", "-w", str(evidence / "tcp-tun.pcap")],
                                    stdout=(evidence / "tcpdump.log").open("wb"), stderr=subprocess.STDOUT, start_new_session=True)
         echo_hosts = [(socket.AF_INET, "198.19.0.1"), (socket.AF_INET6, "2001:db8:29::1")] if args.suite in ("routed", "system", "power", "recovery", "handover") else None
         echo = Echo(evidence / "echo-receipts.json", echo_hosts)
@@ -486,7 +488,7 @@ perf.connection.handshake_timeout_secs = 12
             proc = arun("shell", "am", "instrument", "-w", "-r", "-e", "class", selector,
                         "-e", "q29_private_fixture", "1", "-e", "q29_key_tcp", keys["tcp"],
                         "-e", "q29_key_udp", keys["udp"],
-                        *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "required"] if args.suite in ("recovery", "handover") else []),
+                        *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover") else []),
                         "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
             (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
             result[folder + "_output"] = proc.stdout
@@ -505,7 +507,7 @@ perf.connection.handshake_timeout_secs = 12
             assert all(row["peer"].startswith(("10.86.0.", "10.87.0.")) for row in accepted), accepted
             result["dns_answered_questions"] = len(accepted)
         profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
-        if args.suite in ("recovery", "handover"): profiles = [("udp", "10.87.0.", "fd86:29:2:")]
+        if args.suite in ("recovery", "handover") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
         for profile, subnet, v6 in profiles:
             for family_prefix in (subnet, v6):
                 for protocol in ("tcp", "udp"):

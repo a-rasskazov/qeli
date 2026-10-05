@@ -421,3 +421,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: screen, deep idle and TCP recovery](reports/AUDIT-Q29-ANDROID-POWER.md)
 - [Q29: UDP/QUIC recovery and grace expiry](reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md)
 - [Q29: Wi-Fi/Cellular switching and TUN retention](reports/AUDIT-Q29-ANDROID-HANDOVER.md)
+- [Q29: TCP across Android Wi-Fi/Cellular switching](reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md)

@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v68 -->
+<!-- normative-sync: full-system-audit-v69 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2196,3 +2196,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October,Q29 UDP/QUIC recovery:** [four fresh scenarios](../reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md):2bootstrap PASS,UDP/QUIC×soft/grace-expiry4/4PASS.Soft:new outer port/epoch1 without fresh Auth/plan;full:ordered fallback and exactly1 fresh Auth/plan;PID/TUN/addresses retained.18receipts including2delayed faultUDP through TUN after recoveryAUTH,0receipts in negative windows.Revoke/cleanup/host/service/userdata PASS.1test source changed,295inputs/productAPK/JNI/managed identical;new testAPK.Same-network does not qualify carrier handover;SIGKILLFAIL remains.Q29IN_PROGRESS,28/37(75.7%).
 
 **5 October,Q29 carrier handover:** [actual AVD Network switching](../reports/AUDIT-Q29-ANDROID-HANDOVER.md):UDP/QUIC×Wi-Fi↔Cellular4/4targetPASS,2bootstrap in successful runs,16receipts.New systemhandle/outerport/epoch,Auth/plan2/2,TUNretained.InitialUDPFAIL preserved:incorrect exact-one-commit predicate on LinkProperties update;fixed gate verifies alltargethandles,UDPrepeatPASS,initial strictQUICPASS not repeated.3readonlyattempts,host/service/userdata/cleanup unchanged.296inputs/2APK/JNI/managed identical.AVD/privatebackend;TCPhandover,post-switchIPv6/TCP,NAT64/Release remain,SIGKILLFAIL open.Q29IN_PROGRESS,28/37(75.7%).
+
+**5 October,Q29 TCP handover:** [Wi-Fi↔Cellular](../reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md):2/2PASS,1bootstrap/8receipts. Fresh Auth/NetworkPlan and outerports,PID/TUN/addresses retained,ordinary UID payload after recovery;UDPpathcommit0. Revoke/settings/host/service/userdata/cleanup PASS;296inputs/2APK/JNI/managed unchanged. Harness only,no rebuild. Post-switchIPv6/TCP,NAT64/Release,longpower/flapping,SIGKILLFAIL remain.Q29IN_PROGRESS,28/37(75.7%).

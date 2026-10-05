@@ -26,6 +26,8 @@ def default_carrier(text):
 
 def network_handover(arun,evidence,probe,result):
     checks=result["network_handover"]={"cells":[]}
+    tcp = result["recovery_transport"] == "tcp"
+    checks["contract"] = "TCP_FULL_RECONNECT_RETAINED_TUN" if tcp else "UDP_SOFT_ROAMING_RETAINED_SESSION_TUN"
     def save(name,value):
         (evidence/name).write_text(value)
         return value
@@ -55,7 +57,10 @@ def network_handover(arun,evidence,probe,result):
     checks["original_settings"]={"wifi_on":wifi,"mobile_data":data}
     checks["initial_carrier"]=first
     original_iface=None
-    assert "Experimental UDP roaming path adapter active" in logs(),logs()
+    if tcp:
+        assert "Service started: TCP/fake-tls" in logs() and "Experimental UDP roaming path adapter active" not in logs(),logs()
+    else:
+        assert "Experimental UDP roaming path adapter active" in logs(),logs()
     try:
         # Enable the alternate transport first; these controls affect only readonly AVD state.
         arun("shell","svc","data","enable")
@@ -74,13 +79,21 @@ def network_handover(arun,evidence,probe,result):
             arun("shell",*action)
             wait_until(lambda:(new:=carrier()) is not None and new["handle"]!=old["handle"] and (expected is None or new["transport"]==expected),"default carrier did not switch",45)
             new=carrier();assert new and new["handle"]!=old["handle"]
-            wait_until(lambda:logs().count("Roaming path committed: android:"+new["handle"])>0,"Android did not commit the new actual carrier token",35)
+            if tcp:
+                wait_until(lambda:counts()["plans"]>oldcounts["plans"] and counts()["auth"]>oldcounts["auth"],"TCP did not reconnect/apply a fresh plan",40)
+                assert "reconnecting on the current network" in logs()[len(initial_logs):],logs()
+            else:
+                wait_until(lambda:logs().count("Roaming path committed: android:"+new["handle"])>0,"Android did not commit the new actual carrier token",35)
             reply=probe("Q29RECOVERED" if label=="away" else "Q29MANUAL",True,label="handover-"+label+"-probe")
             after,physical=snapshot("handover-"+label+"-after");nowcounts=counts()
             assert after==before==initial and physical==new,(before,after,initial,new,physical)
-            assert nowcounts["auth"]==oldcounts["auth"] and nowcounts["plans"]==oldcounts["plans"] and nowcounts["commits"]>=oldcounts["commits"]+1,(oldcounts,nowcounts)
             committed_handles=re.findall(r"Roaming path committed: android:([0-9]+)",logs()[len(initial_logs):])
-            assert committed_handles and all(handle==new["handle"] for handle in committed_handles),committed_handles
+            if tcp:
+                assert nowcounts["auth"]>oldcounts["auth"] and nowcounts["plans"]>oldcounts["plans"] and nowcounts["commits"]==oldcounts["commits"]==0,(oldcounts,nowcounts)
+                assert not committed_handles and "Android TUN reused for NetworkPlan" in logs()[len(initial_logs):],logs()
+            else:
+                assert nowcounts["auth"]==oldcounts["auth"] and nowcounts["plans"]==oldcounts["plans"] and nowcounts["commits"]>=oldcounts["commits"]+1,(oldcounts,nowcounts)
+                assert committed_handles and all(handle==new["handle"] for handle in committed_handles),committed_handles
             checks["cells"].append(dict(name=label,status="PASS",before=before,after=after,old_carrier=old,new_carrier=new,committed_carrier_handles=committed_handles,before_counts=oldcounts,after_counts=nowcounts,probe=reply,elapsed_seconds=round(time.monotonic()-start,2)))
             save("handover-"+label+"-logcat.log",logs())
             print("HANDOVER_"+label.upper()+"_PASS "+old["transport"]+" -> "+new["transport"],flush=True)

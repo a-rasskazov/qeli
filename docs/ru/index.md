@@ -421,3 +421,4 @@
 - [Q29: экран, deep idle и восстановление TCP](reports/AUDIT-Q29-ANDROID-POWER.md)
 - [Q29: восстановление UDP/QUIC и истечение grace](reports/AUDIT-Q29-ANDROID-UDP-RECOVERY.md)
 - [Q29: переключение Wi-Fi/Cellular и сохранение TUN](reports/AUDIT-Q29-ANDROID-HANDOVER.md)
+- [Q29: TCP при переключении Android Wi-Fi/Cellular](reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md)
