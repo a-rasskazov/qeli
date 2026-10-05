@@ -442,3 +442,4 @@
 - [Q29: владение запросом разрешений подключения](reports/AUDIT-Q29-ANDROID-PERMISSIONS.md)
 
 - [Q29: сервис на доверенном Wi-Fi](reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md)
+- [Q29 F281: доверенный Wi-Fi при активном lockdown](reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md)

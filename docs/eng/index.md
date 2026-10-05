@@ -442,3 +442,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: connection permission ownership](reports/AUDIT-Q29-ANDROID-PERMISSIONS.md)
 
 - [Q29: trusted Wi-Fi runtime](reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md)
+- [Q29 F281: trusted Wi-Fi with active lockdown](reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md)

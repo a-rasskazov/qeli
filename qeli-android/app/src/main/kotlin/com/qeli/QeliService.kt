@@ -777,6 +777,15 @@ class VpnServiceImpl : VpnService() {
         return TrustedWifiPolicy.normalizeObservedSsid(observedWifiSsid(caps)).orEmpty()
     }
 
+    private fun shouldPauseForTrustedNetwork(caps: NetworkCapabilities?): Boolean {
+        val config = activeConfig ?: trustedWaitConfig ?: return false
+        return TrustedWifiPolicy.shouldPause(
+            networkKind = classifyNetwork(caps),
+            configKillSwitch = config.killSwitch,
+            systemLockdown = preEstablishmentLockdownState().second,
+        )
+    }
+
     private fun startTrustedAware(config: VpnConfig) {
         trustedWaitConfig = config
         userRequestedDisconnect = false
@@ -2110,8 +2119,7 @@ class VpnServiceImpl : VpnService() {
                 carrierReplacementJob?.cancel()
                 carrierReplacementJob = null
             }
-            val enteringTrustedWifi =
-                classifyNetwork(caps) == TrustedWifiPolicy.NetworkKind.TRUSTED_WIFI
+            val enteringTrustedWifi = shouldPauseForTrustedNetwork(caps)
             networkSignatures[network] = physicalNetworkSignature(cm, network)
             val prev = currentNetwork
             if (bestMatching) {
@@ -2165,9 +2173,8 @@ class VpnServiceImpl : VpnService() {
                 return
             }
             if (!TrustedWifiPolicy.shouldEvaluateCallback(network == currentNetwork)) return
-            val trustedKind = classifyNetwork(caps)
             reevaluateTrustedWifi(caps)
-            if (trustedKind == TrustedWifiPolicy.NetworkKind.TRUSTED_WIFI) return
+            if (shouldPauseForTrustedNetwork(caps)) return
             underlyingNetworkStateChanged(cm, network, "Network capabilities changed")
         }
 
@@ -2199,8 +2206,7 @@ class VpnServiceImpl : VpnService() {
             currentNetwork = replacement
             if (replacement != null) {
                 val replacementCaps = cm.getNetworkCapabilities(replacement)
-                val enteringTrustedWifi = replacementCaps?.let(::classifyNetwork) ==
-                    TrustedWifiPolicy.NetworkKind.TRUSTED_WIFI
+                val enteringTrustedWifi = shouldPauseForTrustedNetwork(replacementCaps)
                 if (!enteringTrustedWifi) {
                     switchedNetwork("Network lost", carrierWasLost = true)
                 }
@@ -2239,8 +2245,7 @@ class VpnServiceImpl : VpnService() {
                                     physicalNetworkSignature(cm, lateReplacement)
                                 if (!bestMatching) underlyingNets.add(lateReplacement)
                                 val caps = cm.getNetworkCapabilities(lateReplacement)
-                                val enteringTrustedWifi = caps?.let(::classifyNetwork) ==
-                                    TrustedWifiPolicy.NetworkKind.TRUSTED_WIFI
+                                val enteringTrustedWifi = shouldPauseForTrustedNetwork(caps)
                                 if (!enteringTrustedWifi) {
                                     switchedNetwork(
                                         "Replacement network discovered",

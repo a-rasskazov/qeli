@@ -270,7 +270,11 @@ def system_lifecycle(arun, evidence, echo, result, *, dot=None):
         result["nat64_payload_matrix"] = "PASS"
     elif result["suite"] == "handover":
         from audit_android_network_handover import network_handover
+        if result.get("trusted_lockdown_handover_enabled"):
+            from audit_android_trusted_lockdown import enable_trusted_wifi
+            enable_trusted_wifi(arun,evidence,result)
         network_handover(arun, evidence, probe, result, bursts=bursts)
+        if result.get("trusted_lockdown_handover_enabled"):result["trusted_wifi_lockdown"]["status"]="PASS"
         open_settings()
     elif result["suite"] == "recovery":
         from audit_android_udp_recovery import udp_recovery
@@ -378,9 +382,11 @@ def main():
     ap.add_argument("--resolver-diagnostics", action="store_true", help="observe Android async DNS variants; startup suite only")
     ap.add_argument("--leak-bursts", action="store_true", help="ordinary-UID probe bursts crossing handover/force-stop; Release only")
     ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
+    ap.add_argument("--trusted-lockdown-handover", action="store_true", help="enable actual trusted SSID UI under OS lockdown before Release handover")
     ap.add_argument("--ui-connect-restart", action="store_true", help="verify real Release Activity disconnect/connect after OS lockdown bootstrap; private-dns only")
     args = ap.parse_args()
     if args.suite == "trusted-wifi" and args.variant != "debug":ap.error("trusted Wi-Fi fixture requires debug instrumentation")
+    if args.trusted_lockdown_handover and (args.variant != "release" or args.suite != "handover" or args.apps_mode != "all"):ap.error("trusted lockdown handover requires Release handover apps_mode=all")
     if args.ui_connect_restart and (args.variant != "release" or args.suite != "private-dns"):ap.error("UI connect restart requires Release private-dns suite")
     if args.apps_mode != "all" and (args.variant != "release" or args.suite not in ("startup", "handover", "app-policy")):ap.error("per-app fixture requires Release startup/handover/app-policy")
     if args.require_published_start and (args.variant != "release" or args.suite != "startup" or not args.startup_state):ap.error("published start requires Release startup state")
@@ -408,12 +414,12 @@ def main():
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
                                "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant, "--carrier", args.carrier, "--apps-mode", args.apps_mode,
                                *(["--require-published-start"] if args.require_published_start else []),
-                               *(["--startup-state"] if args.startup_state else []), *(["--resolver-diagnostics"] if args.resolver_diagnostics else []), *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else []), *(["--ui-connect-restart"] if args.ui_connect_restart else [])], env=env, timeout=1200 if args.suite == "endurance" else 650).returncode
+                               *(["--startup-state"] if args.startup_state else []), *(["--resolver-diagnostics"] if args.resolver_diagnostics else []), *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else []), *(["--ui-connect-restart"] if args.ui_connect_restart else []), *(["--trusted-lockdown-handover"] if args.trusted_lockdown_handover else [])], env=env, timeout=1200 if args.suite == "endurance" else 650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(ui_connect_restart_enabled=args.ui_connect_restart, require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else None)
+    result = dict(trusted_lockdown_handover_enabled=args.trusted_lockdown_handover, ui_connect_restart_enabled=args.ui_connect_restart, require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):

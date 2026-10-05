@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v84 -->
+<!-- normative-sync: full-system-audit-v85 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2229,3 +2229,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **6 October, Q29 F280:** [permission ownership](../reports/AUDIT-Q29-ANDROID-PERMISSIONS.md): same valid-profile adapter suite old3FAIL/fixed3PASS; cancel/profile snapshot/Activity recreation fixed. Fresh179JVM(7new), lint0errors55warnings; defaultR8 TCP real UI connect/reconnect,16payloads/192bursts/13DNS/strictDoT/capturephysical0drop0 PASS. Pending permission phase/result injected; Release instrumentation NOT RUN; four preliminary attempts unqualified, all seven cleanupPASS. Native/server/managed unchanged; SIGKILL/ENONET/otherAPI-OEM-arm64 remain,Q29IN_PROGRESS28/37(75.7%).
 
 **6 October, Q29 trusted Wi-Fi:** [service runtime](../reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md):3new instrumented PASS,realSSID/background1.2s/WiFiCellularcycle/livepause/250msresume cancellation/kill-switch refusal,16full IPv4IPv6TCPUDP payload receipts. Product/native/managed unchanged;JVM/lint/R8 prior scope retained. 2harnessFAIL preserved,3runtime cleanup/host/userdata PASS;4helper/4CLI fresh. Active-lockdown trustedSSID handover/remaining lifecycle/SIGKILL/ENONET/otherAPI-OEM-arm64 open,Q29IN_PROGRESS28/37(75.7%).
+
+**6 October, Q29 F281:** [trusted Wi-Fi with lockdown](../reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md): old Release return misses proactive reconnect and falls back after a transport error; four callback predicates fixed. Fresh182JVM(3new)/lint0errors55warnings/defaultR8; TCP/UDP/QUIC6handover transitions,36ordinary-UID full payloads,864bursts/144poststopblocked,3capture physical0/drop0 PASS. Freshdebug3normal-pause tests/16payloads PASS;15helper4CLI/docs/bindings. Three preliminary harnessFAIL and one pre-runtime SFTP interruption preserved;8runtime cleanup/host/userdata PASS. Native/server/managed unchanged;Release instrumentationNOT_RUN. SIGKILL/ENONET/remaining lifecycle/protect/otherAPI-OEM-arm64 open;Q29IN_PROGRESS28/37(75.7%).

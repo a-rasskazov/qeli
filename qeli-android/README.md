@@ -271,3 +271,21 @@ namespaces и off-pool TCP/UDP ответчики. Location/nearby Wi-Fi permiss
 VPN Network; это не Release/default-network/leak проверка. Другие варианты/транспорт
 и несовместимые opt-in отклоняются до изменения стенда.
 [Q29: результаты и открытые границы](../docs/ru/reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md).
+
+
+## Доверенный Wi-Fi и lockdown
+
+При `kill_switch=true` или системном Android lockdown пауза на доверенном SSID
+запрещена. VPN продолжает работу и обычную смену carrier Wi-Fi/Cellular; доверенное
+имя само по себе не должно отменять reconnect/roaming. Без обоих видов lockdown
+явно включённая доверенная пауза сохраняет прежнее поведение.
+
+`audit_android_data_plane_lab.py --suite handover --variant release --apps-mode all
+--trusted-lockdown-handover --leak-bursts --transport tcp` включает реальный SSID
+через редактор настроек production R8 и проверяет handover с OS lockdown.
+Для UDP/QUIC меняется только `--transport`. Location/nearby permissions выдаются
+извне; Save/readback и location foreground type наблюдаются. Служебный probe работает
+от отдельного UID; matching Release instrumentation не запускается. Нужны закреплённые
+APK/manifest, private namespaces и временный readonly AVD. Несовместимые suites,
+варианты и per-app режимы отклоняются до изменений.
+[Q29 F281: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md).
