@@ -197,3 +197,21 @@ DEX-проверка проверяет три метода Trace и досту�
 сетевым сценариям Q29 дополнительно нужен изолированный серверный fixture.
 
 [Q29: проверка Release runner и границы результата](../docs/ru/reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md).
+
+
+## Per-app UID и Private DNS: лабораторная проверка
+
+`scripts/build_android_network_probe.py` собирает второй framework-only пакет
+из существующего AndroidTest receiver, без отдельной реализации сетевых проб.
+Он предназначен только для выделенного стенда. `audit_android_data_plane_lab.py`
+поддерживает `--suite app-policy --variant release --apps-mode include|exclude`:
+нужны закреплённые `fixed/` APK/manifest и `probe/audit-probe.apk`/`manifest.json`.
+Обвязка требует root и свой `/var/tmp/qeli-q29-data-*`, создаёт NET/MNT/PID namespaces
+и readonly AVD, восстанавливает состояние. Запуск на рабочем сервере не требуется.
+
+Проверяются два разных ordinary UID, IPv4/IPv6 TCP/UDP/DNS, семь состояний VPN/lockdown,
+Private DNS off/Automatic и отрицательный strict-provider сценарий. Профиль этой
+матрицы использует `kill_switch=false`, чтобы пользователь мог менять OS lockdown;
+это отдельная проверка от `kill_switch=true`. Прямой трафик исключённого UID без
+lockdown ожидаем; с lockdown он блокируется. Доверенный strict DoT не квалифицирован.
+[Q29: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-APP-POLICY.md).

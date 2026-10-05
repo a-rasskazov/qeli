@@ -433,3 +433,5 @@
 - [Q29: CONNECTED после публикации Android VPN](reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md)
 
 - [Q29: инструментированный Release runner](reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md)
+
+- [Q29: per-app UID / Private DNS](reports/AUDIT-Q29-ANDROID-APP-POLICY.md)

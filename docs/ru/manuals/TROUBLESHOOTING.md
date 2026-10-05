@@ -2693,3 +2693,19 @@ remote FIN сохраняет app-to-server. Полный stop — оба EOF и
 Cloud/device-transfer не копируют app state по явным правилам; перенос профилей выполняется
 экспортом/импортом backup. Без backup потерянный ключ не восстановить.
 [Проверки и границы Q29](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md).
+
+
+<!-- normative-sync: android-private-dns-q29-v1 -->
+
+### Android: исключённое приложение не работает / DNS не разрешается
+
+При включённом «Блокировать подключения без VPN» исключённые per-app приложения
+тоже блокируются. Если им нужен прямой выход, отключите системный lockdown осознанно;
+профиль с `kill_switch=true` после этого не сможет подтвердить требуемую защиту.
+
+При ошибках имён проверьте Android Settings → Network & internet → Private DNS.
+В проверенном API34 неверное имя strict provider ломало системный DNS и при
+действующем VPN; автоматического fallback на открытый DNS не было. Убедитесь, что
+provider доступен и вне VPN, и внутри него. `Automatic` допускает обычный DNS,
+а успешная raw UDP-проба не доказывает работоспособность Private DNS/DoT.
+[Матрица, точные артефакты и ограничения](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md).

@@ -2682,3 +2682,19 @@ Stale restore refuses; app data is not automatically deleted. Explicit cloud/dev
 rules exclude app state; profile transfer uses user backup export/import. No backup means
 no recovery of a lost key.
 [Q29 checks and limits](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md).
+
+
+<!-- normative-sync: android-private-dns-q29-v1 -->
+
+### Android: excluded app blocked / DNS lookup fails
+
+“Block connections without VPN” also blocks apps excluded by per-app settings.
+If they need direct access, deliberately disable system lockdown; a profile with
+`kill_switch=true` then cannot confirm its required protection.
+
+For lookup failures check Android Settings → Network & internet → Private DNS.
+On the tested API34 image an invalid strict-provider name broke system DNS even
+with VPN active, with no clear-DNS fallback. Ensure the provider is reachable
+outside and inside the VPN. `Automatic` permits ordinary DNS; a successful raw
+UDP probe does not prove that Private DNS/DoT works.
+[Matrix, exact artifacts and limits](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md).

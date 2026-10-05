@@ -433,3 +433,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: CONNECTED after Android VPN publication](reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md)
 
 - [Q29: instrumented Release runner](reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md)
+
+- [Q29: per-app UID / Private DNS](reports/AUDIT-Q29-ANDROID-APP-POLICY.md)

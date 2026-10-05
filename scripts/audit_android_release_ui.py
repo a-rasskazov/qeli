@@ -4,7 +4,7 @@ import time
 from android_lab_ui import AndroidVpnSettings
 
 
-def import_release_profile(arun, evidence, result, keys, transport, *, server=None, tunnel_dns=False, apps_mode="all"):
+def import_release_profile(arun, evidence, result, keys, transport, *, server=None, tunnel_dns=False, apps_mode="all", policy_fixture=False):
     ui=AndroidVpnSettings(arun,evidence,result,"Qeli",prefix="release-")
     arun("shell","am","start","-n","com.qeli/.MainActivity")
     def stable_ui(label):
@@ -29,13 +29,13 @@ def import_release_profile(arun, evidence, result, keys, transport, *, server=No
     profile="tcp" if transport=="tcp" else "udp"
     fields=dict(server=(server or "10.0.2.2")+":"+str(24966 if profile=="tcp" else 24967),proto=profile,
                 user="fixture",**{"pass":"fixture-password"},key=keys[profile],mode="fake-tls",
-                quic=str(transport=="quic").lower(),gateway="true",kill_switch="true",ipv6="required",dns="off",
+                quic=str(transport=="quic").lower(),gateway="true",kill_switch="false" if policy_fixture else "true",ipv6="required",dns="off",
                 roaming="off" if profile=="tcp" else "required",mtu_probe="false",reconnect="true",
                 reconnect_base_delay="1",reconnect_max_delay="2",timeout="15")
     if tunnel_dns:fields.update(dns="tunnel",dns_servers="198.19.0.53")
     assert apps_mode in ("all", "include", "exclude")
     fields["apps_mode"] = apps_mode
-    if apps_mode != "all":fields["apps"] = "com.qeli.test" if apps_mode == "include" else "com.android.settings"
+    if apps_mode != "all":fields["apps"] = "com.qeli.test" if apps_mode == "include" else "com.qeli.auditprobe" if policy_fixture else "com.android.settings"
     result["release_apps_mode"] = apps_mode
     ini="# Release fixture\n[qeli]\n"+"".join(k+" = "+v+"\n" for k,v in fields.items())+"[logging]\nlevel = debug\n"
     path=evidence/"release-fixture.ini";path.write_text(ini)

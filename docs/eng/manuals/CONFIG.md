@@ -1707,6 +1707,16 @@ failed roam.
 | `reconnect` · `reconnect_retries` · `reconnect_base_delay` · `reconnect_max_delay` | `true` / `-1` / `1` / `60` | ✓ | ✓ | ✓ | ✓ | ✓ | shared retry-loop settings; delays are seconds, `-1` is unlimited; the core checks the retry budget and calculates delays; OS events stay in the client |
 | `timeout` | `30` | ✓ | ✓ | ✓ | ✓ | ✓ | one connection-attempt timeout; after transport migration the shared Rust core parses and applies it |
 
+
+<!-- normative-sync: android-perapp-lockdown-q29-v1 -->
+
+**Android per-app and lockdown.** With “Block connections without VPN” disabled,
+apps omitted from `include` or listed in `exclude` use the ordinary network.
+With Android lockdown enabled those UIDs are blocked: excluding an app from VPN
+does not permit bypassing system blocking. API34 coverage includes IPv4/IPv6 TCP/UDP
+and DNS, stop, manual recovery and policy removal.
+[Results and limits](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md).
+
 **Desktop per-app details.** With `apps_mode = all`, Windows keeps its native Wintun
 zero-copy path and macOS keeps its ordinary global utun routes/DNS. `include` or `exclude`
 changes only platform packet/flow ownership: the selected TCP, UDP and DNS traffic still enters
