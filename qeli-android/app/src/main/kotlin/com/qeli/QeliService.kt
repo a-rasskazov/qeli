@@ -480,6 +480,7 @@ class VpnServiceImpl : VpnService() {
         }
     }
 
+    @Synchronized
     override fun onRevoke() {
         // The user can revoke/disconnect Qeli from Android's system VPN screen instead of
         // using our UI. Treat that as the same explicit intent so trusted-network automation
@@ -495,11 +496,16 @@ class VpnServiceImpl : VpnService() {
         stopVpn()
     }
 
+    @Synchronized
     override fun onDestroy() {
         // Normal destruction happens only after stopVpn has joined the native runner and called
         // stopSelf. If Android destroys us independently, do the strongest synchronous cleanup
         // available; process death is the final descriptor boundary after this callback.
-        if (!stopping && connectionDesired()) {
+        val unexpectedDestruction = !stopping && connectionDesired()
+        // onDestroy is also a terminal adapter boundary when the process survives.
+        // A queued event must not establish another TUN after this callback.
+        stopping = true
+        if (unexpectedDestruction) {
             broadcastLog(
                 "VPN service destroyed while the connection is still desired; awaiting redelivery",
                 level = "warn",
@@ -965,6 +971,7 @@ class VpnServiceImpl : VpnService() {
         }
     }
 
+    @Synchronized
     private fun startVpn(config: VpnConfig) {
         if (stopping || teardownJob?.isActive == true) {
             broadcastLog("Connect ignored while the previous VPN is still disconnecting")
@@ -1388,18 +1395,21 @@ class VpnServiceImpl : VpnService() {
 
     /** Execute the authenticated Rust plan with Android APIs, then transfer a duplicate of
      * the established TUN to the native packet pump before acknowledging Running. */
+    @Synchronized
     private fun applyNativeNetworkPlan(core: TransportCore, event: TransportCoreEvent) {
         val plan = TransportCoreEventCodec.decodeNetworkPlan(event)
-        val username = activeConfig?.username?.let(::logValue) ?: "?"
-        broadcastLog("Auth OK: user='$username', IP ${plan.tunnelAddress}")
-        plan.connectionLog.forEach(::broadcastLog)
         val config = activeConfig
-        if (config == null || transportCore !== core) {
+        // Shares the service monitor with stop/revoke/destroy and TUN detach. Coroutine
+        // cancellation alone cannot interrupt synchronous Builder.establish().
+        if (stopping || config == null || transportCore !== core) {
             runCatching {
                 core.networkPlanResult(plan.generation, false, "VPN service is stopping")
             }
             return
         }
+        val username = logValue(config.username)
+        broadcastLog("Auth OK: user='$username', IP ${plan.tunnelAddress}")
+        plan.connectionLog.forEach(::broadcastLog)
         var attachment: TunAttachment? = null
         var acknowledged = false
         val previousPushedRoutesInstalled = pushedRoutesInstalled
@@ -1873,19 +1883,21 @@ class VpnServiceImpl : VpnService() {
         roamingUpdateJob?.cancel()
         roamingUpdateJob = null
         cancelCarrierReplacementWait()
-        activePlanGeneration = 0L
-        pathUpdateSequence.set(0)
-        val core = transportCore
-        val runner = transportJob
-        runCatching { core?.stop() }
-        supervisor?.cancel()
+        val (core, runner) = synchronized(this) {
+            activePlanGeneration = 0L
+            pathUpdateSequence.set(0)
+            val core = transportCore
+            val runner = transportJob
+            runCatching { core?.stop() }
+            supervisor?.cancel()
 
-        // Close the Java descriptor immediately to wake native reads. The native
-        // duplicate remains valid until LinuxTunPump exits, so do not advertise
-        // DISCONNECTED or allow a reconnect before runner.join() completes.
-        try { vpnInterface?.close() } catch (_: Exception) {}
-        vpnInterface = null
-        activeTunFingerprint = null
+            // Detach under the same monitor as plan establishment. Native owns a duplicate
+            // until the runner exits; do not announce DISCONNECTED before the join below.
+            try { vpnInterface?.close() } catch (_: Exception) {}
+            vpnInterface = null
+            activeTunFingerprint = null
+            core to runner
+        }
 
         if (runner != null) {
             val stoppedPromptly = withTimeoutOrNull(NATIVE_TEARDOWN_WARN_MS) {
@@ -2631,6 +2643,7 @@ class VpnServiceImpl : VpnService() {
 
     /** Cancel the live native generation (not the TUN) so the retry loop reconnects. Does NOT set
      *  userRequestedDisconnect, so the reconnect proceeds. */
+    @Synchronized
     private fun forceReconnect() {
         cancelCarrierReplacementWait()
         // Debounce: a flapping default network (poor coverage, elevator, Wi-Fi<->LTE

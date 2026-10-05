@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v58 -->
+<!-- normative-sync: full-system-audit-v59 -->
 
-**Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package; lifecycle/полный VPN остаются.**
+**Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1856,6 +1856,8 @@ Daemon IPC/owner/mode, Keychain, selected profile, Intel/ARM ABI и DNS journal.
 **5 октября, итог:** [интеграция F271/F272](../reports/AUDIT-Q28-MACOS-INTEGRATION.md):1248 managed PASS,23 новых network checks,4 baseline FAIL;8 новых Swift cases не исполнены. Все доступные критерии сверены с предыдущими этапами; реальные Mac/Swift исключения не стали PASS. План28/37(75,7%),9 осталось;далее Q29.
 
 ### 29. Android: VpnService, JNI и lifecycle
+
+**5 октября, Q29 lifecycle:** [F277 и проверки](../reports/AUDIT-Q29-ANDROID-LIFECYCLE.md). Установка TUN и остановка сериализованы; join вне монитора. Q29 остаётся IN_PROGRESS, полный VPN/lifecycle ещё не подтверждён. Общий итог 28/37 (75,7%). **167 JVM +23 Android PASS;2 ожидаемых baseline FAIL.**
 
 **Код:** `qeli-android/app`.
 

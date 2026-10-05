@@ -413,3 +413,5 @@
 - [Q28: итоговая интеграция macOS](reports/AUDIT-Q28-MACOS-INTEGRATION.md)
 
 - [Q29: Android — store, manifest и Release](reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md)
+
+- [Q29: конкурентная остановка TUN/JNI](reports/AUDIT-Q29-ANDROID-LIFECYCLE.md)
