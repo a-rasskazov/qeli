@@ -2259,6 +2259,19 @@ Set-NetFirewallProfile -All -DefaultOutboundAction Allow
 
 ### macOS (`pf`)
 
+<!-- normative-sync: mac-pf-ownership-q28-v1 -->
+
+Qeli requires an already loaded unconditional anchor reference for qeli or com.apple/*.
+Check the active configuration with sudo pfctl -sr. With no reference, connection with
+a kill-switch refuses; a firewall administrator must add the reference through the host's
+existing policy manager. Qeli does not load /etc/pf.conf automatically: empty filter output
+does not prove absence of nat/rdr/scrub. Existing quick/pass rules and anchor ordering must
+also be assessed by that administrator; host traffic protection is not qualified by the
+managed selftest. Cleanup preserves global pf enabled state and foreign rules/references.
+Only the recorded owner or a stale owner's recovery may remove Qeli protection. Manual
+flush below is an explicit override and should follow stopping all Qeli clients/daemons.
+
+
 Requires **root** — the tunnel already does. A `block out all` ruleset is loaded that passes
 only loopback, the utun interface(s), the server IP(s), DNS and DHCP.
 
@@ -2276,7 +2289,6 @@ Manual teardown — flush the anchor, **not** `pfctl -f /etc/pf.conf`:
 ```bash
 sudo pfctl -a com.apple/qeli -F rules
 sudo pfctl -a qeli -F rules
-sudo pfctl -d        # only if pf was disabled BEFORE the run
 ```
 
 ### Android and iOS

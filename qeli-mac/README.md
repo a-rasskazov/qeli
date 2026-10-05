@@ -206,6 +206,7 @@ Rust-ядро ABI 1.16. Невыбранные потоки остаются н�
 ## Headless-режимы (отладка/CI)
 
 ```bash
+QeliMac network-selftest                 # изолированные pf/DNS/routes/utun-lifetime проверки без root
 QeliMac control-selftest                 # изолированные daemon/codec/plist/child-process проверки без root
 QeliMac storage-selftest                 # изолированные ключи/архивы, без настоящего Keychain
 QeliMac selftest                         # DNS/routes/pf/utun platform checks (без root)
@@ -264,3 +265,19 @@ Load daemon не генерирует ключ при отсутствии и н
 [Проверки и границы Q28 daemon/control](../docs/ru/reports/AUDIT-Q28-MACOS-CONTROL.md).
 Windows host selftests не подтверждают launchd, Darwin locks, utun/pf, Keychain или
 Swift Network Extension на Mac; runtime исключён пользователем из текущего аудита.
+
+## pf: настройка и восстановление
+
+Kill-switch требует уже загруженную безусловную ссылку anchor qeli либо com.apple/*.
+Проверьте активный ruleset через sudo pfctl -sr. Если ссылки нет, добавьте её через
+действующий механизм управления firewall; Qeli не перезагружает /etc/pf.conf сам,
+поскольку пустой filter не доказывает отсутствие NAT/rdr/scrub. Чужие quick/pass и
+порядок anchors требуют оценки администратором. При disconnect очищаются только
+Qeli anchors, глобальный pf остаётся включённым для сохранения чужих references.
+Чужой живой владелец/повреждённый recovery journal не снимаются автоматически.
+
+DNS journal сериализует recovery/claim/release, сохраняет более новую внешнюю настройку
+и допускает повтор cleanup при ошибке. Удаление адресов и carrier routes подтверждает
+ownership/отсутствие; ошибка запроса не означает отсутствие.
+[Отчёт Q28 network и границы проверки](../docs/ru/reports/AUDIT-Q28-MACOS-NETWORK.md).
+Генератор pf-selftest-rules не выполняет startup recovery и не трогает firewall.

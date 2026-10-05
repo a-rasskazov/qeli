@@ -2219,6 +2219,19 @@ Set-NetFirewallProfile -All -DefaultOutboundAction Allow
 
 ### macOS (`pf`)
 
+<!-- normative-sync: mac-pf-ownership-q28-v1 -->
+
+Qeli требует уже загруженную безусловную ссылку на anchor qeli либо com.apple/*.
+Проверьте активные правила через sudo pfctl -sr. Без ссылки подключение с kill-switch
+отказывается; администратор firewall должен добавить ссылку через действующий механизм
+управления политикой хоста. Qeli не загружает /etc/pf.conf автоматически: пустой вывод
+filter не доказывает отсутствие nat/rdr/scrub. Администратор также должен учитывать
+существующие quick/pass правила и порядок anchors; managed selftest не подтверждает
+блокировку реального трафика. Cleanup сохраняет глобальный pf включённым, чужие правила
+и references. Снять защиту может её записанный владелец или recovery умершего владельца.
+Ручной flush ниже — явное вмешательство после остановки всех Qeli clients/daemons.
+
+
 Требует **root** — туннель его и так требует. Загружается ruleset `block out all`,
 пропускающий только loopback, utun-интерфейсы, IP сервера, DNS и DHCP.
 
@@ -2236,7 +2249,6 @@ Set-NetFirewallProfile -All -DefaultOutboundAction Allow
 ```bash
 sudo pfctl -a com.apple/qeli -F rules
 sudo pfctl -a qeli -F rules
-sudo pfctl -d        # только если pf был выключен ДО запуска
 ```
 
 ### Android и iOS

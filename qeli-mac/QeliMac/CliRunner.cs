@@ -24,6 +24,7 @@ public static class CliRunner
         {
             "selftest" => SelfTest(),
             "control-selftest" => ControlSelfTest(),
+            "network-selftest" => NetworkSelfTest(),
             "storage-selftest" => rest is ["--key-probe", var directory]
                 ? MacStorageSelfTest.RunKeyProbe(directory) : StorageSelfTest(),
             "pf-selftest-rules" => PfSelfTestRules(rest),
@@ -37,7 +38,7 @@ public static class CliRunner
 
     private static int Usage()
     {
-        Console.WriteLine("Usage: QeliMac [selftest | storage-selftest | control-selftest | pf-selftest-rules <path> | handshake <link|ini|file> | connect <link|ini|file> [seconds] | genassets <dir> | genicns <out.icns>]");
+        Console.WriteLine("Usage: QeliMac [selftest | storage-selftest | control-selftest | network-selftest | pf-selftest-rules <path> | handshake <link|ini|file> | connect <link|ini|file> [seconds] | genassets <dir> | genicns <out.icns>]");
         return 2;
     }
 
@@ -61,6 +62,21 @@ public static class CliRunner
         }
         ServiceControlSelfTest.Run(Check);
         Console.WriteLine($"MAC_CONTROL_CHECKS={count}; FAILED={failed}");
+        return failed == 0 ? 0 : 1;
+    }
+
+    private static int NetworkSelfTest()
+    {
+        int count = 0, failed = 0;
+        void Check(string name, bool ok) { count++; Console.WriteLine($"  [{(ok ? "PASS" : "FAIL")}] {name}"); if (!ok) failed++; }
+        DnsJournal.RunSelfTests(Check);
+        NetworkConfigurator.RunRouteLifecycleSelfTest(Check);
+        NetworkConfigurator.RunRoamingRouteSelfTest(Check);
+        KillSwitch.RunSelfTests(Check);
+        MacRoamingSocket.RunSelfTest(Check);
+        VpnTunnel.RunRoamingCapabilitySelfTest(Check);
+        MacNetworkSelfTest.Run(Check);
+        Console.WriteLine($"MAC_NETWORK_CHECKS={count}; FAILED={failed}");
         return failed == 0 ? 0 : 1;
     }
 
@@ -93,6 +109,7 @@ public static class CliRunner
         EncryptedEnvelope.RunSelfTests(Check);
         MacStorageSelfTest.Run(Check);
         ServiceControlSelfTest.Run(Check);
+        MacNetworkSelfTest.Run(Check);
         DnsJournal.RunSelfTests(Check);
         NetworkConfigurator.RunRouteLifecycleSelfTest(Check);
         NetworkConfigurator.RunRoamingRouteSelfTest(Check);

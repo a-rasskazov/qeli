@@ -684,15 +684,8 @@ public static class KillSwitch
     /// reachable regardless, and counting it as "we have a resolver" hides that the real
     /// upstreams are unknown. IPv4 link-local (169.254/16, APIPA) is the same class of
     /// phantom as fec0::.</summary>
-    private static bool UsableResolver(System.Net.IPAddress a)
-    {
-        if (System.Net.IPAddress.IsLoopback(a)) return false;
-        if (a.Equals(System.Net.IPAddress.Any) || a.Equals(System.Net.IPAddress.IPv6Any)) return false;
-        if (a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-            return !a.IsIPv6LinkLocal && !a.IsIPv6SiteLocal && !a.IsIPv6Multicast;
-        var b = a.GetAddressBytes();
-        return !(b[0] == 169 && b[1] == 254);   // APIPA
-    }
+    private static bool UsableResolver(System.Net.IPAddress address) =>
+        Qeli.Shared.Vpn.PhysicalDnsPolicy.IsUsableResolver(address);
 
     private static List<string> ResolveDnsServers()
     {

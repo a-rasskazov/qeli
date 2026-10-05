@@ -298,8 +298,8 @@ public sealed partial class VpnTunnel : VpnTunnelBase
     /// <summary>Put `net.inet.ip.forwarding` back to 0 if WE turned it on. (C-18)</summary>
     private void RestoreIpForwarding()
     {
-        if (_ipForwardingWasOn == false) SetSysctl("net.inet.ip.forwarding=0");
-        if (_ipv6ForwardingWasOn == false) SetSysctl("net.inet6.ip6.forwarding=0");
+        if (_ipForwardingWasOn == false) { SetSysctl("net.inet.ip.forwarding=0"); _ipForwardingWasOn = null; }
+        if (_ipv6ForwardingWasOn == false) { SetSysctl("net.inet6.ip6.forwarding=0"); _ipv6ForwardingWasOn = null; }
         if (_ipForwardingWasOn != null || _ipv6ForwardingWasOn != null)
             Log("IP forwarding restored to its previous IPv4/IPv6 state");
         _ipForwardingWasOn = null;
@@ -308,49 +308,17 @@ public sealed partial class VpnTunnel : VpnTunnelBase
 
     private static bool ReadSysctlFlag(string name)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("/usr/sbin/sysctl", $"-n {name}")
-        { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        using var p = System.Diagnostics.Process.Start(psi);
-        if (p == null) throw new InvalidOperationException($"could not start sysctl to read {name}");
-        var outp = p.StandardOutput.ReadToEndAsync();
-        var err = p.StandardError.ReadToEndAsync();
-        if (!p.WaitForExit(3000))
+        var result = ToolProcess.Run(new System.Diagnostics.ProcessStartInfo("/usr/sbin/sysctl", $"-n {name}"), 3000);
+        ToolProcess.RequireSuccess(result, $"sysctl read {name}");
+        return result.Output.Trim() switch
         {
-            try { p.Kill(true); } catch { }
-            throw new TimeoutException($"sysctl timed out while reading {name}");
-        }
-        string output = outp.GetAwaiter().GetResult().Trim();
-        string error = err.GetAwaiter().GetResult().Trim();
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"sysctl could not read {name}: {error}");
-        return output switch
-        {
-            "0" => false,
-            "1" => true,
-            _ => throw new InvalidOperationException($"sysctl returned invalid value '{output}' for {name}"),
+            "0" => false, "1" => true,
+            _ => throw new InvalidOperationException($"sysctl returned invalid value for {name}")
         };
     }
-
-    private static void SetSysctl(string assignment)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo("/usr/sbin/sysctl", $"-w {assignment}")
-        { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        using var p = System.Diagnostics.Process.Start(psi);
-        if (p == null) throw new InvalidOperationException($"could not start sysctl for {assignment}");
-        var output = p.StandardOutput.ReadToEndAsync();
-        var error = p.StandardError.ReadToEndAsync();
-        if (!p.WaitForExit(3000))
-        {
-            try { p.Kill(true); } catch { }
-            throw new TimeoutException($"sysctl timed out while setting {assignment}");
-        }
-        string stdout = output.GetAwaiter().GetResult().Trim();
-        string stderr = error.GetAwaiter().GetResult().Trim();
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"sysctl could not set {assignment}: " +
-                (string.IsNullOrWhiteSpace(stderr) ? stdout : stderr));
-    }
+    private static void SetSysctl(string assignment) =>
+        ToolProcess.RequireSuccess(ToolProcess.Run(new System.Diagnostics.ProcessStartInfo("/usr/sbin/sysctl", $"-w {assignment}"), 3000),
+            $"sysctl set {assignment}");
 
     private void ApplyRouteFileRoutes(Session session, string dev,
         CancellationToken cancellationToken)

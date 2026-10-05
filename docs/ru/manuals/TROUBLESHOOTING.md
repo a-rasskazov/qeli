@@ -1942,7 +1942,7 @@ adb shell appops set com.qeli ACTIVATE_VPN allow   # если поддержив
   **root** (`sudo`) или включённый launchd-демон.
 - Kill-switch остался после краша? Windows:
   `Remove-NetFirewallRule -Group qeli_ks; Set-NetFirewallProfile -All -DefaultOutboundAction Allow`;
-  macOS: перезапустить/`pfctl -d` (сообщение «Found a stale kill-switch…» само чинит при следующем старте).
+  macOS: запустить Qeli от root для проверенного recovery умершего владельца. Для явного ручного вмешательства остановить все экземпляры и очистить только anchors qeli/com.apple/qeli; глобальный pf и чужие политики сохранить. См. [kill-switch macOS](CONFIG.md#macos-pf).
 - `kill-switch is owned by another live Qeli process` означает, что второй Windows-туннель
   пытается захватить общесистемное состояние firewall. Сначала остановите другой клиент/сервис.
 - `[SECURITY] kill-switch disengage failed; egress remains blocked` — fail-closed режим:

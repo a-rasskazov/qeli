@@ -399,3 +399,5 @@
 - [Q28: хранилища macOS и ключи — этап PASS](reports/AUDIT-Q28-MACOS-STORAGE.md)
 
 - [Q28: daemon macOS, helper и состояние — PASS](reports/AUDIT-Q28-MACOS-CONTROL.md)
+
+- [Q28: очистка сети macOS — PASS](reports/AUDIT-Q28-MACOS-NETWORK.md)

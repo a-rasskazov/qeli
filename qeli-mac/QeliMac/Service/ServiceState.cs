@@ -28,24 +28,54 @@ public static class ServiceState
     public static string DesiredConnectionFile => Path.Combine(Dir, "service-connect.enabled");
 
     private static readonly object _logLock = new();
-    private static readonly ServiceControlLock ControlLock = new(OpenControlLock);
+    private static readonly ServiceControlLock ControlLock = new(() => OpenControlLock(".service-control.lock"));
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ServiceControlLock> OperationLocks = new();
+    internal static IDisposable EnterOperation(string name)
+    {
+        ValidateChildName(name);
+        return OperationLocks.GetOrAdd(name, key => new ServiceControlLock(() => OpenControlLock(key))).Enter();
+    }
+    private static void ValidateChildName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(new[] { '/', '\\', '\0' }) >= 0)
+            throw new ArgumentException("Service child must be a single filename", nameof(name));
+    }
+    internal static byte[]? ReadProtected(string name, int maximum)
+    {
+        ValidateChildName(name); EnsureDir();
+        if (!Directory.Exists(Dir)) return null;
+        return ReadChild(name, privateRead: false, maxBytes: maximum);
+    }
+    internal static bool WriteProtected(string name, byte[] bytes, bool replace = true)
+    {
+        ValidateChildName(name);
+        return AtomicWriteChild(name, bytes, 0x180, replace);
+    }
+    internal static void DeleteProtected(string name)
+    {
+        ValidateChildName(name); EnsureDir();
+        if (!OperatingSystem.IsMacOS()) { File.Delete(Path.Combine(Dir, name)); return; }
+        using var directory = OpenValidatedDirectory();
+        if (unlinkat(directory.DangerousGetHandle().ToInt32(), name, 0) != 0 && Marshal.GetLastPInvokeError() != 2)
+            throw new IOException($"Cannot remove service child '{name}': errno {Marshal.GetLastPInvokeError()}");
+    }
     internal static IDisposable EnterControl() => ControlLock.Enter();
 
-    private static IDisposable OpenControlLock()
+    private static IDisposable OpenControlLock(string name)
     {
         EnsureDir();
         if (!OperatingSystem.IsMacOS())
-            return new FileStream(Path.Combine(Dir, ".service-control.lock"),
+            return new FileStream(Path.Combine(Dir, name),
                 FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         using var directory = OpenValidatedDirectory();
-        int fd = openat(directory.DangerousGetHandle().ToInt32(), ".service-control.lock",
+        int fd = openat(directory.DangerousGetHandle().ToInt32(), name,
             0x2 | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0x180); // O_RDWR, 0600
         if (fd < 0) throw new IOException($"Cannot open daemon control lock: errno {Marshal.GetLastPInvokeError()}");
         var handle = new SafeFileHandle((IntPtr)fd, ownsHandle: true);
         try
         {
             if (FStat(fd, out var stat) != 0) throw new IOException("Cannot inspect daemon control lock");
-            ValidateChild(stat, ".service-control.lock", privateRead: true);
+            ValidateChild(stat, name, privateRead: true);
             if (flock(fd, 0x2 | 0x4) != 0) // LOCK_EX | LOCK_NB (XNU sys/fcntl.h)
                 throw new IOException($"Daemon control is busy: errno {Marshal.GetLastPInvokeError()}");
             return handle; // closing this exact fd releases the advisory lock
