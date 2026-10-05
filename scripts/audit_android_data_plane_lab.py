@@ -289,7 +289,9 @@ def system_lifecycle(arun, evidence, echo, result):
                "revoked service remained")
     links = arun("shell", "su", "0", "ip", "-o", "link", "show").stdout
     assert not re.search(r"^\d+: tun\d", links, re.M), links
-    prefs = arun("shell", "run-as", "com.qeli", "cat", "shared_prefs/app_state.xml").stdout
+    prefs = (arun("shell", "su", "0", "cat", "/data/data/com.qeli/shared_prefs/app_state.xml")
+             if result["android_build_type"] == "release" else
+             arun("shell", "run-as", "com.qeli", "cat", "shared_prefs/app_state.xml")).stdout
     (evidence / "revoked-prefs.xml").write_text(prefs)
     tree = ET.fromstring(prefs)
     assert any(n.get("name") == "connection_desired" and n.get("value") == "false" for n in tree), prefs
@@ -312,6 +314,7 @@ def main():
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
     ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover"), default="explicit")
     ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic")
+    ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
     args = ap.parse_args()
     if args.suite == "recovery" and args.transport == "tcp":ap.error("recovery requires udp/quic")
     assert not args.restart_control or args.suite == "system"
@@ -325,13 +328,13 @@ def main():
             env["Q29_PARENT_" + kind.upper()] = os.readlink("/proc/self/ns/" + kind)
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
-                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport,
+                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant,
                                *(["--restart-control"] if args.restart_control else [])], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(status="RUNNING", namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover") else None)
+    result = dict(status="RUNNING", android_build_type=args.variant, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):
@@ -486,24 +489,38 @@ perf.connection.handshake_timeout_secs = 12
             expected_tests = 1
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
+            assert manifest.get("build_type", "debug") == args.variant, "APK manifest does not match requested variant"
             result[folder + "_apks"] = manifest
             for name, digest in manifest["apks"].items():
                 apk = root / folder / name
                 assert sha(apk) == digest
                 (evidence / (folder + "-" + name + "-install.log")).write_text(arun("install", "-r", "-t", str(apk), timeout=90).stdout)
+            package = arun("shell", "dumpsys", "package", "com.qeli").stdout
+            (evidence / (folder + "-package.txt")).write_text(package)
+            if args.variant == "release":
+                nondebug = arun("shell", "run-as", "com.qeli", "true", check=False)
+                (evidence / (folder + "-run-as.txt")).write_text(nondebug.stdout + nondebug.stderr)
+                assert nondebug.returncode != 0 and "not debuggable" in nondebug.stdout + nondebug.stderr, nondebug
+                assert not re.search(r"(?:pkgFlags|flags)=\[[^\]]*\bDEBUGGABLE\b", package), package
             arun("shell", "appops", "set", "com.qeli", "ACTIVATE_VPN", "allow")
             arun("shell", "pm", "grant", "com.qeli", "android.permission.POST_NOTIFICATIONS")
-            proc = arun("shell", "am", "instrument", "-w", "-r", "-e", "class", selector,
-                        "-e", "q29_private_fixture", "1", "-e", "q29_key_tcp", keys["tcp"],
-                        "-e", "q29_key_udp", keys["udp"],
-                        *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover") else []),
-                        "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
-            (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
-            result[folder + "_output"] = proc.stdout
-            result[folder + "_echo_receipts"] = len(echo.rows)
-            (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "Q29System:I", "AndroidRuntime:E").stdout)
-            if folder == "fixed":
-                assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
+            if args.variant == "release" and args.suite == "handover":
+                from audit_android_release_ui import import_release_profile
+                import_release_profile(arun,evidence,result,keys,args.transport)
+                result[folder + "_output"]="UI_IMPORT_PASS; INSTRUMENTATION_NOT_RUN"
+                result[folder + "_echo_receipts"]=len(echo.rows)
+            else:
+                proc = arun("shell", "am", "instrument", "-w", "-r", "-e", "class", selector,
+                            "-e", "q29_private_fixture", "1", "-e", "q29_key_tcp", keys["tcp"],
+                            "-e", "q29_key_udp", keys["udp"],
+                            *(["-e", "q29_transport", args.transport, "-e", "q29_roaming", "off" if args.transport == "tcp" else "required"] if args.suite in ("recovery", "handover") else []),
+                            "com.qeli.test/androidx.test.runner.AndroidJUnitRunner", timeout=240)
+                (evidence / (folder + "-instrumentation.log")).write_text(proc.stdout + proc.stderr)
+                result[folder + "_output"] = proc.stdout
+                result[folder + "_echo_receipts"] = len(echo.rows)
+                (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "Q29System:I", "AndroidRuntime:E").stdout)
+                if folder == "fixed":
+                    assert f"OK ({expected_tests} {'test' if expected_tests == 1 else 'tests'})" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
         if args.suite in ("system", "power", "recovery", "handover"):
             system_lifecycle(arun, evidence, echo, result)

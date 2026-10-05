@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v70 -->
+<!-- normative-sync: full-system-audit-v71 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2200,3 +2200,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October,Q29 TCP handover:** [Wi-Fi↔Cellular](../reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md):2/2PASS,1bootstrap/8receipts. Fresh Auth/NetworkPlan and outerports,PID/TUN/addresses retained,ordinary UID payload after recovery;UDPpathcommit0. Revoke/settings/host/service/userdata/cleanup PASS;296inputs/2APK/JNI/managed unchanged. Harness only,no rebuild. Post-switchIPv6/TCP,NAT64/Release,longpower/flapping,SIGKILLFAIL remain.Q29IN_PROGRESS,28/37(75.7%).
 
 **5 October,Q29 post-switch payload:** [full dual-stack matrix](../reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md):TCP/UDP/QUIC×Wi-Fi↔Cellular×IPv4/IPv6TCP/UDP24/24PASS,6transitions,3bootstrap/42receipts.IndependentUID,allreplybytes/SHA,sink+TUNpcap;TCPfreshAuth/plan,TUNretained;UDPsoftcommits/Authunchanged. Revoke/settings/host/service/userdata/cleanupPASS.295inputs/productAPK/JNI/managed identical,1testreceiverchange,newtestAPK.AvailableAVDpost-switchpayloadcovered;IPv6only/NAT64,Release,longpower/flapping,SIGKILLFAILremain,Q29IN_PROGRESS,28/37(75.7%).
+
+**5 October, Q29 Release runtime:** [report](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md): 24/24 payload probes, six Wi-Fi ↔ Cellular transitions, three UI INI imports, 30 receipts. TCP/UDP/QUIC × IPv4/IPv6 TCP/UDP, independent UID, full replies/SHA and TUN pcap. PID/TUN retained; revoke/cleanup and lab state PASS. Release/testRelease R8, nondebuggable target, lab signing; production rules not relaxed. Matching instrumentation Trace FAIL and four failed attempts retained; UI success does not close them. IPv6-only/NAT64, full Release fault suite, leak matrix, long power/flapping and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).

@@ -16,7 +16,14 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
 }
 
+// Build the matching androidTest APK; debug tests cannot target an R8 release APK.
+val qeliTestBuildType = providers.gradleProperty("qeliTestBuildType").getOrElse("debug")
+require(qeliTestBuildType in listOf("debug", "release")) { "qeliTestBuildType must be debug or release" }
+val qeliLabReleaseSigning = providers.gradleProperty("qeliLabReleaseSigning").getOrElse("false").toBooleanStrict()
+require(!qeliLabReleaseSigning || qeliTestBuildType == "release") { "Lab release signing requires the release test variant" }
+
 android {
+    testBuildType = qeliTestBuildType
     // Fresh CI/development output replaces, rather than supplements, committed jniLibs.
     providers.environmentVariable("QELI_NATIVE_JNI_DIR").orNull?.let { nativeDir ->
         sourceSets.getByName("main").jniLibs.setSrcDirs(listOf(nativeDir))
@@ -66,7 +73,10 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Sign the release only when a keystore is configured; otherwise the
             // APK is left unsigned (so CI / fresh clones still build).
-            if (keystorePropsFile.exists()) {
+            if (qeliLabReleaseSigning) {
+                // Explicit disposable-lab fixture only; never a production signing fallback.
+                signingConfig = signingConfigs.getByName("debug")
+            } else if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

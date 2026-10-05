@@ -423,3 +423,4 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: Wi-Fi/Cellular switching and TUN retention](reports/AUDIT-Q29-ANDROID-HANDOVER.md)
 - [Q29: TCP across Android Wi-Fi/Cellular switching](reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md)
 - [Q29: IPv4/IPv6 TCP/UDP after Android network switching](reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md)
+- [Q29: minified Release and Android network runtime](reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md)

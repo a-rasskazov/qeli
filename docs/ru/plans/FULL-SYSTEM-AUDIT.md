@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v70 -->
+<!-- normative-sync: full-system-audit-v71 -->
 
 **Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
 
@@ -2213,3 +2213,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября,Q29 TCP handover:** [Wi-Fi↔Cellular](../reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md):2/2PASS,1bootstrap/8receipts. Новая Auth/NetworkPlan и внешние порты,PID/TUN/адреса сохранены,ordinary UID payload после recovery;UDPpathcommit0. Revoke/settings/host/service/userdata/cleanup PASS;296inputs/2APK/JNI/managed идентичны. Только harness,без пересборки. Post-switchIPv6/TCP,NAT64/Release,longpower/flapping,SIGKILLFAIL остаются.Q29IN_PROGRESS,28/37(75,7%).
 
 **5 октября,Q29 post-switch payload:** [полная dual-stack матрица](../reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md):TCP/UDP/QUIC×Wi-Fi↔Cellular×IPv4/IPv6TCP/UDP24/24PASS,6transitions,3bootstrap/42receipts. IndependentUID,все replybytes/SHA,sink+TUNpcap;TCPfreshAuth/plan,TUNretained;UDPsoftcommits/Authunchanged. Revoke/settings/host/service/userdata/cleanupPASS.295inputs/productAPK/JNI/managed identical,1testreceiverchange,newtestAPK. ДоступныйAVD post-switchpayloadзакрыт;IPv6only/NAT64,Release,longpower/flapping,SIGKILLFAIL остаются,Q29IN_PROGRESS,28/37(75,7%).
+
+**5 октября, Q29 Release runtime:** [отчёт](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md): 24/24 payload-проб, шесть переходов Wi-Fi ↔ Cellular, три UI-импорта INI, 30 receipts. TCP/UDP/QUIC × IPv4/IPv6 TCP/UDP, независимый UID, полные ответы/SHA и TUN pcap. PID/TUN сохранены; revoke/cleanup и состояние стенда PASS. Release/testRelease R8, недебажный клиент, лабораторная подпись; production правила не ослаблены. Matching instrumentation Trace FAIL и четыре неуспешные попытки сохранены; успех UI их не закрывает. IPv6-only/NAT64, полный Release fault suite, leak-матрица, долгий power/flapping и SIGKILL FAIL остаются. Q29 IN_PROGRESS; 28/37 (75,7%).
