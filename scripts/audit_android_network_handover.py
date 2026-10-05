@@ -24,7 +24,7 @@ def default_carrier(text):
     raise AssertionError("default network absent from current network agents: "+netid)
 
 
-def network_handover(arun,evidence,probe,result):
+def network_handover(arun,evidence,probe,result, *, bursts=None):
     checks=result["network_handover"]={"cells":[]}
     tcp = result["recovery_transport"] == "tcp"
     checks["contract"] = "TCP_FULL_RECONNECT_RETAINED_TUN" if tcp else "UDP_SOFT_ROAMING_RETAINED_SESSION_TUN"
@@ -76,7 +76,8 @@ def network_handover(arun,evidence,probe,result):
             actions=[("away",["svc","wifi","enable"],"WIFI"),("return",["svc","wifi","disable"],"CELLULAR")]
         for label,action,expected in actions:
             before,old=snapshot("handover-"+label+"-before");oldcounts=counts();initial_logs=logs();start=time.monotonic()
-            arun("shell",*action)
+            if bursts is None:arun("shell",*action)
+            else:bursts.run("handover-"+label,lambda:arun("shell",*action))
             wait_until(lambda:(new:=carrier()) is not None and new["handle"]!=old["handle"] and (expected is None or new["transport"]==expected),"default carrier did not switch",45)
             new=carrier();assert new and new["handle"]!=old["handle"]
             if tcp:

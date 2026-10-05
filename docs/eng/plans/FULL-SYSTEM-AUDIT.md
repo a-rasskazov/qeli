@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v73 -->
+<!-- normative-sync: full-system-audit-v74 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2206,3 +2206,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q29 Release faults:** [report](../reports/AUDIT-Q29-ANDROID-RELEASE-FAULTS.md): seven scenarios PASS (screen-off, forced Doze, TCP reset, UDP/QUIC × soft/grace-expiry), three UI imports, twelve initial dual-stack payload probes. PID/TUN retained, wake without fresh Auth/plan, full recovery with fresh Auth/plan; revoke/cleanup and lab state PASS. Same Release pair and all 296 inputs, no rebuild. Two harness failures retained; DEX explains original Trace references without a definition, runner FAIL not called PASS. NAT64, leak matrix, long power/flapping, remaining lifecycle and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).
 
 **5 October, Q29 IPv6-only/NAT64:** [report](../reports/AUDIT-Q29-ANDROID-NAT64.md): TCP/UDP/QUIC masking, three Release UI imports, 12 dual-stack TCP/UDP payload probes and 18 receipts PASS. SLAAC/RDNSS WLAN without IPv4, A-only server, DNS64 and actual bidirectional translation confirmed in pcap; revoke/cleanup and fixture state PASS. All 296 inputs and APK/JNI/managed unchanged. Three fixture failures retained; NAT64 handover on fixed-IPv4 Cellular not qualified. Leak matrix, long power/flapping, remaining lifecycle and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).
+
+**5 October, Q29 transition/stop leak probes:** [report](../reports/AUDIT-Q29-ANDROID-LEAK-BURSTS.md): four Release runs, 1,056 probes, six handovers and four force-stops. All four physical outgoing paths positively calibrated in sink/pcap; short baseline timeouts not called blocking. No new physical SYN/data/UDP in the qualified window; post-baseline marked requests only through TUN, 192 post-stop probes without reply/receipt/capture. Manual recovery 16 payload probes and revoke/cleanup PASS. Product APK/native/managed unchanged; one test receiver changed, fresh test R8 build. DNS/cold-start/split/per-app, long scenarios and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).

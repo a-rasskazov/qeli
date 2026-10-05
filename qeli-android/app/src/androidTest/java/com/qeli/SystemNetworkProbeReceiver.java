@@ -30,23 +30,68 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
         final String protocol = intent.hasExtra("protocol") ? intent.getStringExtra("protocol") : "udp";
         final int size = intent.getIntExtra("payload_bytes", tag.length());
         if ((!"ipv4".equals(family) && !"ipv6".equals(family)) || (!"tcp".equals(protocol) && !"udp".equals(protocol)) || (size != tag.length() && size != 257 && size != 16384)) return;
+        final int run = intent.getIntExtra("burst_run", 0);
+        final int count = intent.getIntExtra("burst_count", 0);
+        if (run < 0 || (run != 0 && (count < 1 || count > 12)) || (run == 0 && count != 0)) return;
         final PendingResult pending = goAsync();
         Thread worker = new Thread(() -> {
-            String prefix = "COMPLETE tag=" + tag + " uid=" + Process.myUid() + " family=" + family + " protocol=" + protocol + " bytes=" + size;
+            try {
+                if (run == 0) {
+                    probe(tag, family, protocol, size, 0, 0, "COMPLETE tag=" + tag + " uid=" + Process.myUid() + " family=" + family + " protocol=" + protocol + " bytes=" + size);
+                } else {
+                    Thread[] children = new Thread[4];
+                    int at = 0;
+                    for (String f : new String[]{"ipv4", "ipv6"}) {
+                        for (String proto : new String[]{"tcp", "udp"}) {
+                            final String selectedFamily = f, selectedProtocol = proto;
+                            children[at] = new Thread(() -> {
+                                Log.i("Q29Probe", "BURST_BEGIN run=" + run + " uid=" + Process.myUid() + " family=" + selectedFamily + " protocol=" + selectedProtocol + " count=" + count);
+                                for (int sample = 0; sample < count; sample++) {
+                                    String prefix = "BURST run=" + run + " sample=" + sample + " tag=" + tag + " uid=" + Process.myUid() + " family=" + selectedFamily + " protocol=" + selectedProtocol + " bytes=257 started_ms=" + System.currentTimeMillis();
+                                    probe(tag, selectedFamily, selectedProtocol, 257, run, sample, prefix);
+                                    try { Thread.sleep(150); }
+                                    catch (InterruptedException error) { Thread.currentThread().interrupt(); return; }
+                                }
+                            }, "q29-burst-" + selectedFamily + "-" + selectedProtocol);
+                            children[at].setDaemon(true);children[at++].start();
+                        }
+                    }
+                    boolean interrupted = false;
+                    for (Thread child : children) {
+                        while (child.isAlive()) {
+                            try { child.join(); }
+                            catch (InterruptedException error) { interrupted = true; }
+                        }
+                    }
+                    if (interrupted) Thread.currentThread().interrupt();
+                    Log.i("Q29Probe", "BURST_FINISHED run=" + run + " uid=" + Process.myUid());
+                }
+            } finally { pending.finish(); }
+        }, "q29-independent-socket");
+        worker.setDaemon(true); worker.start();
+    }
+
+    private static void probe(String tag, String family, String protocol, int size, int run, int sample, String prefix) {
             try {
                 InetAddress host = InetAddress.getByName("ipv6".equals(family) ? "2001:db8:29::1" : "198.19.0.1");
                 byte[] data = new byte[size];
                 for (int i = 0; i < data.length; i++) data[i] = (byte) ((i * 31 + 17) % 251);
                 byte[] marker = tag.getBytes(StandardCharsets.UTF_8);
                 System.arraycopy(marker, 0, data, 0, marker.length);
+                if (run != 0) {
+                    for (int shift = 0; shift < 4; shift++) {
+                        data[marker.length + shift] = (byte) (run >>> (24 - 8 * shift));
+                        data[marker.length + 4 + shift] = (byte) (sample >>> (24 - 8 * shift));
+                    }
+                }
                 byte[] expected, received;
                 String source;
                 if ("tcp".equals(protocol)) {
                     expected = data.clone();
                     for (int i = 0; i < data.length; i++) expected[i] = data[data.length - 1 - i];
                     try (Socket socket = new Socket()) {
-                        socket.setSoTimeout(3000);
-                        socket.connect(new InetSocketAddress(host, 26000), 2000);
+                        socket.setSoTimeout(run == 0 ? 3000 : 250);
+                        socket.connect(new InetSocketAddress(host, 26000), run == 0 ? 2000 : 250);
                         source = socket.getLocalAddress().getHostAddress();
                         DataOutputStream output = new DataOutputStream(socket.getOutputStream());
                         output.writeInt(data.length); output.write(data); output.flush();
@@ -59,7 +104,7 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
                     System.arraycopy("Q29:".getBytes(StandardCharsets.UTF_8), 0, expected, 0, 4);
                     System.arraycopy(data, 0, expected, 4, data.length);
                     try (DatagramSocket socket = new DatagramSocket()) {
-                        socket.setSoTimeout(1500); socket.connect(host, 26000);
+                        socket.setSoTimeout(run == 0 ? 1500 : 250); socket.connect(host, 26000);
                         source = socket.getLocalAddress().getHostAddress();
                         socket.send(new DatagramPacket(data, data.length));
                         DatagramPacket reply = new DatagramPacket(new byte[expected.length + 1], expected.length + 1);
@@ -68,11 +113,10 @@ public final class SystemNetworkProbeReceiver extends BroadcastReceiver {
                     }
                 }
                 if (!Arrays.equals(expected, received)) throw new IllegalStateException("Payload bytes differ");
-                Log.i("Q29Probe", prefix + " source=" + source + " reply=Q29:" + tag + " sha256=" + sha(data) + " reply_sha256=" + sha(received));
+                Log.i("Q29Probe", prefix + (run == 0 ? "" : " done_ms=" + System.currentTimeMillis()) + " source=" + source + " reply=Q29:" + tag + " sha256=" + sha(data) + " reply_sha256=" + sha(received));
             } catch (Exception error) {
-                Log.i("Q29Probe", prefix + " error=" + error.getClass().getSimpleName() + ":" + error.getMessage());
-            } finally { pending.finish(); }
-        }, "q29-independent-socket");
-        worker.setDaemon(true); worker.start();
+                Log.i("Q29Probe", prefix + (run == 0 ? "" : " done_ms=" + System.currentTimeMillis()) + " error=" + error.getClass().getSimpleName() + ":" + error.getMessage());
+
+            }
     }
 }
