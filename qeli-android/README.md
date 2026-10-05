@@ -240,3 +240,21 @@ IDLE/экран наблюдаются каждые15s; receiver не запус
 System lookup подтверждается A/AAAA, правильным SNI и TUN peer в TLS receipts; raw UDP
 проверяется отдельно и не заменяет DoT. Bootstrap provider не смешивается с app nonce.
 [Q29: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md).
+
+
+## Разрешения подключения: отмена и пересоздание Activity
+
+Activity удерживает первоначально проверенный INI-профиль в памяти ViewModel до
+завершения разрешений уведомлений/VPN. Отмена не позволяет позднему ответу запустить
+сервис; редактирование или переключение профиля не подменяет уже начатый запрос.
+Пересоздание Activity сохраняет запрос, смерть процесса требует нового подключения;
+секреты запроса не сохраняются в Bundle или preferences.
+
+`PermissionFlowInstrumentedTest` проверяет реальные Activity/registry/service/JNI
+с инъецированной стадией ожидания и ответом. Он не автоматизирует системный диалог.
+`audit_android_data_plane_lab.py --suite private-dns --variant release --leak-bursts
+--ui-connect-restart --transport tcp` дополнительно проверяет обычную кнопку
+отключения/подключения после OS lockdown bootstrap на выделенном readonly AVD.
+Нужны закреплённые APK/manifest и частные namespaces; остальные suites/варианты
+отклоняют этот opt-in до изменения стенда.
+[Q29: результаты и ограничения](../docs/ru/reports/AUDIT-Q29-ANDROID-PERMISSIONS.md).

@@ -222,6 +222,29 @@ def system_lifecycle(arun, evidence, echo, result, *, dot=None):
               for key in ("always_on_vpn_app", "always_on_vpn_lockdown")}
     assert policy == {"always_on_vpn_app": "com.qeli", "always_on_vpn_lockdown": "1"}, policy
     result["system_policy"] = policy
+    if result.get("ui_connect_restart_enabled"):
+        ui=AndroidVpnSettings(arun,evidence,result,"Qeli",prefix="connect-")
+        arun("shell","am","start","-n","com.qeli/.MainActivity")
+        tree=ui.ui("connected")
+        tab=ui.text_node(tree,"Connection");assert tab is not None
+        ui.tap(tab);tree=ui.ui("connection-tab")
+        def ring(tree):
+            node=next((v for v in tree.iter("node") if v.get("resource-id")=="com.qeli:id/ringConnect"),None)
+            assert node is not None,"connect ring absent"
+            return node
+        old_count=logs().count("Android VPN CONNECTED:")
+        ui.tap(ring(tree))
+        wait_until(lambda:not re.search(r"^\d+: tun\d",arun("shell","su","0","ip","-o","link","show").stdout,re.M),"UI disconnect left TUN",20)
+        deadline=time.monotonic()+20
+        while time.monotonic()<deadline:
+            tree=ui.ui("disconnected")
+            if any(v.get("resource-id")=="com.qeli:id/tvStatus" and v.get("text")=="Disconnected" for v in tree.iter("node")):break
+        else:raise AssertionError("UI did not finish disconnect")
+        blocked=probe("Q29PROTECTED",False,label="ui-disconnected-lockdown")
+        ui.tap(ring(tree))
+        wait_until(lambda:logs().count("Android VPN CONNECTED:")>old_count,"Release UI connect did not publish a new VPN",30)
+        result["ui_connect_restart"]={"status":"PASS","instrumentation":"NOT_RUN","blocked":blocked,
+            "payloads":[probe("Q29PROTECTED",True,label="ui-reconnect-"+f+"-"+p,family=f,protocol=p,payload_bytes=16384 if p=="tcp" else 257) for f in ("ipv4","ipv6") for p in ("tcp","udp")]}
     if dns_probe is not None:
         dns_probe("connected", True)
         if result["resolver_diagnostics_enabled"]:startup.diagnose()
@@ -355,7 +378,9 @@ def main():
     ap.add_argument("--resolver-diagnostics", action="store_true", help="observe Android async DNS variants; startup suite only")
     ap.add_argument("--leak-bursts", action="store_true", help="ordinary-UID probe bursts crossing handover/force-stop; Release only")
     ap.add_argument("--variant", choices=("debug", "release"), default="debug", help="require matching APK build type in fixture manifest")
+    ap.add_argument("--ui-connect-restart", action="store_true", help="verify real Release Activity disconnect/connect after OS lockdown bootstrap; private-dns only")
     args = ap.parse_args()
+    if args.ui_connect_restart and (args.variant != "release" or args.suite != "private-dns"):ap.error("UI connect restart requires Release private-dns suite")
     if args.apps_mode != "all" and (args.variant != "release" or args.suite not in ("startup", "handover", "app-policy")):ap.error("per-app fixture requires Release startup/handover/app-policy")
     if args.require_published_start and (args.variant != "release" or args.suite != "startup" or not args.startup_state):ap.error("published start requires Release startup state")
     if args.startup_state and args.suite != "startup":ap.error("startup state requires startup suite")
@@ -381,12 +406,12 @@ def main():
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
                                "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite, "--transport", args.transport, "--variant", args.variant, "--carrier", args.carrier, "--apps-mode", args.apps_mode,
                                *(["--require-published-start"] if args.require_published_start else []),
-                               *(["--startup-state"] if args.startup_state else []), *(["--resolver-diagnostics"] if args.resolver_diagnostics else []), *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else [])], env=env, timeout=1200 if args.suite == "endurance" else 650).returncode
+                               *(["--startup-state"] if args.startup_state else []), *(["--resolver-diagnostics"] if args.resolver_diagnostics else []), *(["--restart-control"] if args.restart_control else []), *(["--leak-bursts"] if args.leak_bursts else []), *(["--ui-connect-restart"] if args.ui_connect_restart else [])], env=env, timeout=1200 if args.suite == "endurance" else 650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else None)
+    result = dict(ui_connect_restart_enabled=args.ui_connect_restart, require_published_start=args.require_published_start, apps_mode=args.apps_mode, startup_state_enabled=args.startup_state, resolver_diagnostics_enabled=args.resolver_diagnostics, leak_bursts_enabled=args.leak_bursts, status="RUNNING", android_build_type=args.variant, carrier_fixture=args.carrier, namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite, recovery_transport=args.transport if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") else None)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):

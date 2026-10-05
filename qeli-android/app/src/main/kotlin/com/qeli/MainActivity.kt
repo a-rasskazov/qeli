@@ -32,6 +32,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.ViewModelProvider
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
 import com.qeli.databinding.ActivityMainBinding
@@ -98,7 +99,9 @@ class MainActivity : AppCompatActivity() {
     // Mirror of PREF_LOG_TIME_FORMAT, cached because appendLog reads it per line.
     // Refreshed in onCreate and whenever Settings is saved.
     private var logTimeFormat = DEFAULT_LOG_TIME_FORMAT
-    private var pendingConnect = false
+    private val connectRequest by lazy {
+        ViewModelProvider(this)[VpnConnectViewModel::class.java].request
+    }
     private var logAutoScroll = true
     // True while a fullScroll is already queued on scrollLog, so a burst of log lines
     // coalesces into a single scroll per frame instead of one layout pass per line.
@@ -216,7 +219,13 @@ ipv6 = auto
 
     private val vpnPrepareLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { r -> if (r.resultCode == RESULT_OK) startVpnService() else { appendLog("VPN permission denied"); setDisconnectedState() } }
+    ) { r ->
+        val granted = r.resultCode == RESULT_OK
+        if (connectRequest.finishPermission(VpnConnectRequest.Permission.VPN, granted)) {
+            if (granted) startVpnService()
+            else { appendLog("VPN permission denied"); setDisconnectedState() }
+        }
+    }
 
     private val importConfigLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -229,8 +238,10 @@ ipv6 = auto
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) { if (pendingConnect) { pendingConnect = false; proceedWithVpnPermission() } }
-        else { appendLog("Notification permission denied - required for VPN"); setDisconnectedState() }
+        if (connectRequest.finishPermission(VpnConnectRequest.Permission.NOTIFICATION, granted)) {
+            if (granted) proceedWithVpnPermission()
+            else { appendLog("Notification permission denied - required for VPN"); setDisconnectedState() }
+        }
     }
 
     private val trustedWifiPermissionLauncher = registerForActivityResult(
@@ -315,6 +326,9 @@ ipv6 = auto
         // foreground service keeps running — restore the real tunnel state so the
         // UI doesn't falsely show "Disconnected".
         restoreServiceState()
+        if (connectRequest.isActive && !isConnected && !isDisconnecting && !isTrustedPaused) {
+            setConnectingState()
+        }
 
         loadProfiles()
         renderActiveProfile()
@@ -2164,7 +2178,8 @@ ipv6 = auto
     }
 
     private fun connect() {
-        if (isDisconnecting || isTrustedPaused) return
+        if (isConnected || isConnecting || isDisconnecting || isTrustedPaused ||
+            connectRequest.hasOutstandingResult) return
         val p = current() ?: return
         // `parse` only PARSES — validate() is a separate step, and connecting without it let a
         // profile saved before the range checks existed (or hand-edited since) reach the tunnel
@@ -2177,26 +2192,39 @@ ipv6 = auto
             Toast.makeText(this, getString(R.string.set_real_server), Toast.LENGTH_LONG).show()
             binding.tabs.getTabAt(1)?.select(); showEditor(activeIndex); return
         }
+        if (!connectRequest.begin(cfg)) return
         appendLog("Connecting \"${p.name}\"")
         setConnectingState()
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            pendingConnect = true
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS); return
+            connectRequest.awaitPermission(VpnConnectRequest.Permission.NOTIFICATION)
+            try { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+            catch (e: Exception) {
+                connectRequest.launchFailed(VpnConnectRequest.Permission.NOTIFICATION)
+                appendLog("Permission request error: ${e.message}"); setDisconnectedState()
+            }
+            return
         }
         proceedWithVpnPermission()
     }
 
     private fun proceedWithVpnPermission() {
+        if (!connectRequest.isActive) return
         try {
             val vpnIntent = VpnService.prepare(this)
-            if (vpnIntent != null) vpnPrepareLauncher.launch(vpnIntent) else startVpnService()
-        } catch (e: Exception) { appendLog("Error: ${e.message}"); setDisconnectedState() }
+            if (vpnIntent != null) {
+                connectRequest.awaitPermission(VpnConnectRequest.Permission.VPN)
+                vpnPrepareLauncher.launch(vpnIntent)
+            } else startVpnService()
+        } catch (e: Exception) {
+            connectRequest.launchFailed(VpnConnectRequest.Permission.VPN)
+            appendLog("Error: ${e.message}"); setDisconnectedState()
+        }
     }
 
     private fun startVpnService() {
+        val cfg = connectRequest.takeConfiguration() ?: return
         try {
-            val cfg = VpnConfig.parse(current()!!.text)
             val intent = Intent(this, VpnServiceImpl::class.java).apply {
                 action = VpnServiceImpl.ACTION_CONNECT
                 putExtra(VpnServiceImpl.EXTRA_CONFIG, cfg)
@@ -2208,6 +2236,7 @@ ipv6 = auto
     }
 
     private fun disconnect() {
+        connectRequest.cancel()
         appendLog("Disconnecting…")
         setDisconnectingState()
         try {
