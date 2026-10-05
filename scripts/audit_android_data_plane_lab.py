@@ -213,7 +213,7 @@ def system_lifecycle(arun, evidence, echo, result):
     result["probe_uids"] = uid_rows
     result["app_probe_baseline"] = probe("Q29BASELINE", True)
     policy_applied = logs().count("Native NetworkPlan 1 APPLIED:")
-    # Finishing instrumentation force-stops its target. Start the saved profile via the real OS.
+    # Start the saved profile through the OS after Debug instrumentation or Release UI import.
     arun("shell", "am", "start", "-n", "com.qeli/.MainActivity")
     open_settings(); switch("Always-on VPN", True); switch("Block connections without VPN", True)
     wait_until(lambda: "kill_switch=true" in logs() and logs().count("Native NetworkPlan 1 APPLIED:") > policy_applied,
@@ -223,6 +223,15 @@ def system_lifecycle(arun, evidence, echo, result):
     assert policy == {"always_on_vpn_app": "com.qeli", "always_on_vpn_lockdown": "1"}, policy
     result["system_policy"] = policy
     result["app_probe_lockdown_connected"] = probe("Q29PROTECTED", True)
+    if result["android_build_type"] == "release" and result["suite"] != "handover":
+        # Release UI import has no instrumented bootstrap. Exercise both families and
+        # socket protocols with the independent ordinary-UID receiver before faults.
+        result["release_start_payloads"] = [
+            probe("Q29PROTECTED", True, label="release-start-" + family + "-" + protocol,
+                  family=family, protocol=protocol,
+                  payload_bytes=16384 if protocol == "tcp" else 257)
+            for family in ("ipv4", "ipv6") for protocol in ("tcp", "udp")
+        ]
     if result["suite"] == "handover":
         from audit_android_network_handover import network_handover
         network_handover(arun, evidence, probe, result)
@@ -504,9 +513,11 @@ perf.connection.handshake_timeout_secs = 12
                 assert not re.search(r"(?:pkgFlags|flags)=\[[^\]]*\bDEBUGGABLE\b", package), package
             arun("shell", "appops", "set", "com.qeli", "ACTIVATE_VPN", "allow")
             arun("shell", "pm", "grant", "com.qeli", "android.permission.POST_NOTIFICATIONS")
-            if args.variant == "release" and args.suite == "handover":
+            if args.variant == "release" and args.suite in ("system", "power", "recovery", "handover"):
                 from audit_android_release_ui import import_release_profile
-                import_release_profile(arun,evidence,result,keys,args.transport)
+                # Power/system fixtures are TCP; --transport selects only recovery/handover.
+                ui_transport = args.transport if args.suite in ("recovery", "handover") else "tcp"
+                import_release_profile(arun, evidence, result, keys, ui_transport)
                 result[folder + "_output"]="UI_IMPORT_PASS; INSTRUMENTATION_NOT_RUN"
                 result[folder + "_echo_receipts"]=len(echo.rows)
             else:

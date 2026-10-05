@@ -424,3 +424,4 @@
 - [Q29: TCP при переключении Android Wi-Fi/Cellular](reports/AUDIT-Q29-ANDROID-TCP-HANDOVER.md)
 - [Q29: IPv4/IPv6 TCP/UDP после переключения Android сети](reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md)
 - [Q29: минифицированный Release и сетевой runtime Android](reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md)
+- [Q29: сон и восстановление транспорта в Android Release](reports/AUDIT-Q29-ANDROID-RELEASE-FAULTS.md)

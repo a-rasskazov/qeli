@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v71 -->
+<!-- normative-sync: full-system-audit-v72 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2202,3 +2202,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October,Q29 post-switch payload:** [full dual-stack matrix](../reports/AUDIT-Q29-ANDROID-HANDOVER-PAYLOAD.md):TCP/UDP/QUIC×Wi-Fi↔Cellular×IPv4/IPv6TCP/UDP24/24PASS,6transitions,3bootstrap/42receipts.IndependentUID,allreplybytes/SHA,sink+TUNpcap;TCPfreshAuth/plan,TUNretained;UDPsoftcommits/Authunchanged. Revoke/settings/host/service/userdata/cleanupPASS.295inputs/productAPK/JNI/managed identical,1testreceiverchange,newtestAPK.AvailableAVDpost-switchpayloadcovered;IPv6only/NAT64,Release,longpower/flapping,SIGKILLFAILremain,Q29IN_PROGRESS,28/37(75.7%).
 
 **5 October, Q29 Release runtime:** [report](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md): 24/24 payload probes, six Wi-Fi ↔ Cellular transitions, three UI INI imports, 30 receipts. TCP/UDP/QUIC × IPv4/IPv6 TCP/UDP, independent UID, full replies/SHA and TUN pcap. PID/TUN retained; revoke/cleanup and lab state PASS. Release/testRelease R8, nondebuggable target, lab signing; production rules not relaxed. Matching instrumentation Trace FAIL and four failed attempts retained; UI success does not close them. IPv6-only/NAT64, full Release fault suite, leak matrix, long power/flapping and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).
+
+**5 October, Q29 Release faults:** [report](../reports/AUDIT-Q29-ANDROID-RELEASE-FAULTS.md): seven scenarios PASS (screen-off, forced Doze, TCP reset, UDP/QUIC × soft/grace-expiry), three UI imports, twelve initial dual-stack payload probes. PID/TUN retained, wake without fresh Auth/plan, full recovery with fresh Auth/plan; revoke/cleanup and lab state PASS. Same Release pair and all 296 inputs, no rebuild. Two harness failures retained; DEX explains original Trace references without a definition, runner FAIL not called PASS. NAT64, leak matrix, long power/flapping, remaining lifecycle and SIGKILL FAIL remain. Q29 IN_PROGRESS; 28/37 (75.7%).
