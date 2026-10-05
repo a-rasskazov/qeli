@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v54 -->
+<!-- normative-sync: full-system-audit-v55 -->
 
-**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app and forwarding stages complete; Swift runtime USER SKIPPED.**
+**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app forwarding and C# guardian stages complete; Swift guardian SOURCE REVIEW; Swift runtime USER SKIPPED.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -2164,3 +2164,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q28 per-app:** [bridge, Swift and build paths](../reports/AUDIT-Q28-MACOS-PERAPP.md): F256–F261;22 managed +10 shell PASS,6 old bridge and5 old shell failures. Swift source review;10 new native cases USER SKIPPED. Q28 IN_PROGRESS; forwarding/guardian/native socket lifetime remain. Plan27/37.
 
 **5 October, Q28 forwarding:** [ownership and recovery](../reports/AUDIT-Q28-MACOS-FORWARDING.md): F262–F264;58 new checks,1208 managed PASS,6 expected baseline FAIL. One Qeli owner per Mac,durable snapshot before sysctl,independent restore/checkpoint/retry. Actual Mac USER SKIPPED. Q28 IN_PROGRESS;guardian/native socket lifetime and integration remain. Plan27/37.
+
+**5 October, Q28 guardian:** [readiness and generation ownership](../reports/AUDIT-Q28-MACOS-GUARDIAN.md): F265–F267;39 per-app (17 new),1225 managed PASS,9 expected old C# FAIL. Swift ownership/10 new cases SOURCE REVIEW / USER SKIPPED. Schema v5,bundle upgrade after joining old guardians;no legacy-state takeover. Q28 IN_PROGRESS;native sockets and integration remain. Plan27/37.

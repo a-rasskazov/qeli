@@ -18,10 +18,13 @@ namespace QeliMac.Vpn;
 internal sealed class PerAppController
 {
     internal const string HelperName = "QeliPerAppCtl";
-    private const int RoutingStateVersion = 4;
+    private const int RoutingStateVersion = 5;
     private readonly Action<string> _log;
     private bool _started;
+    private bool _proxyStopped;
     private Process? _guardian;
+    private bool _guardianReady;
+    private string _ownerToken = Guid.NewGuid().ToString("N");
 
     private readonly string _helperPath;
     private readonly Action _validatePlatform;
@@ -38,7 +41,7 @@ internal sealed class PerAppController
         _validatePlatform = ValidatePlatform;
         _invoke = args => Run(_helperPath, args);
         _ensureGuardian = state => EnsureGuardian(_helperPath, state);
-        _guardianAlive = () => _guardian is { HasExited: false };
+        _guardianAlive = () => _guardianReady && _guardian is { HasExited: false };
         _stopGuardian = StopGuardian;
     }
 
@@ -87,6 +90,7 @@ internal sealed class PerAppController
         bool tunnelIpv6,
         bool tunnelUp)
     {
+        if (_proxyStopped) throw new InvalidOperationException("Join the retiring per-app guardian before reconfiguration");
         string helper = _helperPath;
         _validatePlatform();
         if (!File.Exists(helper)) throw new InvalidOperationException(
@@ -99,6 +103,8 @@ internal sealed class PerAppController
         var state = new RoutingState
         {
             Version = RoutingStateVersion,
+            OwnerToken = _ownerToken,
+            OwnerPid = Environment.ProcessId,
             TunnelUp = tunnelUp,
             // The guardian installs this state before activation and then renews it to a
             // rolling five-second lease, including while macOS waits for user approval.
@@ -168,13 +174,13 @@ internal sealed class PerAppController
                     }
                     catch (Exception recoveryError)
                     {
-                        _log("WARN: could not publish fail-closed per-app recovery state: "
+                        Note("WARN: could not publish fail-closed per-app recovery state: "
                             + recoveryError.Message);
                     }
                     try { _ensureGuardian(stateFile); }
                     catch (Exception guardianError)
                     {
-                        _log("WARN: could not restart the per-app guardian: "
+                        Note("WARN: could not restart the per-app guardian: "
                             + guardianError.Message);
                     }
                     _started = true;
@@ -191,15 +197,17 @@ internal sealed class PerAppController
                 }
                 throw;
             }
-            _log($"macOS per-app proxy {(wasStarted ? "updated" : "ACTIVE")}: "
+            Note($"macOS per-app proxy {(wasStarted ? "updated" : "ACTIVE")}: "
                 + $"mode={config.AppsMode}, apps={config.Apps.Count}, interface={interfaceName}");
         }
         finally
         {
-            try { File.Delete(stateFile); stateDirectory.Delete(); }
-            catch (Exception error) { _log("WARN: could not remove private per-app handoff: " + error.Message); }
+            try { File.Delete(Path.Combine(stateDirectory.FullName, "ready")); File.Delete(stateFile); stateDirectory.Delete(); }
+            catch (Exception error) { Note("WARN: could not remove private per-app handoff: " + error.Message); }
         }
     }
+
+    private void Note(string message) { try { _log(message); } catch { /* Observer is not lifecycle control. */ } }
 
     private static bool IsMacSigningIdentifier(string value) =>
         !string.IsNullOrWhiteSpace(value)
@@ -211,16 +219,21 @@ internal sealed class PerAppController
     {
         if (!_started) return;
         RequireHelper();
-        _invoke(new[] { "down" }); // A refusal must stop reconnect before TUN mutation.
+        _invoke(new[] { "down", _ownerToken }); // A refusal must stop reconnect before TUN mutation.
     }
 
     public void Stop()
     {
         if (!_started) return;
-        RequireHelper();
-        _invoke(new[] { "stop" });
+        if (!_proxyStopped)
+        {
+            RequireHelper();
+            _invoke(new[] { "stop", _ownerToken });
+            _proxyStopped = true; // A join retry must not stop a later owner.
+        }
         _stopGuardian();
-        _started = false; // Failed stop/join stays active and can be retried.
+        _started = false; _proxyStopped = false; // Failed join stays active and can be retried.
+        _ownerToken = Guid.NewGuid().ToString("N"); // Never reuse a retired generation.
     }
 
     private void RequireHelper()
@@ -240,8 +253,13 @@ internal sealed class PerAppController
 
     private void EnsureGuardian(string helper, string stateFile)
     {
-        if (_guardian is { HasExited: false }) return;
+        if (_guardian is { HasExited: false })
+        {
+            if (!_guardianReady) throw new IOException("Retire the unacknowledged per-app guardian before retry");
+            return;
+        }
         _guardian?.Dispose();
+        _guardian = null; _guardianReady = false;
         string executable = Environment.ProcessPath
             ?? throw new InvalidOperationException("could not locate the qeli executable");
         var psi = new ProcessStartInfo(helper)
@@ -256,6 +274,35 @@ internal sealed class PerAppController
         psi.ArgumentList.Add(stateFile);
         _guardian = Process.Start(psi)
             ?? throw new InvalidOperationException($"could not start {HelperName} guardian");
+        WaitGuardianReady(_guardian, Path.Combine(Path.GetDirectoryName(stateFile)!, "ready"), _ownerToken);
+        _guardianReady = true;
+    }
+
+    // A live child is not proof that it consumed the handoff. The helper publishes the
+    // exact generation token only after parent validation and an exclusive state claim.
+    internal static void WaitGuardianReady(Process guardian, string readyFile, string token, int budgetMs = 5_000)
+    {
+        if (budgetMs <= 0 || !Guid.TryParseExact(token, "N", out var id) || id.ToString("N") != token)
+            throw new ArgumentException("Invalid guardian readiness request");
+        var watch = Stopwatch.StartNew();
+        Span<byte> bytes = stackalloc byte[33];
+        while (watch.ElapsedMilliseconds < budgetMs)
+        {
+            if (guardian.HasExited) throw new IOException("per-app guardian exited before readiness");
+            try
+            {
+                using var file = new FileStream(readyFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                int count = 0, read;
+                while (count < bytes.Length && (read = file.Read(bytes[count..])) > 0) count += read;
+                if (count != 32 || System.Text.Encoding.UTF8.GetString(bytes[..count]) != token)
+                    throw new InvalidDataException("Invalid per-app guardian readiness token");
+                if (guardian.HasExited) throw new IOException("per-app guardian exited after readiness");
+                return;
+            }
+            catch (FileNotFoundException) { }
+            Thread.Sleep(20);
+        }
+        throw new TimeoutException("per-app guardian did not acknowledge readiness");
     }
 
     private void StopGuardian()
@@ -264,7 +311,7 @@ internal sealed class PerAppController
         if (guardian == null) return;
         JoinGuardian(guardian);
         guardian.Dispose();
-        _guardian = null;
+        _guardian = null; _guardianReady = false;
     }
 
     internal static void JoinGuardian(Process guardian)
@@ -285,6 +332,9 @@ internal sealed class PerAppController
     private sealed class RoutingState
     {
         public int Version { get; init; }
+        public string OwnerToken { get; init; } = "";
+        public int OwnerPid { get; init; }
+        public bool OwnerReleased { get; init; }
         public bool TunnelUp { get; set; }
         public long LeaseExpiresAtUnixMs { get; init; }
         public string InterfaceName { get; init; } = "";

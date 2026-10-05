@@ -405,3 +405,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q28: per-app bridge / Swift / build paths](reports/AUDIT-Q28-MACOS-PERAPP.md)
 
 - [Q28: forwarding ownership and recovery](reports/AUDIT-Q28-MACOS-FORWARDING.md)
+
+- [Q28: guardian readiness and generation ownership](reports/AUDIT-Q28-MACOS-GUARDIAN.md)

@@ -304,3 +304,14 @@ processes, не запускает NetworkExtension. Для запуска nativ
 Не удаляйте recovery journal вслепую. Per-app не приобретает этот глобальный lease.
 forwarding-selftest проверяет managed coordinator и временный файл с подменённым sysctl;
 это не Darwin runtime. [Проверки и границы](../docs/ru/reports/AUDIT-Q28-MACOS-FORWARDING.md).
+
+## Guardian: подтверждение готовности и generation
+
+Host/helper/extension используют внутренний state v5 и обновляются одним подписанным bundle.
+Сначала остановите старые профили/guardian; legacy state v4 автоматически не перехватывается.
+Guardian проверяет parent перед claim и публикует exact token acknowledgement. Ожидание
+готовности до 5 секунд; живой child без ack не считается готовым. Heartbeat и manager
+operations проверяют owner generation; завершённый stop остаётся tombstone. Если join
+отказал после stop, retry только завершает child; новое подключение ждёт retirement.
+[Upgrade, проверки и ограничения](../docs/ru/reports/AUDIT-Q28-MACOS-GUARDIAN.md).
+Swift/Xcode/runtime текущим C# selftest не подтверждены и остаются USER SKIPPED.

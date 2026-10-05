@@ -2625,3 +2625,20 @@ requires administrator inspection; do not blindly delete it. Restore failure ref
 closure. The journal is an internal JSON DTO; user configs remain INI. It does not provide
 full network crash recovery or coordination with independent tools changing sysctl.
 [Checks and limits](../reports/AUDIT-Q28-MACOS-FORWARDING.md).
+
+<!-- normative-sync: manual-macos-guardian-v1 -->
+
+### macOS per-app: guardian readiness and bundle upgrade
+
+Internal per-app schema is v5. Upgrade host/helper/extension as one signed bundle after
+stopping old profiles and joining guardians. Version 4 does not prove ownership and is not
+automatically taken over. If old state blocks claim, confirm old Qeli managers/guardians
+stopped, preserve a copy of per-app-state.json and remove only that stale file in the Qeli
+app-group container. Do not blindly remove active/unknown-owner state.
+
+Readiness failure means no exact token acknowledgement after claim within 5 seconds,
+child exit or invalid ack. A live PID alone is insufficient; finish cleanup before retry.
+A join error after confirmed stop retries join only and blocks reconfiguration until it
+finishes. Foreign live owners are preserved. Completed owner state remains as a tombstone;
+a new token may claim after confirmed stop. Configs remain INI; JSON state is internal DTO.
+[Checks and limits](../reports/AUDIT-Q28-MACOS-GUARDIAN.md).

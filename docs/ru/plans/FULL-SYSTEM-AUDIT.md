@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v54 -->
+<!-- normative-sync: full-system-audit-v55 -->
 
-**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app и forwarding этапы завершены; Swift runtime USER SKIPPED.**
+**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app forwarding и C# guardian этапы завершены; Swift guardian SOURCE REVIEW; Swift runtime USER SKIPPED.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -2177,3 +2177,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **5 октября, Q28 per-app:** [bridge, Swift и build paths](../reports/AUDIT-Q28-MACOS-PERAPP.md): F256–F261; 22 managed +10 shell PASS,6 old bridge failures и5 old shell failures. Swift source review,10 новых native cases USER SKIPPED. Q28 IN_PROGRESS; forwarding/guardian/native socket lifetime остаются. План 27/37.
 
 **5 октября, Q28 forwarding:** [владение и recovery](../reports/AUDIT-Q28-MACOS-FORWARDING.md): F262–F264;58 новых проверок,1208 managed PASS,6 ожидаемых baseline FAIL. Один Qeli-владелец на Mac, durable snapshot до sysctl, независимые restore/checkpoint/retry. Реальный Mac USER SKIPPED. Q28 IN_PROGRESS;guardian/native socket lifetime и интеграция остаются. План27/37.
+
+**5 октября, Q28 guardian:** [готовность и generation ownership](../reports/AUDIT-Q28-MACOS-GUARDIAN.md): F265–F267;39 per-app (17 новых),1225 managed PASS,9 ожидаемых old C# FAIL. Swift ownership/10 новых cases SOURCE REVIEW / USER SKIPPED. Схема v5, bundle upgrade после stop старых guardian; legacy state не перехватывается. Q28 IN_PROGRESS;native sockets и integration остаются. План27/37.

@@ -31,7 +31,8 @@ func makeState(mode: String = "include", apps: [String] = ["com.apple.Safari"],
                tunnelSubnets: [String] = ["10.8.0.2/24", "fd71:e1:42::2/64"],
                physicalLocal: [String] = ["192.168.1.0/24"])
     -> RoutingState {
-    RoutingState(version: qeliRoutingStateVersion, tunnelUp: true,
+    RoutingState(ownerToken: String(repeating: "a", count: 32), ownerPid: getpid(), ownerReleased: false,
+                 version: qeliRoutingStateVersion, tunnelUp: true,
                  leaseExpiresAtUnixMs: Int64(Date().timeIntervalSince1970 * 1000) + 10_000,
                  interfaceName: "utun7", mode: mode,
                  apps: apps, dnsServers: ["10.8.0.1"], carrierAddress: "203.0.113.7",
@@ -74,6 +75,34 @@ for mutation in [
     mutation(&changed)
     expect(!include.policyEquivalent(to: changed), "traffic-policy mutation retires live relays")
 }
+
+// Source cases: require macOS/Xcode; Windows managed fixtures do not execute Swift.
+expect(RoutingStateStore.sameOwner(include, token: String(repeating: "a", count: 32), pid: getpid()),
+       "exact owner generation matches")
+expect(!RoutingStateStore.sameOwner(include, token: String(repeating: "b", count: 32), pid: getpid()),
+       "different token at same PID is a different owner")
+expect(!RoutingStateStore.sameOwner(include, token: String(repeating: "a", count: 32), pid: getpid() + 1),
+       "same token at another PID is a different owner")
+var retiredOwner = include
+retiredOwner.ownerReleased = true
+retiredOwner.tunnelUp = false
+retiredOwner.leaseExpiresAtUnixMs = 0
+expect(!retiredOwner.leaseIsValid(), "completed owner never renews traffic allowance")
+expect(!include.policyEquivalent(to: retiredOwner), "owner retirement retires existing relays")
+var newOwner = include
+newOwner.ownerToken = String(repeating: "b", count: 32)
+expect(!include.policyEquivalent(to: newOwner), "new owner retires otherwise identical relays")
+var badOwner = include
+badOwner.ownerToken = nil
+expect((try? RoutingStateStore.validate(badOwner)) == nil, "missing token is rejected")
+badOwner.ownerToken = String(repeating: "A", count: 32)
+expect((try? RoutingStateStore.validate(badOwner)) == nil, "noncanonical token is rejected")
+badOwner = include
+badOwner.ownerPid = 1
+expect((try? RoutingStateStore.validate(badOwner)) == nil, "invalid parent PID is rejected")
+badOwner = include
+badOwner.ownerReleased = nil
+expect((try? RoutingStateStore.validate(badOwner)) == nil, "unknown release progress is rejected")
 
 let exclude = makeState(mode: "exclude")
 expect(!exclude.selects("com.apple.Safari"), "exclude bypasses listed signing identifier")

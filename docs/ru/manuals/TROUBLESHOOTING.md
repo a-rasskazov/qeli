@@ -2635,3 +2635,21 @@ Forwarding cleanup remains pending или Owned forwarding journal disappeared �
 пользовательские конфиги остаются INI. Это не механизм полного crash recovery сети и не
 координация с независимыми инструментами, меняющими sysctl.
 [Проверки и ограничения](../reports/AUDIT-Q28-MACOS-FORWARDING.md).
+
+<!-- normative-sync: manual-macos-guardian-v1 -->
+
+### macOS per-app: guardian readiness и обновление bundle
+
+Служебная схема per-app — v5. Обновляйте host/helper/extension одним подписанным bundle
+после остановки старых профилей и завершения guardian. Версия v4 не доказывает ownership
+и автоматически не перехватывается. Если старый state мешает claim, подтвердите stop старых
+Qeli managers/guardian, сохраните копию per-app-state.json и удалите только этот устаревший
+файл в Qeli app-group container. Активный/неизвестный state вслепую не удаляйте.
+
+Ошибка readiness означает отсутствие точного token acknowledgement после claim в течение
+5 секунд либо exit/неправильный ack. Самого живого PID недостаточно; завершите cleanup
+перед retry. Join error после подтверждённого stop повторяет только join и блокирует
+reconfiguration до завершения. Чужой живой owner не изменяется. Completed owner state
+сохраняется как tombstone; новый token допускается после подтверждённого stop.
+Конфиги остаются INI, JSON state — служебный DTO.
+[Объём проверок и ограничения](../reports/AUDIT-Q28-MACOS-GUARDIAN.md).

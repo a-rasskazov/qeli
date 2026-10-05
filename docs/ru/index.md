@@ -405,3 +405,5 @@
 - [Q28: per-app bridge / Swift / build paths](reports/AUDIT-Q28-MACOS-PERAPP.md)
 
 - [Q28: forwarding — владение и восстановление](reports/AUDIT-Q28-MACOS-FORWARDING.md)
+
+- [Q28: guardian — готовность и владение поколением](reports/AUDIT-Q28-MACOS-GUARDIAN.md)
