@@ -75,7 +75,7 @@ class QeliWidgetProvider : AppWidgetProvider() {
                 action = VpnServiceImpl.ACTION_CONNECT
                 putExtra(VpnServiceImpl.EXTRA_CONFIG, cfg)
             }
-            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i) else context.startService(i)
+            context.startForegroundService(i)
         } catch (_: Exception) {
             // Background foreground-service start refused (API 31+) → fall back to the app.
             launchApp(context)

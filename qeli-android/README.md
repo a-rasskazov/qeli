@@ -132,3 +132,16 @@ app-owned хранилища не меняются. Release A/B, arm64 и ост
 Результаты прогона 24 сентября: [154 JVM + 6 Android instrumentation tests](../docs/ru/reports/AUDIT-Q34-ANDROID-RUNTIME.md).
 
 Сверка store 2 октября: [Q25-F210](../docs/ru/plans/AUDIT-DEBT.md). Прямая запись внешнего процесса в encrypted store в обход координации не поддерживается; после правки активного INI требуется явное переподключение.
+
+
+## Legacy profile recovery и Release проверки
+
+Неудачная миграция старой encrypted/Tink-базы сохраняет ciphertext и доступную revision,
+блокирует обычную запись и разрешает только явно подтверждённый backup restore через CAS.
+Системный cloud/device-transfer исключён явными правилами; для нового устройства нужен
+экспорт/импорт backup. Потерянный Keystore key без backup не восстанавливается.
+minSdk28 сохраняется; active index использует совместимый точный BigDecimal conversion.
+[Q29 store/manifest/package](../docs/ru/reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md):
+167 JVM,18 debug instrumentation PASS;Release/R8 build иlint с0errors/55warnings.
+Debug test APK не является подходящим тестовым variant для minified Release. Production
+signing,полный Release VPN и другие lifecycle режимы проверяются отдельно.

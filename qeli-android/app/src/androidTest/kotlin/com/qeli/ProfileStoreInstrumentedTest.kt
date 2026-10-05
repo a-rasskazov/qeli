@@ -160,6 +160,25 @@ class ProfileStoreInstrumentedTest {
     }
 
     @Test
+    fun lostKeystoreKeyPreservesCiphertextUntilExplicitVersionedRestore() {
+        val store = ProfileStore.SecureStore(context, prefsName, keyAlias)
+        assertTrue(store.edit().putString("profile", "original").commit())
+        val raw = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        val before = raw.getString("profile", null)!!
+        KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(keyAlias) }
+        val reopened = ProfileStore.SecureStore(context, prefsName, keyAlias)
+        val revision = reopened.version("profile")
+        assertThrows(SecurityException::class.java) { reopened.getString("profile", null) }
+        assertEquals(before, raw.getString("profile", null))
+        reopened.putStringIfVersion("profile", revision, "restored backup")
+        assertEquals("restored backup", reopened.getString("profile", null))
+        assertThrows(ProfileStore.SecureStore.StaleVersionException::class.java) {
+            reopened.putStringIfVersion("profile", revision, "stale restore")
+        }
+        assertEquals("restored backup", ProfileStore.SecureStore(context, prefsName, keyAlias).getString("profile", null))
+    }
+
+    @Test
     fun tamperAndCiphertextRelocationAreRejected() {
         val store = ProfileStore.SecureStore(context, prefsName, keyAlias)
         assertEquals(true, store.edit().putString("profile", "secret").commit())

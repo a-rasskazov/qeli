@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v57 -->
+<!-- normative-sync: full-system-audit-v58 -->
 
-**Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Next Q29 Android.**
+**Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package; lifecycle/full VPN remain.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1858,7 +1858,9 @@ Protect/TUN retention/generations during reconnect/cancel/stop. Keystore, INI mi
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
+
+**5 October, storage/package:** [F273–F276](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md):167 JVM/18debug instrumentation PASS;2baseline failures;Release/R8 build andlint(0errors,55warnings),API28 exactness/legacy recovery/backup exclusions. Temporary read-only AVD;host/service/userdata preserved. R8 production UI smoke separately;debug-test APK onminified target unqualified. Q29 IN_PROGRESS;plan28/37(75.7%).
 
 ### 30. iOS PacketTunnel, Swift and MDM
 

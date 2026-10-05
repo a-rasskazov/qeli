@@ -97,7 +97,7 @@ class QeliTileService : TileService() {
                 action = VpnServiceImpl.ACTION_CONNECT
                 putExtra(VpnServiceImpl.EXTRA_CONFIG, cfg)
             }
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            startForegroundService(intent)
             reflect(VpnServiceImpl.STATUS_CONNECTING)   // optimistic; the broadcast corrects it
         } catch (_: Exception) {
             launchAppToConnect()

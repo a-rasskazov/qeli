@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
-import android.os.Build
 import com.qeli.model.VpnConfig
 
 /**
@@ -37,8 +36,7 @@ class BootReceiver : BroadcastReceiver() {
             putExtra(VpnServiceImpl.EXTRA_CONFIG, cfg)
         }
         runCatching {
-            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(svc)
-            else context.startService(svc)
+            context.startForegroundService(svc)
         }
     }
 }

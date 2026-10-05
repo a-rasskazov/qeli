@@ -124,6 +124,9 @@ class MainActivity : AppCompatActivity() {
     private val secureStore: ProfileStore.SecureStore by lazy {
         // Same store the Quick Settings tile reads — see ProfileStore for the shared params.
         val store = ProfileStore.open(this)
+        // Preserve a failed encrypted migration and its revision for explicit backup
+        // restore; an older plaintext copy must not turn it into an ordinary write.
+        if (store.legacyMigrationFailure != null) return@lazy store
         val legacy = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!store.contains(KEY_PROFILES)) {
             legacy.getString(KEY_PROFILES, null)?.let { raw ->
@@ -420,7 +423,7 @@ ipv6 = auto
     /** App version string for the diagnostics footer, e.g. "v0.7.5 (build 705)". */
     private fun appVersion(): String = try {
         val pi = packageManager.getPackageInfo(packageName, 0)
-        val code = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode.toLong()
+        val code = pi.longVersionCode
         "v${pi.versionName} (build $code)"
     } catch (_: Exception) { "v?" }
 
@@ -1141,7 +1144,10 @@ ipv6 = auto
             "Load the profile store before saving."
         }
         val updated = try {
-            secureStore.putStringIfVersion(KEY_PROFILES, expected, encoded)
+            secureStore.putStringIfVersion(
+                KEY_PROFILES, expected, encoded,
+                allowUnreadableLegacyRecovery = replacingUnreadableStore,
+            )
         } catch (error: ProfileStore.SecureStore.StaleVersionException) {
             throw IllegalStateException(getString(R.string.profile_store_stale), error)
         }
@@ -2195,7 +2201,7 @@ ipv6 = auto
                 action = VpnServiceImpl.ACTION_CONNECT
                 putExtra(VpnServiceImpl.EXTRA_CONFIG, cfg)
             }
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            startForegroundService(intent)
         } catch (e: Exception) {
             appendLog("Service error: ${e.message}"); setDisconnectedState()
         }

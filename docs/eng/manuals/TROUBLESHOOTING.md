@@ -2669,3 +2669,16 @@ remove journals. Downgrade with active new state is unsupported. TCP EOF ends on
 its direction: app FIN preserves server response; remote FIN preserves app-to-server.
 Both EOF or error/cancel/write timeout retire the relay.
 [Criteria, checks and exclusions](../reports/AUDIT-Q28-MACOS-INTEGRATION.md).
+
+
+<!-- normative-sync: q29-android-legacy-backup-v1 -->
+
+### Android: unreadable legacy profiles and recovery
+
+Failed legacy migration is not an empty default store and cannot authorize ordinary writes.
+The encrypted recovery copy survives. Restart the app process after a transient failure;
+use a previously exported backup and explicit UI restore confirmation after Keystore key loss.
+Stale restore refuses; app data is not automatically deleted. Explicit cloud/device-transfer
+rules exclude app state; profile transfer uses user backup export/import. No backup means
+no recovery of a lost key.
+[Q29 checks and limits](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md).

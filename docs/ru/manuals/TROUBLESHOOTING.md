@@ -2680,3 +2680,16 @@ Swift/macOS runtime исключён пользователем, managed tests �
 TCP EOF завершает только соответствующее направление: app FIN сохраняет ответ сервера,
 remote FIN сохраняет app-to-server. Полный stop — оба EOF или error/cancel/write timeout.
 [Сверка критериев, проверки и исключения](../reports/AUDIT-Q28-MACOS-INTEGRATION.md).
+
+
+<!-- normative-sync: q29-android-legacy-backup-v1 -->
+
+### Android: нечитаемые legacy-профили и восстановление
+
+Ошибка legacy migration не создаёт пустой default store и не разрешает обычную запись.
+Старая encrypted-копия сохраняется. При временном отказе перезапустите процесс приложения;
+при утрате Keystore key используйте ранее экспортированный backup и явное подтверждение
+восстановления в UI. Stale restore отказывает; автоматического удаления app data нет.
+Cloud/device-transfer не копируют app state по явным правилам; перенос профилей выполняется
+экспортом/импортом backup. Без backup потерянный ключ не восстановить.
+[Проверки и границы Q29](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md).

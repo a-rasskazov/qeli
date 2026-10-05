@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v57 -->
+<!-- normative-sync: full-system-audit-v58 -->
 
-**Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Далее Q29 Android.**
+**Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package; lifecycle/полный VPN остаются.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1869,7 +1869,9 @@ Protect/TUN retention/generation при reconnect/cancel/stop. Keystore, INI mig
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
+
+**5 октября, store/package:** [F273–F276](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md):167 JVM и18 debug instrumentation PASS;2 baseline ошибки;Release/R8 build иlint(0 errors,55 warnings),API28 exactness/legacy recovery/backup exclusions. Временный read-only AVD,host/service/userdata сохранены. R8 production UI smoke отдельно;debug-test APK наminified target не квалифицирован. Q29 IN_PROGRESS;план28/37(75,7%).
 
 ### 30. iOS: PacketTunnel, Swift и MDM
 

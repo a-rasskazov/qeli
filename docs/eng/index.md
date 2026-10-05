@@ -411,3 +411,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q28: native socket lifetime and I/O budgets](reports/AUDIT-Q28-MACOS-SOCKETS.md)
 
 - [Q28: final macOS integration](reports/AUDIT-Q28-MACOS-INTEGRATION.md)
+
+- [Q29: Android storage, manifest and Release](reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md)

@@ -52,14 +52,28 @@ object ProfileStore {
         val app = context.applicationContext
         val store = SecureStore(app, PREFS_SECURE, KEY_ALIAS)
         if (!store.contains(KEY_PROFILES)) {
-            LegacyEncryptedPreferences.readProfiles(app)?.let { legacy ->
-                check(store.edit().putString(KEY_PROFILES, legacy).commit()) {
-                    "Could not commit migrated profile store"
+            var verified = false
+            try {
+                LegacyEncryptedPreferences.readProfiles(app)?.let { legacy ->
+                    check(store.edit().putString(KEY_PROFILES, legacy).commit()) {
+                        "Could not commit migrated profile store"
+                    }
+                    check(store.getString(KEY_PROFILES, null) == legacy) {
+                        "Migrated profile store did not pass read-back verification"
+                    }
+                    verified = true
+                    LegacyEncryptedPreferences.erase(app)
                 }
-                check(store.getString(KEY_PROFILES, null) == legacy) {
-                    "Migrated profile store did not pass read-back verification"
+            } catch (error: Exception) {
+                if (verified) {
+                    // The new entry is authoritative; preserve the old ciphertext for
+                    // manual cleanup without making usable profiles inaccessible.
+                    android.util.Log.w("ProfileStore", "Legacy encrypted profile cleanup failed")
+                } else {
+                    // Keep a versionable store so the UI can explicitly restore a backup.
+                    // Ordinary reads/writes must not mistake failed migration for empty.
+                    store.legacyMigrationFailure = error
                 }
-                LegacyEncryptedPreferences.erase(app)
             }
         }
         return store.also { singleton = it }
@@ -73,10 +87,14 @@ object ProfileStore {
     ) {
         private val backing = context.getSharedPreferences(preferenceName, Context.MODE_PRIVATE)
         private val key = loadOrCreateKey(keyAlias)
+        @Volatile internal var legacyMigrationFailure: Exception? = null
 
         fun contains(key: String): Boolean = backing.contains(key)
 
         fun getString(key: String, defaultValue: String?): String? {
+            if (key == KEY_PROFILES) legacyMigrationFailure?.let {
+                throw SecurityException("Legacy profile migration failed; explicitly restore a backup", it)
+            }
             val envelope = backing.getString(key, null) ?: return defaultValue
             return decrypt(key, envelope)
         }
@@ -91,12 +109,18 @@ object ProfileStore {
         fun version(key: String): Version = Version(backing.contains(key), backing.all[key])
 
         /** Serializes competing Activities in this process and refuses stale writes. */
-        fun putStringIfVersion(key: String, expected: Version, value: String): Version =
-            synchronized(backing) {
+        fun putStringIfVersion(
+            key: String, expected: Version, value: String,
+            allowUnreadableLegacyRecovery: Boolean = false,
+        ): Version = synchronized(backing) {
+                check(legacyMigrationFailure == null || allowUnreadableLegacyRecovery) {
+                    "Legacy profile migration failed; ordinary profile writes are blocked"
+                }
                 if (version(key) != expected) throw StaleVersionException()
                 check(backing.edit().putString(key, encrypt(key, value)).commit()) {
                     "Could not commit profile store"
                 }
+                if (key == KEY_PROFILES) legacyMigrationFailure = null
                 version(key)
             }
 
@@ -162,6 +186,9 @@ object ProfileStore {
             fun remove(key: String): Editor = apply { values[key] = null }
 
             fun commit(): Boolean {
+                check(store.legacyMigrationFailure == null) {
+                    "Legacy profile migration failed; ordinary profile writes are blocked"
+                }
                 val editor = store.backing.edit()
                 values.forEach { (key, value) ->
                     if (value == null) editor.remove(key)
@@ -205,7 +232,7 @@ object ProfileStore {
         val index = when (raw) {
             null -> 0
             is Number -> try {
-                BigDecimal(raw.toString()).toBigIntegerExact().intValueExact()
+                BigDecimal(raw.toString()).intValueExact()
             } catch (_: ArithmeticException) {
                 null
             } catch (_: NumberFormatException) {
@@ -257,8 +284,10 @@ object ProfileStore {
 
         fun readProfiles(context: Context): String? {
             val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-            if (!raw.contains(KEY_KEYSET) || !raw.contains(VALUE_KEYSET)) return null
             if (raw.all.keys.none { it != KEY_KEYSET && it != VALUE_KEYSET }) return null
+            check(raw.contains(KEY_KEYSET) && raw.contains(VALUE_KEYSET)) {
+                "Legacy encrypted profiles have missing keysets"
+            }
 
             DeterministicAeadConfig.register()
             AeadConfig.register()
