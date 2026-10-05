@@ -19,6 +19,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assume.assumeTrue
@@ -70,7 +71,7 @@ class VpnDataPlaneInstrumentedTest {
         assertFalse(prefs.getBoolean(MainActivity.PREF_CONNECTION_DESIRED, true))
         assertFalse("Java/native TUN remained", Regex("(?m)^\\d+: tun\\d").containsMatchIn(shell("su 0 ip -o link show")))
     }
-    private fun traffic(address: String) {
+    private fun traffic(address: String, explicitNetwork: Boolean = true) {
         val cm = context.getSystemService(ConnectivityManager::class.java)
         val network: Network = requireNotNull(cm.activeNetwork)
         assertTrue(cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true)
@@ -79,17 +80,17 @@ class VpnDataPlaneInstrumentedTest {
         // Inspect an unsent UDP socket; do not start a TCP stream with a physical source.
         waitFor("kernel VPN route/source not ready for $address") {
             DatagramSocket().use { probe ->
-                network.bindSocket(probe)
+                if (explicitNetwork) network.bindSocket(probe)
                 probe.connect(host, 26000)
                 val source = probe.localAddress.hostAddress.orEmpty()
                 source == VpnServiceImpl.liveIp || (address.contains(':') && source.startsWith("fd86:29:"))
             }
         }
         val payload = ByteArray(16_384) { ((it * 31 + 17) % 251).toByte() }
-        network.socketFactory.createSocket().use { socket ->
+        (if (explicitNetwork) network.socketFactory.createSocket() else Socket()).use { socket ->
             socket.soTimeout = 8000
             socket.connect(InetSocketAddress(host, 26000), 8000)
-            Log.i("Q29Traffic", "TCP destination=$address source=${socket.localAddress.hostAddress} vpn=$network default=${cm.activeNetwork} process=${cm.boundNetworkForProcess}")
+            Log.i("Q29Traffic", "TCP destination=$address source=${socket.localAddress.hostAddress} explicit=$explicitNetwork vpn=$network default=${cm.activeNetwork} process=${cm.boundNetworkForProcess}")
             assertTrue("TCP socket must originate from assigned TUN", socket.localAddress.hostAddress?.let {
                 it == VpnServiceImpl.liveIp || it.startsWith("fd86:29:")
             } == true)
@@ -101,9 +102,9 @@ class VpnDataPlaneInstrumentedTest {
         }
         DatagramSocket().use { socket ->
             socket.soTimeout = 8000
-            network.bindSocket(socket)
+            if (explicitNetwork) network.bindSocket(socket)
             socket.connect(host, 26000)
-            Log.i("Q29Traffic", "UDP destination=$address source=${socket.localAddress.hostAddress} vpn=$network")
+            Log.i("Q29Traffic", "UDP destination=$address source=${socket.localAddress.hostAddress} explicit=$explicitNetwork vpn=$network")
             for (size in listOf(32, 257, 1024)) {
                 val data = payload.copyOf(size)
                 socket.send(DatagramPacket(data, data.size))
@@ -113,27 +114,47 @@ class VpnDataPlaneInstrumentedTest {
             }
         }
     }
-    private fun exercise(protocol: String, quic: Boolean, profile: String) {
+    private fun exercise(protocol: String, quic: Boolean, profile: String, explicitNetwork: Boolean = true, fullTunnel: Boolean = false) {
         val key = requireNotNull(args.getString("q29_key_$profile"))
         assertTrue(key.matches(Regex("[0-9a-f]{64}")))
         val config = VpnConfig(serverAddress = "10.0.2.2", port = if (profile == "tcp") 24966 else 24967,
             protocol = protocol, quicEnabled = quic, wireMode = "fake-tls", username = "fixture",
             password = "fixture-password", serverPublicKeyHex = key, bindStaticToSession = true,
             connectionTimeoutSecs = 15, reconnectEnabled = false, killSwitch = false,
-            mtuProbe = false, ipv6 = "required", roaming = "off", routingMode = "split-tunnel",
-            addDefaultGateway = false, dnsMode = "off", heartbeatEnabled = true,
+            mtuProbe = false, ipv6 = "required", roaming = "off", routingMode = if (fullTunnel) "full-tunnel" else "split-tunnel",
+            addDefaultGateway = fullTunnel, dnsMode = "off", heartbeatEnabled = true,
             includeRoutes = if (profile == "tcp") listOf("10.86.0.0/24", "fd86:29:1::/120")
                 else listOf("10.87.0.0/24", "fd86:29:2::/120"),
             loggingLevel = "debug")
         config.validate()
         // TCP also verifies a completed teardown followed by a new authenticated start.
-        repeat(if (profile == "tcp") 2 else 1) {
+        repeat(if (explicitNetwork && profile == "tcp") 2 else 1) {
             assertNotNull(context.startForegroundService(Intent(context, VpnServiceImpl::class.java)
                 .setAction(VpnServiceImpl.ACTION_CONNECT).putExtra(VpnServiceImpl.EXTRA_CONFIG, config)))
             waitFor("authenticated dual TUN did not enter CONNECTED", 25_000) {
                 service()?.foreground == true && VpnServiceImpl.liveStatus == VpnServiceImpl.STATUS_CONNECTED
             }
             val cm = context.getSystemService(ConnectivityManager::class.java)
+            val connectedObserved = System.nanoTime()
+            if (!explicitNetwork) {
+                assertNull("default socket test must not bind the process", cm.boundNetworkForProcess)
+                val destinations = if (profile == "tcp") listOf("10.86.0.1", "fd86:29:1::1")
+                    else listOf("10.87.0.1", "fd86:29:2::1")
+                for (address in destinations) {
+                    var firstSource: String? = null
+                    var attempts = 0
+                    waitFor("ordinary socket route/source not ready for $address") {
+                        DatagramSocket().use { probe ->
+                            probe.connect(InetAddress.getByName(address), 26000)
+                            val source = probe.localAddress.hostAddress.orEmpty()
+                            if (firstSource == null) firstSource = source
+                            attempts++
+                            source == VpnServiceImpl.liveIp || (address.contains(':') && source.startsWith("fd86:29:"))
+                        }
+                    }
+                    Log.i("Q29Traffic", "DEFAULT_READY destination=$address full=$fullTunnel first=$firstSource attempts=$attempts elapsedMs=${TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectedObserved)} default=${cm.activeNetwork} process=${cm.boundNetworkForProcess}")
+                }
+            }
             waitFor("framework VPN default network not published") {
                 cm.activeNetwork?.let { network ->
                     cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true &&
@@ -143,8 +164,8 @@ class VpnDataPlaneInstrumentedTest {
             val properties = VpnServiceImpl.liveConnectionProperties
             assertNotNull(properties)
             assertTrue(VpnServiceImpl.liveIp.startsWith(if (profile == "tcp") "10.86.0." else "10.87.0."))
-            traffic(if (profile == "tcp") "10.86.0.1" else "10.87.0.1")
-            traffic(if (profile == "tcp") "fd86:29:1::1" else "fd86:29:2::1")
+            traffic(if (profile == "tcp") "10.86.0.1" else "10.87.0.1", explicitNetwork)
+            traffic(if (profile == "tcp") "fd86:29:1::1" else "fd86:29:2::1", explicitNetwork)
             // Verify F278 on CONNECTED after real traffic, with receipt of the rejected command.
             val precedingErrors = shell("logcat -d -s VpnSvc:E").split("Invalid profile:").size
             context.startForegroundService(Intent(context, VpnServiceImpl::class.java)
@@ -155,11 +176,18 @@ class VpnDataPlaneInstrumentedTest {
             assertSame("rejected command replaced negotiated properties", properties, VpnServiceImpl.liveConnectionProperties)
             assertTrue(service()?.foreground == true)
             assertTrue(prefs.getBoolean(MainActivity.PREF_CONNECTION_DESIRED, false))
-            traffic(if (profile == "tcp") "10.86.0.1" else "10.87.0.1")
+            traffic(if (profile == "tcp") "10.86.0.1" else "10.87.0.1", explicitNetwork)
             disconnect()
         }
     }
     @Test fun tcpDualStackPayloadAndCompletedRestart() = exercise("tcp", false, "tcp")
     @Test fun udpDualStackPayload() = exercise("udp", false, "udp")
     @Test fun quicDualStackPayload() = exercise("udp", true, "udp")
+    @Test fun tcpOrdinarySplitPayload() = exercise("tcp", false, "tcp", explicitNetwork = false)
+    @Test fun udpOrdinarySplitPayload() = exercise("udp", false, "udp", explicitNetwork = false)
+    @Test fun quicOrdinarySplitPayload() = exercise("udp", true, "udp", explicitNetwork = false)
+    @Test fun tcpOrdinaryFullPayload() = exercise("tcp", false, "tcp", explicitNetwork = false, fullTunnel = true)
+    @Test fun udpOrdinaryFullPayload() = exercise("udp", false, "udp", explicitNetwork = false, fullTunnel = true)
+    @Test fun quicOrdinaryFullPayload() = exercise("udp", true, "udp", explicitNetwork = false, fullTunnel = true)
+
 }

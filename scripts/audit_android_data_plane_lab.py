@@ -120,6 +120,7 @@ def main():
     ap.add_argument("--qeli", type=Path, required=True)
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
+    ap.add_argument("--suite", choices=("explicit", "ordinary"), default="explicit")
     args = ap.parse_args()
     assert os.geteuid() == 0
     root = args.root.resolve(strict=True)
@@ -131,12 +132,12 @@ def main():
             env["Q29_PARENT_" + kind.upper()] = os.readlink("/proc/self/ns/" + kind)
         return subprocess.run(["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child=KILL",
                                "--mount-proc", sys.executable, __file__, "--inside", "--root", str(root),
-                               "--qeli", str(args.qeli), "--sha256", args.sha256], env=env, timeout=650).returncode
+                               "--qeli", str(args.qeli), "--sha256", args.sha256, "--suite", args.suite], env=env, timeout=650).returncode
     assert all(os.readlink("/proc/self/ns/" + kind) != os.environ["Q29_PARENT_" + kind.upper()]
                for kind in ("net", "mnt", "pid"))
     evidence = root / "evidence"
     evidence.mkdir(mode=0o700)
-    result = dict(status="RUNNING", namespace_isolation=True, qeli_sha256=args.sha256)
+    result = dict(status="RUNNING", namespace_isolation=True, qeli_sha256=args.sha256, suite=args.suite)
     def dump(name, value):
         (evidence / name).write_text(json.dumps(value, indent=2) + "\n")
     def cmd(*argv, timeout=30):
@@ -246,8 +247,16 @@ perf.connection.handshake_timeout_secs = 12
                 arun("uninstall", package, timeout=60)
         result["environment"] = {name: arun("shell", "getprop", name).stdout.strip()
                                  for name in ("ro.build.version.sdk", "ro.build.version.release", "ro.product.cpu.abi")}
-        for folder, selector in (("baseline", "com.qeli.VpnDataPlaneInstrumentedTest#tcpDualStackPayloadAndCompletedRestart"),
-                                 ("fixed", "com.qeli.VpnDataPlaneInstrumentedTest")):
+        methods = ["tcpDualStackPayloadAndCompletedRestart", "udpDualStackPayload", "quicDualStackPayload"]
+        phases = [("baseline", "com.qeli.VpnDataPlaneInstrumentedTest#" + methods[0]),
+                  ("fixed", ",".join("com.qeli.VpnDataPlaneInstrumentedTest#" + method for method in methods))]
+        expected_tests = 3
+        if args.suite == "ordinary":
+            methods = [transport + "Ordinary" + mode + "Payload" for transport in ("tcp", "udp", "quic")
+                       for mode in ("Split", "Full")]
+            phases = [("fixed", ",".join("com.qeli.VpnDataPlaneInstrumentedTest#" + method for method in methods))]
+            expected_tests = 6
+        for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             result[folder + "_apks"] = manifest
             for name, digest in manifest["apks"].items():
@@ -264,7 +273,7 @@ perf.connection.handshake_timeout_secs = 12
             result[folder + "_echo_receipts"] = len(echo.rows)
             (evidence / (folder + "-vpn-logcat.log")).write_text(arun("shell", "logcat", "-d", "-s", "VpnSvc:D", "Q29Traffic:I", "AndroidRuntime:E").stdout)
             if folder == "fixed":
-                assert "OK (3 tests)" in proc.stdout, proc.stdout
+                assert f"OK ({expected_tests} tests)" in proc.stdout, proc.stdout
             print(folder.upper() + "_COMPLETE", flush=True)
         assert not any("error" in row for row in echo.rows), echo.rows
         for profile, subnet, v6 in (("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")):

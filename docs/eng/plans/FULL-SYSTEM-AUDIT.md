@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v61 -->
+<!-- normative-sync: full-system-audit-v62 -->
 
 **Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
 
@@ -2178,3 +2178,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **5 October, Q28 guardian:** [readiness and generation ownership](../reports/AUDIT-Q28-MACOS-GUARDIAN.md): F265–F267;39 per-app (17 new),1225 managed PASS,9 expected old C# FAIL. Swift ownership/10 new cases SOURCE REVIEW / USER SKIPPED. Schema v5,bundle upgrade after joining old guardians;no legacy-state takeover. Q28 IN_PROGRESS;native sockets and integration remain. Plan27/37.
 
 **5 October, Q28 sockets:** [fd lifetime and I/O budgets](../reports/AUDIT-Q28-MACOS-SOCKETS.md): F268–F270,18 new Swift cases SOURCE REVIEW / USER SKIPPED. Serial queue + cancel-handler release,nonblocking deadlines,atomic framework-write watchdog,zero UDP datagrams.1225 related managed PASS do not execute Swift. Q28 IN_PROGRESS;final integration/DNS-PF owner stamps remain. Plan27/37.
+
+
+**5 October, ordinary Android sockets:** [split/full × three transports](../reports/AUDIT-Q29-ANDROID-DATA.md):6freshPASS,72replies.5/6initialIPv4sources physical after observedCONNECTED;TUNready1–111ms,payload guarded bypreflight. Immediate first-packet andexternal/default routes unqualified;DNS/kill-switch/lifecycle next. ProductAPK/JNI unchanged,Q29IN_PROGRESS,28/37(75.7%).

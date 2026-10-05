@@ -1,6 +1,6 @@
 # Q29: Android VPN payload and post-auth lifecycle
 
-<!-- normative-sync: q29-android-data-v1 -->
+<!-- normative-sync: q29-android-data-v2 -->
 
 **5 October 2026. Stage PASS; Q29 IN_PROGRESS. Plan28/37(75.7%),9 sections remain.**
 
@@ -28,3 +28,13 @@ Ordinary apps' automaticVPNselection,full-tunnel/lockdown,DNS/external routes,Wi
 
 Raw:C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-data-20261005.
 Evidence:release/certification/evidence/q29-android-data-20261005.json.
+
+## Additional stage: ordinary sockets
+
+Six new cases (TCP fake-tls, UDP fake-tls, UDP QUIC × split/full) use ordinary Socket/DatagramSocket without Network.bindSocket/socketFactory or process binding. **6/6 PASS,72 server replies**: IPv4/IPv6,TCP16KiB,UDP32/257/1024,rejected CONNECT after traffic and manual stop. Native NetworkPlan confirms three mode=full and three mode=split. Destinations are the server's own TUN addresses: exercising full configuration does not yet prove external/default traffic capture.
+
+A readiness window was observed: in **5/6 starts the first IPv4 socket after observed CONNECTED selected physical source10.0.2.16**. TUN source selection appeared1–111ms after observing the status; subsequent IPv6 probes already selected TUN. Measurements include25ms polling,two successful predicate evaluations and checking overhead; they are not exact netd application timing. Diagnostic UDP sockets send no data. Payload is sent only after bounded source preflight. Thus six PASS results confirm delivery after readiness, **not immediate first-packet success after CONNECTED or leak safety with kill_switch=false**. Root cause and any status-publication adjustment remain open; no new Rust regression is established.
+
+Product APK/JNI unchanged,no product fix. Fresh test APK build and six debug cases; preceding results are reused only within original scopes,no fresh combined37Android run. New six cases skip without private fixture arguments. scripts/audit_android_data_plane_lab.py adds --suite ordinary; default explicit selects only the original three methods.
+
+One run took109.19s,tests18.913s. Readonly API34x86_64,fresh NET/MNT/PID on.11,serverexit0,namespace addresses restored,userdata SHA/mtime/size and working network/service unchanged,no app service/TUN,no AndroidRuntimeFATAL. .10 untouched. Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-default-20261005; evidence: release/certification/evidence/q29-android-default-20261005.json. Q29 remains IN_PROGRESS; next external routes/DNS/kill-switch,early first-packet readiness and system lifecycle.
