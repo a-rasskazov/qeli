@@ -82,7 +82,7 @@ class VpnServiceImpl : VpnService() {
     // Watches the physical network (Wi-Fi <-> LTE switch). A feature TCP core receives a
     // generation-scoped candidate path; unsupported/default builds retain the immediate full
     // reconnect fallback instead of waiting for their dead-connection timeout.
-    private var netCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var screenReceiver: BroadcastReceiver? = null
     private var wakeReconnectJob: Job? = null
     @Volatile private var roamingUpdateJob: Job? = null
@@ -2093,6 +2093,16 @@ class VpnServiceImpl : VpnService() {
      *  the set of candidates and reacting only when the link we are actually on disappears.
      *  registerDefaultNetworkCallback is deliberately NOT the fallback: a VPN app is subject
      *  to its own VPN, so once we establish, our default network IS the tun. */
+    @Synchronized
+    private fun dispatchNetworkCallback(owner: ConnectivityManager.NetworkCallback, action: () -> Unit) {
+        // Unregister/replacement cannot retract a callback that was already queued. Check its
+        // owner under the lifecycle monitor before touching carrier or trusted-Wi-Fi state.
+        // Intentional trusted pause keeps this observer alive while its runner is joined.
+        if (netCallback !== owner || (stopping && !trustedPauseInFlight)) return
+        action()
+    }
+
+    @Synchronized
     private fun registerNetworkCallback(): Boolean {
         unregisterNetworkCallback()
         val cm = getSystemService(ConnectivityManager::class.java) ?: run {
@@ -2288,25 +2298,29 @@ class VpnServiceImpl : VpnService() {
             object : ConnectivityManager.NetworkCallback(
                 ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO,
             ) {
-                override fun onAvailable(network: Network) = handleAvailable(network)
+                override fun onAvailable(network: Network) =
+                    dispatchNetworkCallback(this) { handleAvailable(network) }
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
-                    handleCapabilitiesChanged(network, caps)
+                    dispatchNetworkCallback(this) { handleCapabilitiesChanged(network, caps) }
                 override fun onLinkPropertiesChanged(
                     network: Network,
                     linkProperties: android.net.LinkProperties,
-                ) = handleLinkPropertiesChanged(network)
-                override fun onLost(network: Network) = handleLost(network)
+                ) = dispatchNetworkCallback(this) { handleLinkPropertiesChanged(network) }
+                override fun onLost(network: Network) =
+                    dispatchNetworkCallback(this) { handleLost(network) }
             }
         } else {
             object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) = handleAvailable(network)
+                override fun onAvailable(network: Network) =
+                    dispatchNetworkCallback(this) { handleAvailable(network) }
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
-                    handleCapabilitiesChanged(network, caps)
+                    dispatchNetworkCallback(this) { handleCapabilitiesChanged(network, caps) }
                 override fun onLinkPropertiesChanged(
                     network: Network,
                     linkProperties: android.net.LinkProperties,
-                ) = handleLinkPropertiesChanged(network)
-                override fun onLost(network: Network) = handleLost(network)
+                ) = dispatchNetworkCallback(this) { handleLinkPropertiesChanged(network) }
+                override fun onLost(network: Network) =
+                    dispatchNetworkCallback(this) { handleLost(network) }
             }
         }
         currentNetwork = null
@@ -2763,6 +2777,7 @@ class VpnServiceImpl : VpnService() {
         carrierReplacementJob = null
     }
 
+    @Synchronized
     private fun unregisterNetworkCallback() {
         cancelCarrierReplacementWait()
         val cb = netCallback

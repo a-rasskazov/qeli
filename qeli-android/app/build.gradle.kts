@@ -56,12 +56,9 @@ android {
         }
     }
 
-    // Android framework stubs in the unit-test classpath throw "not mocked" by default, so
-    // ANY class touching android.util.Log is unconstructible in a JVM test. PacketCipher
-    // logs its chosen algorithm at class-init, which made the wire codec — the most
-    // safety-critical code in the app — untestable without a device. That is why Android had
-    // no PacketCodec test at all, and why the M6 nonce fix could go missing here unnoticed.
-    // Returning defaults instead of throwing lets the shared wire fixtures run on the JVM.
+    // JVM policy/model tests can reach Android logging without executing framework APIs.
+    // Return defaults for those stubs; actual framework behavior is tested on Android.
+    // INI parsing still loads the production host ConfigCore JNI, configured below.
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
@@ -113,8 +110,8 @@ dependencies {
     // Read-only one-shot migration of the old security-crypto/Tink preference keysets.
     // New profile writes use AES-GCM + Android Keystore directly (ProfileStore).
     implementation("com.google.crypto.tink:tink-android:1.23.0")
-    // Local (JVM) unit tests — e.g. the F3 WebSocket masking wire-vector test that
-    // pins byte parity with the Rust/C# obfs framers (ObfsStreamTest).
+    // Local policy/model and shared configuration conformance tests.
+    // Handshake, framing and payload codecs are owned by Rust, not duplicated here.
     testImplementation("junit:junit:4.13.2")
     // A REAL org.json for JVM unit tests. The `org.json` in android.jar is a stub whose
     // every method throws "not mocked", so any test that touches JSON dies at runtime —

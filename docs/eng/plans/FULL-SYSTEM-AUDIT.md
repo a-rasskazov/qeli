@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v86 -->
+<!-- normative-sync: full-system-audit-v87 -->
 
-**Current result, 5 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage/manifest/package and critical TUN teardown race qualified; full lifecycle/VPN remain.**
+**Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -1868,6 +1868,27 @@ Protect/TUN retention/generations during reconnect/cancel/stop. Keystore, INI mi
 
 **5 October, storage/package:** [F273–F276](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md):167 JVM/18debug instrumentation PASS;2baseline failures;Release/R8 build andlint(0errors,55warnings),API28 exactness/legacy recovery/backup exclusions. Temporary read-only AVD;host/service/userdata preserved. R8 production UI smoke separately;debug-test APK onminified target unqualified. Q29 IN_PROGRESS;plan28/37(75.7%).
 
+### Q29 closure ledger — 6 October
+
+This ledger selects remaining work; previous completed matrices do not require repetition
+without a relevant change. Results remain limited to their exact inputs and tested fixture.
+The section checklist is not a statement that every scenario below has passed.
+
+| Layer | Available evidence | Disposition |
+| --- | --- | --- |
+| INI, Keystore, migration, lost-key/backup and manifest/package | [F273–F276](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md) | Scoped PASS; physical OEM/D2D and older APIs not executed |
+| TUN/plan/protect/observer ownership | [F277](../reports/AUDIT-Q29-ANDROID-LIFECYCLE.md), [F282–F283](../reports/AUDIT-Q29-ANDROID-CONTROLLER.md) | Adapter boundaries qualified; no universal OS scheduling claim |
+| Actual service commands and Activity permission request ownership | [F278](../reports/AUDIT-Q29-ANDROID-SERVICE.md), [F280](../reports/AUDIT-Q29-ANDROID-PERMISSIONS.md) | Scoped PASS; permission waiting/result injection is distinct from OS dialog automation |
+| Data, ordinary UID, dual stack, handover, NAT64, per-app/DoT, bounded Doze/flapping and stop blocking | [Release](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md), [NAT64](../reports/AUDIT-Q29-ANDROID-NAT64.md), [per-app](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md), [power/flapping](../reports/AUDIT-Q29-ANDROID-ENDURANCE.md), [trusted DoT](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md) | Scoped PASS; source/readiness publication fixed by [F279](../reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md); physical long sessions not qualified |
+| R8 instrumentation | [matching runner](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md) | Opt-in matching runner PASS; default production UI smoke separately qualified; earlier runner FAIL retained |
+| External process death | [minimal independent VpnService control](../reports/AUDIT-Q29-ANDROID-SYSTEM.md) | Automatic recovery FAIL on this image, including the independent TUN control; blocking/manual recovery PASS; no causal JNI defect proven |
+| Generic auto/null DnsResolver | [API diagnostic](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md) | ENONET retained; typed A/AAAA and system lookup have separate positive evidence |
+| Whole-section source/dead-code and lifetime reconciliation | Prior stage reviews and 29-file syntactic inventory | Remains; a reference inventory alone is not proof of liveness or a complete source audit |
+
+Q29 remains IN_PROGRESS. Open platform observations are not silently accepted or relabelled
+PASS; platform coverage limits are not new mandatory test permutations. User-skipped other
+platforms and D06 remain unchanged.
+
 ### 30. iOS PacketTunnel, Swift and MDM
 
 **Source:** `qeli-ios/QeliCore`, `qeli-ios/QeliPacketTunnel`, `qeli-ios/QeliIOS`, `qeli-ios/MDM`, `qeli-ios/QeliIOSTests`.
@@ -2233,3 +2254,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **6 October, Q29 F281:** [trusted Wi-Fi with lockdown](../reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md): old Release return misses proactive reconnect and falls back after a transport error; four callback predicates fixed. Fresh182JVM(3new)/lint0errors55warnings/defaultR8; TCP/UDP/QUIC6handover transitions,36ordinary-UID full payloads,864bursts/144poststopblocked,3capture physical0/drop0 PASS. Freshdebug3normal-pause tests/16payloads PASS;15helper4CLI/docs/bindings. Three preliminary harnessFAIL and one pre-runtime SFTP interruption preserved;8runtime cleanup/host/userdata PASS. Native/server/managed unchanged;Release instrumentationNOT_RUN. SIGKILL/ENONET/remaining lifecycle/protect/otherAPI-OEM-arm64 open;Q29IN_PROGRESS28/37(75.7%).
 
 **6 October, Q29 F282:** [socket-protection ownership and trusted-Wi-Fi failures](../reports/AUDIT-Q29-ANDROID-CONTROLLER.md): stale polled requests rejected before carrier/bind/protect side effects under service monitor; sleeps/JNI ACK outside. Same fresh test APK old8/3expected FAIL, fixed8PASS (five new cases), 28 debug full payloads. Fresh182JVM/lint0errors55warnings/defaultR8; TCP/UDP/QUIC6transitions/36ordinary-UID full payloads,864socket samples/144poststopblocked,independent capture physical0/drop0 PASS. All five attempts cleanup/host/service/userdata/address PASS;15helper4CLI/docs/bindings. Three protect cases are Context-attached service adapter fixtures with real JNI sockets; location-switch redaction and queued disconnect exercise actual framework, without claiming permission revoke or a native-join barrier. Native/server/managed unchanged;Release instrumentationNOT_RUN. SIGKILLFAIL/auto-nullENONET and unqualified platform/lifecycle coverage preserved;Q29IN_PROGRESS28/37(75.7%).
+
+**6 October, Q29 F283:** [retired network observer ownership](../reports/AUDIT-Q29-ANDROID-CONTROLLER.md): callbacks check owner/stopping under lifecycle monitor, registration/removal serialized; intentional trusted pause retains its observer. Actual Android registration/real carrier with controlled late delivery on Context-attached service adapter: same fresh test APK old13/5expected FAIL, fixed13PASS; actual framework trusted suite retains28full payloads. Fresh182JVM/lint0errors55warnings/defaultR8 UDP2transitions/12ordinaryUID full payloads/288socket samples/48poststopblocked;independent capture physical0/drop0 PASS. Three runtime cleanup/host/service/userdata/address PASS;15helper4CLI/docs/bindings. Initial module-style helper import failures retained, direct script calls PASS; stale removed-code comments corrected. Native/server/managed unchanged,Release instrumentationNOT_RUN; prior TCP/QUIC matrix retained within old scope. Closure ledger added; SIGKILLFAIL/auto-nullENONET retained;Q29IN_PROGRESS28/37(75.7%).

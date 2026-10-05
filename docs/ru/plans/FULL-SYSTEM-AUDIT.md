@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v86 -->
+<!-- normative-sync: full-system-audit-v87 -->
 
-**Текущий итог, 5 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: store/manifest/package и критическая гонка остановки TUN проверены; полный lifecycle/VPN остаются.**
+**Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -1879,6 +1879,27 @@ Protect/TUN retention/generation при reconnect/cancel/stop. Keystore, INI mig
 
 **5 октября, store/package:** [F273–F276](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md):167 JVM и18 debug instrumentation PASS;2 baseline ошибки;Release/R8 build иlint(0 errors,55 warnings),API28 exactness/legacy recovery/backup exclusions. Временный read-only AVD,host/service/userdata сохранены. R8 production UI smoke отдельно;debug-test APK наminified target не квалифицирован. Q29 IN_PROGRESS;план28/37(75,7%).
 
+### Таблица завершения Q29 — 6 октября
+
+Эта таблица определяет остаток: прежние выполненные матрицы не требуют повторения без
+относящихся к ним изменений. Результаты ограничены точными inputs и проверенным fixture.
+Checklist раздела не утверждает, что каждый сценарий ниже прошёл.
+
+| Слой | Доступные доказательства | Состояние |
+| --- | --- | --- |
+| INI, Keystore, migration, lost-key/backup и manifest/package | [F273–F276](../reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md) | Scoped PASS; physical OEM/D2D и старшие/младшие API не исполнялись |
+| Владельцы TUN/plan/protect/observer | [F277](../reports/AUDIT-Q29-ANDROID-LIFECYCLE.md), [F282–F283](../reports/AUDIT-Q29-ANDROID-CONTROLLER.md) | Adapter boundaries подтверждены; универсальный порядок событий OS не заявлен |
+| Настоящие команды службы и владелец Activity permission request | [F278](../reports/AUDIT-Q29-ANDROID-SERVICE.md), [F280](../reports/AUDIT-Q29-ANDROID-PERMISSIONS.md) | Scoped PASS; инъекция ожидания/ответа permissions отличается от автоматизации OS-диалога |
+| Data, ordinary UID, dual stack, handover, NAT64, per-app/DoT, bounded Doze/flapping и блокировка после stop | [Release](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNTIME.md), [NAT64](../reports/AUDIT-Q29-ANDROID-NAT64.md), [per-app](../reports/AUDIT-Q29-ANDROID-APP-POLICY.md), [power/flapping](../reports/AUDIT-Q29-ANDROID-ENDURANCE.md), [trusted DoT](../reports/AUDIT-Q29-ANDROID-TRUSTED-DOT.md) | Scoped PASS; публикация готовности исправлена [F279](../reports/AUDIT-Q29-ANDROID-CONNECTED-GATE.md); physical long sessions не подтверждены |
+| R8 instrumentation | [matching runner](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md) | Opt-in matching runner PASS; обычный production UI smoke подтверждён отдельно; прежний runner FAIL сохранён |
+| Внешняя смерть процесса | [независимый минимальный VpnService](../reports/AUDIT-Q29-ANDROID-SYSTEM.md) | Automatic recovery FAIL на этом image, включая независимый TUN control; blocking/manual recovery PASS; causal JNI defect не доказан |
+| Generic auto/null DnsResolver | [API diagnostic](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md) | ENONET сохранён; typed A/AAAA и system lookup имеют отдельные положительные результаты |
+| Итоговая сверка source/dead-code и lifetime всего раздела | Прежние reviews и синтаксическая инвентаризация 29 файлов | Остаётся; список ссылок сам по себе не доказывает liveness или полный source audit |
+
+Q29 остаётся IN_PROGRESS. Открытые платформенные наблюдения не принимаются молча и не
+переименованы в PASS; границы платформенного покрытия не превращаются в новые обязательные
+перестановки тестов. Пропущенные пользователем платформы и D06 не изменены.
+
 ### 30. iOS: PacketTunnel, Swift и MDM
 
 **Код:** `qeli-ios/QeliCore`, `qeli-ios/QeliPacketTunnel`, `qeli-ios/QeliIOS`, `qeli-ios/MDM`, `qeli-ios/QeliIOSTests`.
@@ -2246,3 +2267,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **6 октября, Q29 F281:** [доверенный Wi-Fi и lockdown](../reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md): старый Release пропускает активный reconnect на возврате и восстанавливается после ошибки транспорта; исправлены четыре callback predicates. Свежие182JVM(3новых)/lint0errors55warnings/defaultR8; TCP/UDP/QUIC6handover transitions,36полных payload отдельного UID,864bursts/144poststopblocked,3capture physical0/drop0 PASS. Свежиеdebug3normal-pause tests/16payloads PASS;15helper4CLI/docs/bindings. Три preliminary harnessFAIL и один pre-runtime SFTP обрыв сохранены;8runtime cleanup/host/userdata PASS. Native/server/managed неизменны;Release instrumentationNOT_RUN. SIGKILL/ENONET/remaining lifecycle/protect/otherAPI-OEM-arm64 открыты;Q29IN_PROGRESS28/37(75,7%).
 
 **6 октября, Q29 F282:** [владелец защиты сокета и отказы доверенного Wi-Fi](../reports/AUDIT-Q29-ANDROID-CONTROLLER.md): устаревший взятый из очереди запрос отклоняется до carrier/bind/protect под монитором службы; задержки/JNI ACK снаружи. Тот же свежий test APK: старый8/3ожидаемых FAIL, исправленный8PASS (пять новых сценариев),28полных debug ответов. Свежие182JVM/lint0ошибок55warnings/defaultR8; TCP/UDP/QUIC6переходов/36полных ответов отдельному UID,864пробы/144poststopblocked,независимый capture physical0/drop0 PASS. Все пять попыток cleanup/host/service/userdata/address PASS;15helper4CLI/docs/bindings. Три protect проверки — Context-attached adapter fixtures с настоящими JNI sockets; location-switch redaction и queued disconnect используют framework, без утверждения о permission revoke или барьере native join. Native/server/managed неизменны;Release instrumentationNOT_RUN. SIGKILLFAIL/auto-nullENONET и непроверенное платформенное/lifecycle покрытие сохранены;Q29IN_PROGRESS28/37(75,7%).
+
+**6 октября, Q29 F283:** [владелец снятого сетевого наблюдателя](../reports/AUDIT-Q29-ANDROID-CONTROLLER.md): callbacks проверяют owner/stopping под lifecycle monitor, регистрация/снятие сериализованы; намеренная trusted-пауза сохраняет наблюдателя. Настоящая Android registration/real carrier с управляемой поздней доставкой на Context-attached adapter службы: тот же свежий test APK старый13/5ожидаемых FAIL, исправленный13PASS; настоящая framework trusted suite сохраняет28полных ответов. Свежие182JVM/lint0ошибок55warnings/defaultR8 UDP2перехода/12полных ответов отдельному UID/288проб/48poststopblocked;независимый capture physical0/drop0 PASS. Три runtime cleanup/host/service/userdata/address PASS;15helper4CLI/docs/bindings. Первые module-style import failures сохранены, прямые вызовы scripts PASS; устаревшие комментарии удалённых реализаций исправлены. Native/server/managed неизменны,Release instrumentationNOT_RUN; прежняя TCP/QUIC матрица сохраняет старую область. Добавлена таблица завершения; SIGKILLFAIL/auto-nullENONET сохранены;Q29IN_PROGRESS28/37(75,7%).

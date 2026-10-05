@@ -1,6 +1,6 @@
-# Q29 F282: владелец защиты сокета и отказы доверенного Wi-Fi
+# Q29 F282–F283: владелец защиты сокета и отказы доверенного Wi-Fi
 
-<!-- normative-sync: q29-android-controller-v1 -->
+<!-- normative-sync: q29-android-controller-v2 -->
 
 F282 запрещает уже взятому из JNI-очереди запросу защиты сокета выбирать или привязывать
 carrier после начала остановки либо замены core. Каждая попытка protect теперь проверяет
@@ -61,6 +61,53 @@ namespace, останавливают приватный сервер, не ос
 (один изменён),пяти неизменных regression inputs,14 неизменных native files,семи managed
 artifacts и шести APK. Native/server/managed переиспользованы явно; упаковка arm64 JNI
 проверена, исполнения arm64 не было. Пятнадцать helper tests и четыре CLI guards PASS.
+
+## F283: владелец снятого сетевого callback
+
+Callback сохранял доступ к выбору carrier и политике доверенного Wi-Fi после снятия или
+замены наблюдателя, а также начала обычной остановки. Новый dispatcher проверяет identity
+наблюдателя и stopping под монитором службы до каждого available, capabilities,
+link-properties и lost handler. Регистрация/снятие используют тот же монитор, публикация
+наблюдателя volatile. Намеренная trusted-пауза сохраняет наблюдателя: настоящая смена сети
+по-прежнему может завершать паузу и возобновлять VPN.
+
+Пять новых сценариев регистрируют настоящие Android observers на Context-attached adapter
+службы, сохраняют старый callback и вызывают его напрямую с настоящими physical Network/
+Capabilities/LinkProperties. Проверяются stopping, снятие, замена, capabilities вместе с
+link-properties и lost. Это управление границей поздней доставки, а не доказательство
+естественного такого расписания Android на всех устройствах. Старый F282 APK:13тестов,
+ровно5ожидаемых FAIL,8прежних PASS; исправленный:13/13PASS с тем же свежим test APK.
+Старый lost меняет Wi-Fi107 на carrier101, available/capabilities публикуют107 после снятия.
+Объединённый старый capabilities/link сценарий падает на capabilities; link handler
+исполнен в исправленном сценарии, отдельного воспроизведения старого link отказа нет.
+
+Настоящая framework trusted-Wi-Fi suite повторена без изменений:пять сценариев,семь
+аутентифицированных стадий и28полных explicit-VPN-Network ответов. Свежие182JVM и
+обычные defaultR8/debug builds PASS;lint0ошибок55прежнихwarnings. В комментариях build/model
+исправлены ссылки на удалённые Kotlin PacketCipher/PacketCodec/ObfsStreamTest и handshake
+методы службы; реализация codec и криптографическое поведение не меняются.
+
+Свежий обычный production R8 UDP Release PASS:два перехода Wi-Fi→Cellular→Wi-Fi,
+12полных ответов отдельному UID IPv4/IPv6 TCP/UDP,288проб,включая48заблокированных после
+остановки. Все12помеченных payload независимо собраны из TUN pcap и проверены по sink SHA;
+четыре исходящих физических вида проб положительно откалиброваны, новых физических
+запросов0/kernel drops0 в проверяемых окнах. При уходе ответы43/48, возврате48/48;
+переход без потерь не обещан. PID/TUN сохранены, soft commits выбирают настоящий новый
+carrier без нового Auth/NetworkPlan. Все три попытки сохраняют host/service/readonly
+userdata и адреса namespace, останавливают приватный сервер и не оставляют службу/TUN.
+Предыдущие F282 TCP/UDP/QUIC результаты сохраняют свою область; TCP/QUIC здесь заново не
+исполнялись.
+
+В этом пакете закреплены303 Android/build inputs (пять изменены),23 auxiliary inputs
+(один изменён),пять неизменных regression inputs,14 неизменных native files,семь managed
+artifacts и шесть APK. Standalone Java Release probe переиспользован без изменений.
+Свежие15helper tests и4CLIguards PASS. Первые три module-style вызова helper не дошли до
+сценариев: imports требуют scripts directory; прямые вызовы scripts PASS, отказные логи
+сохранены. Matching Release instrumentation NOT RUN; arm64 не исполнялся.
+
+Raw:`audit-debt-20260924/q29-android-observer-20261006`.
+Evidence:`release/certification/evidence/q29-android-observer-20261006.json`.
+Предыдущие F282 packet/evidence неизменны и не переименованы в новый запуск.
 
 ## Область результата и остаток
 

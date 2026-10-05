@@ -299,9 +299,16 @@ Retry sleeps и JNI ACK выполняются вне монитора. Откл
 не должно оставлять VPN на доверенной паузе: неизвестный SSID требует восстановления TUN.
 
 `--suite trusted-wifi --variant debug --transport tcp` теперь объединяет пять
-framework trusted-Wi-Fi сценариев и три protect owner/stop/monitor adapter проверки
-с настоящими JNI socket requests. Всего восемь тестов; location/nearby permissions
+framework trusted-Wi-Fi сценариев, три protect owner/stop/monitor adapter проверки
+с настоящими JNI socket requests и пять проверок владельца сетевого наблюдателя.
+Всего 13 тестов; location/nearby permissions
 выдаются извне, SSID settings задаются локально тестом. Location-switch redaction
 не равна отзыву permission с возможным убийством процесса; queued pause/disconnect
 не подтверждает точную точку внутри native join.
-[Q29 F282: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-CONTROLLER.md).
+[Q29 F282–F283: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-CONTROLLER.md).
+
+Сетевые callbacks принимаются только от текущего зарегистрированного наблюдателя,
+под монитором lifecycle. При обычной остановке они отклоняются; намеренная trusted-пауза
+сохраняет наблюдателя для возобновления VPN. Тесты поздней доставки используют настоящий
+Android callback и carrier, но вызывают сохранённый callback напрямую на Context-attached
+объекте службы; это не воспроизведение естественного порядка событий Android.

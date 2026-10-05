@@ -224,4 +224,53 @@ class TransportLifecycleInstrumentedTest {
             worker.join(5000); assertFalse(worker.isAlive); clean(service, core)
         }
     }
+
+    private fun observer(method: String, replace: Boolean = false, stopping: Boolean = false) {
+        val core = core(); val service = fixture(core)
+        val register = VpnServiceImpl::class.java.getDeclaredMethod("registerNetworkCallback")
+            .apply { isAccessible = true }
+        val unregister = VpnServiceImpl::class.java.getDeclaredMethod("unregisterNetworkCallback")
+            .apply { isAccessible = true }
+        val callbackField = VpnServiceImpl::class.java.getDeclaredField("netCallback")
+            .apply { isAccessible = true }
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val network = requireNotNull(cm.allNetworks.firstOrNull {
+            val caps = cm.getNetworkCapabilities(it)
+            caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true &&
+                caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }) { "real physical Wi-Fi required" }
+        val caps = requireNotNull(cm.getNetworkCapabilities(network))
+        val links = requireNotNull(cm.getLinkProperties(network))
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        try {
+            instrumentation.runOnMainSync {
+                field(service, "stopping", false)
+                assertTrue(register.invoke(service) as Boolean)
+                val old = callbackField.get(service) as android.net.ConnectivityManager.NetworkCallback
+                if (replace) assertTrue(register.invoke(service) as Boolean)
+                else if (!stopping) unregister.invoke(service)
+                field(service, "stopping", stopping)
+                field(service, "currentNetwork", if (method == "lost") network else null)
+                when (method) {
+                    "available" -> old.onAvailable(network)
+                    "capabilities" -> old.onCapabilitiesChanged(network, caps)
+                    "links" -> old.onLinkPropertiesChanged(network, links)
+                    "lost" -> old.onLost(network)
+                    else -> error("unknown callback fixture")
+                }
+                assertEquals("retired/stopped observer must not mutate the selected carrier ($method)",
+                    if (method == "lost") network else null, selectedCarrier(service))
+            }
+        } finally {
+            instrumentation.runOnMainSync { field(service, "stopping", true); unregister.invoke(service) }
+            clean(service, core)
+        }
+    }
+    @Test fun stoppedObserverCannotPublishCarrier() = observer("available", stopping = true)
+    @Test fun unregisteredObserverCannotPublishCarrier() = observer("available")
+    @Test fun replacedObserverCannotPublishCarrier() = observer("available", replace = true)
+    @Test fun retiredObserverCapabilitiesAndLinksCannotPublishCarrier() {
+        observer("capabilities"); observer("links")
+    }
+    @Test fun retiredObserverLostCannotEraseCarrier() = observer("lost")
 }

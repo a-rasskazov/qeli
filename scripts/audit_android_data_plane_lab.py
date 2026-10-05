@@ -590,11 +590,16 @@ perf.connection.handshake_timeout_secs = 12
         if args.suite == "trusted-wifi":
             protection_methods = ["stoppedServiceRejectsLateProtectBeforeCarrierMutation",
                                   "replacedCoreCannotProtectOnBehalfOfCurrentConnection",
-                                  "protectionWaitsAtOwnerCheckWhileLifecycleOwnsMonitor"]
+                                  "protectionWaitsAtOwnerCheckWhileLifecycleOwnsMonitor",
+                                  "stoppedObserverCannotPublishCarrier",
+                                  "unregisteredObserverCannotPublishCarrier",
+                                  "replacedObserverCannotPublishCarrier",
+                                  "retiredObserverCapabilitiesAndLinksCannotPublishCarrier",
+                                  "retiredObserverLostCannotEraseCarrier"]
             selector = "com.qeli.TrustedWifiInstrumentedTest," + ",".join(
                 "com.qeli.TransportLifecycleInstrumentedTest#" + name for name in protection_methods)
             phases=[("fixed",selector)]
-            expected_tests=8
+            expected_tests=13
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             assert manifest.get("build_type", "debug") == args.variant, "APK manifest does not match requested variant"
