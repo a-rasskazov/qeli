@@ -13,7 +13,7 @@ namespace QeliMac;
 public static class Program
 {
     private static readonly string[] CliVerbs = { "selftest", "handshake", "connect", "genassets", "genicns",
-        "pf-selftest-rules", "storage-selftest", "control-selftest", "network-selftest", "perapp-selftest" };
+        "pf-selftest-rules", "storage-selftest", "control-selftest", "network-selftest", "perapp-selftest", "forwarding-selftest" };
 
     // Darwin's sigset_t is a bare uint32 with signal N in bit N-1, and SIG_SETMASK is 3.
     // Both read out of the macOS SDK headers rather than assumed: Linux's sigset_t is
@@ -106,6 +106,7 @@ public static class Program
              string.Equals(args[0], "control-selftest", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(args[0], "network-selftest", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(args[0], "perapp-selftest", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(args[0], "forwarding-selftest", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(args[0], "pf-selftest-rules", StringComparison.OrdinalIgnoreCase)))
             return CliRunner.Run(args[0], args.Skip(1).ToArray());
 
@@ -141,12 +142,16 @@ public static class Program
         try { Vpn.NetworkConfigurator.SweepDns(message => Console.Error.WriteLine($"qeli: {message}")); }
         catch (Exception e) { dnsRecoveryFailure = e; LogStartupError(e); }
 
+        Exception? forwardingRecoveryFailure = null;
+        try { Vpn.ForwardingJournal.Sweep(message => Console.Error.WriteLine($"qeli: {message}")); }
+        catch (Exception e) { forwardingRecoveryFailure = e; LogStartupError(e); }
+
         if (args.Any(a => string.Equals(a, "--service", StringComparison.OrdinalIgnoreCase)))
         {
             // Starting a new tunnel after a failed stale-journal restore could leave the host
             // with qeli DNS but no usable VPN. Let launchd retry the recovery on its next
             // supervised start; never overwrite the saved pre-qeli resolver snapshot.
-            if (killSwitchRecoveryFailure != null || dnsRecoveryFailure != null) return 1;
+            if (killSwitchRecoveryFailure != null || dnsRecoveryFailure != null || forwardingRecoveryFailure != null) return 1;
             try { Service.ServiceHostRunner.Run(); return 0; }
             catch (Exception e) { LogStartupError(e); return 1; }
         }

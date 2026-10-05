@@ -293,3 +293,14 @@ processes, не запускает NetworkExtension. Для запуска nativ
 нужен Mac/Xcode; в текущем аудите это USER SKIPPED.
 Сборка per-app принимает только точный dist/per-app-ARCH и отказывает при symlink paths.
 [Проверки и оставшийся scope](../docs/ru/reports/AUDIT-Q28-MACOS-PERAPP.md).
+
+## Forwarding: один владелец и recovery
+
+Обычный utun-профиль с forward=true получает эксклюзивный lease на весь Mac.
+Сначала сохраняется исходное состояние IPv4/IPv6, затем подтверждаются sysctl changes.
+Второй Qeli forward-профиль отказывает до изменения ядра; сначала остановите первый.
+При cleanup failure журнал и ответственность сохраняются для повторной остановки;
+закрытие utun отказывает. Root startup восстанавливает только мёртвого владельца.
+Не удаляйте recovery journal вслепую. Per-app не приобретает этот глобальный lease.
+forwarding-selftest проверяет managed coordinator и временный файл с подменённым sysctl;
+это не Darwin runtime. [Проверки и границы](../docs/ru/reports/AUDIT-Q28-MACOS-FORWARDING.md).

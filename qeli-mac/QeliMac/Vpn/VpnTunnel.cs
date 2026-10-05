@@ -259,66 +259,13 @@ public sealed partial class VpnTunnel : VpnTunnelBase
                 _net.VerifyCarrierPath(address, dev);
     }
 
-    /// <summary>Was `net.inet.ip.forwarding` already 1 before we touched it? Null = we never
-    /// changed it. Turning the user's Mac into a router is a HOST-WIDE change that outlived
-    /// the tunnel — it was set on connect and never put back, so a single site-to-site
-    /// session left IP forwarding on until the next reboot. (C-18)</summary>
-    private bool? _ipForwardingWasOn;
-    private bool? _ipv6ForwardingWasOn;
-
-    /// <summary>Enable kernel forwarding (no NAT) for active NetworkPlan families (#13).
-    /// The tunnel runs elevated; a failure aborts setup because forward=true is part of the plan.
-    /// The previous value is remembered and restored in <see cref="CleanupPlatform"/>.</summary>
-    private void EnableIpForwarding(bool hasIpv4, bool hasIpv6)
-    {
-        bool? ipv4WasOn = hasIpv4 ? ReadSysctlFlag("net.inet.ip.forwarding") : null;
-        bool? ipv6WasOn = hasIpv6 ? ReadSysctlFlag("net.inet6.ip6.forwarding") : null;
-        _ipForwardingWasOn = ipv4WasOn;
-        _ipv6ForwardingWasOn = ipv6WasOn;
-        try
-        {
-            if (ipv4WasOn == false) SetSysctl("net.inet.ip.forwarding=1");
-            if (ipv6WasOn == false) SetSysctl("net.inet6.ip6.forwarding=1");
-            string families = hasIpv4 && hasIpv6 ? "IPv4 and IPv6" : hasIpv4 ? "IPv4" : "IPv6";
-            Log($"IP forwarding enabled/preserved for {families} — LAN behind this node routable through the tunnel, no NAT");
-        }
-        catch (Exception setupError)
-        {
-            try { RestoreIpForwarding(); }
-            catch (Exception rollbackError)
-            {
-                throw new InvalidOperationException(
-                    $"could not enable IP forwarding ({setupError.Message}); rollback also failed: {rollbackError.Message}",
-                    setupError);
-            }
-            throw new InvalidOperationException($"could not enable IP forwarding: {setupError.Message}", setupError);
-        }
+    private ForwardingJournal? _forwarding;
+    private void EnableIpForwarding(bool hasIpv4, bool hasIpv6) =>
+        (_forwarding ??= ForwardingJournal.Create(Log)).Enable(hasIpv4, hasIpv6);
+    private void RestoreIpForwarding() {
+        _forwarding?.ReleaseOwned();
+        _forwarding = null; // Failed restore retains the journal/coordinator for retry.
     }
-
-    /// <summary>Put `net.inet.ip.forwarding` back to 0 if WE turned it on. (C-18)</summary>
-    private void RestoreIpForwarding()
-    {
-        if (_ipForwardingWasOn == false) { SetSysctl("net.inet.ip.forwarding=0"); _ipForwardingWasOn = null; }
-        if (_ipv6ForwardingWasOn == false) { SetSysctl("net.inet6.ip6.forwarding=0"); _ipv6ForwardingWasOn = null; }
-        if (_ipForwardingWasOn != null || _ipv6ForwardingWasOn != null)
-            Log("IP forwarding restored to its previous IPv4/IPv6 state");
-        _ipForwardingWasOn = null;
-        _ipv6ForwardingWasOn = null;
-    }
-
-    private static bool ReadSysctlFlag(string name)
-    {
-        var result = ToolProcess.Run(new System.Diagnostics.ProcessStartInfo("/usr/sbin/sysctl", $"-n {name}"), 3000);
-        ToolProcess.RequireSuccess(result, $"sysctl read {name}");
-        return result.Output.Trim() switch
-        {
-            "0" => false, "1" => true,
-            _ => throw new InvalidOperationException($"sysctl returned invalid value for {name}")
-        };
-    }
-    private static void SetSysctl(string assignment) =>
-        ToolProcess.RequireSuccess(ToolProcess.Run(new System.Diagnostics.ProcessStartInfo("/usr/sbin/sysctl", $"-w {assignment}"), 3000),
-            $"sysctl set {assignment}");
 
     private void ApplyRouteFileRoutes(Session session, string dev,
         CancellationToken cancellationToken)
@@ -484,8 +431,7 @@ public sealed partial class VpnTunnel : VpnTunnelBase
     protected override void BeforeTunDispose()
     {
         _perApp?.Stop();
-        try { RestoreIpForwarding(); }
-        catch { /* best effort here; CleanupPlatform retries and collects failures */ }
+        RestoreIpForwarding(); // Refusal retains the live TUN and its cleanup ownership.
         // Reset DNS and routes BEFORE closing the utun descriptor: XNU destroys the
         // interface on close and configd then holds SCPreferences for ~20 s (with DHCP
         // probes), blocking networksetup.

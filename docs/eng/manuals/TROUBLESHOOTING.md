@@ -2608,3 +2608,20 @@ If WebSocket Upgrade fails,check that the intermediate HTTP endpoint preserves G
 <!-- normative-sync: manual-ws-control-v1 -->
 
 With front=websocket,Ping is handled without application data. Valid Close ends the connection after echo;later data is refused. A Close payload error indicates invalid length,status or UTF-8 reason. Terminal errors require a new carrier. `reality` is a Quick Start name:INI uses fake-tls with REALITY proxy;mode=reality-tls means real TLS. AWG jc must match for TCP obfs;on UDP it means junk datagrams. Configs remain INI. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: manual-macos-forwarding-v1 -->
+
+### macOS: forwarding owner or cleanup error
+
+Ordinary utun profiles with forward=true allow one Qeli forwarding owner per Mac.
+For Another live Qeli forwarding owner exists, stop the current profile before starting
+another. Initially enabled forwarding also requires a lease. No new INI settings.
+Root startup recovers dead-owner journals and preserves live owners.
+
+Forwarding cleanup remains pending or Owned forwarding journal disappeared means
+cleanup was not confirmed. Retry ordinary stop after resolving sysctl or protected
+/Library/Application Support/Qeli access errors. Corrupt/replaced forwarding-state.json
+requires administrator inspection; do not blindly delete it. Restore failure refuses TUN
+closure. The journal is an internal JSON DTO; user configs remain INI. It does not provide
+full network crash recovery or coordination with independent tools changing sysctl.
+[Checks and limits](../reports/AUDIT-Q28-MACOS-FORWARDING.md).

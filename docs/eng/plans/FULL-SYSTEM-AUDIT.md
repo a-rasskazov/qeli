@@ -10,9 +10,9 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v53 -->
+<!-- normative-sync: full-system-audit-v54 -->
 
-**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage/control/network and C#/shell per-app stages complete; Swift runtime USER SKIPPED.**
+**Current total, 5 October: 27/37 sections DONE/PASS (73.0%), 10 remaining. Q27 complete within agreed scope; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app and forwarding stages complete; Swift runtime USER SKIPPED.**
 
 Inventory date: **22 September 2026**. Baseline: branch `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, development **0.8.2**.
@@ -2162,3 +2162,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 **4 October, HTTP/WS read batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md):6 fixes,9 baseline FAIL,11 new tests,2335 Linux PASS,40 live probes+63 transport assertions,request-head ASan/libFuzzer,fresh matrix/soak/four native A/B PASS. At the read batch,Close/control lifecycle and wire-matrix review remained open;Q12 was IN_PROGRESS,overall11/37 (29.7%).
 
 **5 October, Q28 per-app:** [bridge, Swift and build paths](../reports/AUDIT-Q28-MACOS-PERAPP.md): F256–F261;22 managed +10 shell PASS,6 old bridge and5 old shell failures. Swift source review;10 new native cases USER SKIPPED. Q28 IN_PROGRESS; forwarding/guardian/native socket lifetime remain. Plan27/37.
+
+**5 October, Q28 forwarding:** [ownership and recovery](../reports/AUDIT-Q28-MACOS-FORWARDING.md): F262–F264;58 new checks,1208 managed PASS,6 expected baseline FAIL. One Qeli owner per Mac,durable snapshot before sysctl,independent restore/checkpoint/retry. Actual Mac USER SKIPPED. Q28 IN_PROGRESS;guardian/native socket lifetime and integration remain. Plan27/37.

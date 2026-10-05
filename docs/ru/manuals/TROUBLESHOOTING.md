@@ -2617,3 +2617,21 @@ TUN/NAT/NDP, `post_up`, DNS и bind каждого `listen`. Ошибка `liste
 <!-- normative-sync: manual-ws-control-v1 -->
 
 При front=websocket Ping обслуживается без отправки данных приложением. Корректный Close завершает соединение после echo; дополнительные данные после Close не принимаются. Ошибка Close payload означает неверную длину, status или UTF-8 причину. После terminal error нужен новый carrier. `reality` — имя Quick Start: INI использует fake-tls с REALITY proxy; mode=reality-tls обозначает настоящий TLS. AWG jc должен совпадать для TCP obfs; на UDP это junk datagrams. Конфиги остаются INI. [Q12](../reports/AUDIT-Q12-TRANSPORTS.md).
+
+<!-- normative-sync: manual-macos-forwarding-v1 -->
+
+### macOS: ошибка владельца или очистки forwarding
+
+Для обычного utun с forward=true допускается один Qeli forwarding owner на весь Mac.
+При Another live Qeli forwarding owner exists остановите текущий профиль до запуска
+следующего. Исходно включённый forwarding также требует lease. Новых INI-ключей нет.
+Root startup восстанавливает журнал мёртвого владельца; живого не трогает.
+
+Forwarding cleanup remains pending или Owned forwarding journal disappeared означают,
+что очистка не подтверждена. Повторите штатную остановку после устранения ошибки sysctl
+или доступа к защищённому каталогу /Library/Application Support/Qeli. Повреждённый либо
+подменённый forwarding-state.json требует проверки администратором; не удаляйте файл
+вслепую. Ошибка восстановления не разрешает закрытие TUN. Журнал — внутренний JSON DTO,
+пользовательские конфиги остаются INI. Это не механизм полного crash recovery сети и не
+координация с независимыми инструментами, меняющими sysctl.
+[Проверки и ограничения](../reports/AUDIT-Q28-MACOS-FORWARDING.md).

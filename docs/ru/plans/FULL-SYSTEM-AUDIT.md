@@ -10,9 +10,9 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v53 -->
+<!-- normative-sync: full-system-audit-v54 -->
 
-**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: storage/control/network и C#/shell per-app этапы завершены; Swift runtime USER SKIPPED.**
+**Текущий итог, 5 октября: 27/37 разделов DONE/PASS (73,0%), осталось 10. Q27 завершён в согласованном объёме; Q28 IN_PROGRESS: storage/control/network, C#/shell per-app и forwarding этапы завершены; Swift runtime USER SKIPPED.**
 
 Дата инвентаризации: **22 сентября 2026**. База: ветка `dev`, commit
 `fc6f4a5dc8df7f119f2d99a6b72b08916ae7a268`, разработка **0.8.2**.
@@ -2175,3 +2175,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 **4 октября, HTTP/WS read batch PASS:** [Q12](../reports/AUDIT-Q12-TRANSPORTS.md): 6 исправлений,9 baseline FAIL,11 новых тестов,2335 Linux PASS,40 live probes+63 transport assertions,request-head ASan/libFuzzer,свежие matrix/soak/четыре native A/B PASS. На момент read-пакета Close/control lifecycle и wire-матрица оставались открытыми; тогда Q12 IN_PROGRESS,план11/37 (29,7%).
 
 **5 октября, Q28 per-app:** [bridge, Swift и build paths](../reports/AUDIT-Q28-MACOS-PERAPP.md): F256–F261; 22 managed +10 shell PASS,6 old bridge failures и5 old shell failures. Swift source review,10 новых native cases USER SKIPPED. Q28 IN_PROGRESS; forwarding/guardian/native socket lifetime остаются. План 27/37.
+
+**5 октября, Q28 forwarding:** [владение и recovery](../reports/AUDIT-Q28-MACOS-FORWARDING.md): F262–F264;58 новых проверок,1208 managed PASS,6 ожидаемых baseline FAIL. Один Qeli-владелец на Mac, durable snapshot до sysctl, независимые restore/checkpoint/retry. Реальный Mac USER SKIPPED. Q28 IN_PROGRESS;guardian/native socket lifetime и интеграция остаются. План27/37.
