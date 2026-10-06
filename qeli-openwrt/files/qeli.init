@@ -377,17 +377,42 @@ sync_firewall_device() {
 	return 0
 }
 
-# rc.common closes the procd message after this callback and otherwise loses its
-# exit code. Preserve preparation/cleanup results for its standard result hooks.
+# procd.sh restores its JSON namespace after ubus and loses the command status.
+# Observe only this init invocation's service mutations, leaving argument arrays
+# unchanged. The rc.common result hooks run after submission/deletion and preserve
+# that status; a failed stop also prevents restart from admitting a new instance.
+qeli_track_procd_result() {
+	QELI_PROCD_RESULT=0
+	ubus() {
+		local result
+		command ubus "$@"
+		result=$?
+		if [ "$1" = call ] && [ "$2" = service ]; then
+			case "$3" in
+				set|add|delete) QELI_PROCD_RESULT="$result" ;;
+			esac
+		fi
+		return "$result"
+	}
+}
+
 start_service() {
 	QELI_START_RESULT=1
 	[ "${QELI_STOP_RESULT:-0}" = 0 ] || return 1
+	qeli_track_procd_result
 	qeli_start_service "$@" || { QELI_START_RESULT=$?; return "$QELI_START_RESULT"; }
 	QELI_START_RESULT=0
 }
 
-service_started() { return "${QELI_START_RESULT:-1}"; }
-service_stopped() { return "${QELI_STOP_RESULT:-1}"; }
+service_started() {
+	[ "${QELI_START_RESULT:-1}" = 0 ] || return "${QELI_START_RESULT:-1}"
+	return "${QELI_PROCD_RESULT:-1}"
+}
+service_stopped() {
+	[ "${QELI_STOP_RESULT:-1}" = 0 ] || return "${QELI_STOP_RESULT:-1}"
+	QELI_STOP_RESULT="${QELI_PROCD_RESULT:-1}"
+	return "$QELI_STOP_RESULT"
+}
 
 qeli_start_service() {
 	config_load qeli || return 1
@@ -420,6 +445,7 @@ qeli_start_service() {
 }
 
 stop_service() {
+	qeli_track_procd_result
 	QELI_STOP_RESULT=0
 	rm -f "$CONF" || QELI_STOP_RESULT=$?
 	return "$QELI_STOP_RESULT"

@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v19 -->
+<!-- normative-sync: q31-openwrt-controls-v20 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -1048,7 +1048,7 @@ default toolchains и работающие сервисы не изменяли�
 |---|---|
 | Реальная standalone cross-сборка четырёх targets/ELF | DONE в указанном scope |
 | UCI/INI, shell lifecycle/rollback и LuCI | Scoped suites PASS; сохранены модельные границы |
-| Настоящие ucode/fs, rpcd/ubus/UCI и session ACL | Scoped native PASS F347–F351 ниже; procd/package SDK остаются OPEN |
+| Настоящие ucode/fs, rpcd/ubus/UCI и session ACL | Scoped native PASS F347–F352 ниже; package SDK остаётся OPEN, procd non-PID1 lifecycle проверен |
 | Preflight→launch config snapshot, core plan generation/ABA | OPEN; текущий exclusion lock не устраняет эти гонки |
 | SIGKILL/power-loss installer recovery | Manual recovery; полная bundle transaction не подтверждена |
 | Firmware WAN/reboot/DNS/firewall/RSS/throughput | USER_EXCLUDED; cross-build не device test |
@@ -1201,3 +1201,64 @@ Native RPC/UCI/session ACL часть проверена; procd/SDK/HTTP/firmwar
 этими tests. Config preflight/core generation/ABA и clean A/B остаются OPEN.
 Q31 IN_PROGRESS;28/37(75.7%),9 осталось. Q29 SIGKILL FAIL/auto-null ENONET,
 Q30 Apple exclusions/callback-drain OPEN и D06 ACCEPTED сохранены.
+
+## F352: init скрывал ошибку отправки команды настоящему procd
+
+На официальном OpenWrt24.10.4 x86/64 rootfs старый init возвращал exit0 для
+start/stop/restart/reload при отсутствии service object procd, хотя ubus сообщал
+Not found. При отсутствующем Unix socket ошибка также терялась. procd.sh после
+ubus очищает JSON и восстанавливает namespace; rc.common вызывает результатные
+hooks после этих операций. Прежние hooks сохраняли лишь ошибки подготовки и
+удаления INI, поэтому LuCI мог показать успешную команду без доступного supervisor.
+
+Init теперь локально наблюдает command ubus call service set/add/delete: передаёт
+тот же массив аргументов без изменения и сохраняет фактический exit code.
+Wrapper устанавливается из start_service/stop_service после загрузки procd.sh;
+не зависит от переопределения внутренних функций библиотеки. service_started
+возвращает ошибку подготовки либо отправки, service_stopped — ошибку удаления
+INI либо отправки delete. Последняя сохраняется в QELI_STOP_RESULT: restart/reload
+не допускает новый instance после failed stop. Другие ubus calls не меняют receipt.
+Успех отправки не доказывает VPN connectivity, завершение cleanup или успешную
+валидацию конфигурации самим клиентом; эти границы сохранены.
+
+Скачан официальный rootfs.tar.gz24.10.4, SHA256
+ e7f8ab84eef55c7eb23492de7b0517dbc23fbedaa4abbb680fe64720c309dc03.
+В нём настоящий musl procd2024.12.22~42d39376-r1, ubusd/ubus/libuci,
+BusyBox ash, rc.common/procd.sh/jshn. Все archive/runtime identities сохранены.
+Каждый метод копирует rootfs в owned0700 chroot на .11 с собственным Unix socket.
+Procd работает как обычный процесс, не PID1; штатная boot/reboot последовательность
+не запускается. Host /etc, system services, network/firewall и .10 неизменны.
+
+7 новых integration methods PASS без skips: настоящий start/command argv/env и
+0600INI; stop с удалением rendered config и сохранением volatile secret;
+restart/reload с новым PID и актуальным INI; SIGKILL owned child→реальный respawn;
+disabled no-instance, enable/disable rc.d symlinks; missing secret/binary admission;
+ошибки при missing procd и missing socket для четырёх verbs. Один метод проверяет
+несколько состояний, не дополнительные checklist пункты. Client executable —
+inert shell receipt с exec sleep; /dev/net/tun — только файл existence marker,
+firewall UCI пустой и реального reload нет. Qeli data plane, cleanup NetworkPlan,
+WAN/reboot, DNS/firewall и firmware boot не подтверждены этим запуском.
+
+Старый Git init на тех же7 методах даёт8 assertion failures: обе недоступности
+× четыре verbs. Первый6-method baseline с4 failures также сохранён. Полный
+OpenWrt набор69 = прежние55 +7rpcd +7procd PASS отдельно в BusyBox ash/dash;
+все optional runtime env заданы, skips нет. Прежние ucode24.10/fs GNU runtime,
+rpcd/UCI template, saved rc.common fixture и exact-source INI inspector повторно
+использованы с их прежними hashes. Procd tests всегда выполняют rootfs BusyBox,
+а shell-dependent прежние fixtures — выбранный interpreter. Собственных процессов
+и runtime roots после всех runs нет.14 Node/37recipes/docs/bindings/diff PASS.
+Core/native/router Qeli sources/recipes/artifacts не менялись; повторная Rust/FFI/
+cross сборка для shell fix не заявлена. SDK не запускался: read-only inventory .11
+показал1.7GB free, поэтому в этом блоке использован малый rootfs вместо SDK251MB
+с дальнейшей распаковкой/feed/build. Это оставшийся пункт, не технический PASS.
+
+Источники: [официальный rootfs/hash](https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/),
+[release procd recipe](https://github.com/openwrt/openwrt/blob/v24.10.4/package/system/procd/Makefile),
+[pinned non-PID1 daemon](https://github.com/openwrt/procd/blob/42d3937654508b04da64969f9d764ac2ec411904/procd.c),
+[release rc.common](https://github.com/openwrt/openwrt/blob/v24.10.4/package/base-files/files/etc/rc.common).
+Пакет: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-procd-20261006.
+Evidence: release/certification/evidence/q31-openwrt-procd-20261006.json.
+Actual procd supervision API проверен в указанном scope; SDK/package installation,
+HTTP, config preflight/core generation/ABA, clean A/B остаются OPEN; firmware
+USER_EXCLUDED. Q31 IN_PROGRESS;28/37(75.7%),9 осталось. Q29 SIGKILL FAIL/auto-null
+ENONET, Q30 Apple exclusions/callback-drain OPEN и D06 ACCEPTED сохранены.

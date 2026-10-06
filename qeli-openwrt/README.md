@@ -178,9 +178,11 @@ commit and retries on the next start even if staged options are already absent.
 After fixing the storage/UCI error, retry start; this does not guarantee reboot
 transactions or erase old flash blocks. Rotate migrated credentials.
 Failed UCI loads or multiple qeli firewall zones reject start preparation. Standard
-rc.common hooks return preparation/cleanup failures to the service caller; failed
-stop cleanup blocks the next start within the same restart/reload call. Daemon
-acceptance, join and connectivity are separate from this command result.
+rc.common hooks return preparation/cleanup and actual ubus service submission
+failures to the caller. Failed stop cleanup or service deletion submission blocks
+the next start within that restart/reload call. An unavailable procd/service socket
+is a command failure; fix the supervisor and retry. Successful submission still
+does not confirm client initialization, completed cleanup or VPN connectivity.
 
 The development init renderer quotes string values and escapes double quotes
 according to the shared INI parser. Literal quotes, backslashes and significant
@@ -201,8 +203,11 @@ linked secret destinations reject writes. Clearing secrets also rejects a linked
 runtime directory to avoid deleting outside files; an absent directory is a no-op. Correct the unexpected filesystem
 object before retrying; do not treat a failed write as an applied credential.
 Host tests cover real ucode/fs and native24.10 rpcd/ubus/UCI/session ACL in a
-private chroot. They do not confirm procd, SDK installation, HTTP serving or
-router firmware behavior. Administrator path replacement
+private chroot. Separate tests exercise the actual official24.10.4 x86 procd
+supervision API and rc.common with an inert client process: start/stop/reload,
+respawn, autostart links and transport errors. Procd runs as a non-PID1 daemon;
+these tests do not confirm VPN cleanup/connectivity, SDK installation, HTTP
+serving, OpenWrt boot or router firmware behavior. Administrator path replacement
 between checks and publication is outside this guarantee.
 
 The LuCI package explicitly requires luci-base, rpcd-mod-ucode and ucode-mod-fs
