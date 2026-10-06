@@ -111,3 +111,11 @@
   Apple does not expose that enforcement mode to Qeli's custom Packet Tunnel Provider.
   VPN On Demand is the closest Qeli/consumer equivalent to Android boot auto-connect.
 - There is no battery-optimization exemption flow or Android-style foreground service.
+
+## Q30 source audit, 6 October 2026
+
+[Scoped MDM/provider callback fixes](../docs/eng/reports/AUDIT-Q30-IOS-POLICY-SNAPSHOT.md)
+reject truncated numeric policies and invalidate stale provider replies across tunnel
+transitions. Six new XCTest cases are retained but NOT_RUN on Windows; six Python
+IPA-verifier fixture regressions PASS. These are not a simulator/device qualification.
+Q30 remains IN_PROGRESS; the user excluded Apple runtime for this audit.

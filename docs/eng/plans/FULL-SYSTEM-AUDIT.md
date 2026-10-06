@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v90 -->
+<!-- normative-sync: full-system-audit-v91 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1904,7 +1904,13 @@ Exactly-once start/stop completion, generation/cancellation, Keychain/app groups
 - [ ] Integration and target platform.
 - [ ] Fixes, retesting and evidence.
 
-**Status: TODO.**
+**Status: IN_PROGRESS.**
+
+[Scoped F290/F291 source fixes](../reports/AUDIT-Q30-IOS-POLICY-SNAPSHOT.md):
+exact MDM numbers and stale provider-reply ownership. Six IPA-verifier fixture
+regressions PASS; six added Swift XCTest and Xcode/runtime NOT_RUN (user-excluded
+Apple runtime). Whole-section review remains open; no checklist item is closed yet.
+Q29 open observations retained; overall28/37(75.7%),9 remain.
 
 ### 31. OpenWrt, LuCI and Keenetic
 

@@ -46,6 +46,7 @@ final class TunnelManager: NSObject, ObservableObject {
     private var statusObserver: NSObjectProtocol?
     private var statsTimer: Timer?
     private var operationGeneration: UInt64 = 0
+    private var snapshotResponseGate = ProviderSnapshotResponseGate()
     /// Revision assigned synchronously by the UI before it launches an asynchronous
     /// On-Demand preference write. This is separate from `operationGeneration`: a
     /// settings edit must not cancel a tunnel connection attempt, but an older edit
@@ -121,6 +122,7 @@ final class TunnelManager: NSObject, ObservableObject {
            config.serverPublicKeyHex?.isEmpty != false || config.realityShortID?.isEmpty != false {
             throw TunnelManagerError.realityRequiresPinnedKey
         }
+        snapshotResponseGate.invalidate()
         operationGeneration &+= 1
         invalidatePendingOnDemandUpdates()
         let generation = operationGeneration
@@ -197,6 +199,7 @@ final class TunnelManager: NSObject, ObservableObject {
     /// MDM-selected profile cannot be resolved. Keeping the old provider UUID or
     /// On-Demand rules here would turn a policy error into an unmanaged fallback.
     func failClosedForManagedProfilePolicy() async throws {
+        snapshotResponseGate.invalidate()
         operationGeneration &+= 1
         invalidatePendingOnDemandUpdates()
         try await prepare()
@@ -288,6 +291,7 @@ final class TunnelManager: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        snapshotResponseGate.invalidate()
         operationGeneration &+= 1
         let status = manager?.connection.status ?? .invalid
         var value = snapshot
@@ -312,6 +316,7 @@ final class TunnelManager: NSObject, ObservableObject {
     }
 
     private func consume(status: NEVPNStatus) {
+        if systemStatus != status { snapshotResponseGate.invalidate() }
         systemStatus = status
         var value = sharedStore.snapshot()
         switch status {
@@ -387,12 +392,21 @@ final class TunnelManager: NSObject, ObservableObject {
     }
 
     private func requestProviderSnapshot() {
-        guard let session = manager?.connection as? NETunnelProviderSession else { return }
+        guard systemStatus == .connected || systemStatus == .reasserting,
+              snapshot.phase != .disconnecting,
+              let session = manager?.connection as? NETunnelProviderSession else { return }
+        let token = snapshotResponseGate.issue()
         do {
             try session.sendProviderMessage(Data("snapshot".utf8)) { [weak self] data in
                 guard let data,
                       let value = try? JSONDecoder().decode(TunnelSnapshot.self, from: data) else { return }
-                Task { @MainActor in self?.publish(value) }
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.systemStatus == .connected || self.systemStatus == .reasserting,
+                          self.snapshot.phase != .disconnecting,
+                          self.snapshotResponseGate.accept(token) else { return }
+                    self.publish(value)
+                }
             }
         } catch {
             // A connection can transition between the status check and this message.
