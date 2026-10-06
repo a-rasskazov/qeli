@@ -192,7 +192,8 @@ RPC; it preserves staged form edits and displays unknown when the read fails.
 Maintainer cross-build helpers reject target typos and setup/transfer failures;
 Every run uploads this checkout into a fresh private directory. SHA256/ELF-checked
 atomic artifact transfer does not qualify full ABI or real router runtime. Development tests execute pinned OpenWrt24.10/25.12 ucode/fs on a Linux host;
-rpcd/ubus/procd and firmware runtime remain unqualified.
+The native24.10 rpcd/ubus/UCI/session ACL path is tested in a private Linux chroot;
+procd, SDK installation, HTTP serving and firmware runtime remain unqualified.
 
 
 The first-install firewall defaults use named package-owned sections. An existing
@@ -263,6 +264,17 @@ FIFOs and symlinks do not count. Linked runtime directories and non-regular or
 linked secret destinations reject writes. Clearing secrets also rejects a linked
 runtime directory to avoid deleting outside files; an absent directory is a no-op. Correct the unexpected filesystem
 object before retrying; do not treat a failed write as an applied credential.
-Host tests cover real ucode/fs and isolated init file operations; they do not
-confirm rpcd/ubus/procd or router firmware behavior. Administrator path replacement
+Host tests cover real ucode/fs and native24.10 rpcd/ubus/UCI/session ACL in a
+private chroot. They do not confirm procd, SDK installation, HTTP serving or
+router firmware behavior. Administrator path replacement
 between checks and publication is outside this guarantee.
+
+The LuCI package explicitly requires luci-base, rpcd-mod-ucode and ucode-mod-fs
+along with qeli. An installation missing fs cannot register the Qeli RPC object.
+Both secret fields validate ASCII controls, the UTF-8 byte limit and Unicode
+before sending RPC. NUL is unsupported by ubus C-string transport: external RPC
+producers must reject it before serialization, as it may otherwise truncate a
+value before the Qeli handler receives it. Use valid text without control bytes.
+LuCI session staging remains separate from init-visible configuration until
+commit; administrative global CLI UCI staging is a different context and can be
+init-visible before commit. Save & Apply the form before service controls.

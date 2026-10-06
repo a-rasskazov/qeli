@@ -2,7 +2,8 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for the qeli VPN client
-LUCI_DEPENDS:=+qeli +rpcd-mod-ucode
+# The UI framework and imported fs module are runtime requirements.
+LUCI_DEPENDS:=+luci-base +qeli +rpcd-mod-ucode +ucode-mod-fs
 LUCI_PKGARCH:=all
 PKG_VERSION:=0.8.2
 PKG_RELEASE:=1

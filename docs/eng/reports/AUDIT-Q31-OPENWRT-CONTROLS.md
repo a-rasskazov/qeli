@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v18 -->
+<!-- normative-sync: q31-openwrt-controls-v19 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -1047,7 +1047,7 @@ Current Q31 remainder:
 |---|---|
 | Actual standalone four-target cross builds/ELF | DONE in the stated scope |
 | UCI/INI, shell lifecycle/rollback and LuCI | Scoped suites PASS; model boundaries retained |
-| Actual ucode/fs | Scoped PASS F347–F349 below; rpcd/UCI/procd/package SDK remain OPEN |
+| Actual ucode/fs, rpcd/ubus/UCI and session ACL | Scoped native PASS F347–F351 below; procd/package SDK remain OPEN |
 | Preflight→launch config snapshot/core plan generation/ABA | OPEN; exclusion lock does not eliminate these races |
 | SIGKILL/power-loss installer recovery | Manual recovery; no full bundle transaction claim |
 | Firmware WAN/reboot/DNS/firewall/RSS/throughput | USER_EXCLUDED; cross-build is not a device test |
@@ -1126,5 +1126,74 @@ Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-u
 Evidence: release/certification/evidence/q31-openwrt-ucode-runtime-20261006.json.
 ucode/fs platform API is qualified in this scope; daemon/SDK/firmware,
 config preflight-to-launch generation/ABA and clean A/B remain separately OPEN.
+Q31 IN_PROGRESS;28/37(75.7%),9 remain. Q29 SIGKILL FAIL/auto-null ENONET,
+Q30 Apple exclusions/callback-drain OPEN and D06 ACCEPTED are preserved.
+
+## F350–F351: package dependencies and actual RPC/UCI/ACL
+
+F350: the LuCI package declared only qeli/rpcd-mod-ucode despite requiring the
+UI framework and importing fs. luci.mk maps LUCI_DEPENDS into runtime DEPENDS;
+rpcd-mod-ucode requires libucode but not fs. Existing LuCI installs mask missing
+requirements. luci-base and ucode-mod-fs are now explicit dependencies. Actual
+rpcd without fs.so cannot register luci.qeli; with it all five methods exist.
+A full SDK package resolver/install was not run.
+
+F351: the form sent secrets without caller validation. Native ubus CLI/JSON→blob
+truncates NUL and its suffix before Qeli: left<NUL>right was stored as left with
+success. This is unsupported input for the transport's C-string API; a handler
+cannot detect bytes already lost. The official caller now shares a form/setSecret
+validator rejecting all C0/DEL before RPC, invalid types, over4096 UTF-8 bytes
+and lone surrogates. Empty fields preserve existing secrets; Unicode/quotes/edge
+spaces remain literal and storage errors propagate. Arbitrary direct RPC callers
+must reject NUL before serialization; server rejection of already lost NUL is not
+claimed. The probe is UNSUPPORTED_NUL_INPUT_LOST_BEFORE_QELI, not supported input.
+
+A pristine GNU host stack was built from OpenWrt24.10 recipes at recorded commit
+58584c6f2829a7e5d77376ab68aae3dcc4a392d8: libubox49056d17,ubus60e04048,
+uci16ff0bad,rpcdbba95191 and ucode3f64c808; full SHAs are in evidence. CMake3.31.6,
+json-c0.18 and existing native runtime libraries, single compiler job and private
+DESTDIR/sysroot only, no system install. rpcd file/rpcsys/iwinfo are disabled;
+ucode plugin/fs are real. The independent new ucode build has ZLIB OFF. In F347,
+ZLIB remained default ON but its target was not built or used, clarifying the
+previous brief modules description without changing old artifact bytes. Initial
+install failed on unbuilt zlib; a separate copy was built. Initial rpcd compile
+lacked private json-c headers; only build include flags were corrected.
+
+Seven new integration methods PASS without skips. Each starts owned ubusd/rpcd
+inside a chroot with a separate Unix socket, unmodified Qeli module/init/ACL,
+actual OpenWrt functions.sh/uci.sh/libuci and private config/runtime paths.
+Cases cover signature/type policy, exit2/9 and VM recovery, both secret bytes/
+4096byte Unicode/child17, filesystem/linked-leaf guards, actual reader/writer ACL
+allow/deny decisions for the five methods and UCI qeli/firewall, session-specific
+UCI set/commit and unknown status for missing config.11 literal/control/Unicode/
+injection values also pass real UCI→init renderer→reused exact-source Rust INI
+inspector, SHA256 afc80db3… matches F342 and format.rs is unchanged. Service
+start/stop/enable verbs and logger are adapters; procd is unqualified. Actual
+session.access decisions are tested; HTTP/uhttpd authentication bridge is not.
+
+Initial chroot devices in /tmp(nodev) could not open; fixtures moved to owned
+/var/tmp without remounting. Initial global CLI staging assertion was wrong:
+global UCI deltas are init-visible and do not model LuCI session staging. Final
+checks use real session SID uci.set/commit: status stays unchanged until commit.
+Initial NUL assertion was qualified after the separate transport probe. These
+setup/fixture assumptions are not extra product findings; original FAIL inputs/
+logs are retained. Final tests/cleanup PASS; no owned daemons/runtime roots remain.
+Host /etc, services, network/firewall and .10 were unchanged.
+
+14 Node fixtures PASS,3 new:66 control/name cases, invalid types, ASCII/Unicode
+byte boundaries, lone surrogates, literal values, blank/no-op and storage failure.
+Old JS with the same new tests reproduces NUL transmission before validation;
+initial incomplete baseline without qeli.uc is excluded.37 recipes, docs/bindings/
+diff PASS. Core/native/router inputs/artifacts are unchanged; no new Qeli/FFI/
+cross build is claimed. Pinned source archives, CMake configs, runtime template/
+dependencies, executable/module SHA and exact Git input proof are saved.
+
+Sources: [pinned rpcd package dependencies](https://github.com/openwrt/openwrt/blob/58584c6f2829a7e5d77376ab68aae3dcc4a392d8/package/system/rpcd/Makefile),
+[LuCI runtime dependency mapping](https://github.com/openwrt/luci/blob/openwrt-24.10/luci.mk),
+[pinned rpcd ucode dispatch](https://github.com/openwrt/rpcd/blob/bba95191ff2f22c9118a1ba1355b83afaa277ae3/ucode.c).
+Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-rpcd-package-20261006.
+Evidence: release/certification/evidence/q31-openwrt-rpcd-package-20261006.json.
+Native RPC/UCI/session ACL is qualified; these tests do not replace procd/SDK/
+HTTP/firmware. Config preflight/core generation/ABA and clean A/B remain OPEN.
 Q31 IN_PROGRESS;28/37(75.7%),9 remain. Q29 SIGKILL FAIL/auto-null ENONET,
 Q30 Apple exclusions/callback-drain OPEN and D06 ACCEPTED are preserved.

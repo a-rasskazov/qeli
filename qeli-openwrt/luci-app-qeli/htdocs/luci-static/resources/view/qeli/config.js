@@ -66,8 +66,24 @@ function svc(action) {
 	});
 }
 
+// Validate before JSON/ubus: C-string transports can discard a NUL suffix.
+function validateSecretValue(value) {
+	if (value == null || value === '') return true; // leave the existing secret
+	if (typeof value !== 'string') return _('The secret must be text.');
+	if (/[\x00-\x1f\x7f]/.test(value)) return _('The secret must not contain ASCII control characters.');
+	if (value.length > 4096) return _('The secret must contain at most 4096 UTF-8 bytes.');
+	try {
+		// Each percent triplet represents one UTF-8 byte; reject lone surrogates.
+		if (encodeURIComponent(value).replace(/%[0-9A-F]{2}|./g, 'x').length > 4096)
+			return _('The secret must contain at most 4096 UTF-8 bytes.');
+	} catch (e) { return _('The secret must contain valid Unicode.'); }
+	return true;
+}
+
 function setSecret(name, value) {
-	if (!value) return Promise.resolve(); // empty means "leave the existing volatile secret"
+	var validation = validateSecretValue(value);
+	if (validation !== true) return Promise.reject(new Error(validation));
+	if (value == null || value === '') return Promise.resolve(); // leave the existing volatile secret
 	return callQeliSetSecret(name, value).then(function (ok) {
 		if (!ok) throw new Error(_('Failed to store the volatile %s secret.').format(name));
 		ui.addNotification(null, E('p', _('Volatile %s secret updated. Restart qeli to apply it.').format(name)), 'info');
@@ -212,6 +228,7 @@ return view.extend({
 		o.password = true;
 		o.rmempty = true;
 		o.cfgvalue = function () { return ''; };
+		o.validate = function (sectionId, value) { return validateSecretValue(value); };
 		o.write = function (sectionId, value) { return setSecret('pass', value); };
 		o.remove = function () { return Promise.resolve(); };
 
@@ -256,6 +273,7 @@ return view.extend({
 		o.password = true;
 		o.rmempty = true;
 		o.cfgvalue = function () { return ''; };
+		o.validate = function (sectionId, value) { return validateSecretValue(value); };
 		o.write = function (sectionId, value) { return setSecret('obfs_key', value); };
 		o.remove = function () { return Promise.resolve(); };
 

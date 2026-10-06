@@ -16,11 +16,12 @@ function fixture(options = {}) {
     const context = vm.createContext({
         view: { extend: v => v }, form: {}, poll: {},
         ui: { addNotification() {} }, E: () => ({}), _: v => v,
-        rpc: { declare: spec => async action => {
+        rpc: { declare: spec => async (action, value) => {
             if (spec.method === 'service_status') {
                 if (options.statusFailure) throw new Error('status unavailable');
                 return { enabled: options.backendEnabled };
             }
+            if (spec.method === 'set_secret') { events.push(['secret', action, value]); return !options.failSecret; }
             if (spec.method !== 'service_action') return {};
             events.push(`${action}:${committed}`);
             if (options.failService === action) return false;
@@ -39,8 +40,8 @@ function fixture(options = {}) {
         }
     });
     vm.runInContext("String.prototype.format = function(v) { return this.replace('%s',v); };", context);
-    vm.runInContext('(function(){' + source.replace('return view.extend({', 'globalThis.audit = { controlService, getEnabled, statusText }; return view.extend({') + '\n})()', context);
-    return { control: context.audit.controlService, status: context.audit.getEnabled, text: context.audit.statusText, events };
+    vm.runInContext('(function(){' + source.replace('return view.extend({', 'globalThis.audit = { controlService, getEnabled, statusText, setSecret }; return view.extend({') + '\n})()', context);
+    return { control: context.audit.controlService, status: context.audit.getEnabled, text: context.audit.statusText, secret: context.audit.setSecret, events };
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 (async () => {
@@ -133,6 +134,36 @@ async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
                 assert.throws(() => methods['luci.qeli'].clear_secret.call({ args: { name } }), /invalid:2/);
             assert.equal(calls.length, admitted);
         }
+    });
+    await test('secret controls and invalid types are rejected before RPC', async () => {
+        const f = fixture();
+        for (const name of ['pass', 'obfs_key']) {
+            for (const code of [...Array(32).keys(), 127])
+                await assert.rejects(f.secret(name, 'left' + String.fromCharCode(code) + 'right'), /control/i);
+            for (const value of [false, 0, 1, [], {}])
+                await assert.rejects(f.secret(name, value), /text/i);
+        }
+        assert.deepEqual(f.events, []);
+    });
+    await test('secret UTF-8 byte limits and malformed Unicode reject before RPC', async () => {
+        const f = fixture();
+        for (const value of ['a'.repeat(4097), 'é'.repeat(2049), '😀'.repeat(1025)])
+            await assert.rejects(f.secret('pass', value), /4096/);
+        for (const value of ['\ud800', '\udc00'])
+            await assert.rejects(f.secret('pass', value), /Unicode/);
+        assert.deepEqual(f.events, []);
+        for (const value of ['a'.repeat(4096), 'é'.repeat(2048), '😀'.repeat(1024), '  "quoted" \\ $ ; `  ']) {
+            await f.secret('pass', value);
+            assert.deepEqual(f.events.at(-1), ['secret', 'pass', value]);
+        }
+    });
+    await test('blank secrets keep the current value and storage errors propagate', async () => {
+        const f = fixture();
+        for (const value of ['', null, undefined]) await f.secret('pass', value);
+        assert.deepEqual(f.events, []);
+        const failed = fixture({ failSecret: true });
+        await assert.rejects(failed.secret('obfs_key', 'fixture'), /Failed to store/);
+        assert.deepEqual(failed.events, [['secret', 'obfs_key', 'fixture']]);
     });
     console.log(`LuCI fixture tests: ${passed} PASS (not rpcd/procd device qualification)`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
