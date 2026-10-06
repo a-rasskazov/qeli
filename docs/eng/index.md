@@ -412,7 +412,7 @@ guidance. Start with the **[archive map](archive/README.md)**.
 
 - [Q28: final macOS integration](reports/AUDIT-Q28-MACOS-INTEGRATION.md)
 
-- [Q29: Android storage, manifest and Release](reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md)
+- [Q29: Android storage, profile editor, export and Release](reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md)
 
 - [Q29: concurrent TUN/JNI teardown](reports/AUDIT-Q29-ANDROID-LIFECYCLE.md)
 - [Q29: foreground service commands and lifecycle](reports/AUDIT-Q29-ANDROID-SERVICE.md)

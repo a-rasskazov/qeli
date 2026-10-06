@@ -312,3 +312,22 @@ framework trusted-Wi-Fi сценариев, три protect owner/stop/monitor ad
 сохраняет наблюдателя для возобновления VPN. Тесты поздней доставки используют настоящий
 Android callback и carrier, но вызывают сохранённый callback напрямую на Context-attached
 объекте службы; это не воспроизведение естественного порядка событий Android.
+
+## Экспорт архива и выбор приложений
+
+Чтение недоступного хранилища при экспорте показывает ошибку, сохраняя ciphertext.
+Шифрование и запись файла выполняются вне UI-потока; успех сообщается после write/close.
+Пустой stream, ошибки записи и закрытия — ошибки экспорта. Temporary bytes очищаются.
+Формат архива и INI-конфигов не меняется; служебный JSON архива остаётся контейнером.
+
+В per-app editor Save доступен после загрузки списка. Настроенные пакеты, которых нет в
+Android inventory, отображаются по package name и сохраняются, пока пользователь сам
+их не снимет. Доступность checkbox определяется текущим режимом, даже если он изменён
+во время загрузки; закрытие диалога отменяет его job.
+
+`audit_android_data_plane_lab.py --suite profile-ui --variant debug --transport tcp`
+запускает пять Activity/PackageManager/Keystore/file сценариев на disposable readonly AVD.
+Тестовая инспекция dialog roots использует reflection; экспорт идёт в реальные private
+`file:` destinations, не в сторонний SAF/cloud provider. Нет VPN payload в этой debug suite.
+Другие варианты/транспорт отклоняются до изменения стенда.
+[Q29 F284–F285: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md).

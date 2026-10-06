@@ -1,6 +1,6 @@
-# Q29: Android — хранилище, manifest и Release-пакет
+# Q29: Android — хранилище, редактор профиля, backup и Release
 
-<!-- normative-sync: q29-android-storage-package-v1 -->
+<!-- normative-sync: q29-android-storage-package-v2 -->
 
 **5 октября 2026: этап PASS; Q29 IN_PROGRESS. План 28/37 (75,7%), осталось 9 разделов.**
 
@@ -38,3 +38,70 @@ Evidence: release/certification/evidence/q29-android-storage-package-20261005.js
 Контракты: [specialUse property](https://developer.android.com/reference/android/content/pm/ServiceInfo), [BigDecimal exact/API1](https://developer.android.com/reference/java/math/BigDecimal), [BigInteger exact/API31](https://developer.android.com/reference/java/math/BigInteger), [Android backup/D2D](https://developer.android.com/identity/data/autobackup).
 
 Диагностика тестового варианта Release: NoClassDefFoundError для kotlin.jvm.internal.Intrinsics в AndroidJUnitRunner/MonitoringInstrumentation. Debug-тестовый APK зависит от классов неминифицированного приложения; штатная production Activity запускается без instrumentation. Этот результат не считается PASS instrumentation Release или дефектом запуска клиента.
+
+## 6 октября: F284–F285 — редактор профиля и экспорт архива
+
+| Находка | Исправление |
+| --- | --- |
+| F284 | Ошибка чтения store выходила из обработчика Activity; null output stream мог сообщать успех, KDF и запись provider выполнялись на UI-потоке. Ошибка чтения теперь отображается без замены ciphertext. Шифрование и write/close выполняются на Dispatchers.IO; успех сообщается после завершения, null/write/close дают ошибку. Временный массив результата очищается. |
+| F285 | Save во время перечисления мог стереть список приложений; сохранение после загрузки удаляло недоступные пакеты; смена режима оставляла устаревшее состояние checkbox. Save выключен до публикации строк, отсутствующие пакеты остаются строками с package name, доступность checkbox зависит от текущего режима. Закрытие отменяет enumeration job; permission lookup отдельного пакета выдерживает его параллельное удаление. |
+
+Строка с package name сохраняется, пока пользователь явно не снимет выбор. Пустой выбор
+по-прежнему нормализуется в существующий режим всех приложений; INI keys/default не меняются.
+Служебный JSON архива остаётся контейнером профилей; конфигурации остаются INI.
+
+### Свежие проверки и границы
+
+- **188 JVM PASS, шесть новых exporter cases**: точный UTF-8/close/очистка temporary bytes,
+  encrypted round-trip и неверный пароль, null sink, отказ write, отказ close,
+  превышение UTF-8 бюджета до открытия sink. Lint: **0 errors,54 warnings**.
+  Свежие debug/androidTest и обычный R8/resource-shrunk Release собираются.
+- **Один исправленный test APK: старый продукт 5 тестов/4 ожидаемых FAIL,
+  исправленный 5 PASS**. Настоящие Activity, PackageManager и Keystore проверяют ранний
+  Save, сохранение отсутствующего пакета, смену режима во время загрузки, экспорт из
+  нечитаемого encrypted store и точные plaintext/encrypted архивы в реальные private
+  `file:` destinations. Dialog roots инспектируются тестовым reflection на Android14/API34
+  x86_64. Сторонний SAF/cloud provider и UI latency benchmark не проверены. IO placement
+  подтверждён source review; JVM sink-проверки отказов перечислены выше.
+- Первый baseline дал 3 FAIL/2 PASS: один тест читал профиль до выполнения отложенного
+  Android Save listener. Результат, исходный тест и APK сохранены как диагностика обвязки.
+  Ранний PASS отсутствующего пакета не квалифицирован. Ожидание idle подтверждает четыре
+  отказа; положительный экспорт проходит на обеих версиях продукта.
+- Release TCP, независимый анализ пакетов и итоговый cleanup квалифицируются точными
+  результатами ниже. Debug profile suite не создаёт VPN payload. Matching Release
+  instrumentation в этом пакете не запускалась.
+- Native/server/service/managed inputs неизменны. Прежние UDP/QUIC и service результаты
+  сохраняют свою область. Standalone Java Release probe использован повторно. Source proof:
+  306 Android inputs (три новых, два существующих изменены),23 auxiliary (один изменён),
+  пять неизменных regression inputs,14 native hashes,семь managed artifacts и восемь APK,
+  включая два первых диагностических артефакта. Выполнены15 helper checks и6 CLI guards
+  отклонения недопустимых режимов расширенного lab runner.
+
+Raw: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q29-android-profile-ui-20261006.
+Evidence: release/certification/evidence/q29-android-profile-ui-20261006.json.
+
+Q29 остаётся IN_PROGRESS,28/37(75,7%). SIGKILL auto-redelivery FAIL и generic auto/null
+DnsResolver ENONET остаются открыты: этот UI/storage fix не устанавливает их причину и
+не принимает их. Границы API/OEM/arm64/physical покрытия, пользовательские skips и D06 неизменны.
+
+Первая попытка исправленного продукта: пять тестов PASS, итог runner FAIL из-за старого
+traffic guard, ожидавшего TCP/UDP receipts от profile-only suite. Диагностика сохранена;
+теперь suite требует нулевые echo receipts и проходит Android cleanup. Исполненные helpers
+baseline/первого debug закреплены за сохранённой версией до guard-fix; итоговые debug/Release
+inputs закреплены отдельно. Product APK не менялся.
+
+### Квалифицированный итог runtime
+
+Обычный production R8 Release TCP **PASS**: настоящий UI import INI и OS lockdown,два
+перехода Wi-Fi→Cellular→Wi-Fi,12 полных IPv4/IPv6 TCP/UDP ответов отдельному UID с точным
+SHA приёмника и независимой реконструкцией помеченных пакетов. Native планы/auth
+обновляются после каждого TCP перехода, PID/TUN сохраняются. Проанализированы288 socket
+проб,48 после остановки заблокированы;physical new requests0,capture drops0 в проверенных
+окнах. Потери на границе handover/force-stop сохранены: это не288 успешных ответов.
+Profile-only debug **5/5 PASS**,нулевые VPN receipts.
+
+Пять попыток (два старых baseline,первый fixed debug с устаревшим traffic guard обвязки,
+квалифицированный debug,Release) сохранили baseline хоста/службы и SHA/mtime/size исходного
+userdata AVD,восстановили namespace addresses и штатно завершили private server. Итоговые
+успешные прогоны дополнительно подтверждают отсутствие Android Qeli service/TUN/fatal
+exception. .10 не затрагивался. Новая native матрица и повтор UDP/QUIC не нужны;push/deploy нет.

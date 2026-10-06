@@ -859,27 +859,28 @@ ipv6 = auto
 
     /** Export ALL profiles (the encrypted store's JSON blob) to a user-picked file. */
     private fun writeBackup(uri: android.net.Uri) {
-        val blob = secureStore.getString(KEY_PROFILES, null)
-            ?: run { Toast.makeText(this, getString(R.string.nothing_to_back_up), Toast.LENGTH_SHORT).show(); return }
+        val blob = try { secureStore.getString(KEY_PROFILES, null) }
+        catch (error: Exception) {
+            Toast.makeText(this, getString(R.string.backup_failed, error.message ?: ""), Toast.LENGTH_LONG).show()
+            return
+        } ?: run { Toast.makeText(this, getString(R.string.nothing_to_back_up), Toast.LENGTH_SHORT).show(); return }
         // Optional passphrase: empty = legacy plaintext JSON; non-empty = AES-256-GCM
         // encrypted container so an exported file can't leak credentials at rest.
         promptPassphrase(getString(R.string.backup_passphrase_title), allowEmpty = true) { pass ->
-            try {
-                val out = if (pass.isEmpty()) blob.toByteArray()
-                          else com.qeli.crypto.BackupCrypto.encrypt(blob, pass)
-                val outputLimit = if (pass.isEmpty()) {
-                    MAX_IMPORTED_FILE_BYTES
-                } else {
-                    MAX_IMPORTED_BACKUP_BYTES
+            lifecycleScope.launch {
+                try {
+                    // KDF and a user-selected document provider can both block. Report success
+                    // only after the entire write and close have completed off the UI thread.
+                    withContext(Dispatchers.IO) {
+                        BackupExporter.write(blob, pass) { contentResolver.openOutputStream(uri) }
+                    }
+                    val suffix = getString(if (pass.isEmpty()) R.string.backup_unencrypted else R.string.backup_encrypted)
+                    Toast.makeText(this@MainActivity, getString(R.string.backed_up, profiles.size, suffix), Toast.LENGTH_SHORT).show()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, getString(R.string.backup_failed, e.message ?: ""), Toast.LENGTH_LONG).show()
                 }
-                require(out.size <= outputLimit) {
-                    "backup exceeds the supported export limit"
-                }
-                contentResolver.openOutputStream(uri)?.use { it.write(out) }
-                val suffix = getString(if (pass.isEmpty()) R.string.backup_unencrypted else R.string.backup_encrypted)
-                Toast.makeText(this, getString(R.string.backed_up, profiles.size, suffix), Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, getString(R.string.backup_failed, e.message ?: ""), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -1754,6 +1755,7 @@ ipv6 = auto
         val loading = TextView(this).apply { text = getString(R.string.loading_apps); setPadding(0, dp(8), 0, dp(8)) }
         listBox.addView(loading)
         val checks = HashMap<String, CheckBox>()
+        var appsLoaded = false
 
         fun setListEnabled(on: Boolean) { for (c in checks.values) c.isEnabled = on }
 
@@ -1774,6 +1776,7 @@ ipv6 = auto
             .setView(root)
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.save) { _, _ ->
+                if (!appsLoaded) return@setPositiveButton
                 if (profileRevision != openedAtRevision) {
                     Toast.makeText(this, R.string.profile_changed_during_edit, Toast.LENGTH_LONG).show()
                     return@setPositiveButton
@@ -1801,22 +1804,32 @@ ipv6 = auto
             }
             .create()
         dialog.show()
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).isEnabled = false
 
-        // Enumerate apps in the background, then build the checkbox rows.
-        lifecycleScope.launch {
-            val apps = withContext(Dispatchers.IO) { loadSelectableApps() }
+        // Preserve configured packages that are uninstalled/hidden from this inventory.
+        // A round trip through this editor must not silently broaden a per-app profile.
+        val enumeration = lifecycleScope.launch {
+            val apps = withContext(Dispatchers.IO) {
+                val known = loadSelectableApps().associateBy { it.pkg }.toMutableMap()
+                for (pkg in startSel) known.putIfAbsent(pkg, AppEntry(pkg, pkg))
+                known.values.sortedBy { it.label.lowercase() }
+            }
+            if (!dialog.isShowing) return@launch
             listBox.removeView(loading)
             for (app in apps) {
                 val cb = CheckBox(this@MainActivity).apply {
                     text = app.label
                     isChecked = startSel.contains(app.pkg)
-                    isEnabled = startMode != "all"
+                    isEnabled = rgMode.checkedRadioButtonId != rbAll.id
                 }
                 checks[app.pkg] = cb
                 listBox.addView(cb)
             }
             if (apps.isEmpty()) listBox.addView(TextView(this@MainActivity).apply { text = getString(R.string.no_apps_found) })
+            appsLoaded = true
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).isEnabled = true
         }
+        dialog.setOnDismissListener { enumeration.cancel() }
     }
 
     private data class AppEntry(val pkg: String, val label: String)
@@ -1847,7 +1860,8 @@ ipv6 = auto
         for (ai in apps) {
             val pkg = ai.packageName ?: continue
             if (pkg == packageName) continue
-            if (pm.checkPermission(Manifest.permission.INTERNET, pkg) != PackageManager.PERMISSION_GRANTED) continue
+            if (!runCatching { pm.checkPermission(Manifest.permission.INTERNET, pkg) ==
+                    PackageManager.PERMISSION_GRANTED }.getOrDefault(false)) continue
             val label = try { pm.getApplicationLabel(ai).toString() } catch (_: Exception) { pkg }
             out.add(AppEntry(pkg, label))
         }
