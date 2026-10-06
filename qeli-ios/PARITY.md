@@ -119,3 +119,11 @@ reject truncated numeric policies and invalidate stale provider replies across t
 transitions. Six new XCTest cases are retained but NOT_RUN on Windows; six Python
 IPA-verifier fixture regressions PASS. These are not a simulator/device qualification.
 Q30 remains IN_PROGRESS; the user excluded Apple runtime for this audit.
+
+[Q30 Keychain source fixes](../docs/eng/reports/AUDIT-Q30-IOS-KEYCHAIN.md) extend
+first-writer ownership from the master key to device ID/TOFU and explicitly validate
+stored key sizes. Seven Keychain XCTest are NOT_RUN; no cross-process/runtime claim.
+The provider/engine completion review remains open.
+
+Explicit malformed/stale provider profile requests now fail rather than falling back
+to the persisted profile (Q30-F294); four new selector XCTest NOT_RUN.

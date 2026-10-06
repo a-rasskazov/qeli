@@ -823,11 +823,10 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             } else {
                 let store = SecureIdentityStore()
                 let bytes = Self.decodeHex(received)
-                if let remembered = try store.knownHostKey(endpoint: identity.serverId) {
-                    guard remembered == bytes else { throw NativeTunnelError.serverKeyMismatch }
-                } else {
+                var remembered = try store.knownHostKey(endpoint: identity.serverId)
+                if remembered == nil {
                     do {
-                        try store.rememberHostKey(bytes, endpoint: identity.serverId)
+                        remembered = try store.rememberHostKey(bytes, endpoint: identity.serverId)
                     } catch {
                         guard config.allowUnpinnedTofu else { throw error }
                         sharedStore.appendLog(
@@ -835,6 +834,11 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                             "unpinned because allow_unpinned_tofu = true"
                         )
                     }
+                }
+                // A concurrent writer may have pinned a different proven key. This is a
+                // mismatch, not an I/O failure eligible for allow_unpinned_tofu fallback.
+                if let remembered {
+                    guard remembered == bytes else { throw NativeTunnelError.serverKeyMismatch }
                 }
             }
             try transport.serverIdentityResult(sequence: event.sequence, accepted: true)

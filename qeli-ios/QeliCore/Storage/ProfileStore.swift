@@ -47,6 +47,7 @@ final class ProfileStore: @unchecked Sendable {
         guard let keyData = try keychain.read(account: masterKeyAccount) else {
             throw ProfileStoreError.missingMasterKey
         }
+        guard keyData.count == 32 else { throw KeychainError.invalidKeyLength }
         let key = SymmetricKey(data: keyData)
         let sealed = try AES.GCM.SealedBox(combined: combined)
         let plaintext = try AES.GCM.open(sealed, using: key)

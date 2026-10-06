@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v91 -->
+<!-- normative-sync: full-system-audit-v92 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1911,6 +1911,16 @@ exact MDM numbers and stale provider-reply ownership. Six IPA-verifier fixture
 regressions PASS; six added Swift XCTest and Xcode/runtime NOT_RUN (user-excluded
 Apple runtime). Whole-section review remains open; no checklist item is closed yet.
 Q29 open observations retained; overall28/37(75.7%),9 remain.
+
+
+[Storage F292/F293 source fixes](../reports/AUDIT-Q30-IOS-KEYCHAIN.md): Keychain
+first-writer identity/TOFU arbitration, no silent ID rotation, explicit key sizes and
+removal of the now-unreferenced update API. Seven new Keychain XCTest NOT_RUN;
+six IPA fixture regressions/documentation/bindings PASS. Engine/provider shutdown,
+read/settings callback lifetime and platform qualification remain open.
+
+Explicit malformed/stale profile options now fail without launching the configured
+profile (F294); four selector XCTest NOT_RUN,11 new XCTest in this batch.
 
 ### 31. OpenWrt, LuCI and Keenetic
 

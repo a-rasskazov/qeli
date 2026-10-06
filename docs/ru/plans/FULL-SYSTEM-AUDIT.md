@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v91 -->
+<!-- normative-sync: full-system-audit-v92 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1922,6 +1922,16 @@ Exactly-once start/stop completion, generation/cancel, Keychain/app groups, exte
 fixture-регрессий PASS; шесть новых Swift XCTest и Xcode/runtime NOT_RUN
 (Apple runtime исключён пользователем). Review всего раздела открыт, пункты пока
 не закрыты. Наблюдения Q29 сохранены; всего28/37(75.7%),осталось9.
+
+
+[Storage source fixes F292/F293](../reports/AUDIT-Q30-IOS-KEYCHAIN.md): первый
+Keychain writer для ID/TOFU, без тихой rotation, явные размеры ключей и удаление
+неиспользуемого update API. Семь новых Keychain XCTest NOT_RUN; шесть IPA fixture
+регрессий/docs/bindings PASS. Engine/provider shutdown, read/settings callback
+lifetime и platform qualification открыты.
+
+Неверный/удалённый explicit profile option теперь не запускает configured profile
+(F294); четыре selector XCTest NOT_RUN,11 новых XCTest в пакете.
 
 ### 31. OpenWrt, LuCI и Keenetic
 

@@ -42,21 +42,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
                 // The app owns profile publication; the extension is a read-only consumer.
                 let archive = try ProfileStore().load(initializeIfMissing: false)
-                let optionID = (options?["profileID"] as? NSString)
-                    .map { $0 as String }
-                    .flatMap(UUID.init(uuidString:))
-                let configuredID = ((protocolConfiguration as? NETunnelProviderProtocol)?
-                    .providerConfiguration?["profileID"] as? String)
-                    .flatMap(UUID.init(uuidString:))
+                let profileID = TunnelProfileSelection.resolve(
+                    requested: options?["profileID"],
+                    configured: (protocolConfiguration as? NETunnelProviderProtocol)?
+                        .providerConfiguration?["profileID"]
+                )
                 let configuredLogLevel = ((protocolConfiguration as? NETunnelProviderProtocol)?
                     .providerConfiguration?["logLevel"] as? String)
                 // A one-shot app request wins; automatic launches must carry the
                 // exact persisted provider UUID. Never fall back to a locally active
                 // profile when managed/provider configuration is missing or stale.
-                let candidates = [optionID, configuredID].compactMap { $0 }
-                guard let profile = candidates.compactMap({ id in
-                    archive.profiles.first(where: { $0.id == id })
-                }).first else {
+                guard let profileID,
+                      let profile = archive.profiles.first(where: { $0.id == profileID }) else {
                     throw PacketTunnelProviderError.profileNotFound
                 }
                 let config = try VPNConfig(parsing: profile.configText)
