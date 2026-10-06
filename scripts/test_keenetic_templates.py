@@ -138,6 +138,14 @@ class KeeneticInstallerTests(KeeneticFixture):
         self.assertNotEqual(self.installer().returncode,0)
         self.assertEqual(self.installed('bin/qeli-client').read_text(),'old binary')
 
+    def test_upgrade_refuses_existing_pid_and_pending_publication_before_dependencies(self):
+        self.seed_installed();folder=self.opt/'var/run';folder.mkdir(parents=True)
+        for name in ('qeli-client.pid','qeli-client.pid.pending'):
+            path=folder/name;path.write_text('fixture state')
+            result=self.installer();self.assertNotEqual(result.returncode,0)
+            self.assertEqual(self.installed('bin/qeli-client').read_text(),'old binary')
+            self.assertNotIn('opkg update',self.calls());path.unlink()
+
     def test_optional_ipv6_package_failure_is_explicit_warning(self):
         (self.bin/'ip6tables').unlink()
         result=self.installer(QELI_FAIL='opkg:install ip6tables')

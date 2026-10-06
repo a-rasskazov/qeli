@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v6 -->
+<!-- normative-sync: q31-openwrt-controls-v7 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -423,3 +423,79 @@ router USER_EXCLUDED. PID identity, TERM/join ordering, мгновенный о�
 INI/core semantic parity, OpkgTun idempotence/concurrency и широкий build/source
 review остаются OPEN. Предыдущие runtime statuses/artifacts/dates/acceptance_basis
 и Q29/Q30/D06 observations сохранены. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.
+
+## F324: PID-файл мог направить сигнал чужому процессу или группе
+
+Оба init-шаблона доверяли cat(PIDFILE) и kill -0/kill без проверки процесса. Старый
+скрипт принимал и завершал специально созданный sleep victim по устаревшему PID.
+Неверный PID0 доходил до попытки группового сигнала; в этом сравнении kill всегда
+перехватывался, групповой сигнал не посылался.
+
+Новый приватный PID record содержит десятичный PID и время старта из Linux proc в
+тиках. Перед приёмом процесса/сигналом проверяются оба значения, точный формат,
+положительный не-системный PID и executable identity. Суффикс deleted после замены
+бинарника допускается для исходного процесса. Start ticks отличают повторно выданный
+PID в пределах одной загрузки; пробелы/скобки в comm не ломают stat parser. Corrupt/legacy single-PID records,
+чужой executable и неверные ticks блокируют start/stop и сохраняют состояние для
+сверки. Status:0 live,3 stopped,4 unverified. Это best-effort shell/proc checks:
+окно между проверкой и kill не закрыто атомарно через pidfd. Interprocess locking,
+PID namespace/reboot identity и настоящий router proc/readlink не квалифицированы;
+атомарная защита PID identity не заявляется.
+
+PID публикуется файлом0600 через соседний временный файл и rename. При отказе
+известный запущенный процесс завершается с ожиданием, если identity подтверждена.
+Если termination/publication не закончены, pending record остаётся, start/stop
+отказывают до ручной сверки. Установщик теперь отклоняет существующий PID/pending
+record до зависимостей/замены файлов: сначала остановить установленный шаблон и
+проверить завершение. Старый single-PID формат автоматически не мигрирует. Ошибка
+proc-read после запуска может оставить неполный pending record и напечатанный PID;
+не удалять его и не запускать новую генерацию вслепую.
+
+## F325: после TERM сеть очищалась до выхода, ошибка запуска выглядела успехом
+
+Старый stop выполнял compatibility cleanup до TERM, сразу удалял PID/plan и TUN без
+ожидания. EXIT native helper с задержкой видел уже удалённые файлы; игнорируемый TERM
+давал успешный stop и забытое состояние. Старый core-managed start сообщал успех при
+мгновенном выходе executable или PID path, являющемся каталогом. Старый unwind после
+NAT failure также очищал до выхода helper. Безопасное original/current сравнение
+воспроизводит каждый случай.
+
+Теперь оба шаблона требуют executable/config/readlink, проверяют каталоги, восстанавливают
+старое compatibility state, готовят/публикуют record и проверяют post-exec liveness.
+Это process admission, не подтверждение authenticated NetworkPlan readiness для
+core-managed/OpkgTun старта. TERM адресуется проверенному процессу с ожиданием выхода
+до15 итераций по одной секунде. Matching zombie считается завершившимся: это наблюдение
+выхода, не waitpid reaping процесса, созданного другой оболочкой. Signal/identity/
+timeout failure сохраняет PID/plan/marker и пропускает network cleanup; restart не
+запускает новый клиент. После выхода выполняется compatibility recovery, затем
+проверяемое удаление plan/markers/PID. Ошибки startup plan/NAT/marker проходят через
+тот же joined stop. PID-removal/cleanup failure допускает повтор.
+
+Шаблон больше не выполняет ip link del: временем жизни TUN управляют kernel/core/ndm,
+нельзя вслепую удалять persistent или повторно используемый интерфейс. Это не новое
+подтверждение настоящего Qeli thread drain, kill-switch lifetime или connectivity.
+Точные wall-clock deadlines, SIGKILL/power loss, одновременно работающий wan.d handler
+и все service/admin операции под межпроцессной блокировкой остаются OPEN.
+
+Linux native test executable: process-fixture.c в raw packet, однократная сборка cc
+с сохранённым hash; release-бинарник Qeli не пересобирался.43 native-process cases
+(21 base,22 OpkgTun),44 state-file models и21 installer/hook cases: всего108 на
+BusyBox ash/dash PASS;44 новых, включая installer upgrade gate. Helper публикует
+подставной plan, задерживает выход или игнорирует TERM. Уникальный per-test executable
+и отдельно созданные sleep children ограничивают цели сигналов/очистки. Network
+callbacks подменены; настоящий kernel network/firewall/router service не менялся.
+Polling сокращён до3*50ms (startup50ms, plan timeout2 polls): проверяет control flow,
+не production15-second duration. Старые state fixtures теперь моделируют proc и
+имеют executable/readlink, чтобы проверять stale-recovery admission с новым форматом.
+Сохранён начальный original-source harness assertion FAIL: выбор первого nat_up
+добавлял новый lifecycle code. Исправленный воспроизводитель добавляет только
+последние fixture callbacks, оставляя старую реализацию. Invalid/group PID scenario
+всегда моделирует сигналы, не посылает групповой сигнал.
+Native recipes37/docs/bindings/diff PASS; настоящий router/core-OS integration NOT_RUN.
+
+Пакет F324–F325: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-process-lifecycle-20261006.
+Evidence: release/certification/evidence/q31-keenetic-process-lifecycle-20261006.json.
+INI/core semantic parity, OpkgTun idempotence/generation/concurrency, packaging и
+широкий source/build ABI/provenance остаются OPEN. Предыдущие runtime statuses/artifacts/
+dates/acceptance_basis и Q29/Q30/D06 observations сохранены. Router USER_EXCLUDED;
+Q31 IN_PROGRESS,28/37(75.7%),9 осталось.

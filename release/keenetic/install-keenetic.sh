@@ -28,6 +28,12 @@ if [ ! -f /opt/etc/qeli/client.conf ]; then
   [ -s "$PKGDIR/client.conf.example" ] || { echo "нет client.conf.example"; exit 1; }
 fi
 
+# Stop using the installed template before replacing a running/uncertain generation.
+for state in /opt/var/run/qeli-client.pid /opt/var/run/qeli-client.pid.*; do
+  [ -e "$state" ] || continue
+  echo "qeli-client: stop/review installed client before upgrade ($state)"; exit 1
+done
+
 # Mandatory package errors stop installation; no partial client publication follows.
 opkg update
 opkg install ip-full iptables

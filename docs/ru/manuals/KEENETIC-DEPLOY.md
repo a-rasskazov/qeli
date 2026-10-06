@@ -288,3 +288,21 @@ forwarding checkpoint version2 с сохранёнными интерфейса�
 отказывается от автоматической очистки. Сохранить исходные значения до проверки
 восстановления; не удалять checkpoint для обхода отказа. Совпадающие нетегированные
 правила администратора автоматически не удаляются. См. [результаты и оставшиеся ограничения Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+## Процесс клиента и формат PID
+
+Init-шаблоны development0.8.2 сохраняют `PID start_ticks` в PID-файле0600 и проверяют
+Linux proc start time/executable перед сигналами. Старый single-PID record и
+непроверенный процесс требуют ручной сверки identity; автоматически не принимаются.
+Перед обновлением остановить предыдущим установленным шаблоном и проверить процесс/
+правила. Установщик отказывает при существующем PID или pending publication files.
+
+Stop посылает TERM и ждёт до15 проверок по одной секунде до compatibility cleanup.
+Timeout или ошибка сигнала сохраняет process record, plan и OpkgTun marker; restart
+не запускает новый клиент. Устранить причину и повторить. Pending publication file
+требует сверки владения, его нельзя просто удалить для обхода отказа. Автоматического
+KILL escalation нет. Status codes:0 running,3 stopped,4 unverified. Время жизни TUN,
+включая persistent TUN, оставлено core/kernel/ndm. Успешный start подтверждает живой
+executable, не authentication/connectivity. Shell/proc checks не дают atomic pidfd
+identity и сериализации всех операций. Linux native-helper tests проверяют порядок
+wrapper; настоящий router integration исключён. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).

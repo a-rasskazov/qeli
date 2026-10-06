@@ -13,6 +13,9 @@ class StateCases:
     def setUp(self):
         super().setUp()
         (self.root/'tun').touch()
+        (self.bin/'readlink').symlink_to(shutil.which('readlink'))
+        executable=self.opt/'bin/qeli-client';executable.parent.mkdir(parents=True)
+        executable.write_text('#!/bin/sh\nexit 99\n');executable.chmod(0o700)
         self.sysroot=self.root/'proc-sys'
         self.ip4=self.sysroot/'net/ipv4/ip_forward'
         self.ip6=self.sysroot/'net/ipv6/conf/all/forwarding'
@@ -57,7 +60,7 @@ p.write_text(json.dumps(rules))
             p=self.bin/command;p.unlink();p.write_text('#!'+sys.executable+'\n'+model.read_text());p.chmod(0o700)
         self.template=self.root/'state-template.sh'
         self.copy_template(ROOT/self.TEMPLATE,self.template)
-        text=self.template.read_text().replace('/proc/sys/',str(self.sysroot)+'/')
+        text=self.template.read_text().replace('/proc/sys/',str(self.sysroot)+'/').replace('/proc/',str(self.root/'proc')+'/')
         text,dispatch=text.rsplit('case "$1" in',1)
         self.dispatch='case "$1" in'+dispatch
         # Tests exercise legacy functions for both templates; never operate ndm.
@@ -214,12 +217,12 @@ echo() {
         self.assertEqual(self.plan.read_text(),before);self.assertTrue(self.state.exists())
 
     def test_failed_cleanup_gates_stop_and_restart_without_signals(self):
-        self.state.write_text('ipv4=0\nipv6=0\n');pid=self.opt/'var/run/qeli-client.pid';pid.write_text('900001')
+        self.state.write_text('ipv4=0\nipv6=0\n');pid=self.opt/'var/run/qeli-client.pid';pid.write_text('900001 1')
         before=self.plan.read_text()
         for expression in ('stop','set -- restart\n'+self.dispatch):
             result=self.execute(expression);self.assertNotEqual(result.returncode,0)
             self.assertNotIn('qeli-client: старт',result.stdout)
-            self.assertEqual(pid.read_text(),'900001');self.assertEqual(self.plan.read_text(),before)
+            self.assertEqual(pid.read_text(),'900001 1');self.assertEqual(self.plan.read_text(),before)
         self.assertFalse(any(c.startswith('kill ') for c in self.calls()))
 
 class KeeneticBaseStateTests(StateCases,KeeneticFixture):

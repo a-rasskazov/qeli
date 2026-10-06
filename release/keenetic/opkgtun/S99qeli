@@ -255,60 +255,164 @@ nat_down() {
   restore_forwarding_state
 }
 
-is_running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+# PID record: decimal pid + Linux /proc start ticks. No process-group signals.
+read_pid() {
+  record="$(cat "$PIDFILE" 2>/dev/null)" || return 2
+  IFS=' ' read -r PROC_PID PROC_START extra <<EOF
+$record
+EOF
+  [ "$record" = "$PROC_PID $PROC_START" ] && [ -z "$extra" ] || return 2
+  case "$PROC_PID" in ''|0*|1|*[!0-9]*) return 2 ;; esac
+  [ "${#PROC_PID}" -le 10 ] || return 2
+  case "$PROC_START" in ''|*[!0-9]*) return 2 ;; esac
+}
+
+read_proc_stat() {
+  stat="$(cat "/proc/$PROC_PID/stat" 2>/dev/null)" || return 2
+  # Strip comm through its last closing parenthesis: comm may contain spaces/').
+  tail="${stat##*) }"
+  PROC_STATE="$(printf '%s\n' "$tail" | awk '{print $1}')"
+  seen_start="$(printf '%s\n' "$tail" | awk '{print $20}')"
+  case "$seen_start" in ''|*[!0-9]*) return 2 ;; esac
+  [ -n "$PROC_STATE" ] || return 2
+}
+
+owned_process_status() {
+  [ -d "/proc/$PROC_PID" ] || return 1
+  read_proc_stat || { [ ! -d "/proc/$PROC_PID" ] && return 1; return 2; }
+  [ "$seen_start" = "$PROC_START" ] || return 2
+  case "$PROC_STATE" in Z|X) return 1 ;; esac
+  exe="$(readlink "/proc/$PROC_PID/exe" 2>/dev/null)" || {
+    [ ! -d "/proc/$PROC_PID" ] && return 1; return 2;
+  }
+  expected_exe="$(readlink -f "$BIN")" || return 2
+  case "$exe" in "$expected_exe"|"$expected_exe (deleted)") return 0 ;; *) return 2 ;; esac
+}
+
+is_running() { [ -f "$PIDFILE" ] && read_pid && owned_process_status; }
+
+terminate_owned_process() {
+  owned_process_status; process_status=$?
+  case "$process_status" in
+    1) return 0 ;;
+    2) echo "qeli-client: refusing unverified PID $PROC_PID"; return 1 ;;
+  esac
+  if ! kill -TERM "$PROC_PID"; then
+    owned_process_status; [ $? = 1 ] || return 1
+    return 0
+  fi
+  waited=0
+  while [ "$waited" -lt 15 ]; do
+    owned_process_status; process_status=$?
+    case "$process_status" in
+      1) return 0 ;;
+      2) echo "qeli-client: PID identity changed during stop; state retained"; return 1 ;;
+    esac
+    waited=$((waited + 1)); sleep 1
+  done
+  owned_process_status; [ $? = 1 ] && return 0
+  echo "qeli-client: TERM timeout; process and recovery state retained"
+  return 1
+}
+
+stop_process() {
+  if [ ! -e "$PIDFILE" ]; then
+    for pending in "$PIDFILE".*; do
+      [ -e "$pending" ] || continue
+      echo "qeli-client: pending PID publication; stop refused"; return 1
+    done
+    return 0
+  fi
+  read_pid || { echo "qeli-client: invalid/old PID record; manual identity review required"; return 1; }
+  terminate_owned_process
+}
 
 start() {
-  if is_running; then echo "qeli-client уже запущен (pid $(cat "$PIDFILE"))"; return 0; fi
-  if [ ! -e /dev/net/tun ]; then
-    echo "нет /dev/net/tun — включи компонент VPN в KeeneticOS"; exit 1
+  if [ -e "$PIDFILE" ]; then
+    read_pid || { echo "qeli-client: invalid/old PID record; start refused"; return 1; }
+    owned_process_status; process_status=$?
+    case "$process_status" in
+      0) echo "qeli-client already running (pid $PROC_PID)"; return 0 ;;
+      2) echo "qeli-client: unverified PID; start refused"; return 1 ;;
+    esac
   fi
+  for pending in "$PIDFILE".*; do
+    [ -e "$pending" ] || continue
+    echo "qeli-client: pending PID publication $pending; review required"; return 1
+  done
+  [ -x "$BIN" ] && [ -s "$CONF" ] && command -v readlink >/dev/null 2>&1 || {
+    echo "qeli-client: executable/config/readlink missing"; return 1;
+  }
+  [ -e /dev/net/tun ] || { echo "нет /dev/net/tun — включи компонент VPN в KeeneticOS"; return 1; }
   mkdir -p /opt/var/run /opt/var/log /opt/etc/qeli || return 1
   if [ -f "$SYSCTL_STATE" ]; then nat_down || return 1; fi
-  rm -f "$PLAN_STATE"
+  rm -f "$PIDFILE" "$PLAN_STATE" || return 1
+  PID_TMP="$(mktemp "$PIDFILE.XXXXXX")" || return 1
+  chmod 600 "$PID_TMP" || { rm -f "$PID_TMP"; return 1; }
   echo "qeli-client: старт"
   "$BIN" --config "$CONF" >> "$LOG" 2>&1 &
-  echo $! > "$PIDFILE"
+  PROC_PID=$!
+  if ! read_proc_stat; then
+    if [ -d "/proc/$PROC_PID" ]; then
+      echo "qeli-client: cannot inspect launched pid $PROC_PID; $PID_TMP retained"
+    else
+      wait "$PROC_PID" 2>/dev/null; rm -f "$PID_TMP"
+    fi
+    return 1
+  fi
+  PROC_START="$seen_start"
+  if ! printf '%s %s\n' "$PROC_PID" "$PROC_START" > "$PID_TMP" || ! mv -f "$PID_TMP" "$PIDFILE"; then
+    sleep 1
+    if terminate_owned_process; then
+      rm -f "$PID_TMP" "$PLAN_STATE"
+    else
+      echo "qeli-client: launched pid $PROC_PID; recovery record $PID_TMP retained"
+    fi
+    return 1
+  fi
+  # Detect exec/immediate exit. This is process admission, not authentication readiness.
+  sleep 1
+  if ! is_running; then echo "qeli-client: launch failed"; stop; return 1; fi
   if [ -z "$OPKGTUN" ] && [ "$GATEWAY" = yes ] && \
      ! core_manages_gateway && ! wait_for_network_plan; then
     echo "qeli-client: за 60с не получен подтверждённый NetworkPlan"
-    kill "$(cat "$PIDFILE")" 2>/dev/null
-    rm -f "$PIDFILE" "$PLAN_STATE"
-    exit 1
+    stop; return 1
   fi
   if ! nat_up; then
     echo "qeli-client: не удалось применить legacy gateway firewall"
-    nat_down
-    kill "$(cat "$PIDFILE")" 2>/dev/null
-    rm -f "$PIDFILE" "$PLAN_STATE"
-    exit 1
+    stop; return 1
   fi
   if [ -n "$OPKGTUN" ]; then
-    echo "$OPKGTUN" > "$OPKGTUN_STATE"   # сигнал wan.d-хуку: регистрируй OpkgTun в ndm
+    if ! printf '%s\n' "$OPKGTUN" > "$OPKGTUN_STATE"; then stop; return 1; fi
     echo "qeli-client: OpkgTun-режим ($OPKGTUN) — регистрация в ndm через wan.d-хук"
   fi
+  if ! is_running; then stop; return 1; fi
 }
 
 stop() {
   echo "qeli-client: стоп"
+  # The client must finish its own NetworkPlan teardown before wrapper recovery.
+  stop_process || return 1
   nat_down || return 1
-  if [ -f "$PIDFILE" ]; then
-    kill "$(cat "$PIDFILE")" 2>/dev/null
-    rm -f "$PIDFILE"
-  fi
-  rm -f "$PLAN_STATE"
-  if [ -n "$OPKGTUN" ]; then
-    rm -f "$OPKGTUN_STATE" "$OPKGTUN_TUNIP"
-    # интерфейс из ndm снять вручную из ssh-логина: ndmc -c "no interface OpkgTun0"
-    # (tun сам исчезнет при завершении qeli — он non-persistent).
-  else
-    ip link del "$TUN" 2>/dev/null   # подчистить tun, если остался
-  fi
+  rm -f "$PLAN_STATE" || return 1
+  rm -f "$OPKGTUN_STATE" "$OPKGTUN_TUNIP" "$OPKGTUN_STATE.apply-pending" || return 1
+  # ndm owns the OpkgTun interface; removal remains an administrator operation.
+  # Kernel/core/ndm own TUN lifetime; never delete a possibly foreign/persistent link.
+  rm -f "$PIDFILE"
 }
 
 case "$1" in
-  start)   start ;;
-  stop)    stop ;;
-  restart) stop && sleep 1 && start ;;
-  status)  is_running && echo "running (pid $(cat "$PIDFILE"))" || echo "stopped" ;;
+  start) start ;;
+  stop) stop ;;
+  restart) stop && start ;;
+  status)
+    if [ ! -e "$PIDFILE" ]; then echo stopped; exit 3; fi
+    read_pid || { echo "unverified PID record"; exit 4; }
+    owned_process_status; process_status=$?
+    case "$process_status" in
+      0) echo "running (pid $PROC_PID)" ;;
+      1) echo stopped; exit 3 ;;
+      *) echo "unverified PID identity"; exit 4 ;;
+    esac ;;
   *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
 esac

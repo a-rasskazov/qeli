@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v6 -->
+<!-- normative-sync: q31-openwrt-controls-v7 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -427,3 +427,79 @@ router USER_EXCLUDED. PID identity, TERM/join ordering, instant launch failure,
 INI/core semantic parity, OpkgTun idempotence/concurrency and broader build/source
 review remain OPEN. Earlier runtime statuses/artifacts/dates/acceptance_basis and
 Q29/Q30/D06 observations are retained. Q31 IN_PROGRESS, overall28/37(75.7%),9 remain.
+
+## F324: a numeric PID file could target a foreign process or process group
+
+Both init templates trusted cat(PIDFILE) and kill -0/kill without identifying the
+process. A stale PID pointing at an explicitly spawned sleep victim was accepted
+and terminated by the original script. Invalid PID0 could reach a group-signal
+attempt; that comparison always intercepted kill and sent no group signal.
+
+New private PID records contain decimal PID and Linux proc start ticks. Both
+values, exact record shape, positive non-system PID and executable identity are
+checked before process admission/signalling. A replaced executable's deleted
+suffix is accepted for the original generation. Start ticks distinguish PID reuse within one boot;
+comm spaces/parentheses do not break stat parsing. Corrupt/legacy single-PID records,
+foreign executables and mismatched ticks reject start/stop and retain state for
+review. Status is0 live,3 stopped and4 unverified. These are best-effort shell/proc
+checks: the check-to-kill race is not atomically closed by pidfd, and interprocess
+locking, PID namespaces/reboot identity and actual router proc/readlink remain
+unqualified. No atomic PID-identity protection is claimed.
+
+PID publication uses a0600 sibling file and rename. Failure stops and joins the
+known launched process when its identity is verified. If termination/publication
+cannot finish, the pending record remains and both start/stop reject it for review.
+The installer now rejects an existing PID or pending record before dependencies
+or file replacement; stop the installed template and verify completion before
+upgrade. There is no automatic migration of the former single-PID format. A
+proc-read failure after launch may retain an incomplete pending record plus a
+printed PID; do not discard it and launch another generation blindly.
+
+## F325: TERM was followed by cleanup before exit, and launch failure looked successful
+
+Original stop performed compatibility cleanup before TERM, immediately removed PID/
+plan and deleted TUN without waiting. A delayed native helper's EXIT observed both
+records gone; an ignored TERM still produced successful stop and forgotten state.
+Original core-managed start reported success when the executable exited immediately
+or when the PID path was a directory. Original NAT-failure unwind also cleaned before
+the delayed helper exited. Safe original/current comparisons reproduce each case.
+
+Both templates now require executable/config/readlink, check directories, recover
+stale compatibility state, prepare/publish the process record and check post-exec
+liveness. This is process admission, not authenticated NetworkPlan readiness for
+core-managed/OpkgTun startup. TERM targets the verified process and polls for exit
+up to15 one-second iterations. It treats the matching zombie as terminated; this
+is observed process exit, not waitpid reaping of a process started by another shell.
+Signal/identity/timeout failure retains PID/plan/marker and skips network cleanup;
+restart does not launch another client. After exit, compatibility recovery runs,
+then plan/markers/PID are cleared with errors checked. Startup plan/NAT/marker failures
+use the same joined stop path. PID-removal/cleanup failure supports a later retry.
+
+The wrapper no longer runs ip link del: kernel/core/ndm own TUN lifetime, and a
+persistent or reused link must not be blindly removed. Startup grants no extra
+claim about actual Qeli thread drain, kill-switch lifetime or connectivity. Exact
+wall-clock deadlines, SIGKILL/power loss, a concurrently running wan.d handler and
+all service operations/administrator changes under an interprocess lock remain OPEN.
+
+Linux-owned native test executable: raw packet process-fixture.c, compiled once with
+cc and hash recorded; no Qeli release binary rebuilt.43 native-process cases (21 base,
+22 OpkgTun),44 state-file models and21 installer/hook cases total108 per BusyBox
+ash/dash PASS;44 cases are new including the installer upgrade gate. The native
+helper publishes a fake plan, delays exit or ignores TERM. Its unique per-test path
+and explicitly spawned sleep children bound signal/cleanup targets. Network callbacks
+are substituted; no actual kernel network/firewall/router service mutation. Polling
+is shortened to3*50ms (startup50ms, plan timeout2 polls), qualifying control flow,
+not the production15-second duration. Old state fixtures now model proc and provide
+an executable/readlink so stale-recovery admission is exercised under the new format.
+One initial original-source harness assertion FAIL is retained: it selected the
+first nat_up and accidentally appended current lifecycle code; corrected comparison
+appends only the final fixture callbacks, preserving the old implementation. The
+invalid/group PID scenario always models signals, never sends a group signal.
+Native recipes37/docs/bindings/diff PASS; actual router/core-OS integration NOT_RUN.
+
+Packet F324–F325: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-process-lifecycle-20261006.
+Evidence: release/certification/evidence/q31-keenetic-process-lifecycle-20261006.json.
+INI/core semantic parity, OpkgTun idempotence/generation/concurrency, packaging and
+broader source/build ABI/provenance remain OPEN. Earlier runtime statuses/artifacts/
+dates/acceptance_basis and Q29/Q30/D06 observations are retained. Router USER_EXCLUDED;
+Q31 IN_PROGRESS, overall28/37(75.7%),9 remain.

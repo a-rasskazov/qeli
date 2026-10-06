@@ -277,3 +277,22 @@ requires manual ownership review and recovery; the new script preserves it and
 refuses automatic cleanup. Keep its original values until recovery is verified.
 Do not delete it to bypass the failure. Matching untagged administrator rules are
 not automatically removed. See [Q31 evidence and remaining limits](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+## Process lifecycle and PID records
+
+Development0.8.2 init templates store `PID start_ticks` in the0600 PID file and
+check Linux proc start time/executable before signals. Old single-PID records and
+unverified processes require manual identity review; they are not automatically
+adopted. Stop with the previously installed template and verify the process/rules
+before upgrading. The installer refuses existing PID or pending publication files.
+
+Stop sends TERM and waits up to15 one-second polls before compatibility cleanup.
+Timeout or signal failure retains the process record, plan and OpkgTun marker;
+restart fails without starting another client. Correct the cause and retry. A
+pending publication file requires ownership review, not deletion to bypass the gate.
+There is no automatic KILL escalation. Status codes:0 running,3 stopped,4 unverified.
+The wrapper delegates TUN lifetime to core/kernel/ndm, including persistent TUNs.
+A successful start confirms a live executable, not authentication or connectivity.
+Shell/proc checks do not provide atomic pidfd identity or serialize all operations.
+Linux native-helper tests qualify the wrapper's order; actual router integration
+is excluded. See [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
