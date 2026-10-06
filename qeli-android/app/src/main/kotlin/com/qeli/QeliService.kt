@@ -116,6 +116,7 @@ class VpnServiceImpl : VpnService() {
     private val teardownSupervisor = SupervisorJob()
     private val teardownScope = CoroutineScope(teardownSupervisor + Dispatchers.IO)
     @Volatile private var teardownJob: Job? = null
+    private var pendingReconfigureConfig: VpnConfig? = null
 
     private data class CarrierDnsRequest(
         val key: String,
@@ -173,6 +174,7 @@ class VpnServiceImpl : VpnService() {
         private const val WAKE_LOCK_LEASE_MS = 10 * 60 * 1000L
         private const val WAKE_LOCK_RENEW_MS = 5 * 60 * 1000L
         const val ACTION_CONNECT = "com.qeli.CONNECT"
+        const val ACTION_RECONFIGURE = "com.qeli.RECONFIGURE"
         const val ACTION_DISCONNECT = "com.qeli.DISCONNECT"
         // Non-exported and accepted only by a debuggable build. CI grants Android's
         // ACTIVATE_VPN app-op, then executes the production Builder path on a real emulator.
@@ -349,7 +351,7 @@ class VpnServiceImpl : VpnService() {
                 }
                 return START_NOT_STICKY
             }
-            ACTION_CONNECT -> {
+            ACTION_CONNECT, ACTION_RECONFIGURE -> {
                 val config = if (Build.VERSION.SDK_INT >= 33) {
                     intent.getSerializableExtra(EXTRA_CONFIG, VpnConfig::class.java)
                 } else {
@@ -374,6 +376,7 @@ class VpnServiceImpl : VpnService() {
                         Log.e("VpnSvc", "Refusing to connect: ${rejected.message}")
                         rejectForegroundConnect("Invalid profile: ${rejected.message}")
                     }
+                    intent.action == ACTION_RECONFIGURE -> requestReconfiguration(config)
                     else -> {
                         prepareDiagnosticSession("app", redelivered)
                         if (redelivered) {
@@ -385,6 +388,7 @@ class VpnServiceImpl : VpnService() {
                 }
             }
             ACTION_DISCONNECT -> {
+                pendingReconfigureConfig = null
                 broadcastLog("User requested VPN disconnect")
                 userRequestedDisconnect = true
                 setConnectionDesired(false)
@@ -473,7 +477,7 @@ class VpnServiceImpl : VpnService() {
         // automation. REDELIVER (never STICKY/null) restores the exact connect action after
         // low-memory process death. Manual Disconnect synchronously clears the desired bit
         // first, so it remains NOT_STICKY and cannot resurrect a user-stopped tunnel.
-        return if (shouldRedeliverVpnService(stopping, connectionDesired())) {
+        return if (shouldRedeliverVpnService(stopping && pendingReconfigureConfig == null, connectionDesired())) {
             START_REDELIVER_INTENT
         } else {
             START_NOT_STICKY
@@ -482,6 +486,7 @@ class VpnServiceImpl : VpnService() {
 
     @Synchronized
     override fun onRevoke() {
+        pendingReconfigureConfig = null
         // The user can revoke/disconnect Qeli from Android's system VPN screen instead of
         // using our UI. Treat that as the same explicit intent so trusted-network automation
         // cannot resurrect the tunnel. Do not call VpnService's default stopSelf(); stopVpn()
@@ -498,6 +503,7 @@ class VpnServiceImpl : VpnService() {
 
     @Synchronized
     override fun onDestroy() {
+        pendingReconfigureConfig = null
         // Normal destruction happens only after stopVpn has joined the native runner and called
         // stopSelf. If Android destroys us independently, do the strongest synchronous cleanup
         // available; process death is the final descriptor boundary after this callback.
@@ -977,6 +983,28 @@ class VpnServiceImpl : VpnService() {
             TrustedWifiPolicy.NetworkKind.UNKNOWN_WIFI -> scheduleTrustedResume(2_000L)
             TrustedWifiPolicy.NetworkKind.NO_NETWORK -> Unit
         }
+    }
+
+    @Synchronized
+    private fun requestReconfiguration(config: VpnConfig) {
+        if (stopping || teardownJob?.isActive == true) {
+            broadcastLog("Reconfiguration ignored while VPN is disconnecting")
+            return
+        }
+        val error = killSwitchError(currentKillSwitchReadiness(config))
+        if (error != null) {
+            rejectForegroundConnect(error)
+            return
+        }
+        setConnectionDesired(true)
+        if (transportCore == null && vpnInterface == null && transportJob?.isActive != true) {
+            prepareDiagnosticSession("settings", redelivered = false)
+            startTrustedAware(config)
+            return
+        }
+        pendingReconfigureConfig = config
+        userRequestedDisconnect = true // stop retries while draining the previous generation
+        stopVpn()
     }
 
     @Synchronized
@@ -2864,6 +2892,18 @@ class VpnServiceImpl : VpnService() {
             liveTrustedSsid = ""
 
             withContext(Dispatchers.Main.immediate) {
+                val reconfigure = synchronized(this@VpnServiceImpl) {
+                    pendingReconfigureConfig.also { pendingReconfigureConfig = null }
+                }
+                if (reconfigure != null && finalError == null && connectionDesired()) {
+                    // Native runner and TUN are fully drained. Keep the foreground controller;
+                    // never weaken the active-generation guard or race a stopped service instance.
+                    teardownJob = null
+                    stopping = false
+                    prepareDiagnosticSession("settings", redelivered = false)
+                    startTrustedAware(reconfigure)
+                    return@withContext
+                }
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 if (finalError == null) {
                     broadcastStatus(STATUS_DISCONNECTED)

@@ -373,7 +373,7 @@ def main():
     ap.add_argument("--sha256", required=True)
     ap.add_argument("--inside", action="store_true")
     ap.add_argument("--restart-control", action="store_true", help="run the standalone platform-only restart control before system suite")
-    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns", "trusted-wifi", "profile-ui"), default="explicit")
+    ap.add_argument("--suite", choices=("explicit", "ordinary", "routed", "system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns", "trusted-wifi", "profile-ui", "settings-ui"), default="explicit")
     ap.add_argument("--transport", choices=("tcp", "udp", "quic"), default="udp", help="transport for recovery/handover suite; recovery requires udp/quic; trusted-wifi requires tcp")
     ap.add_argument("--carrier", choices=("default", "nat64"), default="default", help="private IPv6-only TAP/SLAAC/DNS64/NAT64 backend; Release nat64 suite only")
     ap.add_argument("--startup-state", action="store_true", help="24-sample cold-start burst with ordinary-UID network snapshots; startup only")
@@ -386,7 +386,7 @@ def main():
     ap.add_argument("--ui-connect-restart", action="store_true", help="verify real Release Activity disconnect/connect after OS lockdown bootstrap; private-dns only")
     args = ap.parse_args()
     if args.suite == "trusted-wifi" and args.variant != "debug":ap.error("trusted Wi-Fi fixture requires debug instrumentation")
-    if args.suite == "profile-ui" and (args.variant != "debug" or args.transport != "tcp"):ap.error("profile UI fixture requires debug TCP")
+    if args.suite in ("profile-ui", "settings-ui") and (args.variant != "debug" or args.transport != "tcp"):ap.error("profile UI fixture requires debug TCP")
     if args.trusted_lockdown_handover and (args.variant != "release" or args.suite != "handover" or args.apps_mode != "all"):ap.error("trusted lockdown handover requires Release handover apps_mode=all")
     if args.ui_connect_restart and (args.variant != "release" or args.suite != "private-dns"):ap.error("UI connect restart requires Release private-dns suite")
     if args.apps_mode != "all" and (args.variant != "release" or args.suite not in ("startup", "handover", "app-policy")):ap.error("per-app fixture requires Release startup/handover/app-policy")
@@ -603,6 +603,8 @@ perf.connection.handshake_timeout_secs = 12
             expected_tests=13
         if args.suite == "profile-ui":
             phases=[("fixed","com.qeli.ProfileUiInstrumentedTest,com.qeli.DiagnosticLogStoreInstrumentedTest")];expected_tests=10
+        if args.suite == "settings-ui":
+            phases=[("fixed","com.qeli.SettingsReconnectInstrumentedTest")];expected_tests=3
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             assert manifest.get("build_type", "debug") == args.variant, "APK manifest does not match requested variant"
@@ -680,7 +682,7 @@ perf.connection.handshake_timeout_secs = 12
             result["dns_answered_questions"] = len(accepted)
         profiles = [("tcp", "10.86.0.", "fd86:29:1:")] if args.suite in ("system", "power", "recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns", "trusted-wifi") else [("tcp", "10.86.0.", "fd86:29:1:"), ("udp", "10.87.0.", "fd86:29:2:")]
         if args.suite in ("recovery", "handover", "nat64", "startup", "app-policy", "endurance", "private-dns") and args.transport != "tcp": profiles = [("udp", "10.87.0.", "fd86:29:2:")]
-        if args.suite == "profile-ui":
+        if args.suite in ("profile-ui", "settings-ui"):
             assert not echo.rows, "profile UI fixture must not emit VPN payload"
             profiles = []
         for profile, subnet, v6 in profiles:

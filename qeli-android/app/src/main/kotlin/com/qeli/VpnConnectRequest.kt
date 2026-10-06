@@ -16,9 +16,15 @@ internal class VpnConnectRequest {
     val isActive: Boolean get() = configuration != null
     val hasOutstandingResult: Boolean get() = awaiting != null
 
-    fun begin(config: VpnConfig): Boolean {
+    var reconfigure: Boolean = false
+        private set
+
+    fun begin(config: VpnConfig): Boolean = begin(config, false)
+
+    fun begin(config: VpnConfig, reconfigure: Boolean): Boolean {
         if (isActive || hasOutstandingResult) return false
         configuration = config
+        this.reconfigure = reconfigure
         return true
     }
     fun awaitPermission(permission: Permission) {

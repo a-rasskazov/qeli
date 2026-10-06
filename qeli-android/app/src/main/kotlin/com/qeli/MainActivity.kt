@@ -821,7 +821,7 @@ ipv6 = auto
                 // the new LAN-bypass setting.
                 if (lanChanged && (isConnected || isConnecting)) {
                     Toast.makeText(this, getString(R.string.reconnecting_lan), Toast.LENGTH_SHORT).show()
-                    connect()
+                    reconnectForSettings()
                 }
                 // Strictly last: recreate() tears down this Activity, so any work above that
                 // still touches this window (the toast, connect()) has to have run already.
@@ -2170,9 +2170,14 @@ ipv6 = auto
         if (!isConnected && !isConnecting && !isDisconnecting && !isTrustedPaused) connect()
     }
 
-    private fun connect() {
-        if (isConnected || isConnecting || isDisconnecting || isTrustedPaused ||
-            connectRequest.hasOutstandingResult) return
+    private fun connect() = startConnectRequest(reconfigure = false)
+
+    /** A settings edit may replace an active attempt, but never steal a permission callback. */
+    private fun reconnectForSettings() = startConnectRequest(reconfigure = true)
+
+    private fun startConnectRequest(reconfigure: Boolean) {
+        if (isDisconnecting || connectRequest.hasOutstandingResult ||
+            (!reconfigure && (isConnected || isConnecting || isTrustedPaused))) return
         val p = current() ?: return
         // Revalidate saved text through the strict shared parser at activation.
         val cfg = try { VpnConfig.parse(p.text) } catch (e: Exception) {
@@ -2182,7 +2187,7 @@ ipv6 = auto
             Toast.makeText(this, getString(R.string.set_real_server), Toast.LENGTH_LONG).show()
             binding.tabs.getTabAt(1)?.select(); showEditor(activeIndex); return
         }
-        if (!connectRequest.begin(cfg)) return
+        if (!connectRequest.begin(cfg, reconfigure)) return
         appendLog("Connecting \"${p.name}\"")
         setConnectingState()
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -2213,10 +2218,11 @@ ipv6 = auto
     }
 
     private fun startVpnService() {
+        val reconfigure = connectRequest.reconfigure
         val cfg = connectRequest.takeConfiguration() ?: return
         try {
             val intent = Intent(this, VpnServiceImpl::class.java).apply {
-                action = VpnServiceImpl.ACTION_CONNECT
+                action = if (reconfigure) VpnServiceImpl.ACTION_RECONFIGURE else VpnServiceImpl.ACTION_CONNECT
                 putExtra(VpnServiceImpl.EXTRA_CONFIG, cfg)
             }
             startForegroundService(intent)

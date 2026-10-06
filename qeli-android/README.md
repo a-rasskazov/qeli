@@ -336,3 +336,13 @@ private diagnostic journal / bounded stream на disposable readonly AVD.
 Update metadata ограничены4MiB; журнал при восстановлении читает ограниченный хвост.
 Все imports используют общий bounded reader с прежними INI/archive budgets.
 [Q29 F286–F288: source review, исправления и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-SOURCE.md).
+
+Изменение LAN bypass в Settings запрашивает reconfiguration активного соединения;
+обычный Connect сохраняет прежний guard. Ожидающий permission result не перехватывается.
+`audit_android_data_plane_lab.py --suite settings-ui --variant debug --transport tcp`
+выполняет три real-settings/native-pre-auth сценария без Auth/TUN/payload. Connected UI
+и pending permission phase введены тестом; это не проверка LAN route reachability.
+[Q29 F289: результат и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-SETTINGS.md).
+
+Служба завершает прежний native runner/TUN перед explicit reconfiguration; Disconnect,
+revoke и destroy отменяют отложенный config. Ordinary Connect не обходит generation guard.

@@ -1,6 +1,6 @@
 # Q29 F286–F288: bounded input and final Android source review
 
-<!-- normative-sync: q29-android-source-v1 -->
+<!-- normative-sync: q29-android-source-v2 -->
 
 6 October 2026. Review criterion completed for 31 main Kotlin files, Android resources,
 manifest/build/R8 and their Rust JNI entry surface. This reconciles the earlier stage
@@ -72,3 +72,7 @@ Next: F289 explicit LAN reconfiguration. [SIGKILL automatic recovery FAIL](AUDIT
 and [auto/null DnsResolver ENONET](AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md) remain open;
 no causal JNI defect established. No additional mandatory permutations introduced.
 Q29 IN_PROGRESS; total28/37(75.7%),9 remain. User-skipped platforms and D06 unchanged.
+
+## Subsequent F289 closure
+
+[F289 scoped fix and checks](AUDIT-Q29-ANDROID-SETTINGS.md). The OPEN entry above describes this original packet; Q29 still remains IN_PROGRESS.

@@ -446,3 +446,5 @@
 - [Q29 F282–F283: владельцы protect/callback и скрытый SSID](reports/AUDIT-Q29-ANDROID-CONTROLLER.md)
 
 - [Q29 F286–F288: границы чтения, UI state и итоговая сверка source](reports/AUDIT-Q29-ANDROID-SOURCE.md)
+
+- [Q29 F289: переподключение после LAN-настроек](reports/AUDIT-Q29-ANDROID-SETTINGS.md)

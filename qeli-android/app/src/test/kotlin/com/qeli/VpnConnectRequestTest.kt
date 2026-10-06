@@ -49,4 +49,19 @@ class VpnConnectRequestTest {
         request.launchFailed(notification);assertFalse(request.hasOutstandingResult);assertFalse(request.isActive)
         assertTrue(request.begin(next))
     }
+    @Test fun reconfigurationModeBelongsToThePermissionSnapshot() {
+        val request = VpnConnectRequest(); assertTrue(request.begin(first, true))
+        request.awaitPermission(notification)
+        assertFalse(request.begin(next, false)); assertTrue(request.reconfigure)
+        assertTrue(request.finishPermission(notification, true)); request.awaitPermission(vpn)
+        assertTrue(request.finishPermission(vpn, true)); assertTrue(request.reconfigure)
+        assertSame(first, request.takeConfiguration())
+    }
+    @Test fun cancelledReconfigurationCannotMarkANewOrdinaryConnect() {
+        val request = VpnConnectRequest(); assertTrue(request.begin(first, true))
+        request.awaitPermission(notification); request.cancel()
+        assertFalse(request.begin(next, false)); assertFalse(request.finishPermission(notification, true))
+        assertTrue(request.begin(next)); assertFalse(request.reconfigure)
+        assertSame(next, request.takeConfiguration())
+    }
 }

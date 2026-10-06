@@ -1,6 +1,6 @@
 # Q29 F286–F288: ограниченное чтение и итоговый source review Android
 
-<!-- normative-sync: q29-android-source-v1 -->
+<!-- normative-sync: q29-android-source-v2 -->
 
 6 октября 2026. Критерий review завершён для31 основных Kotlin-файлов, Android resources,
 manifest/build/R8 и Rust JNI-входов. Прежние reviews сверены с текущими callers и владельцами
@@ -72,3 +72,7 @@ Evidence: release/certification/evidence/q29-android-source-20261006.json.
 и [auto/null DnsResolver ENONET](AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md) остаются открыты;
 причинный JNI defect не установлен. Новых обязательных permutations не добавлено.
 Q29 IN_PROGRESS; итог28/37(75,7%),9 осталось. User-skipped platforms и D06 неизменны.
+
+## Последующее завершение F289
+
+[F289: исправление и границы проверки](AUDIT-Q29-ANDROID-SETTINGS.md). OPEN выше относится к исходному пакету; Q29 по-прежнему IN_PROGRESS.
