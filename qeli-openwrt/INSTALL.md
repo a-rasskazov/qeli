@@ -190,8 +190,8 @@ real router. See [Q31 audit evidence](../docs/eng/reports/AUDIT-Q31-OPENWRT-CONT
 Development status polling reads init-visible UCI through the scoped service_status
 RPC; it preserves staged form edits and displays unknown when the read fails.
 Maintainer cross-build helpers reject target typos and setup/transfer failures;
---sync is needed to upload this checkout. SHA256-verified atomic artifact transfer
-does not qualify source freshness, ABI or real router runtime. Current adapter
+Every run uploads this checkout into a fresh private directory. SHA256/ELF-checked
+atomic artifact transfer does not qualify full ABI or real router runtime. Current adapter
 fixtures do not execute an ucode interpreter/rpcd.
 
 
@@ -204,12 +204,29 @@ the marker as a substitute for repair. Retry completes those sections without
 duplicating devices/forwarding; this does not roll back partial UCI changes.
 The marker is tmpfs state, not a persistent reboot recovery guarantee.
 
-Maintainer --sync replaces the managed src/.cargo inputs and uploads Cargo.toml/
-Cargo.lock while preserving target cache. An interrupted upload/close leaves
-.router-sync-incomplete in the remote source root. Every later helper build,
-including one without --sync, refuses that checkout until a successful --sync.
-The replacement is not atomic or locked; without --sync an unmarked remote
-checkout is reused. This does not establish complete build provenance.
+Each helper run allocates a private0700 directory under
+/var/tmp/qeli-router-keenetic-XXXXXX or /var/tmp/qeli-router-openwrt-XXXXXX, uploads
+the current checkout and uses its own target directory. --sync remains a
+compatibility option; upload also happens without it. The old /opt/qeli-src and
+shared Cargo.toml backup are no longer used. Manifest restriction to rlib affects
+only that private copy. Upload/close failure leaves .router-sync-incomplete and
+stops the run; retry creates a new checkout. Runs retain their directories for
+diagnosis; after the run finishes, review and remove only its printed owned path.
+They are not automatically removed. Qeli compilation uses --locked, --jobs1 and no incremental
+cache. Separate runs may still share installed toolchains and Cargo download cache.
+
+Before atomic publication, the same SHA256-bound snapshot must be a little-endian
+ELF executable of the requested class/machine, with a file-backed executable entry,
+no PT_INTERP or DT_NEEDED; ARMv7 must declare EABI5 hard-float. Failure preserves
+the previous local binary, including when its hash would match the remote cache.
+These checks do not prove musl identity, CPU ISA, full MIPS float ABI, reproducible
+builds or firmware runtime. Rust stable/nightly and Zig are not fully pinned by
+these helpers. See [Q31](../docs/eng/reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+The SDK package requires Cargo.lock before compilation and checks the client-only
+graph with cargo metadata --locked before cargo install --locked --jobs1.
+Missing/outdated lockfiles fail before installation. Keep the source SHA and
+PKG_MIRROR_HASH release-cut steps; this check does not validate a real SDK package.
 
 Secret deletion reports filesystem failure through both CLI and LuCI; an absent
 file is a successful no-op. Removing the stored file does not stop the current

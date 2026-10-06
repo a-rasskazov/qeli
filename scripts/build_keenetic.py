@@ -24,15 +24,15 @@ import os, sys
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(__file__))
-from native_lab import LabConnection, remote_sha256, pull_verified_artifact
-from router_source import sync_router_source, require_router_source_ready
+from router_artifact import pull_router_artifact
+from router_source import (sync_router_source, require_router_source_ready,
+                           create_router_checkout, restrict_router_crate_types as restrict_crate_types)
 from lab_common import connect, LAB_SRV
 
-REMOTE_ROOT = "/opt/qeli-src"
+REMOTE_ROOT = None
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_SRC = REPO_ROOT / "qeli"
 LOCAL_OUT = REPO_ROOT / "release" / "keenetic"
-ROUTER_MANIFEST_BACKUP = f"{REMOTE_ROOT}/Cargo.toml.router-backup"
 PINNED_CARGO_ZIGBUILD = "0.23.0"
 TARGETS = {
     "aarch64": "aarch64-unknown-linux-musl",
@@ -62,30 +62,7 @@ def tail(s, n=25):
     return "\n".join(s.splitlines()[-n:])
 
 def restrict_router_crate_types(c):
-    """Build only the rlib dependency needed by qeli-client.
-
-    The persistent checkout is restored in ``finally`` by main. MIPS Zig cannot
-    link the desktop/mobile cdylib and must never be asked to build that unused
-    artifact as a side effect of a client-only binary.
-    """
-    restore_router_manifest(c)
-    command = (
-        f"cp {REMOTE_ROOT}/Cargo.toml {ROUTER_MANIFEST_BACKUP} && "
-        f"sed -i 's/^crate-type = \\[\"rlib\", \"cdylib\", \"staticlib\"\\]$/"
-        f"crate-type = [\"rlib\"]/' {REMOTE_ROOT}/Cargo.toml && "
-        f"grep -qxF 'crate-type = [\"rlib\"]' {REMOTE_ROOT}/Cargo.toml"
-    )
-    rc, output = run(c, command, t=30)
-    if rc != 0:
-        restore_router_manifest(c)
-        raise RuntimeError(f"cannot restrict router crate types:\n{output}")
-
-
-def restore_router_manifest(c):
-    rc, output = run(c, f"test ! -f {ROUTER_MANIFEST_BACKUP} || mv -f {ROUTER_MANIFEST_BACKUP} {REMOTE_ROOT}/Cargo.toml", t=30)
-    if rc != 0:
-        raise RuntimeError(f"cannot restore router Cargo.toml:\n{output}")
-
+    restrict_crate_types(c, REMOTE_ROOT)
 
 
 def sync_tree(c):
@@ -122,20 +99,16 @@ def build(c, arch, target):
         # tier-3: nightly + сборка std из исходников. Rust компилит mipsel в soft-float
         # ABI, а zig по умолчанию линкует mips как fpxx → конфликт float-ABI на линковке.
         # Принуждаем линковку к soft-float (бинарь не использует FPU — идёт на любом mips).
-        cmd = (f"cd {REMOTE_ROOT} && RUSTFLAGS='-C link-arg=-msoft-float' "
+        cmd = (f"cd {REMOTE_ROOT} && CARGO_TARGET_DIR={REMOTE_ROOT}/target CARGO_INCREMENTAL=0 RUSTFLAGS='-C link-arg=-msoft-float' "
                f"cargo +nightly zigbuild "
-               f"-Z build-std=std,panic_abort --locked --release --bin {BIN} "
+               f"-Z build-std=std,panic_abort --locked --jobs 1 --release --bin {BIN} "
                f"{CLIENT_FEATURES} --target {target} 2>&1")
     else:
-        cmd = (f"cd {REMOTE_ROOT} && cargo zigbuild --locked --release --bin {BIN} "
+        cmd = (f"cd {REMOTE_ROOT} && CARGO_TARGET_DIR={REMOTE_ROOT}/target CARGO_INCREMENTAL=0 cargo zigbuild --locked --jobs 1 --release --bin {BIN} "
                f"{CLIENT_FEATURES} --target {target} 2>&1")
     rc, out = run(c, cmd, t=1800)
     print(tail(out, 25))
     print(f"{arch} build rc:", rc)
-    if rc == 0:
-        _, info = run(c, f"file {REMOTE_ROOT}/target/{target}/release/{BIN}; "
-                         f"ls -lh {REMOTE_ROOT}/target/{target}/release/{BIN} | awk '{{print $5}}'")
-        print("  artifact:", info)
     print()
     return rc
 
@@ -145,23 +118,17 @@ def pull(c, arch, target):
     destination = os.path.relpath(
         os.path.join(LOCAL_OUT, f"{BIN}-keenetic-{arch}"), REPO_ROOT
     ).replace("\\", "/")
-    digest = remote_sha256(LabConnection(c), src)
-    if digest == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
-        raise RuntimeError("router artifact is empty")
-    sf = c.open_sftp()
-    try:
-        size, actual, _changes = pull_verified_artifact(sf, src, digest, REPO_ROOT, [destination])
-        print(f"pulled {arch}: {size} bytes, sha256={actual}")
-    finally:
-        sf.close()
+    size, digest = pull_router_artifact(c, src, target, REPO_ROOT, destination)
+    print(f"pulled {arch}: {size} bytes, sha256={digest}")
+
 
 
 def main():
+    global REMOTE_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sync", action="store_true", help="upload this checkout before building")
+    parser.add_argument("--sync", action="store_true", help="compatibility option: every run now uploads this checkout")
     parser.add_argument("arch", nargs="?", choices=tuple(TARGETS))
     args = parser.parse_args()
-    do_sync = args.sync
     targets = {args.arch: TARGETS[args.arch]} if args.arch else TARGETS
     try:
         c = connect(LAB_SRV)
@@ -173,16 +140,13 @@ def main():
             "из GitHub Releases (aarch64 / mipsel -unknown-linux-musl); см. docs/*/manuals/KEENETIC-DEPLOY.md.\n"
         )
     results = {}
-    restricted = False
     try:
-        # Recover an interrupted previous manifest before --sync overwrites it.
-        restore_router_manifest(c)
-        if do_sync:
-            print("synced", sync_tree(c), "source files")
+        REMOTE_ROOT = create_router_checkout(c, "keenetic")
+        print("isolated router checkout:", REMOTE_ROOT)
+        print("synced", sync_tree(c), "source files")
         check_sync_ready(c)
         ensure_toolchain(c, targets)
         restrict_router_crate_types(c)
-        restricted = True
         for arch, target in targets.items():
             try:
                 results[arch] = build(c, arch, target)
@@ -193,10 +157,9 @@ def main():
                 print(f"{arch} failed: {error}")
     finally:
         try:
-            if restricted:
-                restore_router_manifest(c)
-        finally:
             c.close()
+        finally:
+            REMOTE_ROOT = None
     print("\n===== ИТОГ =====")
     for arch in targets:
         print(f"  {arch}: {'OK' if results.get(arch) == 0 else 'FAIL'}")

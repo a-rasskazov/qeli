@@ -86,8 +86,11 @@ endef
 CARGO_INSTALL:=0
 define Build/Compile
 	+cd $(PKG_BUILD_DIR)/qeli && \
+	test -f Cargo.lock && \
+	$(CARGO_PKG_VARS) cargo metadata --locked --format-version 1 \
+		--no-default-features --features client-bin > /dev/null && \
 	$(CARGO_PKG_VARS) \
-	cargo install -v \
+	cargo install -v --locked --jobs 1 \
 		--profile release \
 		--no-default-features --features client-bin \
 		--bin qeli-client \

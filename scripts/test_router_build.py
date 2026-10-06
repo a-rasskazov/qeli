@@ -6,15 +6,28 @@ import io
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import Mock, patch
+import router_artifact
+from test_router_artifact import elf_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Build tests model transport. Missing Paramiko must never trigger installation
+    # or a real connection; the imported lab helper gets a rejecting test-only stub.
+    try:
+        import paramiko
+        transport_context=contextlib.nullcontext()
+    except ModuleNotFoundError:
+        transport=types.ModuleType('paramiko')
+        transport.SSHClient=Mock(side_effect=AssertionError('SSH forbidden in router models'))
+        transport_context=patch.dict(sys.modules,{'paramiko':transport})
+    with transport_context:
+        spec.loader.exec_module(module)
     return module
 
 KEEN = load('q31_keen', ROOT / 'scripts/build_keenetic.py')
@@ -27,7 +40,7 @@ class RouterBuildTests(unittest.TestCase):
 
     def invoke_main(self, module, argv, **overrides):
         client = Mock()
-        changes = dict(connect=Mock(return_value=client), restore_router_manifest=Mock(),
+        changes = dict(connect=Mock(return_value=client), create_router_checkout=Mock(return_value="/var/tmp/qeli-router-"+("keenetic" if module is KEEN else "openwrt")+"-ABC123"),
             sync_tree=Mock(return_value=1), check_sync_ready=Mock(), ensure_toolchain=Mock(),
             restrict_router_crate_types=Mock(), build=Mock(return_value=0))
         if module is KEEN:
@@ -86,18 +99,21 @@ class RouterBuildTests(unittest.TestCase):
                 module.ensure_toolchain(Mock(), self.selected(module))
             self.assertFalse(any('nightly' in call.args[1] for call in run.call_args_list))
 
-    def test_manifest_recovered_before_sync_and_restored_after_build(self):
+    def test_every_run_allocates_then_syncs_even_without_sync_option(self):
         for module in MODULES:
-            events = []
-            restore = Mock(side_effect=lambda c: events.append('restore'))
-            sync = Mock(side_effect=lambda c: events.append('sync') or 1)
-            client, _ = self.invoke_main(module, ['--sync', 'aarch64'], restore_router_manifest=restore, sync_tree=sync)
-            self.assertEqual(events, ['restore', 'sync', 'restore'])
-            client.close.assert_called_once()
+            for args in (['aarch64'], ['--sync','aarch64']):
+                events=[]
+                allocate=Mock(side_effect=lambda c,k:events.append('allocate') or '/var/tmp/qeli-router-'+k+'-ABC123')
+                sync=Mock(side_effect=lambda c:events.append(('sync',module.REMOTE_ROOT)) or 1)
+                client,changes=self.invoke_main(module,args,create_router_checkout=allocate,sync_tree=sync)
+                self.assertEqual(events,['allocate',('sync','/var/tmp/qeli-router-'+('keenetic' if module is KEEN else 'openwrt')+'-ABC123')])
+                self.assertIsNone(module.REMOTE_ROOT)
+                client.close.assert_called_once()
+                self.assertFalse(hasattr(module,'restore_router_manifest'))
 
     def test_setup_and_sync_failure_always_close_connection(self):
         for module in MODULES:
-            for failed in ('restore_router_manifest', 'sync_tree', 'check_sync_ready', 'ensure_toolchain'):
+            for failed in ('create_router_checkout', 'sync_tree', 'check_sync_ready', 'ensure_toolchain','restrict_router_crate_types'):
                 client = Mock()
                 with self.subTest(module=module.__name__, failed=failed):
                     with self.assertRaisesRegex(RuntimeError, 'fixture failure'):
@@ -105,13 +121,12 @@ class RouterBuildTests(unittest.TestCase):
                             **{failed: Mock(side_effect=RuntimeError('fixture failure'))})
                     client.close.assert_called_once()
 
-    def test_cleanup_failure_still_closes_connection(self):
+    def test_close_failure_propagates_and_clears_run_context(self):
         for module in MODULES:
-            client = Mock()
-            with self.assertRaisesRegex(RuntimeError, 'restore failed'):
-                self.invoke_main(module, ['aarch64'], connect=Mock(return_value=client),
-                    restore_router_manifest=Mock(side_effect=[None, RuntimeError('restore failed')]))
-            client.close.assert_called_once()
+            client=Mock();client.close.side_effect=RuntimeError('close failed')
+            with self.assertRaisesRegex(RuntimeError,'close failed'):
+                self.invoke_main(module,['aarch64'],connect=Mock(return_value=client))
+            client.close.assert_called_once();self.assertIsNone(module.REMOTE_ROOT)
 
     def test_artifact_failure_cannot_report_success(self):
         for module in MODULES:
@@ -146,21 +161,30 @@ class RouterBuildTests(unittest.TestCase):
                     root = Path(directory); output = root / 'out'; output.mkdir()
                     name = 'qeli-client-keenetic-aarch64' if module is KEEN else 'qeli-client-openwrt-aarch64'
                     destination = output / name; destination.write_bytes(b'previous')
-                    payload = b'fixture ELF'; digest = hashlib.sha256(payload).hexdigest()
+                    payload = elf_fixture(); digest = hashlib.sha256(payload).hexdigest()
                     if mode == 'empty': digest = hashlib.sha256(b'').hexdigest()
                     sf = Mock()
                     sf.open.return_value = io.BytesIO(b'different' if mode == 'mismatch' else payload)
                     if mode == 'read-failure': sf.open.side_effect = IOError('read failed')
                     client = Mock(); client.open_sftp.return_value = sf
-                    with patch.multiple(module, REPO_ROOT=root, LOCAL_OUT=output), patch.object(module, 'remote_sha256', return_value=digest), patch.object(module, 'run', return_value=(0, '')), contextlib.redirect_stdout(io.StringIO()):
+                    with patch.multiple(module, REPO_ROOT=root, LOCAL_OUT=output, REMOTE_ROOT='/var/tmp/qeli-router-openwrt-ABC123'), patch.object(router_artifact, 'remote_sha256', return_value=digest), patch.object(module, 'run', return_value=(0, '')), contextlib.redirect_stdout(io.StringIO()):
                         if mode == 'success':
                             self.transfer(module, client)
                             self.assertEqual(destination.read_bytes(), payload)
                         else:
                             with self.assertRaises((RuntimeError, IOError)): self.transfer(module, client)
                             self.assertEqual(destination.read_bytes(), b'previous')
-                    if mode == 'empty': client.open_sftp.assert_not_called()
-                    else: sf.close.assert_called_once()
+                    sf.close.assert_called_once()
+
+    def test_wrong_elf_with_matching_hash_fails_actual_main_pull_on_both_helpers(self):
+        for module in MODULES:
+            client=Mock();sf=Mock();sf.open.side_effect=lambda *a:io.BytesIO(b'not ELF')
+            client.open_sftp.return_value=sf
+            overrides={'connect':Mock(return_value=client)}
+            overrides['pull' if module is KEEN else 'build']=module.pull if module is KEEN else module.build
+            with patch.object(module,'run',return_value=(0,'')),patch.object(router_artifact,'remote_sha256',return_value=hashlib.sha256(b'not ELF').hexdigest()):
+                with self.assertRaises(SystemExit) as result:self.invoke_main(module,['aarch64'],**overrides)
+            self.assertEqual(result.exception.code,1);sf.close.assert_called_once();client.close.assert_called_once()
 
     def test_both_helpers_delegate_sync_and_ready_check_to_shared_owner(self):
         for module in MODULES:
@@ -189,6 +213,9 @@ class RouterBuildTests(unittest.TestCase):
                     else: self.assertEqual(module.build(Mock(), arch, *selected), 17)
                 command = run.call_args.args[1]
                 self.assertIn('--locked', command)
+                self.assertIn('--jobs 1',command)
+                self.assertIn('CARGO_TARGET_DIR=',command)
+                self.assertIn('CARGO_INCREMENTAL=0',command)
                 self.assertIn('--no-default-features --features client-bin', command)
                 self.assertIn('--bin qeli-client', command)
 

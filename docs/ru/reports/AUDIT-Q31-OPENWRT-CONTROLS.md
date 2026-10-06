@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v11 -->
+<!-- normative-sync: q31-openwrt-controls-v12 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -722,3 +722,64 @@ provenance и широкий review OPEN. Q29 FAIL/ENONET,Q30 skips/drain OPEN,D
 Q31 IN_PROGRESS;28/37(75.7%),осталось9.
 
 Первый directory baseline дал также две ошибки фикстуры: успешная старая установка повлияла на следующие targets. Raw logs сохранены и не квалифицируют эти targets. Отдельные свежие фикстуры воспроизводят ложный старый успех для binary/init/config и отказ нового кода: шесть old/current records на shell PASS. Код продукта и входы финального165-suite для этого сравнения не менялись.
+
+## F335: общий checkout и backup manifest загрязняли сборки роутеров
+
+Без --sync оба helper использовали старый /opt/qeli-src. Успешная сборка могла
+содержать прежние исходники; параллельные запуски изменяли/восстанавливали один
+Cargo.toml и делили target. Теперь каждый запуск создаёт проверенный приватный
+mktemp-каталог0700, всегда загружает текущие управляемые входы, проверяет завершение
+sync и ограничивает только свою копию до rlib. Общие backup/restore удалены.
+CARGO_TARGET_DIR принадлежит запуску; CARGO_INCREMENTAL=0 и --jobs1 ограничивают
+конкурентность компилятора внутри него. --sync совместим, но необязателен.
+Напечатанный каталог сохраняется для диагностики и требует проверенной очистки
+после завершения; старые checkout не меняются. Toolchain и download cache Cargo
+могут быть общими; конкурентная установка toolchain и локальные изменения файлов
+во время upload пока не квалифицированы.
+
+## F336: совпадение SHA допускало несовместимый бинарник и даже не-ELF
+
+Проверенный hash доставки не подтверждал архитектуру или статическую компоновку.
+Оба helper используют router_artifact.py: один снимок SFTP читается, транспорт
+закрывается, SHA сверяется, проверяется тот же снимок, затем существующий owner
+публикует его атомарно. Отказ сохраняет прежний бинарник; совпавший локальный hash
+не обходит проверку. Gate проверяет границы headers/segments, little endian,
+разрядность/машину target и исполняемую точку входа, запрещает PT_INTERP/DT_NEEDED,
+проверяет EABI5 hard-float ARMv7. ET_EXEC/static PIE разрешены; расширенный формат
+program headers отвергается. Это metadata admission, а не доказательство musl,
+CPU ISA, полного float ABI MIPS, работы kernel/firmware или полной валидности ELF.
+
+## F337: SDK install не обеспечивал graph из сохранённого lockfile
+
+Пакет OpenWrt требует Cargo.lock и проверяет client-only graph через cargo metadata
+--locked до cargo install --locked --jobs1. Реальный fixture показал: install
+--locked --path сам по себе допускал отсутствующий/устаревший lockfile для локальной
+path dependency. Guard отвергает оба случая до публикации. Загрузок зависимостей
+не было. Source SHA/mirror hash остаются этапами release-cut. Пустые SDK include
+stubs только позволяют GNU make развернуть настоящий Build/Compile; полноценная
+SDK/package/cross сборка этим не подтверждается.
+
+На .11 PASS45 router tests:15 helper failure/admission,16 ELF/snapshot,7 private
+checkout,7 sync. Три POSIX метода выполняют реальные операции над собственными
+каталогами/manifest; compiler/SSH helper проверяются моделями с test-only Paramiko
+stub, запрещающим SSH, поскольку Paramiko в лабе отсутствует.20 old/current записей
+воспроизводят допуск старого source и неверного ELF с совпадающим SHA в обоих
+helper. Пять реальных offline GNU make/Cargo tiny-crate случаев: старый код
+принимает missing/stale lock, новый отвергает их и принимает valid lock. Настоящий
+маленький x86_64 glibc-static ELF проходит metadata gate; прежний неизменённый GNU
+debug Qeli ELF отвергается по PT_INTERP. Это не свежая router Qeli/musl cross сборка
+и не выполнение на firmware. Начальные import/fixture-assumption FAIL сохранены
+и не квалифицируют результат.37 recipe tests, docs/bindings/diff PASS.
+
+Пакет F335–F337: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-build-isolation-20261006.
+Evidence: release/certification/evidence/q31-router-build-isolation-20261006.json.
+Rust/core/native compile inputs, библиотеки, существующие router binaries и их
+историческая квалификация неизменны. Новые Qeli/FFI/release/cross build, фиксация
+toolchain/reproducibility и полный ABI не заявляются. Core/config generation,
+ABA, last-check replacement, порядок firmware и whole-bundle rollback OPEN.
+Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 сохранены. Q31 IN_PROGRESS;
+28/37(75.7%),9 осталось; целый checklist-пункт Q31 не закрыт.
+
+Основание metadata: [ELF program headers](https://refspecs.linuxfoundation.org/elf/gabi4%2B/ch5.pheader.html),
+[Arm ELF32 ABI](https://github.com/ARM-software/abi-aa/blob/main/aaelf32/aaelf32.rst),
+[Cargo install](https://doc.rust-lang.org/cargo/commands/cargo-install.html).

@@ -56,18 +56,25 @@ python scripts/build_keenetic.py --sync
 
 You can build only the needed arch: `python scripts/build_keenetic.py --sync mipsel`.
 
-The helper is maintainer-internal; --sync uploads this checkout before building.
-Without it, the existing remote source is used. Target typos fail before SSH;
-setup/transfer errors return failure. Downloaded bytes are SHA256-checked and
-atomically replace the previous file. This does not qualify a fresh source snapshot,
-reproducibility or real router runtime; see [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+The helper is maintainer-internal and requires access to the private lab.
+Each helper run allocates a private0700 directory under
+/var/tmp/qeli-router-keenetic-XXXXXX or /var/tmp/qeli-router-openwrt-XXXXXX, uploads
+the current checkout and uses its own target directory. --sync remains a
+compatibility option; upload also happens without it. The old /opt/qeli-src and
+shared Cargo.toml backup are no longer used. Manifest restriction to rlib affects
+only that private copy. Upload/close failure leaves .router-sync-incomplete and
+stops the run; retry creates a new checkout. Runs retain their directories for
+diagnosis; after the run finishes, review and remove only its printed owned path.
+They are not automatically removed. Qeli compilation uses --locked, --jobs1 and no incremental
+cache. Separate runs may still share installed toolchains and Cargo download cache.
 
-The maintainer --sync now replaces managed src/.cargo, manifests and lockfile,
-including deleted modules and current Cargo config, and preserves target cache.
-An incomplete upload/close keeps .router-sync-incomplete in the remote source
-root. Builds with or without --sync reject that marker; rerun --sync successfully
-to repair. Replacement is not atomic or locked, and unmarked cached source is
-still reused without --sync. Full provenance and reproducibility remain unqualified.
+Before atomic publication, the same SHA256-bound snapshot must be a little-endian
+ELF executable of the requested class/machine, with a file-backed executable entry,
+no PT_INTERP or DT_NEEDED; ARMv7 must declare EABI5 hard-float. Failure preserves
+the previous local binary, including when its hash would match the remote cache.
+These checks do not prove musl identity, CPU ISA, full MIPS float ABI, reproducible
+builds or firmware runtime. Rust stable/nightly and Zig are not fully pinned by
+these helpers. See [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
 
 ---

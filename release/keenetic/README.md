@@ -100,3 +100,11 @@ wan.d hook; старые скрипты общей блокировки не с�
 Recovery-файлы PID/plan/forwarding/pending не удалять. Hook-события не очередятся;
 обнаруженная смена плана прерывает L3/save/receipt и оставляет pending. Атомарность
 core-поколений/ABA/firmware этим не доказана.
+
+Maintainer builds now always upload into private0700 /var/tmp/qeli-router-keenetic-XXXXXX
+checkouts, with separate target/rlib restriction and one compiler job. --sync is
+compatible but optional. Retained directories require reviewed per-run cleanup.
+SHA256-bound ELF admission precedes atomic local publication; it checks class,
+machine, little endian and absence of interpreter/shared dependencies, not full
+ISA/musl/firmware compatibility or reproducibility. Old /opt/qeli-src is unused.
+See [deployment manual](../../docs/eng/manuals/KEENETIC-DEPLOY.md) for limits.

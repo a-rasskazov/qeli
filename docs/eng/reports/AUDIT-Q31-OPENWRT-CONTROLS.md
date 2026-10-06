@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v11 -->
+<!-- normative-sync: q31-openwrt-controls-v12 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -725,3 +725,63 @@ and broader review remain OPEN. Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06 retaine
 Q31 IN_PROGRESS;28/37(75.7%),9 remain.
 
 Initial directory baseline subtests also produced two fixture errors because an earlier successful old installation affected later targets. Those raw logs are retained and do not qualify those targets. Separate fresh fixtures now reproduce false old success for binary/init/config and checked new rejection: six old/current records per shell PASS. No product implementation or final165-suite input changed for that comparison.
+
+## F335: shared cached checkout and manifest backup contaminated router builds
+
+Both helpers reused /opt/qeli-src without --sync. A successful build could thus
+contain older sources; simultaneous runs also edited/restored one Cargo.toml and
+shared target. Each run now creates a checked private0700 mktemp root, always
+uploads current managed inputs, requires completed sync and restricts only that
+copy to rlib. No shared manifest backup/restore remains. CARGO_TARGET_DIR belongs
+to the run; CARGO_INCREMENTAL=0 and --jobs1 bound Qeli compiler concurrency per run.
+--sync is accepted for compatibility. The printed owned directory is retained
+for diagnosis and needs reviewed cleanup after completion; old roots are untouched.
+Installed toolchains and Cargo downloads may still be shared; concurrent toolchain
+installation and local source mutation during upload are not qualified.
+
+## F336: matching SHA admitted incompatible/non-ELF router artifacts
+
+A valid transfer hash did not establish ELF architecture or static admission.
+Both helpers now share router_artifact.py: read one SFTP snapshot, close transport,
+compare its SHA, inspect that same snapshot and pass it to the existing atomic
+publisher. Invalid data cannot replace a previous binary or bypass admission via
+a matching local hash. The gate bounds headers/segments, requires little endian,
+target class/machine and executable entry, rejects PT_INTERP/DT_NEEDED and checks
+ARMv7 EABI5 hard-float. It permits ET_EXEC/static PIE; unsupported extended program
+headers fail. This is metadata admission, not proof of musl, CPU instructions,
+full MIPS float ABI, kernel/firmware behavior or complete binary validity.
+
+## F337: SDK installation did not enforce the checked-in dependency graph
+
+The OpenWrt package now requires Cargo.lock and checks the client-only graph with
+cargo metadata --locked before cargo install --locked --jobs1. The actual fixture
+showed that install --locked --path alone still admitted missing/stale lockfiles
+for its local path dependency; the guard rejects both before publication. No
+dependencies were downloaded. The source SHA/mirror hash remain release-cut
+obligations. Empty SDK include stubs only expose the checked-in Build/Compile to
+GNU make; this is not an OpenWrt SDK or real package/cross build.
+
+45 router tests PASS on .11:15 helper failure/admission,16 ELF/snapshot,7 private
+checkout and7 sync methods. Three POSIX methods perform actual owned directory/
+manifest operations; compiler/SSH helper cases are models with a rejecting
+test-only Paramiko stub because the lab lacks Paramiko.20 old/current comparison
+records reproduce cached-source admission and invalid matching-SHA publication in
+both helpers. Five actual offline GNU make/Cargo tiny-crate cases show old missing/
+stale success, new missing/stale refusal and new valid success. Tiny real x86_64
+glibc-static ELF passes the metadata gate; the unchanged prior GNU debug Qeli ELF
+is rejected for PT_INTERP. Neither is a fresh router Qeli/musl cross build or a
+firmware execution. Initial import/fixture-assumption failures remain retained
+and unqualified.37 recipe tests and docs/bindings/diff PASS.
+
+Packet F335–F337: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-build-isolation-20261006.
+Evidence: release/certification/evidence/q31-router-build-isolation-20261006.json.
+Rust/core/native compile inputs, native libraries, existing router binaries and
+their historical qualification remain unchanged. No fresh Qeli/FFI/release/cross
+build, toolchain pinning/reproducibility or full ABI qualification is claimed.
+Core/config generation, ABA, last-check replacement, firmware ordering and
+whole-bundle rollback stay OPEN. Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 retained.
+Q31 IN_PROGRESS;28/37(75.7%),9 remain; no whole Q31 checklist row is closed.
+
+Metadata references: [ELF program headers](https://refspecs.linuxfoundation.org/elf/gabi4%2B/ch5.pheader.html),
+[Arm ELF32 ABI](https://github.com/ARM-software/abi-aa/blob/main/aaelf32/aaelf32.rst),
+[Cargo install](https://doc.rust-lang.org/cargo/commands/cargo-install.html).

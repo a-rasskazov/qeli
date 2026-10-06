@@ -54,18 +54,25 @@ python scripts/build_keenetic.py --sync
 
 Можно собрать только нужную арку: `python scripts/build_keenetic.py --sync mipsel`.
 
-Это внутренний скрипт мейнтейнера: --sync загружает текущий checkout перед сборкой,
-без него используется прежний remote source. Опечатка архитектуры отклоняется до
-SSH; ошибки подготовки/скачивания возвращают отказ. Байты сверяются по SHA256 и
-атомарно заменяют прежний файл. Свежий snapshot, reproducibility и настоящий router
-runtime этим не квалифицированы; см. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+Helper предназначен для мейнтейнера и требует доступа к приватной лабе.
+Каждый запуск helper создаёт приватный каталог0700
+/var/tmp/qeli-router-keenetic-XXXXXX или /var/tmp/qeli-router-openwrt-XXXXXX,
+загружает текущий checkout и использует собственный target. --sync оставлен для
+совместимости: загрузка выполняется и без него. Общий /opt/qeli-src и backup
+Cargo.toml больше не используются. Ограничение crate-type до rlib меняет только
+приватную копию. Ошибка upload/close оставляет .router-sync-incomplete и останавливает
+запуск; повтор создаёт новый checkout. Каталоги сохраняются для диагностики:
+после завершения проверь и удали только напечатанный каталог конкретного запуска.
+Автоматической очистки нет. Компиляция Qeli использует --locked, --jobs1, без incremental
+cache. Установленные toolchain и download cache Cargo всё ещё могут быть общими.
 
-Maintainer --sync заменяет управляемые src/.cargo, manifests и lockfile, включая
-удалённые модули и текущий Cargo config, сохраняя target cache. Ошибка upload/close
-оставляет .router-sync-incomplete в удалённом source root. Сборка с --sync или без
-него запрещена, пока успешный --sync не восстановит входы. Замена не атомарна и не
-имеет lock; без --sync старый checkout без marker используется по-прежнему.
-Полные provenance и воспроизводимость этим не подтверждены.
+Перед атомарной публикацией тот же SHA256-проверенный снимок должен быть ELF
+little-endian нужной разрядности/архитектуры с исполняемой точкой входа, без
+PT_INTERP и DT_NEEDED; ARMv7 обязан объявлять EABI5 hard-float. Отказ сохраняет
+предыдущий локальный бинарник, в том числе при совпадении его hash с remote cache.
+Проверка не доказывает musl, CPU ISA, полный float ABI MIPS, воспроизводимость
+сборки или работу прошивки. Rust stable/nightly и Zig здесь ещё не полностью
+зафиксированы. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
 
 ---

@@ -686,8 +686,11 @@ class NativeRecipeTests(unittest.TestCase):
         )
         for recipe in recipes:
             source = recipe.read_text(encoding="utf-8")
-            self.assertIn('crate-type = [\\"rlib\\"]', source, recipe.name)
-            self.assertIn("restore_router_manifest(c)", source, recipe.name)
+            self.assertIn("restrict_crate_types(c, REMOTE_ROOT)",source,recipe.name)
+            self.assertIn("create_router_checkout(c,",source,recipe.name)
+            self.assertNotIn("restore_router_manifest",source,recipe.name)
+            self.assertNotIn('REMOTE_ROOT = "/opt/qeli-src"',source,recipe.name)
+            self.assertIn("pull_router_artifact",source,recipe.name)
             self.assertIn("raise SystemExit(1)", source, recipe.name)
             self.assertIn('PINNED_CARGO_ZIGBUILD = "0.23.0"', source, recipe.name)
             self.assertIn("cargo install --list", source, recipe.name)
