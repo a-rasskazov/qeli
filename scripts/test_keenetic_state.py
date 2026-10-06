@@ -15,7 +15,7 @@ class StateCases:
         (self.root/'tun').touch()
         (self.bin/'readlink').symlink_to(shutil.which('readlink'))
         executable=self.opt/'bin/qeli-client';executable.parent.mkdir(parents=True)
-        executable.write_text('#!/bin/sh\nexit 99\n');executable.chmod(0o700)
+        executable.write_text('#!/bin/sh\nif [ "$3" = --print-gateway-owner ]; then printf "legacy\\n"; exit 0; fi\nexit 99\n');executable.chmod(0o700)
         self.sysroot=self.root/'proc-sys'
         self.ip4=self.sysroot/'net/ipv4/ip_forward'
         self.ip6=self.sysroot/'net/ipv6/conf/all/forwarding'
@@ -64,7 +64,7 @@ p.write_text(json.dumps(rules))
         text,dispatch=text.rsplit('case "$1" in',1)
         self.dispatch='case "$1" in'+dispatch
         # Tests exercise legacy functions for both templates; never operate ndm.
-        self.body=text+'\nOPKGTUN=""; TUN=vpn0\n'
+        self.body=text+'\nOPKGTUN=""; TUN=vpn0; GATEWAY_OWNER=legacy\n'
 
     def execute(self,expression,**env):
         script=self.root/'state-case.sh'

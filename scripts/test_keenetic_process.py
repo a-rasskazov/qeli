@@ -186,7 +186,7 @@ exec '''+real+' "$@"')
     def test_missing_plan_timeout_aborts_through_joined_stop(self):
         self.conf.write_text('[qeli]\ngateway_nat = false\n')
         self.script.write_text(self.script.read_text().replace('case "$1" in','OPKGTUN=""\ncase "$1" in'))
-        self.assertNotEqual(self.service('start',QELI_HELPER_MODE='no-plan').returncode,0)
+        self.assertNotEqual(self.service('start',QELI_HELPER_MODE='no-plan',QELI_TEST_GATEWAY_OWNER='legacy').returncode,0)
         pid=next(iter(self.helper_pids()));self.assertFalse(running(pid));self.assertFalse(self.pidfile.exists())
         lines=self.event_lines();self.assertGreater(lines.index('CLEANUP'),next(i for i,l in enumerate(lines) if l.startswith('EXIT ')))
     def test_comm_parenthesis_and_spaces(self):

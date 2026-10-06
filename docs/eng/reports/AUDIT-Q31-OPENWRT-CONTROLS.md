@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v9 -->
+<!-- normative-sync: q31-openwrt-controls-v10 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -610,3 +610,59 @@ Initial native-recipe FAIL is retained: its old literal server_build= source che
 no longer matched dynamic stage output. The recipe now requires the named locked
 server command, and the execution test asserts server_build=OK after success.
 Final recipes PASS; no product command was weakened to satisfy the old assertion.
+
+## F330: duplicated init INI parsing disagreed with the core
+
+Both templates had an awk parser plus their own true/yes/1 table. Valid quoted,
+uppercase/BOM and on values accepted by the canonical client parser were treated
+as false in the wrapper. Original/current comparisons reproduce unwanted legacy
+NAT/forwarding for quoted gateway_nat, uppercase keys and forward=on.
+
+Both shell parsers are removed. qeli-client --print-gateway-owner uses the existing
+bounded config_source loader and strict shared INI parser and returns only core or
+legacy, before logging initialization or client execution. No config secrets are
+serialized and hooks/device identity/TOFU/TUN/network setup are not executed. The
+new API is gated Linux AND client-bin; outside that added region, client/mod.rs is
+identical to the baseline. Cargo/native FFI recipes/default feature set and all
+other native implementations are unchanged; this is not a new FFI ABI.
+
+## F331: exit-node ownership and query failures could fall into legacy LAN NAT
+
+Old core_manages_gateway inspected gateway_nat/forward only. Valid exit_node=true
+therefore enabled the opposite-direction legacy LAN masquerade too. It is now core
+ownership alongside gateway_nat/forward. All flags false/absent preserve the legacy
+fallback. Invalid/duplicate/conflicting configurations, nonzero/unknown/empty/multiline
+query results reject start before launch or network recovery. Unknown ownership
+never admits nat_up. One validated pre-launch answer is cached for wrapper decisions;
+GATEWAY=no and active OpkgTun require no legacy ownership query. Stop recovery remains
+independent of current INI flags and saved-state rules are unchanged.
+
+Upgrade the standalone binary and template together. A binary lacking the new
+command rejects gateway startup rather than silently invoking the old shell parser.
+The query is a config snapshot, not authentication readiness or proof of ownership
+of a running generation. The process subsequently reloads the path: concurrent
+configuration replacement between inspection/start and concurrent service/wan.d
+operations remain OPEN. No atomic config-generation lock is claimed.
+
+Fresh Rust1.97.0 offline/locked/jobs1 host client-bin debug build, eight binary
+unit tests, pinned formatter and strict Clippy PASS.155 cases per BusyBox ash/dash
+PASS:47 owned native-helper process cases,44 state models,12 installer,17 hook,19
+verifier and16 new owner cases.22 actual inspector/INI admission subcases run per
+shell across both templates.16 original/current records per shell reproduce the
+three syntax mismatches and exit-node legacy ownership; only new-source queries
+use the actual host inspector, old-source decisions use original awk. Firewall,
+proc/sys, network and service callbacks remain models. The C process helper now
+models the metadata response without a parser; actual core parsing is qualified
+by Rust tests and the host inspector. Existing state fixtures were corrected to
+admit metadata inspection so stale-recovery assertions reach recovery, not an
+earlier unsupported-command failure; both final suites rerun.37 recipes/docs/
+bindings/diff PASS. Windows rustfmt was unavailable, so the pinned lab formatter
+was used before compilation. No Qeli release/cross-build, actual router/firmware
+networking or native FFI artifact rebuild; historical statuses/dates remain.
+
+Packet F330–F331: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-core-gateway-20261006.
+Evidence: release/certification/evidence/q31-keenetic-core-gateway-20261006.json.
+Core gateway INI decision parity is now scoped PASS. Config/generation concurrency,
+OpkgTun ownership, packaging and broader source/build ABI/provenance remain OPEN.
+Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06 retained; router USER_EXCLUDED.
+Q31 IN_PROGRESS;28/37(75.7%),9 remain.

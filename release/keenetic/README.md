@@ -81,3 +81,10 @@ PID-файл нового шаблона хранит `PID start_ticks`. До о
 сохраняется, restart не запускает ещё один клиент. Старые single-PID записи требуют
 сверки владельца. Status:0 running,3 stopped,4 unverified. Шаблон не удаляет TUN
 напрямую. [Порядок остановки и обновления](../../docs/ru/manuals/KEENETIC-DEPLOY.md).
+
+Gateway fallback больше не разбирает INI в shell. При GATEWAY=yes без OpkgTun
+шаблон читает `qeli-client --config ... --print-gateway-owner`: core для
+gateway_nat/forward/exit_node, legacy при выключенных flags. Ответ/ошибка
+проверяются до запуска; старый binary без команды отказывает. Обновлять binary
+и шаблон вместе, сохранять config стабильным во время start. Для OpkgTun или
+GATEWAY=no этот compatibility query не нужен. [Подробности](../../docs/ru/manuals/KEENETIC-DEPLOY.md).

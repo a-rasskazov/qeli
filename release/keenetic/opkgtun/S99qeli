@@ -38,24 +38,20 @@ export QELI_KNOWN_HOSTS=/opt/etc/qeli/known_hosts
 export QELI_TUNIP_FILE="$PLAN_STATE"
 export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-config_value() {
-  awk -F= -v wanted="$1" '
-    /^[[:space:]]*\[/ { section=$0; gsub(/[[:space:]]/, "", section); next }
-    section == "[qeli]" {
-      key=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
-      if (key == wanted) {
-        $1=""; sub(/^=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit
-      }
-    }
-  ' "$CONF" 2>/dev/null
-}
-
-core_manages_gateway() {
-  case "$(config_value gateway_nat):$(config_value forward)" in
-    true:*|yes:*|1:*|*:true|*:yes|*:1) return 0 ;;
-    *) return 1 ;;
+# One pre-launch canonical query; never parse INI in the shell.
+GATEWAY_OWNER=""
+load_gateway_owner() {
+  GATEWAY_OWNER=""
+  [ "$GATEWAY" = yes ] && [ -z "$OPKGTUN" ] || return 0
+  GATEWAY_OWNER="$("$BIN" --config "$CONF" --print-gateway-owner)" || {
+    echo "qeli-client: cannot inspect gateway ownership; upgrade binary/template together"; return 1;
+  }
+  case "$GATEWAY_OWNER" in
+    core|legacy) return 0 ;;
+    *) echo "qeli-client: invalid gateway ownership response"; return 1 ;;
   esac
 }
+core_manages_gateway() { [ "$GATEWAY_OWNER" = core ]; }
 
 legacy_ipv4_enabled() { grep -q '^ipv4=' "$PLAN_STATE" 2>/dev/null; }
 legacy_ipv6_enabled() { grep -q '^ipv6=' "$PLAN_STATE" 2>/dev/null; }
@@ -169,7 +165,11 @@ add_owned_rule() {
 nat_up() {
   [ -n "$OPKGTUN" ] && return 0     # OpkgTun-режим: NAT/firewall делает ndm
   [ "$GATEWAY" = yes ] || return 0
-  core_manages_gateway && return 0
+  case "$GATEWAY_OWNER" in
+    core) return 0 ;;
+    legacy) ;;
+    *) echo "qeli-client: gateway ownership not admitted"; return 1 ;;
+  esac
   if ! legacy_ipv4_enabled && ! legacy_ipv6_enabled; then
     echo "qeli-client: в $PLAN_STATE нет согласованных IPv4/IPv6 адресов"
     return 1
@@ -347,6 +347,7 @@ start() {
   [ -x "$BIN" ] && [ -s "$CONF" ] && command -v readlink >/dev/null 2>&1 || {
     echo "qeli-client: executable/config/readlink missing"; return 1;
   }
+  load_gateway_owner || return 1
   [ -e /dev/net/tun ] || { echo "нет /dev/net/tun — включи компонент VPN в KeeneticOS"; return 1; }
   mkdir -p /opt/var/run /opt/var/log /opt/etc/qeli || return 1
   if [ -f "$SYSCTL_STATE" ]; then nat_down || return 1; fi

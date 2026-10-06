@@ -306,3 +306,26 @@ The hook writes `/opt/var/run/qeli.opkgtun.applied` (0600) only after all ndm co
 ## Maintainer host verification
 
 `python scripts/keenetic_verify.py` uses `QELI_LAB_PASS`, optional `QELI_LAB_SERVER` (default10.66.116.11) and `QELI_LAB_USER` (defaultroot). It builds in a new private `/var/tmp/qeli-keenetic-verify.*` directory with its own target, locked dependencies and one compiler job; services remain running. The printed directory is retained for inspection and should be removed after use. Exit0 means host build/tests/Clippy/graph/ELF/hash passed; exit1 means verification/connect/close failure; exit2 means credentials missing. Host success does not certify MIPS/ARM ABI or firmware. [Audit details](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+
+## Gateway ownership through the core INI parser
+
+The current binary supports:
+
+```sh
+qeli-client --config /opt/etc/qeli/client.conf --print-gateway-owner
+```
+
+It validates the same INI grammar as runtime and prints only `core` when
+`gateway_nat`, `forward` or `exit_node` is enabled, otherwise `legacy`. It exits
+without connecting, executing hooks or configuring networking. Both init templates
+use this command once before gateway startup. Quoted/case/on/BOM values follow the
+core parser; invalid configs or unsupported/invalid replies fail startup. With
+`GATEWAY=no` or active OpkgTun, no legacy ownership query is needed.
+
+Update standalone binary and template together; an old binary without the command
+cannot start the compatibility gateway path. Core ownership suppresses wrapper
+LAN NAT, including exit-node operation. Legacy ownership preserves the fallback
+when core flags are absent/false. This snapshot does not lock the config: keep it
+stable during start and use stop/update/start to change ownership. Actual router
+firmware and concurrent generation handling remain unqualified. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).

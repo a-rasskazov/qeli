@@ -8354,6 +8354,22 @@ impl Drop for NetworkPlanApplyGuard<'_> {
     }
 }
 
+/// Inspect gateway ownership through the same bounded file loader and strict INI
+/// service used at Linux startup. This command performs no platform/network work.
+#[cfg(all(target_os = "linux", feature = "client-bin"))]
+pub fn inspect_gateway_owner(config_path: &std::path::Path) -> anyhow::Result<&'static str> {
+    let (snapshot, _) = crate::config_source::load_client(config_path)?;
+    let (contents, _) = snapshot.into_parts();
+    let config = crate::config::parse_client_config_strict(&contents)?;
+    Ok(
+        if config.routing.gateway_nat || config.routing.forward || config.routing.exit_node {
+            "core"
+        } else {
+            "legacy"
+        },
+    )
+}
+
 #[cfg(target_os = "linux")]
 fn publish_network_plan_state(plan: &NetworkPlan) -> anyhow::Result<()> {
     let Ok(path) = std::env::var("QELI_TUNIP_FILE") else {

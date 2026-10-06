@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v105 -->
+<!-- normative-sync: full-system-audit-v106 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -2331,3 +2331,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): on
 
 
 **F328–F329, 6 October:** [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): isolated per-run verification checkout/target; shared source sync, no service operations; checked locked single-job host gate, forward normal/build graph, mandatory ELF/hash and meaningful exit/SSH-finally.19 gate tests Windows/Linux,7 real temp-file shared-sync,37 recipes/docs/bindings PASS; actual offline Cargo local-fixture positive/negative graphs PASS. Original forced-service calls, stale sync, false PASS/exit0 and connection leak reproduced with models/temp files. No Qeli build/router qualification; INI parity/OpkgTun concurrency/package/build provenance OPEN.Q31 IN_PROGRESS,28/37 unchanged.
+
+
+**F330–F331, 6 October:** [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): removed both shell INI parsers; client-bin-only core metadata inspection uses bounded loader/strict common parser. Quoted/case/BOM/on parity and exit_node ownership; cached validated preflight, unknown/error reply fails before launch. Fresh Rust1.97 client-bin host debug build/8unit/Clippy/fmt PASS;155cases each BusyBox/dash,16new owners with22actual inspector subcases;16old/current records each shell.37recipes/docs/bindings PASS. Default core outside gated addition unchanged; no FFI/release/cross rebuild or real router networking. Binary/template upgrade together; configuration path is reloaded, generation/concurrency not closed. Q29/Q30/D06 retained,Q31 IN_PROGRESS28/37.
