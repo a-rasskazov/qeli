@@ -244,3 +244,11 @@ Failed UCI loads or multiple qeli firewall zones reject start preparation. Stand
 rc.common hooks return preparation/cleanup failures to the service caller; failed
 stop cleanup blocks the next start within the same restart/reload call. Daemon
 acceptance, join and connectivity are separate from this command result.
+
+The development init renderer quotes string values and escapes double quotes
+according to the shared INI parser. Literal quotes, backslashes and significant
+edge whitespace in usernames or volatile obfs keys survive rendering. Enter raw
+values through UCI/LuCI or the stdin secret command; do not add INI escaping there.
+ASCII control characters remain rejected for secrets and stripped from ordinary
+UCI values. This formatting rule does not make an invalid endpoint, logging mode
+or other setting valid; the client still validates the resulting configuration.

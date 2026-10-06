@@ -38,7 +38,15 @@ EXTRA_HELP="
 ini_sanitize() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 
 # Append `key = value` to the INI only when value is non-empty.
-ini_kv() { [ -n "$2" ] || return 0; printf '%s = %s\n' "$1" "$(ini_sanitize "$2")" >> "$CONF"; }
+# The shared INI parser trims bare values and unescapes quotes inside quoted
+# values. Always quote strings, escaping only double quotes exactly as its
+# serializer does; bare backslashes remain literal. Never evaluate UCI text.
+ini_write() {
+	local value
+	value="$(ini_sanitize "$2" | sed 's/"/\\\"/g')" || return 1
+	printf '%s = "%s"\n' "$1" "$value" >> "$CONF"
+}
+ini_kv() { [ -n "$2" ] || return 0; ini_write "$1" "$2"; }
 
 # qeli.main.dev is written into the root-owned firewall zone. Reserve a qeli-specific
 # namespace so LuCI write access to this package cannot repoint NAT/forwarding at br-lan,
@@ -204,11 +212,12 @@ render_conf_file() {
 	ensure_runtime_dir || return 1
 	: > "$CONF" || return 1
 	chmod 600 "$CONF" || return 1
-	printf '[qeli]\nserver = %s\nproto = %s\n' \
-		"$(ini_sanitize "$server")" "$(ini_sanitize "$proto")" >> "$CONF" || return 1
+	printf '[qeli]\n' >> "$CONF" || return 1
+	ini_write server "$server" || return 1
+	ini_write proto "$proto" || return 1
 	ini_kv user "$user" || return 1
 	# Keep the password out of the rendered INI too: the core reads this 0600 tmpfs file.
-	printf 'password_file = %s\n' "$PASS_FILE" >> "$CONF" || return 1
+	ini_write password_file "$PASS_FILE" || return 1
 	ini_kv key  "$key" || return 1
 	# bind_static is on by default; only emit when explicitly off (TOFU / zero key).
 	if [ "$bind_static" = 0 ]; then echo "bind_static = false" >> "$CONF" || return 1; fi
@@ -255,8 +264,9 @@ render_conf_file() {
 	if [ "$allow_ipv6_leak" = 1 ]; then echo "allow_ipv6_leak = true" >> "$CONF" || return 1; fi
 	# Sanitize log_level like every other value: a control char in the UCI option
 	# (e.g. a stray newline) would otherwise inject an extra INI line here. (C-10)
-	printf '\n[logging]\nlevel = %s\ntime_format = %s\n' \
-		"$(ini_sanitize "$log_level")" "$(ini_sanitize "$log_time_format")" >> "$CONF" || return 1
+	printf '\n[logging]\n' >> "$CONF" || return 1
+	ini_write level "$log_level" || return 1
+	ini_write time_format "$log_time_format" || return 1
 	return 0
 }
 

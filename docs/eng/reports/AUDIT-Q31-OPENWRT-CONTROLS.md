@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v14 -->
+<!-- normative-sync: q31-openwrt-controls-v15 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -897,3 +897,43 @@ older scripts/admin, core/config generation/ABA/last-check, firmware/full ABI an
 cross-build qualification remain OPEN. Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,
 D06 retained; real router USER_EXCLUDED. Q31 IN_PROGRESS;28/37(75.7%),9 remain;
 no whole checklist row is closed.
+
+## F342: UCI → INI changed literal strings before the shared parser
+
+The renderer wrote string values without quotes. The shared INI parser trims
+edge whitespace from bare values and removes one surrounding quote pair with
+backslash-quote unescaping. A username with edge spaces or a volatile obfs_key
+starting and ending with quotes could therefore differ from the operator input.
+Preserving the secret file alone did not protect subsequent key serialization.
+This is a data conversion defect; this packet did not run a VPN handshake.
+
+One ini_write now wraps strings in double quotes and escapes only double quotes,
+matching the shared core serializer. Bare backslashes remain literal. ini_kv
+keeps omission of absent optional values; required server/proto/password_file
+and logging use the same writer. ASCII controls are still stripped before
+writing, bool/MTU remain unchanged. UCI text is not evaluated; the parameter
+surface and external configuration format remain INI.
+
+Four new tests exercise40 round-trip operations:13 variants each for the writer,
+user and obfs_key plus one required/logging/control case. Unmodified
+config/format.rs is compiled into a separate GNU host inspector with the existing
+log rlib; the fixture supplies generated INI on stdin and compares UTF-8 bytes
+through hex fields. This executes the actual shared parser, not another Python
+implementation. The Git baseline init with the same new tests reproduces13
+mismatches per shell. Full current41 =23 init +9 defaults +5 saved rc.common
+dispatcher +4 round-trip PASS separately under BusyBox ash and dash. Files, init
+functions and the Rust parser execute in owned temporary paths; UCI/procd/firewall
+remain models. The saved dispatcher snapshot/hash is unchanged; no real OpenWrt
+daemons run. Initial standalone compilation lacked the log dependency; that
+failure is retained, then the existing GNU log rlib was linked without parser edits.
+
+11 LuCI Node fixtures,37 native recipes, docs/bindings/diff PASS. Core/native/
+router build recipes and existing artifacts are unchanged; no fresh Qeli,
+FFI/cross/firmware/ABI build or network obfs handshake is claimed. Value format
+round-trip is tested separately from ClientConfig semantic validity.
+
+Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-ini-roundtrip-20261006.
+Evidence: release/certification/evidence/q31-openwrt-ini-roundtrip-20261006.json.
+Q31 IN_PROGRESS,28/37(75.7%),9 remain; no whole checklist row closed.
+Generation/ABA/last-check/firmware ordering and cross qualification remain OPEN;
+Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 retained, router USER_EXCLUDED.

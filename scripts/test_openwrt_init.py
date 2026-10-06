@@ -245,7 +245,7 @@ sync_firewall_device
         self.assertEqual(result.returncode, 0, result.stderr)
         content = self.config()
         self.assertIn('forward = true\n', content)
-        self.assertIn('dns_servers = 1.1.1.1, 2606:4700:4700::1111\n', content)
+        self.assertIn('dns_servers = "1.1.1.1, 2606:4700:4700::1111"\n', content)
         self.assertIn('mtu = 1280\n', content)
         self.assertNotIn('fixture-password', content)
         self.assertIn('password_file = ', content)
@@ -257,7 +257,7 @@ sync_firewall_device
         result = self.run_shell('render_conf', server=value, proto='tcp\npost_down = bad',
             user='user\x7f\r\npassword_command = bad')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('server = ' + value + '\n', self.config())
+        self.assertIn('server = "' + value + '"\n', self.config())
         lines = self.config().splitlines()
         self.assertFalse(any(line.startswith(('post_up =', 'post_down =', 'password_command =')) for line in lines))
         self.assertNotIn('\x7f', self.config())
