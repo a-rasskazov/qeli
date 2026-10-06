@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v92 -->
+<!-- normative-sync: full-system-audit-v93 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1921,6 +1921,13 @@ read/settings callback lifetime and platform qualification remain open.
 
 Explicit malformed/stale profile options now fail without launching the configured
 profile (F294); four selector XCTest NOT_RUN,11 new XCTest in this batch.
+
+[F295–F297 lifecycle source fixes](../reports/AUDIT-Q30-IOS-LIFECYCLE.md): terminal
+monitor Stop, current-engine effects and provider-wide OS leases; shared15s settings
+budget, cache invalidation and original completion outcomes.13 new XCTest NOT_RUN;
+actual callback draining/lifetime/native joins not runtime-qualified. App/UI/settings
+source review remains.6 IPA fixture/docs/bindings PASS; runtime matrices reused only
+for unchanged implementations. Q30 IN_PROGRESS,28/37; no checklist item closed.
 
 ### 31. OpenWrt, LuCI and Keenetic
 

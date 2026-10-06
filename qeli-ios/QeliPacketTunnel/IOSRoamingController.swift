@@ -297,7 +297,7 @@ actor IOSRoamingController {
     private let serverPort: UInt16
     private let monitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "ru.qeli.ios.roaming.monitor")
-    private var monitoring = false
+    private var lifecycle = SingleUseResourceLifecycle()
     private var latestPath: NWPath?
     private var baselineSignature: String?
     private var active: Active?
@@ -310,15 +310,14 @@ actor IOSRoamingController {
     private var candidates: [UInt64: Candidate] = [:]
     private var rolledBack: [UInt64: QeliPathUpdate] = [:]
 
-    init(engine: QeliNativeTunnelEngine, serverAddress: String, serverPort: UInt16) {
-        self.engine = engine
+    init(serverAddress: String, serverPort: UInt16) {
         self.serverAddress = serverAddress
         self.serverPort = serverPort
     }
 
-    func start() {
-        guard !monitoring else { return }
-        monitoring = true
+    func start(engine: QeliNativeTunnelEngine) {
+        guard lifecycle.start() else { return }
+        self.engine = engine
         monitor.pathUpdateHandler = { [weak self] path in
             Task { await self?.observed(path) }
         }
@@ -336,16 +335,16 @@ actor IOSRoamingController {
         rolledBack.removeAll()
         latestPath = nil
         baselineSignature = nil
-        if monitoring {
+        if lifecycle.stop() {
             monitor.pathUpdateHandler = nil
             monitor.cancel()
-            monitoring = false
         }
     }
 
     func arm(
         transport: QeliNativeTransport, generation: UInt64, carrierAddresses: [String]
     ) {
+        guard lifecycle.active else { return }
         pendingUpdate?.cancel()
         pendingUpdate = nil
         waitingForReplacement = false
@@ -373,6 +372,7 @@ actor IOSRoamingController {
     }
 
     private func observed(_ path: NWPath) {
+        guard lifecycle.active else { return }
         latestPath = path
         guard active != nil else { return }
         guard let signature = IOSRoamingSocket.signature(for: path) else {
@@ -441,7 +441,7 @@ actor IOSRoamingController {
     /// its fail-closed routes until a Wi-Fi/cellular callback makes progress possible.
     func waitForUsablePath() async throws -> Bool {
         var waited = false
-        while monitoring {
+        while lifecycle.active {
             if latestPath.flatMap(IOSRoamingSocket.signature) != nil {
                 return waited
             }

@@ -3,7 +3,9 @@ import NetworkExtension
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let sharedStore = SharedTunnelStore()
-    private let lifecycleLock = NSLock()
+    private let lifecycleLock = NSRecursiveLock()
+    let settingsGate = ProviderOperationGate()
+    let packetReadGate = ProviderOperationGate()
     private var engine: QeliNativeTunnelEngine?
     private var startTask: Task<Void, Never>?
     private var startCompletion: ProviderStartCompletion?
@@ -25,6 +27,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             startTask = nil
             startCompletion = completion
             engine = nil
+            reasserting = false
             return value
         }
         state.previousTask?.cancel()
@@ -89,25 +92,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
                 completion.finish(nil)
             } catch is CancellationError {
-                if isCurrent(state.generation), let startedEngine {
-                    await startedEngine.stop()
-                    clear(engine: startedEngine, generation: state.generation)
-                }
+                if let startedEngine { await startedEngine.stop() }
+                if let startedEngine { clear(engine: startedEngine, generation: state.generation) }
                 completion.finish(CancellationError())
             } catch {
-                if isCurrent(state.generation) {
-                    if let startedEngine { await startedEngine.stop() }
-                    if isCurrent(state.generation) {
-                        if let startedEngine { clear(engine: startedEngine, generation: state.generation) }
-                        recordStartFailure(error)
-                    }
-                }
+                if let startedEngine { await startedEngine.stop() }
+                if let startedEngine { clear(engine: startedEngine, generation: state.generation) }
+                recordStartFailure(error, generation: state.generation)
                 completion.finish(error)
             }
             finishStart(generation: state.generation)
         }
         let retained = lifecycleLock.withLock { () -> Bool in
-            guard lifecycleGeneration == state.generation else { return false }
+            guard lifecycleGeneration == state.generation, startCompletion === completion else { return false }
             startTask = task
             return true
         }
@@ -119,21 +116,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping () -> Void
     ) {
         let state = lifecycleLock.withLock { () -> (
+            generation: UInt64,
             task: Task<Void, Never>?,
             completion: ProviderStartCompletion?,
             engine: QeliNativeTunnelEngine?
         ) in
             lifecycleGeneration &+= 1
-            let value = (startTask, startCompletion, engine)
+            let value = (lifecycleGeneration, startTask, startCompletion, engine)
             startTask = nil
             startCompletion = nil
             engine = nil
+            reasserting = false
             return value
         }
         state.task?.cancel()
         state.completion?.finish(CancellationError())
         Task {
             await state.engine?.stop()
+            let finalSnapshot = state.engine?.currentSnapshot() ?? TunnelSnapshot()
+            lifecycleLock.withLock {
+                if lifecycleGeneration == state.generation, engine == nil {
+                    sharedStore.save(finalSnapshot)
+                }
+            }
             completionHandler()
         }
     }
@@ -172,9 +177,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func install(engine newEngine: QeliNativeTunnelEngine, generation: UInt64) -> Bool {
-        lifecycleLock.withLock {
+        let initial = newEngine.currentSnapshot() // never take the engine lock while holding lifecycleLock
+        return lifecycleLock.withLock {
             guard lifecycleGeneration == generation else { return false }
             engine = newEngine
+            sharedStore.save(initial)
             return true
         }
     }
@@ -194,17 +201,76 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private func recordStartFailure(_ error: Error) {
-        var snapshot = sharedStore.snapshot()
-        snapshot.phase = .error
-        snapshot.error = error.localizedDescription
-        snapshot.message = error.localizedDescription
-        snapshot.privateUpdatePath = nil
-        snapshot.liveConnectionProperties = nil
-        snapshot.updatedAt = Date()
-        sharedStore.save(snapshot)
-        sharedStore.appendLog("ERROR: \(error.localizedDescription)")
+    private func recordStartFailure(_ error: Error, generation: UInt64) {
+        lifecycleLock.withLock {
+            guard lifecycleGeneration == generation else { return }
+            var snapshot = sharedStore.snapshot()
+            snapshot.phase = .error
+            snapshot.error = error.localizedDescription
+            snapshot.message = error.localizedDescription
+            snapshot.privateUpdatePath = nil
+            snapshot.liveConnectionProperties = nil
+            snapshot.updatedAt = Date()
+            sharedStore.save(snapshot)
+            sharedStore.appendLog("ERROR: \(error.localizedDescription)")
+        }
     }
+
+    func ownsEngine(_ owner: QeliNativeTunnelEngine) -> Bool {
+        lifecycleLock.withLock { engine === owner }
+    }
+
+    func publishEngineSnapshot(_ snapshot: TunnelSnapshot, owner: QeliNativeTunnelEngine) {
+        lifecycleLock.withLock {
+            guard engine === owner else { return }
+            sharedStore.save(snapshot)
+        }
+    }
+
+    func setEngineReasserting(_ value: Bool, owner: QeliNativeTunnelEngine) {
+        lifecycleLock.withLock {
+            guard engine === owner else { return }
+            reasserting = value
+        }
+    }
+
+    func cancelEngineTunnel(_ error: Error, owner: QeliNativeTunnelEngine) {
+        lifecycleLock.withLock {
+            guard engine === owner else { return }
+            cancelTunnelWithError(error)
+        }
+    }
+
+    func applyEngineSettings(
+        _ settings: NEPacketTunnelNetworkSettings, owner: QeliNativeTunnelEngine,
+        completion: @escaping (Error?) -> Void
+    ) -> Bool {
+        lifecycleLock.withLock {
+            guard engine === owner else { return false }
+            setTunnelNetworkSettings(settings, completionHandler: completion)
+            return true
+        }
+    }
+
+    func readEnginePackets(
+        owner: QeliNativeTunnelEngine, completion: @escaping ([Data], [NSNumber]) -> Void
+    ) -> Bool {
+        lifecycleLock.withLock {
+            guard engine === owner else { return false }
+            packetFlow.readPackets(completionHandler: completion)
+            return true
+        }
+    }
+
+    func writeEnginePackets(
+        _ packets: [Data], protocols: [NSNumber], owner: QeliNativeTunnelEngine
+    ) -> Bool {
+        lifecycleLock.withLock {
+            guard engine === owner else { return false }
+            return packetFlow.writePackets(packets, withProtocols: protocols)
+        }
+    }
+
 }
 
 private final class ProviderStartCompletion: @unchecked Sendable {

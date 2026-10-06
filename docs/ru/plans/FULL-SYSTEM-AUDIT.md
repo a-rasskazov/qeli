@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v92 -->
+<!-- normative-sync: full-system-audit-v93 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1932,6 +1932,13 @@ lifetime и platform qualification открыты.
 
 Неверный/удалённый explicit profile option теперь не запускает configured profile
 (F294); четыре selector XCTest NOT_RUN,11 новых XCTest в пакете.
+
+[Lifecycle source fixes F295–F297](../reports/AUDIT-Q30-IOS-LIFECYCLE.md): terminal
+monitor Stop, current-engine effects и provider-wide OS leases; общий15s settings
+budget, cache invalidation и исходный completion result.13 новых XCTest NOT_RUN;
+callback drain/lifetime/native joins без runtime qualification. App/UI/settings
+source review остаётся.6 IPA fixture/docs/bindings PASS; прошлые runtime results
+только для неизменных реализаций. Q30 IN_PROGRESS,28/37; checklist не закрывается.
 
 ### 31. OpenWrt, LuCI и Keenetic
 

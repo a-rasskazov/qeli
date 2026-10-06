@@ -452,3 +452,5 @@
 - [Q30: iOS MDM / provider snapshot](reports/AUDIT-Q30-IOS-POLICY-SNAPSHOT.md)
 
 - [Q30: iOS Keychain / TOFU](reports/AUDIT-Q30-IOS-KEYCHAIN.md)
+
+- [Q30: iOS lifecycle / provider ownership](reports/AUDIT-Q30-IOS-LIFECYCLE.md)

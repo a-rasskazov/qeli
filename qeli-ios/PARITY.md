@@ -127,3 +127,9 @@ The provider/engine completion review remains open.
 
 Explicit malformed/stale provider profile requests now fail rather than falling back
 to the persisted profile (Q30-F294); four new selector XCTest NOT_RUN.
+
+[Q30 lifecycle source fixes](../docs/eng/reports/AUDIT-Q30-IOS-LIFECYCLE.md) make monitor
+Stop terminal, fence provider effects by current engine and serialize OS operations
+across engines with callback-owned leases and a shared15s settings budget.13 new
+helper XCTest NOT_RUN; real OS callback drain, memory, native joins and Apple build
+remain unqualified. Never treat cancellation as an OS operation's completion.

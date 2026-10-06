@@ -76,72 +76,8 @@ private struct NativeServerIdentity: Decodable, Sendable {
     var publicKey: String
 }
 
-private actor NativeSettingsGate {
-    private var held = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func acquire() async {
-        if !held { held = true; return }
-        await withCheckedContinuation { waiters.append($0) }
-    }
-
-    func release() {
-        if waiters.isEmpty { held = false } else { waiters.removeFirst().resume() }
-    }
-}
-
-private final class NativeSettingsCompletion: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Result<Void, Error>, Never>?
-    private var finished = false
-
-    func park(_ value: CheckedContinuation<Result<Void, Error>, Never>) {
-        let immediate = lock.withLock { () -> Bool in
-            if finished { return true }
-            continuation = value
-            return false
-        }
-        if immediate { value.resume(returning: .failure(NativeTunnelError.networkSettingsTimedOut)) }
-    }
-
-    func finish(_ result: Result<Void, Error>) {
-        let pending = lock.withLock { () -> CheckedContinuation<Result<Void, Error>, Never>? in
-            guard !finished else { return nil }
-            finished = true
-            defer { continuation = nil }
-            return continuation
-        }
-        pending?.resume(returning: result)
-    }
-}
-
-private final class NativeDNSCompletion: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Result<[String], Error>, Never>?
-    private var finished = false
-
-    func park(_ value: CheckedContinuation<Result<[String], Error>, Never>) {
-        let immediate = lock.withLock { () -> Bool in
-            if finished { return true }
-            continuation = value
-            return false
-        }
-        if immediate {
-            value.resume(returning: .failure(NativeTunnelError.dnsResolutionTimedOut))
-        }
-    }
-
-    func finish(_ result: Result<[String], Error>) {
-        let pending = lock.withLock {
-            () -> CheckedContinuation<Result<[String], Error>, Never>? in
-            guard !finished else { return nil }
-            finished = true
-            defer { continuation = nil }
-            return continuation
-        }
-        pending?.resume(returning: result)
-    }
-}
+private typealias NativeSettingsCompletion = AsyncResultCompletion<Void>
+private typealias NativeDNSCompletion = AsyncResultCompletion<[String]>
 
 /// `getaddrinfo` is blocking and cannot be cancelled. Without a process-wide gate every
 /// reconnect timeout launched another global-queue worker while the previous resolver was
@@ -173,19 +109,17 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
     private static let emptyPullNanoseconds: UInt64 = 1_000_000
     private static let dnsLimiter = NativeDNSLimiter()
 
-    private unowned let provider: PacketTunnelProvider
+    // Retain the provider until cancelled Swift workers/OS callbacks drain. Provider clears
+    // its engine reference on stop/replacement, breaking the installed-owner cycle.
+    private let provider: PacketTunnelProvider
     private let profile: Profile
     private let config: VPNConfig
     private let detailedLogging: Bool
     private let sharedStore: SharedTunnelStore
     private let stateLock = NSLock()
-    private let packetWriteLock = NSLock()
-    private let settingsGate = NativeSettingsGate()
-    private let packetReadGate = NativeSettingsGate()
-    private lazy var roamingController = IOSRoamingController(
-        engine: self,
-        serverAddress: config.serverAddress,
-        serverPort: UInt16(config.port))
+    private let settingsGate: ProviderOperationGate
+    private let packetReadGate: ProviderOperationGate
+    private let roamingController: IOSRoamingController
 
     private var native: QeliNativeTransport?
     private var supervisorTask: Task<Void, Never>?
@@ -229,6 +163,10 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         sharedStore: SharedTunnelStore
     ) {
         self.provider = provider
+        settingsGate = provider.settingsGate
+        packetReadGate = provider.packetReadGate
+        roamingController = IOSRoamingController(
+            serverAddress: config.serverAddress, serverPort: UInt16(config.port))
         self.profile = profile
         self.config = config
         detailedLogging = ["debug", "trace"].contains(logLevel.lowercased())
@@ -245,10 +183,10 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         initial.message = "Preparing native transport…"
         initial.updatedAt = Date()
         snapshot = initial
-        sharedStore.save(initial)
     }
 
     func start() async throws {
+        try ensureRunning()
         let transportName = config.protocolName.uppercased() + "/" + config.wireMode
             + (config.isUDP && config.quicEnabled ? "+QUIC" : "")
         sharedStore.appendLog("Service started: \(transportName)")
@@ -263,11 +201,14 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         // refreshes this set; a temporarily unavailable resolver falls back to these last-known
         // addresses so DDNS support never makes an ordinary outage less recoverable.
         let resolvedCarriers = try await Self.resolveIPCandidates(config.serverAddress)
+        try ensureRunning()
         let transport = try QeliNativeTransport(
             config: try config.toTransportCoreINI(), roamingEnabled: config.allowsNativePathRoaming)
         try transport.setDeviceID(try SecureIdentityStore().deviceID())
-        await roamingController.start()
+        await roamingController.start(engine: self)
+        try ensureRunning()
         try await applyBootstrapSettings(carrierAddresses: resolvedCarriers)
+        try ensureRunning()
         try transport.start()
 
         let installed = stateLock.withLock { () -> Bool in
@@ -342,7 +283,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         }
         guard resources.7 else { return }
         await roamingController.stop()
-        provider.reasserting = false
+        provider.setEngineReasserting(false, owner: self)
         resources.1?.cancel()
         resources.3?.cancel()
         resources.4?.cancel()
@@ -351,6 +292,11 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         resources.2?.cancel()
         if !resources.6 { resetSnapshot(phase: .disconnected, message: "", error: nil) }
         sharedStore.appendLog("Native tunnel stopped")
+    }
+
+    private func ensureRunning() throws {
+        try Task.checkCancellation()
+        guard !stateLock.withLock({ stopped }), provider.ownsEngine(self) else { throw CancellationError() }
     }
 
     func wake() {
@@ -469,7 +415,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                 ))
                 return
             case .retry(let attempt, let delayMilliseconds):
-                provider.reasserting = true
+                provider.setEngineReasserting(true, owner: self)
                 let carrierWasMissing = !(await roamingController.hasUsablePath())
                 if carrierWasMissing {
                     update(phase: .connecting, message: "Waiting for Wi-Fi or cellular network")
@@ -562,8 +508,8 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                 switch event.kind {
                 case 1:
                     if event.state == 3, let plan = stateLock.withLock({ activePlan }) {
-                        provider.reasserting = false
-                        publishConnected(plan)
+                        provider.setEngineReasserting(false, owner: self)
+                        publishConnected(plan, transport: transport)
                     }
                 case 2:
                     try await acceptNetworkPlan(event, transport: transport)
@@ -770,8 +716,12 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         do {
             let carriers = stateLock.withLock { carrierAddresses }
             try await applyNetworkSettings(plan, carrierExclusions: carriers)
+            try ensureRunning()
             try transport.networkPlanResult(generation: plan.generation, accepted: true)
-            stateLock.withLock { activePlan = plan }
+            try stateLock.withLock {
+                guard !stopped, native === transport else { throw CancellationError() }
+                activePlan = plan
+            }
             await roamingController.arm(
                 transport: transport,
                 generation: plan.generation,
@@ -912,8 +862,10 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                         continue
                     }
                     let protocols = Self.packetProtocols(packets)
-                    let accepted = self.packetWriteLock.withLock {
-                        self.provider.packetFlow.writePackets(packets, withProtocols: protocols)
+                    let accepted = self.stateLock.withLock { () -> Bool in
+                        guard !self.stopped, self.native === transport,
+                              self.activePlan?.generation == generation else { return false }
+                        return self.provider.writeEnginePackets(packets, protocols: protocols, owner: self)
                     }
                     guard accepted else { throw NativeTunnelError.packetInjectionFailed }
                 } catch is CancellationError {
@@ -927,12 +879,14 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         let stats = Task { [weak self, transport] in
             guard let self else { return }
             while !Task.isCancelled, !self.stateLock.withLock({ self.stopped }) {
-                do { self.publishStats(try transport.stats()) } catch { return }
+                do {
+                    self.publishStats(try transport.stats(), transport: transport, generation: generation)
+                } catch { return }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
         let retained = stateLock.withLock { () -> Bool in
-            guard !stopped, activePlan?.generation == generation else { return false }
+            guard !stopped, native === transport, activePlan?.generation == generation else { return false }
             uplinkTask = uplink
             downlinkTask = downlink
             statsTask = stats
@@ -1045,10 +999,18 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                 CharacterSet.controlCharacters.contains($0)
             })
         }) else { throw NativeTunnelError.invalidNetworkPlan }
+        let settingsStarted = DispatchTime.now().uptimeNanoseconds
+        let settingsBudget = UInt64(Self.settingsTimeoutMilliseconds) * 1_000_000
+        func remainingBudget() -> UInt64 {
+            let elapsed = DispatchTime.now().uptimeNanoseconds - settingsStarted
+            return elapsed < settingsBudget ? settingsBudget - elapsed : 0
+        }
         let requestGeneration = stateLock.withLock { () -> UInt64 in
+            guard !stopped else { return 0 }
             networkSettingsGeneration &+= 1
             return networkSettingsGeneration
         }
+        guard requestGeneration != 0 else { throw CancellationError() }
         let network = NEPacketTunnelNetworkSettings(
             tunnelRemoteAddress: plan.carrierAddress ?? config.serverAddress
         )
@@ -1226,8 +1188,12 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             allowIpv4Leak: plan.allowIpv4Leak, allowIpv6Leak: plan.allowIpv6Leak)
 
 
-        await settingsGate.acquire()
+        let settingsLease: ProviderOperationGate.Lease
+        do { settingsLease = try await settingsGate.acquire(timeoutNanoseconds: remainingBudget()) }
+        catch ProviderOperationGate.GateError.timedOut { throw NativeTunnelError.networkSettingsTimedOut }
+        var releaseLocally = true
         do {
+            try Task.checkCancellation()
             guard stateLock.withLock({
                 !stopped && networkSettingsGeneration == requestGeneration
             }) else { throw CancellationError() }
@@ -1236,17 +1202,39 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             }
             if !reused {
                 let completion = NativeSettingsCompletion()
-                let outcome: Result<Void, Error> = await withCheckedContinuation { continuation in
-                    completion.park(continuation)
-                    provider.setTunnelNetworkSettings(network) { error in
-                        completion.finish(
-                            error.map { Result<Void, Error>.failure($0) } ?? .success(()))
+                let settingsGate = self.settingsGate
+                let outcome: Result<Void, Error> = await withTaskCancellationHandler {
+                    await withCheckedContinuation { continuation in
+                        completion.park(continuation)
+                        guard !Task.isCancelled, remainingBudget() > 0 else {
+                            if Task.isCancelled { completion.finish(.failure(CancellationError())) }
+                            else { completion.finish(.failure(NativeTunnelError.networkSettingsTimedOut)) }
+                            return
+                        }
+                        let current = stateLock.withLock { () -> Bool in
+                            guard !stopped, networkSettingsGeneration == requestGeneration else { return false }
+                            // A timed-out OS apply may still complete later. The last successful
+                            // fingerprint is no longer proof of the actual system settings.
+                            appliedNetworkSettingsFingerprint = nil
+                            return true
+                        }
+                        guard current else { completion.finish(.failure(CancellationError())); return }
+                        let issued = provider.applyEngineSettings(network, owner: self) { error in
+                            completion.finish(error.map { .failure($0) } ?? .success(()))
+                            // Timeout/cancellation only resumes Swift. The real OS callback
+                            // releases admission, so an old apply cannot race a new engine.
+                            Task { await settingsGate.release(settingsLease) }
+                        }
+                        releaseLocally = !issued
+                        if !issued { completion.finish(.failure(CancellationError())); return }
+                        DispatchQueue.global().asyncAfter(
+                            deadline: .now() + .nanoseconds(Int(remainingBudget()))
+                        ) {
+                            completion.finish(.failure(NativeTunnelError.networkSettingsTimedOut))
+                        }
                     }
-                    DispatchQueue.global().asyncAfter(
-                        deadline: .now() + .milliseconds(Self.settingsTimeoutMilliseconds)
-                    ) {
-                        completion.finish(.failure(NativeTunnelError.networkSettingsTimedOut))
-                    }
+                } onCancel: {
+                    completion.finish(.failure(CancellationError()))
                 }
                 try outcome.get()
                 let committed = stateLock.withLock { () -> Bool in
@@ -1267,12 +1255,13 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                     )
                 }
             }
-            await settingsGate.release()
+            if releaseLocally { await settingsGate.release(settingsLease) }
         } catch {
-            await settingsGate.release()
+            if releaseLocally { await settingsGate.release(settingsLease) }
             throw error
         }
 
+        try ensureRunning()
         if publishFacts {
             let effectiveRouteSet = Set(effectivePlanCIDRs)
             let pushedRoutesInstalled = RouteExclusionPlanner.countInstalledOriginals(
@@ -1281,7 +1270,8 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                 excludes: effectiveExcludes,
                 protectedCidrs: protectedDNSRoutes
             )
-            stateLock.withLock {
+            try stateLock.withLock {
+                guard !stopped, networkSettingsGeneration == requestGeneration else { throw CancellationError() }
                 snapshot.clientAddress = plan.tunnelAddress
                 snapshot.tunnelAddresses = plan.addresses.map { "\($0.address)/\($0.prefixLen)" }
                 snapshot.tunnelGateway = plan.tunnelGateway
@@ -1310,7 +1300,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                 snapshot.privateUpdatePath = privateUpdatePath
                 snapshot.liveConnectionProperties = liveConnectionProperties
                 snapshot.updatedAt = Date()
-                sharedStore.save(snapshot)
+                provider.publishEngineSnapshot(snapshot, owner: self)
             }
             if pushedRoutesInstalled < plan.pushedRoutes.count {
                 sharedStore.appendLog(
@@ -1323,11 +1313,12 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             // Settings reloads use publishFacts=false because negotiated DNS/MTU/routes did
             // not change, but an effective global allowLAN toggle still changes whether an
             // app-owned update request is guaranteed to remain inside the tunnel.
-            stateLock.withLock {
+            try stateLock.withLock {
+                guard !stopped, networkSettingsGeneration == requestGeneration else { throw CancellationError() }
                 snapshot.privateUpdatePath = privateUpdatePath
                 snapshot.liveConnectionProperties = liveConnectionProperties
                 snapshot.updatedAt = Date()
-                sharedStore.save(snapshot)
+                provider.publishEngineSnapshot(snapshot, owner: self)
             }
         }
     }
@@ -1421,14 +1412,15 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         // NEPacketTunnelFlow.readPackets has no cancellation API. The old generation therefore
         // keeps this gate until its real callback arrives; a replacement waits instead of issuing
         // a second concurrent read and rechecks the handoff buffer after acquiring the gate.
-        await packetReadGate.acquire()
+        let readLease: ProviderOperationGate.Lease
+        do { readLease = try await packetReadGate.acquire() } catch { return ([], []) }
         if Task.isCancelled {
-            await packetReadGate.release()
+            await packetReadGate.release(readLease)
             return ([], [])
         }
         let retained = takePendingUplink(continuityKey: continuityKey)
         if !retained.isEmpty {
-            await packetReadGate.release()
+            await packetReadGate.release(readLease)
             return (retained, Self.packetProtocols(retained))
         }
 
@@ -1440,16 +1432,25 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
                     continuation.resume(returning: ([], []))
                     // Cancellation won before the continuation was parked, so no
                     // NetworkExtension read was issued and the gate is safe to release now.
-                    Task { await readGate.release() }
+                    Task { await readGate.release(readLease) }
                     return
                 }
-                provider.packetFlow.readPackets { [weak self] packets, protocols in
-                    if !box.finish((packets, protocols)) {
-                        self?.retainPendingUplink(
-                            Self.ipPackets(packets, protocols: protocols),
-                            continuityKey: continuityKey)
+                let issued = provider.readEnginePackets(owner: self) { [weak self] packets, protocols in
+                    let delivered = box.finish((packets, protocols))
+                    Task { [weak self] in
+                        // Even a synchronous OS callback must not take the engine lock
+                        // while provider admission holds lifecycleLock. Retain before release.
+                        if !delivered {
+                            self?.retainPendingUplink(
+                                Self.ipPackets(packets, protocols: protocols),
+                                continuityKey: continuityKey)
+                        }
+                        await readGate.release(readLease)
                     }
-                    Task { await readGate.release() }
+                }
+                if !issued {
+                    box.finish(([], []))
+                    Task { await readGate.release(readLease) }
                 }
             }
         } onCancel: {
@@ -1460,9 +1461,9 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
         }
     }
 
-    private func publishConnected(_ plan: NativeNetworkPlan) {
+    private func publishConnected(_ plan: NativeNetworkPlan, transport: QeliNativeTransport) {
         stateLock.withLock {
-            guard !stopped else { return }
+            guard !stopped, native === transport, activePlan?.generation == plan.generation else { return }
             if attemptConnectedAt == nil { attemptConnectedAt = ProcessInfo.processInfo.systemUptime }
             snapshot.phase = .connected
             snapshot.message = "Connected — Rust transport core"
@@ -1472,15 +1473,17 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             snapshot.tunnelGateway = plan.tunnelGateway
             if snapshot.connectedAt == nil { snapshot.connectedAt = Date() }
             snapshot.updatedAt = Date()
-            sharedStore.save(snapshot)
+            provider.publishEngineSnapshot(snapshot, owner: self)
         }
     }
 
-    private func publishStats(_ stats: QeliTransportStats) {
+    private func publishStats(
+        _ stats: QeliTransportStats, transport: QeliNativeTransport, generation: UInt64
+    ) {
         let now = Date()
         var udpLogs: [String] = []
         stateLock.withLock {
-            guard !stopped else { return }
+            guard !stopped, native === transport, activePlan?.generation == generation else { return }
             let elapsed = max(now.timeIntervalSince(lastStatsDate), 0.001)
             snapshot.bytesUploaded = stats.txBytes
             snapshot.bytesDownloaded = stats.rxBytes
@@ -1539,7 +1542,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             udpInternalDrops = stats.udpInternalDrops
             udpBufferGrows = stats.udpBufferGrows
             snapshot.updatedAt = now
-            sharedStore.save(snapshot)
+            provider.publishEngineSnapshot(snapshot, owner: self)
         }
         udpLogs.forEach { sharedStore.appendLog($0) }
     }
@@ -1590,7 +1593,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             return true
         }
         guard shouldStop else { return }
-        provider.reasserting = true
+        provider.setEngineReasserting(true, owner: self)
         sharedStore.appendLog("\(reason); using full reconnect fallback")
         transport.stop()
     }
@@ -1604,7 +1607,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             snapshot.message = message
             snapshot.error = error
             snapshot.updatedAt = Date()
-            sharedStore.save(snapshot)
+            provider.publishEngineSnapshot(snapshot, owner: self)
         }
         if !message.isEmpty { sharedStore.appendLog(message) }
     }
@@ -1620,19 +1623,19 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             snapshot.privateUpdatePath = nil
             snapshot.liveConnectionProperties = nil
             snapshot.updatedAt = Date()
-            sharedStore.save(snapshot)
+            provider.publishEngineSnapshot(snapshot, owner: self)
             return true
         }
         guard changed else { return }
         sharedStore.appendLog("ERROR: \(error.localizedDescription)")
         if holdFailClosed {
-            provider.reasserting = true
+            provider.setEngineReasserting(true, owner: self)
             sharedStore.appendLog(
                 "SECURITY: full-tunnel routes remain fail-closed; disconnect explicitly after investigating the server identity."
             )
         } else {
-            provider.reasserting = false
-            provider.cancelTunnelWithError(error)
+            provider.setEngineReasserting(false, owner: self)
+            provider.cancelEngineTunnel(error, owner: self)
         }
     }
 
@@ -1667,7 +1670,7 @@ final class QeliNativeTunnelEngine: @unchecked Sendable {
             snapshot.privateUpdatePath = nil
             snapshot.liveConnectionProperties = nil
             snapshot.updatedAt = Date()
-            sharedStore.save(snapshot)
+            provider.publishEngineSnapshot(snapshot, owner: self)
         }
     }
 
