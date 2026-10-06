@@ -326,8 +326,13 @@ Android inventory, отображаются по package name и сохраня�
 во время загрузки; закрытие диалога отменяет его job.
 
 `audit_android_data_plane_lab.py --suite profile-ui --variant debug --transport tcp`
-запускает пять Activity/PackageManager/Keystore/file сценариев на disposable readonly AVD.
+запускает десять сценариев: семь Activity/PackageManager/Keystore/file и три проверки
+private diagnostic journal / bounded stream на disposable readonly AVD.
 Тестовая инспекция dialog roots использует reflection; экспорт идёт в реальные private
 `file:` destinations, не в сторонний SAF/cloud provider. Нет VPN payload в этой debug suite.
 Другие варианты/транспорт отклоняются до изменения стенда.
 [Q29 F284–F285: результаты и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-STORAGE-PACKAGE.md).
+
+Update metadata ограничены4MiB; журнал при восстановлении читает ограниченный хвост.
+Все imports используют общий bounded reader с прежними INI/archive budgets.
+[Q29 F286–F288: source review, исправления и границы](../docs/ru/reports/AUDIT-Q29-ANDROID-SOURCE.md).

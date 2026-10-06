@@ -1,6 +1,7 @@
 package com.qeli
 
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -29,6 +30,8 @@ internal object DiagnosticLogStore {
     internal const val MAX_BYTES = 512L * 1024L
     private const val MAX_MESSAGE_CHARS = 4_096
     private const val MAX_SESSION_CHARS = 64
+    // One normalized UTF-8/base64 record fits within this extra boundary allowance.
+    private const val MAX_RECORD_BYTES = 24 * 1024
 
     private val lock = Any()
     private val knownCounts = mutableMapOf<String, Int>()
@@ -60,7 +63,7 @@ internal object DiagnosticLogStore {
             val key = file.absoluteFile.normalize().path
             var count = knownCounts[key]
             if (count == null) {
-                val loaded = loadUnlocked(file)
+                val loaded = loadUnlocked(file, maxBytes)
                 val retained = retainNewest(loaded.entries, maxEntries, maxBytes)
                 if (loaded.hadInvalidRecord || retained.size != loaded.entries.size ||
                     file.length() > maxBytes
@@ -74,7 +77,7 @@ internal object DiagnosticLogStore {
             FileOutputStream(file, true).use { output -> output.write(bytes) }
             count++
             if (count > maxEntries || file.length() > maxBytes) {
-                val retained = retainNewest(loadUnlocked(file).entries, maxEntries, maxBytes)
+                val retained = retainNewest(loadUnlocked(file, maxBytes).entries, maxEntries, maxBytes)
                 rewriteUnlocked(file, retained)
                 count = retained.size
             }
@@ -93,7 +96,7 @@ internal object DiagnosticLogStore {
         synchronized(lock) {
             val file = File(directory, FILE_NAME)
             if (!file.exists()) return emptyList()
-            val loaded = loadUnlocked(file)
+            val loaded = loadUnlocked(file, maxBytes)
             val retained = retainNewest(loaded.entries, maxEntries, maxBytes)
             if (loaded.hadInvalidRecord || retained.size != loaded.entries.size ||
                 file.length() > maxBytes
@@ -122,15 +125,30 @@ internal object DiagnosticLogStore {
         val hadInvalidRecord: Boolean,
     )
 
-    private fun loadUnlocked(file: File): LoadResult {
+    private fun loadUnlocked(file: File, maxBytes: Long): LoadResult {
         if (!file.exists()) return LoadResult(emptyList(), false)
         val entries = mutableListOf<DiagnosticLogEntry>()
         var invalid = false
-        file.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-            lines.forEach { line ->
-                val entry = decode(line)
-                if (entry == null) invalid = true else entries += entry
-            }
+        // Rotation bounds normal writes, but a corrupt/restored file can be much larger.
+        // Seek to a bounded tail before decoding; include one complete record at the edge.
+        FileInputStream(file).use { input ->
+            val budget = (minOf(maxBytes, MAX_BYTES) + MAX_RECORD_BYTES).toInt()
+            val start = (input.channel.size() - budget).coerceAtLeast(0L)
+            val partialFirstLine = if (start > 0) {
+                input.channel.position(start - 1)
+                invalid = true
+                input.read() != '\n'.code
+            } else false
+            val bytes = BoundedInput.read(input, budget)
+            try {
+                bytes.inputStream().bufferedReader(StandardCharsets.UTF_8).use { reader ->
+                    if (partialFirstLine) reader.readLine()
+                    reader.forEachLine { line ->
+                        val entry = decode(line)
+                        if (entry == null) invalid = true else entries += entry
+                    }
+                }
+            } finally { bytes.fill(0) }
         }
         return LoadResult(entries, invalid)
     }

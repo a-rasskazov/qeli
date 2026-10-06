@@ -413,7 +413,7 @@ class VpnServiceImpl : VpnService() {
                 } else if (connectionDesired()) {
                     val cfg = ProfileStore.activeProfileConfigText(this)
                         ?.let { raw ->
-                            runCatching { VpnConfig.parse(raw).also { it.validate() } }.getOrNull()
+                            runCatching { VpnConfig.parse(raw) }.getOrNull()
                         }
                     if (cfg != null) startTrustedAware(cfg)
                     else stopVpn("No usable active profile")
@@ -429,12 +429,10 @@ class VpnServiceImpl : VpnService() {
             // alternative to autostart, which made this the advertised path.
             // (Audit 2026-07-27, M1)
             VpnService.SERVICE_INTERFACE -> {
-                // validate() too, not just parse(): always-on is the path with NO UI to show a
-                // rejection, so an out-of-range saved profile would otherwise be carried all the
-                // way into the tunnel. A failure lands in the same "no usable profile" branch
-                // below, which does report itself. (Audit 2026-07-30, #11.)
+                // Strict parsing rejects invalid saved profiles before always-on activation;
+                // the failure is reported by the no-usable-profile branch below.
                 val cfg = ProfileStore.activeProfileConfigText(this)
-                    ?.let { runCatching { VpnConfig.parse(it).also { c -> c.validate() } }.getOrNull() }
+                    ?.let { runCatching { VpnConfig.parse(it) }.getOrNull() }
                 if (cfg == null || cfg.serverAddress.isBlank() || cfg.serverAddress == "SERVER_IP_OR_HOST") {
                     // Nothing to connect. Say so loudly: with lockdown on, the user sees a
                     // dead network and no explanation anywhere.
@@ -536,10 +534,6 @@ class VpnServiceImpl : VpnService() {
         }
         carrierDnsExecutor.shutdownNow()
         super.onDestroy()
-    }
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
     }
 
     @Synchronized
@@ -931,7 +925,7 @@ class VpnServiceImpl : VpnService() {
             if (!TrustedWifiPolicy.shouldResumeAfterDelay(kind, resumeEvenIfTrusted) ||
                 !pausedByTrustedWifi || !connectionDesired()) return@launch
             val config = trustedWaitConfig ?: ProfileStore.activeProfileConfigText(this@VpnServiceImpl)
-                ?.let { runCatching { VpnConfig.parse(it).also { value -> value.validate() } }.getOrNull() }
+                ?.let { runCatching { VpnConfig.parse(it) }.getOrNull() }
             if (config == null) {
                 withContext(Dispatchers.Main.immediate) { stopVpn("No usable active profile") }
                 return@launch

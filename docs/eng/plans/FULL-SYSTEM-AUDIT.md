@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v88 -->
+<!-- normative-sync: full-system-audit-v89 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1858,7 +1858,7 @@ Protect/TUN retention/generations during reconnect/cancel/stop. Keystore, INI mi
 
 **Existing harness/fixtures:** `scripts/roaming_android_sleep_wake_gate.py`, `scripts/roaming_android_udp_grace_expiry_gate.py`.
 
-- [ ] Review and dead code.
+- [x] Review and dead code.
 - [ ] Positive, boundary and negative scenarios.
 - [ ] Failures and concurrency.
 - [ ] Integration and target platform.
@@ -1883,11 +1883,12 @@ The section checklist is not a statement that every scenario below has passed.
 | R8 instrumentation | [matching runner](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md) | Opt-in matching runner PASS; default production UI smoke separately qualified; earlier runner FAIL retained |
 | External process death | [minimal independent VpnService control](../reports/AUDIT-Q29-ANDROID-SYSTEM.md) | Automatic recovery FAIL on this image, including the independent TUN control; blocking/manual recovery PASS; no causal JNI defect proven |
 | Generic auto/null DnsResolver | [API diagnostic](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md) | ENONET retained; typed A/AAAA and system lookup have separate positive evidence |
-| Whole-section source/dead-code and lifetime reconciliation | Prior stage reviews, original29-file inventory and added exporter review (now30 main Kotlin files) | Remains; a reference inventory alone is not proof of liveness or a complete source audit |
+| Whole-section source/dead-code and lifetime reconciliation | [F286–F288](../reports/AUDIT-Q29-ANDROID-SOURCE.md),31 Kotlin files, Manifest/resources/R8/22 JNI | Review criterion complete; F289 LAN reconfiguration fix remains. Reference screen alone is not liveness proof. |
 
 Q29 remains IN_PROGRESS. Open platform observations are not silently accepted or relabelled
 PASS; platform coverage limits are not new mandatory test permutations. User-skipped other
 platforms and D06 remain unchanged.
+
 
 ### 30. iOS PacketTunnel, Swift and MDM
 

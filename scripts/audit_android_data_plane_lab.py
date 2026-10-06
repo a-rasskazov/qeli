@@ -602,7 +602,7 @@ perf.connection.handshake_timeout_secs = 12
             phases=[("fixed",selector)]
             expected_tests=13
         if args.suite == "profile-ui":
-            phases=[("fixed","com.qeli.ProfileUiInstrumentedTest")];expected_tests=5
+            phases=[("fixed","com.qeli.ProfileUiInstrumentedTest,com.qeli.DiagnosticLogStoreInstrumentedTest")];expected_tests=10
         for folder, selector in phases:
             manifest = json.loads((root / folder / "manifest.json").read_text())
             assert manifest.get("build_type", "debug") == args.variant, "APK manifest does not match requested variant"

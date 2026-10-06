@@ -32,6 +32,7 @@ data class UpdateInfo(val latest: String, val url: String, val isNewer: Boolean)
  * returns null (fail-soft).
  */
 object UpdateChecker {
+    private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
     private const val RELEASES = "https://api.github.com/repos/litvinovtd/qeli/releases"
     private const val PAGE = "https://github.com/litvinovtd/qeli/releases"
 
@@ -84,7 +85,10 @@ object UpdateChecker {
                     } else if (conn.responseCode !in 200..299) {
                         null
                     } else {
-                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        val body = conn.inputStream.use { input ->
+                            val bytes = BoundedInput.read(input, MAX_RESPONSE_BYTES)
+                            try { decodeUtf8Strict(bytes) } finally { bytes.fill(0) }
+                        }
                         val arr = JSONArray(body)
                         var found: UpdateInfo? = null
                         for (i in 0 until arr.length()) {

@@ -70,13 +70,10 @@ class QeliTileService : TileService() {
     }
 
     private fun connectDefault() {
-        // validate() too, not just parse(): the widget and the Quick Settings tile are the
-        // other doors into the tunnel, and skipping the range checks here let a profile the
-        // main UI would refuse start straight from the home screen. Neither surface has any
-        // UI to show a rejection, so a bad profile must simply not connect.
-        // (Audit 2026-07-31.)
+        // The shared strict parser rejects invalid profiles; consent and notification
+        // requirements are handled below before a headless start.
         val cfg = ProfileStore.activeProfileConfigText(this)
-            ?.let { runCatching { VpnConfig.parse(it).also { c -> c.validate() } }.getOrNull() }
+            ?.let { runCatching { VpnConfig.parse(it) }.getOrNull() }
         val needsConsent = runCatching { VpnService.prepare(this) != null }.getOrDefault(true)
         val needsNotif = Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=

@@ -444,3 +444,5 @@
 - [Q29: сервис на доверенном Wi-Fi](reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md)
 - [Q29 F281: доверенный Wi-Fi при активном lockdown](reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md)
 - [Q29 F282–F283: владельцы protect/callback и скрытый SSID](reports/AUDIT-Q29-ANDROID-CONTROLLER.md)
+
+- [Q29 F286–F288: границы чтения, UI state и итоговая сверка source](reports/AUDIT-Q29-ANDROID-SOURCE.md)

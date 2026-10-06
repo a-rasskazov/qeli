@@ -444,3 +444,5 @@ guidance. Start with the **[archive map](archive/README.md)**.
 - [Q29: trusted Wi-Fi runtime](reports/AUDIT-Q29-ANDROID-TRUSTED-WIFI.md)
 - [Q29 F281: trusted Wi-Fi with active lockdown](reports/AUDIT-Q29-ANDROID-TRUSTED-LOCKDOWN.md)
 - [Q29 F282–F283: protect/callback ownership and SSID redaction](reports/AUDIT-Q29-ANDROID-CONTROLLER.md)
+
+- [Q29 F286–F288: bounded input, UI state and source reconciliation](reports/AUDIT-Q29-ANDROID-SOURCE.md)

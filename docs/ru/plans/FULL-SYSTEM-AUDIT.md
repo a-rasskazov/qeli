@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v88 -->
+<!-- normative-sync: full-system-audit-v89 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1869,7 +1869,7 @@ Protect/TUN retention/generation при reconnect/cancel/stop. Keystore, INI mig
 
 **Имеющаяся обвязка/fixtures:** `scripts/roaming_android_sleep_wake_gate.py`, `scripts/roaming_android_udp_grace_expiry_gate.py`.
 
-- [ ] Review и мёртвый код.
+- [x] Review и мёртвый код.
 - [ ] Штатные, граничные и негативные сценарии.
 - [ ] Отказы и конкуренция.
 - [ ] Интеграция и целевая платформа.
@@ -1894,11 +1894,12 @@ Checklist раздела не утверждает, что каждый сцен
 | R8 instrumentation | [matching runner](../reports/AUDIT-Q29-ANDROID-RELEASE-RUNNER.md) | Opt-in matching runner PASS; обычный production UI smoke подтверждён отдельно; прежний runner FAIL сохранён |
 | Внешняя смерть процесса | [независимый минимальный VpnService](../reports/AUDIT-Q29-ANDROID-SYSTEM.md) | Automatic recovery FAIL на этом image, включая независимый TUN control; blocking/manual recovery PASS; causal JNI defect не доказан |
 | Generic auto/null DnsResolver | [API diagnostic](../reports/AUDIT-Q29-ANDROID-RESOLVER-DIAGNOSTIC.md) | ENONET сохранён; typed A/AAAA и system lookup имеют отдельные положительные результаты |
-| Итоговая сверка source/dead-code и lifetime всего раздела | Прежние reviews, исходная инвентаризация29 файлов и review нового exporter (теперь30 main Kotlin файлов) | Остаётся; список ссылок сам по себе не доказывает liveness или полный source audit |
+| Итоговая сверка source/dead-code и lifetime всего раздела | [F286–F288](../reports/AUDIT-Q29-ANDROID-SOURCE.md),31 Kotlin files, Manifest/resources/R8/22 JNI | Review завершён; остаётся fix F289 LAN reconfiguration. Reference screen сам по себе не доказывает liveness. |
 
 Q29 остаётся IN_PROGRESS. Открытые платформенные наблюдения не принимаются молча и не
 переименованы в PASS; границы платформенного покрытия не превращаются в новые обязательные
 перестановки тестов. Пропущенные пользователем платформы и D06 не изменены.
+
 
 ### 30. iOS: PacketTunnel, Swift и MDM
 

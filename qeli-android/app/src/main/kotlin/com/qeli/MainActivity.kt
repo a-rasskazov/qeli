@@ -956,27 +956,11 @@ ipv6 = auto
      * unbounded. The caller selects the plaintext-config or base64-expanded backup ceiling. */
     private suspend fun readUriBytesBounded(uri: Uri, maxBytes: Int): ByteArray =
         withContext(Dispatchers.IO) {
+            val limit = if (maxBytes < 1024 * 1024) "${maxBytes / 1024} KiB"
+                else "${maxBytes / (1024 * 1024)} MiB"
             contentResolver.openInputStream(uri)?.use { input ->
-                val output = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(16 * 1024)
-                try {
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        if (output.size() + count > maxBytes) {
-                            val limit = if (maxBytes < 1024 * 1024) {
-                                "${maxBytes / 1024} KiB"
-                            } else {
-                                "${maxBytes / (1024 * 1024)} MiB"
-                            }
-                            throw IllegalArgumentException("file exceeds $limit import limit")
-                        }
-                        output.write(buffer, 0, count)
-                    }
-                } finally {
-                    buffer.fill(0)
-                }
-                output.toByteArray().also { require(it.isNotEmpty()) { "empty file" } }
+                BoundedInput.read(input, maxBytes, "file exceeds $limit import limit")
+                    .also { require(it.isNotEmpty()) { "empty file" } }
             } ?: throw IllegalArgumentException("empty file")
         }
 
@@ -1000,7 +984,7 @@ ipv6 = auto
             val stored = storedProfileText(entry)
             validateProfileForStorage(name, stored, "profile ${index + 1}")
             try {
-                VpnConfig.parse(stored).validate()
+                VpnConfig.parse(stored)
             } catch (error: Exception) {
                 throw IllegalArgumentException(
                     "profile ${index + 1} ('$name') is invalid: " +
@@ -1077,7 +1061,7 @@ ipv6 = auto
                     val name = p.optString("name", "profile")
                     val stored = storedProfileText(p)
                     validateProfileForStorage(name, stored, "profile ${i + 1}")
-                    VpnConfig.parse(stored).validate()
+                    VpnConfig.parse(stored)
                     loaded.add(Profile(name, stored))
                 }
                 // Commit only after every entry parsed and validated. A corrupt tail must not
@@ -1124,7 +1108,7 @@ ipv6 = auto
      *
      * Built through the model rather than by string concatenation so the key names come from
      * `toIni` and cannot drift from what `fromIni` reads. It used to be assembled as JSON and
-     * handed to `VpnConfig.fromJson`; that parser is gone (see `VpnConfig.jsonRetired`), and
+     * handed to `VpnConfig.fromJson`; that parser has been removed, and
      * routing here was only ever the full-tunnel default anyway.
      *
      * A profile still stored under the older `json` key is NOT converted — it is passed through
@@ -1344,13 +1328,8 @@ ipv6 = auto
                     addProfileFromQeliUri(text)
                     return@launch
                 }
-                // `parse` only PARSES — fromIni never called validate(), so the comment that
-                // used to sit here claiming otherwise was the whole bug: a raw INI file was stored
-                // verbatim with port 0 / 99999, an unknown proto or mode, an out-of-range timeout
-                // or a negative reconnect, and only failed much later at connect. Validate at the
-                // boundary where untrusted text enters, exactly as the qeli:// import already does.
-                // (Audit 2026-07-29, #5.)
-                val cfg = VpnConfig.parse(text).also { it.validate() }
+                // Strict parsing validates untrusted INI at the import boundary.
+                val cfg = VpnConfig.parse(text)
                 // Stored verbatim: what parsed is already INI, so re-emitting it through `toIni`
                 // would only drop the author's comments and ordering for no gain.
                 val label = commentLabel(content).orEmpty().ifBlank { cfg.serverAddress }
@@ -1789,7 +1768,7 @@ ipv6 = auto
                     candidate[i].text = ProfileAppsEditor.replace(profile.text, mode, sel)
                     reconnectNeeded = i == activeIndex && candidate[i].text != profile.text &&
                         (isConnected || isConnecting || isTrustedPaused)
-                    VpnConfig.parse(candidate[i].text).validate()
+                    VpnConfig.parse(candidate[i].text)
                     persistCandidate(candidate, activeIndex)
                 } catch (e: Exception) {
                     Toast.makeText(this, e.message ?: "Invalid per-app profile", Toast.LENGTH_LONG).show()
@@ -2195,11 +2174,8 @@ ipv6 = auto
         if (isConnected || isConnecting || isDisconnecting || isTrustedPaused ||
             connectRequest.hasOutstandingResult) return
         val p = current() ?: return
-        // `parse` only PARSES — validate() is a separate step, and connecting without it let a
-        // profile saved before the range checks existed (or hand-edited since) reach the tunnel
-        // with an out-of-range port/transport/mode/timeout/MTU/padding. Import already
-        // validates; this is the other door into the same data. (Audit 2026-07-30, #11.)
-        val cfg = try { VpnConfig.parse(p.text).also { it.validate() } } catch (e: Exception) {
+        // Revalidate saved text through the strict shared parser at activation.
+        val cfg = try { VpnConfig.parse(p.text) } catch (e: Exception) {
             Toast.makeText(this, getString(R.string.profile_config_invalid, e.message ?: ""), Toast.LENGTH_LONG).show(); return
         }
         if (cfg.serverAddress.isBlank() || cfg.serverAddress == "SERVER_IP_OR_HOST") {
@@ -2309,7 +2285,7 @@ ipv6 = auto
 
     private fun setDisconnectedState() {
         updateJob?.cancel(); updateJob = null
-        isConnected = false; isConnecting = false; isDisconnecting = false
+        isConnected = false; isConnecting = false; isDisconnecting = false; isTrustedPaused = false
         clientIp = ""; clientGateway = ""
         binding.btnPing.isEnabled = true
         binding.btnCheckAll.isEnabled = true
@@ -2362,7 +2338,7 @@ ipv6 = auto
 
     private fun setErrorState(error: String?) {
         updateJob?.cancel(); updateJob = null
-        isConnected = false; isConnecting = false; isDisconnecting = false
+        isConnected = false; isConnecting = false; isDisconnecting = false; isTrustedPaused = false
         clientIp = ""; clientGateway = ""
         binding.btnPing.isEnabled = true
         binding.btnCheckAll.isEnabled = true

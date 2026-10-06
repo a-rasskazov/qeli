@@ -11,7 +11,7 @@ import org.junit.Test
 /**
  * Range checks on IMPORTED numeric config values. (Audit 2026-07-27, C6)
  *
- * The server-PUSHED mtu was already clamped at the handshake (QeliService.parseOk), but the
+ * The server-PUSHED MTU is checked by the shared handshake core, but the
  * locally imported one was not: a hand-written `mtu = 40`, or a scanned
  * `qeli://…?mtu=99999`, went straight through to VpnService.Builder.setMtu, where establish()
  * fails and the retry loop reconnects forever behind an opaque error. Padding was the same
@@ -23,6 +23,17 @@ import org.junit.Test
  * Defined legacy normalization (for example bounded AWG values) stays in the core.
  */
 class ConfigImportRangesTest {
+
+    @Test fun `strict saved profile parsing rejects drafts at every activation boundary`() {
+        assertEquals("vpn.example.com", VpnConfig.parse(ini()).serverAddress)
+        for (tail in listOf("mtu = 40", "proto = unknown", "timeout = -1", "server = host:99999")) {
+            val text = ini(tail)
+            VpnConfig.fromIni(text) // Drafts remain editable.
+            assertNotNull(tail, runCatching { VpnConfig.parse(text) }.exceptionOrNull())
+        }
+        val changed = VpnConfig.parse(ini()).copy(roaming = "unknown")
+        assertNotNull(runCatching { changed.validate() }.exceptionOrNull())
+    }
 
     @Test fun `malformed zero pins never become TOFU through model copy`() {
         for (pin in listOf("0", "0".repeat(63), "0".repeat(65))) {

@@ -139,4 +139,18 @@ class ProfileUiInstrumentedTest {
             assertTrue(file.delete())
         }
     }
+    private fun assertTrustedWaitingCleared(terminal: String) {
+        launch("all")
+        scenario!!.onActivity { owner ->
+            val update = MainActivity::class.java.getDeclaredMethod("updateUi", String::class.java, String::class.java)
+                .apply { isAccessible = true }
+            update.invoke(owner, VpnServiceImpl.STATUS_WAITING_TRUSTED, null)
+            val paused = MainActivity::class.java.getDeclaredField("isTrustedPaused").apply { isAccessible = true }
+            assertTrue(paused.getBoolean(owner))
+            update.invoke(owner, terminal, "fixture terminal state")
+            assertFalse("terminal state retained trusted pause and locked connect/profile switching", paused.getBoolean(owner))
+        }
+    }
+    @Test fun disconnectedAfterTrustedWaitingClearsPause() = assertTrustedWaitingCleared(VpnServiceImpl.STATUS_DISCONNECTED)
+    @Test fun errorAfterTrustedWaitingClearsPause() = assertTrustedWaitingCleared(VpnServiceImpl.STATUS_ERROR)
 }
