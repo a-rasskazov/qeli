@@ -107,6 +107,15 @@ The script: detects the arch → places the right binary in `/opt/bin/qeli-clien
 `ip-full` and `iptables` (Keenetic's busybox `ip` is stripped — no `tuntap`); checks
 `/dev/net/tun`; lays out `S99qeli` and a config stub.
 
+Development0.8.2 installer consumes the canonical qeli-client-keenetic-aarch64/mipsel
+artifacts; old qeli-client-aarch64/mipsel names remain a fallback. Required package
+errors stop publication. Existing INI content is preserved and restricted to0600.
+Copies are prepared first and each file is renamed atomically; the bundle is not
+an atomic transaction. Correct an installation error and retry; no automatic VPN
+restart occurs. Optional ip6tables failure requires checking IPv6 support.
+[Q31 fixture evidence](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md) does not qualify real
+opkg, ELF/ABI, power-loss or firmware runtime.
+
 ---
 
 ## Step 5. Fill in the config (on the router)

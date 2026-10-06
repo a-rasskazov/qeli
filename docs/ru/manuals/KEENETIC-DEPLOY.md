@@ -105,6 +105,15 @@ sh install-keenetic.sh
 `ip-full` и `iptables` (busybox-`ip` Кинетика урезан — нет `tuntap`); проверит
 `/dev/net/tun`; разложит `S99qeli` и болванку конфига.
 
+Установщик development0.8.2 использует canonical qeli-client-keenetic-aarch64/mipsel;
+старые qeli-client-aarch64/mipsel остаются fallback. Отказ обязательных пакетов
+останавливает публикацию. Existing INI content сохраняется, mode ограничен0600.
+Копии готовятся заранее, файлы публикуются атомарным rename по отдельности; весь
+bundle не является транзакцией. Ошибку устранить и повторить установку; VPN сам
+не перезапускается. Отказ optional ip6tables требует проверить IPv6 support.
+[Q31 fixture evidence](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md) не квалифицирует
+настоящие opkg/ELF/ABI/power-loss/firmware runtime.
+
 ---
 
 ## Шаг 5. Заполнить конфиг (на роутере)

@@ -21,28 +21,37 @@
 
 STATE=/opt/var/run/qeli.opkgtun          # маркер: S99qeli пишет сюда имя tun в OpkgTun-режиме
 TUNIP=/opt/var/run/qeli.tunip            # qeli пишет сюда выданный сервером IP (attach-режим)
+PENDING="$STATE.apply-pending"           # failed apply must bypass address-only no-op
 LOG=/opt/var/log/qeli-client.log
 export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [ -f "$STATE" ] || exit 0                 # OpkgTun-режим в S99qeli выключен — выходим тихо
 IF="$(cat "$STATE" 2>/dev/null)"          # имя kernel-tun (напр. opkgtun0)
-case "$IF" in opkgtun[0-9]*) ;; *) exit 0 ;; esac
-NDM_IF="OpkgTun${IF#opkgtun}"             # opkgtun0 -> OpkgTun0 (ndm капитализирует)
+case "$IF" in opkgtun*) ;; *) exit 1 ;; esac
+SUFFIX="${IF#opkgtun}"
+case "$SUFFIX" in ''|*[!0-9]*) exit 1 ;; esac
+[ "${#IF}" -le 15 ] || exit 1
+NDM_IF="OpkgTun$SUFFIX"             # opkgtun0 -> OpkgTun0 (ndm капитализирует)
 
 # Разведка формата событий (раскомментируй ОДИН раз на устройстве, потом верни назад):
 # { echo "--- wan.d/010-qeli $(date) ---"; env; } >> "$LOG" 2>&1
 
 # Адреса, которые qeli выдал сервер. Новый формат содержит family=address/prefix;
 # первая строка остаётся legacy primary address для старых хуков.
-WANT_IP="$(sed -n 's/^ipv4=\([^/]*\)\/.*/\1/p' "$TUNIP" 2>/dev/null | head -n1)"
-[ -n "$WANT_IP" ] || WANT_IP="$(grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TUNIP" 2>/dev/null | head -n1)"
-WANT_IP6_CIDR="$(sed -n 's/^ipv6=//p' "$TUNIP" 2>/dev/null | head -n1)"
-WANT_IP6="${WANT_IP6_CIDR%/*}"
+# Capture one atomically published file, so its families/MTU are from one read.
+read_plan() {
+  PLAN="$(cat "$TUNIP" 2>/dev/null)" || PLAN=""
+  WANT_IP="$(printf '%s\n' "$PLAN" | sed -n 's/^ipv4=\([^/]*\)\/.*/\1/p' | head -n1)"
+  [ -n "$WANT_IP" ] || WANT_IP="$(printf '%s\n' "$PLAN" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+  WANT_IP6_CIDR="$(printf '%s\n' "$PLAN" | sed -n 's/^ipv6=//p' | head -n1)"
+  WANT_IP6="${WANT_IP6_CIDR%/*}"
+}
+read_plan
 
 # Уже поднят, подключён и с нужным адресом? Тихо выходим — работы нет (идемпотентность +
 # защита от петли событий ndm: наш `... up`/`ip route` ниже сами генерят события wan.d).
 CUR="$(ndmc -c "show interface $NDM_IF" 2>/dev/null)"
-if echo "$CUR" | grep -q "connected: yes" \
+if [ ! -e "$PENDING" ] && echo "$CUR" | grep -q "connected: yes" \
    && { [ -z "$WANT_IP" ] || echo "$CUR" | grep -q "address: $WANT_IP"; } \
    && { [ -z "$WANT_IP6" ] || echo "$CUR" | grep -q "$WANT_IP6"; }; then
   exit 0
@@ -64,10 +73,8 @@ fi
 # событий ndm — если qeli ещё в backoff, регистрацию докрутит следующий вызов хука.
 i=0; IP="$WANT_IP"; IP6="$WANT_IP6"; IP6_CIDR="$WANT_IP6_CIDR"
 while [ -z "$IP" ] && [ -z "$IP6" ] && [ $i -lt 10 ]; do
-  IP="$(sed -n 's/^ipv4=\([^/]*\)\/.*/\1/p' "$TUNIP" 2>/dev/null | head -n1)"
-  [ -n "$IP" ] || IP="$(grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TUNIP" 2>/dev/null | head -n1)"
-  IP6_CIDR="$(sed -n 's/^ipv6=//p' "$TUNIP" 2>/dev/null | head -n1)"
-  IP6="${IP6_CIDR%/*}"
+  read_plan
+  IP="$WANT_IP"; IP6="$WANT_IP6"; IP6_CIDR="$WANT_IP6_CIDR"
   if [ -n "$IP" ] || [ -n "$IP6" ]; then
     break
   fi
@@ -75,7 +82,7 @@ while [ -z "$IP" ] && [ -z "$IP6" ] && [ $i -lt 10 ]; do
 done
 [ -n "$IP" ] || [ -n "$IP6" ] || { echo "wan.d/010-qeli: $NDM_IF создан, ждём attach qeli (нет IP в $TUNIP)" >> "$LOG"; exit 0; }
 
-MTU="$(sed -n 's/^mtu=\([0-9][0-9]*\)$/\1/p' "$TUNIP" 2>/dev/null | head -n1)"
+MTU="$(printf '%s\n' "$PLAN" | sed -n 's/^mtu=\([0-9][0-9]*\)$/\1/p' | head -n1)"
 case "$MTU" in
   ''|*[!0-9]*) MTU=1400 ;;
   *) [ "$MTU" -ge 576 ] && [ "$MTU" -le 16602 ] || MTU=1400 ;;
@@ -88,13 +95,22 @@ esac
 # Глобальный default здесь не ставим: без отдельного bypass для адреса qeli-сервера
 # он заворачивает несущее соединение в сам туннель. Policy-routing включается в Keenetic UI,
 # где ndm может атомарно учесть приоритеты и исключения.
-ndmc -c "interface $NDM_IF description qeli-VPN"
-ndmc -c "interface $NDM_IF ip global auto"
-[ -z "$IP" ] || ndmc -c "interface $NDM_IF ip address $IP 255.255.255.255"
-[ -z "$IP6_CIDR" ] || ndmc -c "interface $NDM_IF ipv6 address $IP6_CIDR"
-ndmc -c "interface $NDM_IF ip mtu $MTU"
-ndmc -c "interface $NDM_IF ip tcp adjust-mss pmtu"
-ndmc -c "interface $NDM_IF security-level public"
-ndmc -c "interface $NDM_IF up"
-ndmc -c "system configuration save"
+ndm_apply() {
+  ndmc -c "$1" || {
+    echo "wan.d/010-qeli: ndm rejected configuration for $NDM_IF; retry required" >> "$LOG"
+    return 1
+  }
+}
+# Persist retry intent before the first mutation; normal failure leaves it intact.
+(umask 077; : > "$PENDING") || exit 1
+ndm_apply "interface $NDM_IF description qeli-VPN" || exit 1
+ndm_apply "interface $NDM_IF ip global auto" || exit 1
+[ -z "$IP" ] || ndm_apply "interface $NDM_IF ip address $IP 255.255.255.255" || exit 1
+[ -z "$IP6_CIDR" ] || ndm_apply "interface $NDM_IF ipv6 address $IP6_CIDR" || exit 1
+ndm_apply "interface $NDM_IF ip mtu $MTU" || exit 1
+ndm_apply "interface $NDM_IF ip tcp adjust-mss pmtu" || exit 1
+ndm_apply "interface $NDM_IF security-level public" || exit 1
+ndm_apply "interface $NDM_IF up" || exit 1
+ndm_apply "system configuration save" || exit 1
+rm -f "$PENDING" || exit 1
 echo "wan.d/010-qeli: $NDM_IF up (IPv4=${IP:-none}, IPv6=${IP6:-none}, mtu $MTU) — L3 держит ndm" >> "$LOG"

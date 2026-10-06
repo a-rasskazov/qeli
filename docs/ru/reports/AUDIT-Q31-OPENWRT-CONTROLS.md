@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v4 -->
+<!-- normative-sync: q31-openwrt-controls-v5 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -288,3 +288,70 @@ Evidence: release/certification/evidence/q31-secrets-upgrade-20261006.json.
 Полные package upgrade/rollback, interprocess/daemon failure/lifecycle, широкий
 review и build provenance OPEN. Предыдущие seals/runtime statuses/artifacts/dates/
 acceptance_basis и Q29/Q30/D06 observations сохранены. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.
+
+## F320: установщик Keenetic искал старые артефакты и скрывал отказ зависимостей
+
+Build helper публикует qeli-client-keenetic-aarch64/mipsel, а установщик искал
+только qeli-client-aarch64/mipsel: canonical-only bundle не устанавливался.
+Обязательный opkg install ip-full/iptables имел ||true, поэтому после отказа
+подготовки установщик публиковал клиент и сообщал готовность. Оба поведения
+воспроизведены на исходном Git source с изолированными command models. Инструкции
+теперь указывают canonical artifacts и --sync; старые ручные имена поддерживаются
+как fallback, canonical имеет приоритет.
+
+До dependency changes проверяются непустые binary/init/new-config inputs. Ошибки
+обязательных update/install передаются вызывающему, проверяется наличие ip/iptables;
+отказ необязательного ip6tables даёт явное предупреждение. Копии binary/init/config
+готовятся до публикации; обычные temporary files убираются при выходе, каждый файл
+публикуется sibling rename. Existing INI content сохранён, mode ограничен0600,
+credential directory0700. Copy/preparation failure сохраняет старые binary/init.
+Publication failure может оставить частичный bundle: несколько rename не являются
+транзакцией; нужно устранить ошибку и повторить установку. Автоматический restart,
+concurrent-installer lock, fsync/power-loss и настоящие architecture/ELF/opkg проверки
+не заявляются.
+
+Одиннадцать installer cases: canonical/legacy names, обе архитектуры выбора,
+existing config, required/optional dependency errors, missing command, incomplete
+bundle/unsupported arch, copy failure и publication retry. Артефакты — маленькие
+fixture files, VPN binary не запускается. Первый baseline attempt использовал
+ambient PATH и завершился harness FAIL, запись сохранена. В final fixtures PATH
+ограничен для обоих source; lab inventory подтверждает отсутствие настоящего opkg.
+
+## F321: OpkgTun игнорировал ошибки ndm и смешивал чтения NetworkPlan
+
+Каждая ndmc mutation продолжалась после отказа, затем выполнялся save и выводилось
+interface up. Original-source model injection воспроизводит exit0/up/save после
+неудачного ip global. Теперь проверяются все L3/configuration-save mutations;
+отказ возвращается вызывающему, выводится retry required, ложный up не печатается.
+Перед первой mutation создаётся pending checkpoint0600, который удаляется только
+после успешного save. При повторе незавершённого apply address-only no-op обходится,
+даже если ndm уже показывает matching connected addresses. Ошибки создания/удаления
+checkpoint не дают сообщить completion; это не cross-process lock или fsync transaction.
+Ранее успешные изменения ndm не откатываются автоматически: устранить причину,
+повторить hook или manual registration, проверяя результат каждой команды.
+Отсутствующий interface/plan по-прежнему даёт0 с диагностикой ожидания, без up.
+
+Interface marker теперь требует opkgtun + непустой только десятичный suffix,
+максимум15 символов. Старый glob принимал opkgtun0garbage, что доходило до ndm в
+модели. Неправильный marker не вызывает ndm commands. Это исправление локальной
+грамматики, не доказанный server-to-ndm exploit. План читается одним снимком, все
+IPv4/IPv6/MTU извлекаются из него. Принудительная замена после первого чтения
+воспроизвела old IPv4 из A при IPv6/MTU из B; corrected команды используют только A.
+Это не сериализация concurrent stop, не generation ownership и не второй полный
+клиентский parser NetworkPlan.
+
+Девять hook cases: dual-stack apply, все девять mutation failures/connected retry,
+ошибки создания/удаления checkpoint, invalid marker,
+missing plan/interface, existing address no-op и forced replacement. Старые optimistic
+address/status idempotence, MTU-only updates, process ownership/join, legacy NAT/sysctl
+recovery и wan.d concurrency OPEN. Настоящие ndmc error/status output, event recursion,
+ndm rollback и firmware compatibility не квалифицированы. Настоящие network/proc/sys/
+службы роутера не менялись.
+
+Пакет F320–F321: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-install-hook-20261006.
+Evidence: release/certification/evidence/q31-keenetic-install-hook-20261006.json.
+20 cases на BusyBox ash/dash PASS в .11 temporary roots с подставными /opt/PATH/
+opkg/ndmc. Также PASS37 native recipes/docs/bindings/diff; native implementation,
+OpenWrt adapters и build helpers неизменны. Настоящие opkg/ndm/cross-build NOT_RUN;
+routers USER_EXCLUDED. Предыдущие seals/runtime statuses/artifacts/dates/acceptance_basis
+и Q29/Q30/D06 observations сохранены. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.

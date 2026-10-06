@@ -15,8 +15,8 @@
 
 ## Сборка бинарей (на лабе .10)
 ```sh
-python scripts/build_keenetic.py
-# → release/keenetic/qeli-client-aarch64  и  qeli-client-mipsel
+python scripts/build_keenetic.py --sync
+# → release/keenetic/qeli-client-keenetic-aarch64 и qeli-client-keenetic-mipsel
 ```
 
 ## Установка (на роутере)
@@ -55,3 +55,16 @@ tail -f /opt/var/log/qeli-client.log   # ждём 'Auth OK'
 rm -f /opt/etc/init.d/S99qeli /opt/bin/qeli-client
 rm -rf /opt/etc/qeli
 ```
+
+## Ошибки установки (development0.8.2)
+
+Установщик предпочитает canonical имена `qeli-client-keenetic-aarch64/mipsel`,
+старые `qeli-client-aarch64/mipsel` поддерживает для ручных bundles. Ошибка установки
+обязательных ip-full/iptables прекращает установку; отсутствие ip6tables явно
+предупреждается и требует проверить IPv6 перед запуском.
+
+Существующий INI сохраняется, доступ ограничивается0600, каталог —0700. Копии
+готовятся до замены; каждый файл публикуется атомарно, но весь bundle не является
+транзакцией. После отказа публикации устранить ошибку и повторить установщик.
+Работающий VPN автоматически не перезапускается. Это проверено shell/filesystem
+fixtures, не настоящим opkg/прошивкой/ELF. См. [Q31](../../docs/ru/reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
