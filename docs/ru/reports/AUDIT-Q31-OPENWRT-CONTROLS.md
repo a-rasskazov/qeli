@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v3 -->
+<!-- normative-sync: q31-openwrt-controls-v4 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -229,3 +229,62 @@ Evidence: release/certification/evidence/q31-install-source-sync-20261006.json.
 runtime USER_EXCLUDED. Старые seals/runtime statuses/artifacts/dates/acceptance_basis
 сохранены. Полные upgrade/rollback, lifecycle/secret races между процессами, широкий
 review и настоящая build qualification OPEN. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.
+
+## F316–F318: ошибки удаления, миграции и загрузки UCI
+
+clear_secrets сообщал успех после ошибки rm. RPC clear_secret игнорировал null,
+возвращаемый fs.unlink при ошибке, и всегда выдавал result=true. CLI теперь
+передаёт отказ, включая частичное удаление all; отсутствующий файл удаляется
+идемпотентно. RPC проверяет два буквальных имени, делегирует init owner и выдаёт
+result=false при ненулевом/неправильном результате команды. Compatible Node fixture
+воспроизводит ложный успех с documented null; настоящий ucode не исполняется.
+[Первичный контракт fs.unlink](https://ucode-lang.org/module-fs.html#unlink).
+Удаление сохранённого файла не останавливает работающий VPN и не стирает уже
+загруженные клиентом/отрендеренным obfs-конфигом копии; смена применяется restart.
+
+Legacy migration удаляла staged UCI options до commit. После отказа commit повтор
+видел отсутствие опций и возвращал0, хотя старые секреты оставались на постоянном
+хранилище. Теперь0600 secret-migration-pending создаётся до staged delete и
+сохраняется при отказе. Повтор делает commit даже без staged legacy options;
+ошибка удаления marker сохраняет намерение повторить. Значение читается один раз,
+непустой текущий runtime secret сохраняется, копирование идёт до удаления; пустые
+legacy values также очищаются. Проверены copy/marker/delete/commit/remove failures.
+Marker tmpfs: crash/reboot transaction и secure flash erase не подтверждены.
+После миграции нужно сменить старые credentials, как было указано ранее.
+
+Оба config_load qeli при старте, загрузка firewall и восстановление qeli context
+теперь явно запрещают admission при отказе. Несколько зон qeli отвергаются до
+мутации вместо выбора последней. Валидное отсутствие зоны допустимо по-прежнему.
+Baseline model probes в обоих interpreter воспроизводят ложный успех clear/load/
+ambiguous zone и сохранение persistent credentials после migration retry.
+
+## F319: rc.common скрывал ошибку callback от сервисной команды
+
+Сверка сохранённого [upstream rc.common](https://raw.githubusercontent.com/openwrt/openwrt/master/package/base-files/files/etc/rc.common)
+показала: rc_procd вызывает callback, закрывает сервисное сообщение, а start/stop
+затем вызывают optional hooks; иначе callback result теряется. Сохранённый dispatcher
+с fixture-only lib/functions/procd adapters воспроизводит callback failure при CLI
+exit0. Для отделения этого дефекта использован промежуточный F316–F318 source до
+hooks, сохранённый отдельно от Git baseline.
+
+Init owner теперь удерживает preparation/cleanup status и возвращает его через
+стандартные service_started/service_stopped hooks. После ошибки stop cleanup
+запрос procd_kill сохраняется, но последующая подготовка start внутри того же
+restart/reload запрещается. Валидный disabled start успешен. Это callback results,
+не проверка ubus publication/delete failure, daemon acceptance, native join или
+VPN connectivity. flock/admission настоящей procd library только source-reviewed;
+собственный механизм блокировок не добавлялся.
+
+Пять saved-dispatcher cases,23 init и9 installation cases дают37 PASS отдельно в
+BusyBox ash/dash на .11. Snapshot зафиксирован bytes/hash; тестам нужен явный путь
+QELI_OPENWRT_RC_COMMON_FIXTURE, без него skip. Пути/adapters temporary-only: реальные
+/etc/firewall/rc.d/daemons не менялись. Два hook cases и9 предшествующих init cases
+новые.11 Node fixtures PASS, включая новый compatible RPC clear case. Также PASS
+37 native recipes, docs/bindings/diff.
+
+Пакет F316–F319: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-secrets-upgrade-20261006.
+Evidence: release/certification/evidence/q31-secrets-upgrade-20261006.json.
+Настоящие libuci/fw4/procd/ucode/rpcd/opkg и cross-build NOT_RUN; router USER_EXCLUDED.
+Полные package upgrade/rollback, interprocess/daemon failure/lifecycle, широкий
+review и build provenance OPEN. Предыдущие seals/runtime statuses/artifacts/dates/
+acceptance_basis и Q29/Q30/D06 observations сохранены. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.

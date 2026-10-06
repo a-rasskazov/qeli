@@ -85,11 +85,13 @@ const methods = {
 	clear_secret: {
 		args: { name: '' },
 		call: function(request) {
-			const path = secretPath(request.args.name);
-			if (!path)
+			const name = request.args.name;
+			if (name != 'pass' && name != 'obfs_key')
 				exit(UBUS_STATUS_INVALID_ARGUMENT);
-			fs.unlink(path);
-			return { result: true };
+			// The init script owns secret deletion and propagates filesystem errors.
+			// Only the two literal names above can enter this fixed command.
+			const code = system(`/etc/init.d/qeli clear_secrets ${name} >/dev/null 2>&1`);
+			return { result: code === 0, code };
 		}
 	}
 };

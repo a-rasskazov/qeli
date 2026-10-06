@@ -39,7 +39,7 @@ uci() {
     if [ "$verb" = get ]; then
         case "$key" in
             qeli.main.dev) printf '%s' "${QELI_TEST_dev:-qeli0}" ;;
-            firewall.zone0.name) printf qeli ;;
+            firewall.zone0.name|firewall.zone1.name) printf qeli ;;
             firewall.zone0.device) cat "$QELI_TEST_ROOT/device" ;;
             firewall.zone0.masq6) cat "$QELI_TEST_ROOT/masq6" ;;
             *) return 1 ;;
@@ -52,6 +52,33 @@ uci() {
         delete) : > "$QELI_TEST_ROOT/device" ;;
         add_list) printf '%s' "${key#*=}" > "$QELI_TEST_ROOT/device" ;;
         set) printf 1 > "$QELI_TEST_ROOT/masq6" ;;
+    esac
+}
+'''
+
+MIGRATION_MODEL = r'''
+uci() {
+    [ "$1" != -q ] || shift
+    local verb="$1" key="$2" name
+    name="${key#qeli.main.}"
+    if [ "$verb" = get ]; then
+        [ -f "$QELI_TEST_ROOT/stage-$name" ] || return 1
+        cat "$QELI_TEST_ROOT/stage-$name"
+        return
+    fi
+    printf '%s\n' "$verb" >> "$QELI_TEST_ROOT/calls"
+    [ "${QELI_TEST_FAIL:-}" != "$verb" ] || return 17
+    case "$verb" in
+        delete) command rm -f "$QELI_TEST_ROOT/stage-$name" ;;
+        commit)
+            for name in pass obfs_key; do
+                if [ -f "$QELI_TEST_ROOT/stage-$name" ]; then
+                    command cp "$QELI_TEST_ROOT/stage-$name" "$QELI_TEST_ROOT/disk-$name" || return 1
+                else
+                    command rm -f "$QELI_TEST_ROOT/disk-$name" || return 1
+                fi
+            done ;;
+        *) return 1 ;;
     esac
 }
 '''
@@ -86,6 +113,125 @@ class OpenWrtInitTests(unittest.TestCase):
     def calls(self):
         p = self.root / 'calls'
         return p.read_text().splitlines() if p.exists() else []
+
+    def seed_legacy(self, name='pass', value='legacy-fixture'):
+        for prefix in ('stage-', 'disk-'):
+            (self.root / (prefix + name)).write_text(value)
+
+    def migration(self, body='migrate_legacy_secrets', **values):
+        return self.run_shell(MIGRATION_MODEL + '\n' + body, **values)
+
+    def test_start_result_hook_preserves_failure_and_disabled_success(self):
+        result = self.run_shell('qeli_start_service() { return 17; }; start_service; service_started')
+        self.assertEqual(result.returncode, 17)
+        self.assertEqual(self.run_shell('start_service; service_started', enabled='0').returncode, 0)
+
+    def test_stop_result_hook_and_restart_gate_preserve_cleanup_failure(self):
+        result = self.run_shell('''
+rm() { return 17; }
+stop_service
+service_stopped
+''')
+        self.assertEqual(result.returncode, 17)
+        result = self.run_shell('''
+QELI_STOP_RESULT=17
+qeli_start_service() { printf start >> "$QELI_TEST_ROOT/calls"; }
+start_service
+service_started
+''')
+        self.assertNotEqual(result.returncode, 0); self.assertEqual(self.calls(), [])
+
+    def test_clear_secrets_propagates_unlink_failure(self):
+        (self.root / 'run/obfs-key').write_text('fixture-obfs')
+        for name in ('pass', 'obfs_key', 'all'):
+            result = self.run_shell('rm() { return 17; }; clear_secrets "$QELI_TEST_NAME"', NAME=name)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue((self.root / 'run/password').exists())
+            self.assertTrue((self.root / 'run/obfs-key').exists())
+
+    def test_clear_named_all_absent_and_invalid_names(self):
+        (self.root / 'run/obfs-key').write_text('fixture-obfs')
+        self.assertEqual(self.run_shell('clear_secrets pass').returncode, 0)
+        self.assertTrue((self.root / 'run/obfs-key').exists())
+        self.assertEqual(self.run_shell('clear_secrets pass').returncode, 0)
+        self.assertEqual(self.run_shell('clear_secrets invalid').returncode, 2)
+        self.assertTrue((self.root / 'run/obfs-key').exists())
+        self.assertEqual(self.run_shell('clear_secrets').returncode, 0)
+        self.assertFalse((self.root / 'run/obfs-key').exists())
+
+    def test_migration_failed_commit_retries_when_staged_keys_are_already_gone(self):
+        self.seed_legacy(); self.seed_legacy('obfs_key', 'legacy-obfs')
+        (self.root / 'run/password').unlink()
+        result = self.migration(FAIL='commit'); self.assertNotEqual(result.returncode, 0)
+        pending = self.root / 'run/secret-migration-pending'
+        self.assertTrue(pending.exists()); self.assertEqual(pending.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((self.root / 'stage-pass').exists())
+        self.assertTrue((self.root / 'disk-pass').exists())
+        self.assertEqual((self.root / 'run/password').read_text(), 'legacy-fixture')
+        self.assertEqual((self.root / 'run/obfs-key').read_text(), 'legacy-obfs')
+        self.assertEqual(self.migration().returncode, 0)
+        self.assertFalse(pending.exists()); self.assertFalse((self.root / 'disk-pass').exists())
+        self.assertFalse((self.root / 'disk-obfs_key').exists())
+        self.assertEqual(self.calls(), ['delete', 'delete', 'commit', 'commit'])
+
+    def test_migration_copy_marker_delete_failure_preserves_persisted_secret(self):
+        self.seed_legacy()
+        (self.root / 'run/password').unlink()
+        result = self.migration('write_runtime_secret_value() { return 17; }; migrate_legacy_secrets')
+        self.assertNotEqual(result.returncode, 0); self.assertEqual(self.calls(), [])
+        self.assertTrue((self.root / 'stage-pass').exists())
+        (self.root / 'run/password').write_text('new-secret')
+        result = self.migration('ensure_runtime_dir() { return 17; }; migrate_legacy_secrets')
+        self.assertNotEqual(result.returncode, 0); self.assertEqual(self.calls(), [])
+        self.assertTrue((self.root / 'stage-pass').exists())
+        self.assertNotEqual(self.migration(FAIL='delete').returncode, 0)
+        self.assertTrue((self.root / 'stage-pass').exists()); self.assertTrue((self.root / 'disk-pass').exists())
+        self.assertTrue((self.root / 'run/secret-migration-pending').exists())
+        self.assertEqual(self.migration().returncode, 0)
+        self.assertFalse((self.root / 'disk-pass').exists())
+
+    def test_migration_existing_runtime_secret_wins_and_empty_legacy_is_scrubbed(self):
+        self.seed_legacy(); self.seed_legacy('obfs_key', '')
+        self.assertEqual(self.migration().returncode, 0)
+        self.assertEqual((self.root / 'run/password').read_text(), 'fixture-password')
+        self.assertFalse((self.root / 'disk-pass').exists())
+        self.assertFalse((self.root / 'disk-obfs_key').exists())
+        self.assertFalse((self.root / 'run/obfs-key').exists())
+
+    def test_migration_marker_removal_failure_keeps_retry_intent(self):
+        self.seed_legacy()
+        result = self.migration('''
+rm() { case "$*" in *secret-migration-pending*) return 17 ;; esac; command rm "$@"; }
+migrate_legacy_secrets
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.root / 'run/secret-migration-pending').exists())
+        self.assertEqual(self.migration().returncode, 0)
+        self.assertEqual(self.calls(), ['delete', 'commit', 'commit'])
+
+    def test_start_rejects_both_config_load_failures_before_procd_admission(self):
+        for fail_at in ('1', '2'):
+            result = self.run_shell('''
+load_count=0
+config_load() { load_count=$((load_count + 1)); [ "$load_count" != "$QELI_TEST_FAIL_AT" ]; }
+migrate_legacy_secrets() { :; }
+procd_open_instance() { printf procd >> "$QELI_TEST_ROOT/calls"; }
+start_service
+''', FAIL_AT=fail_at, enabled='0')
+            self.assertNotEqual(result.returncode, 0); self.assertEqual(self.calls(), [])
+        self.assertEqual(self.run_shell('start_service', enabled='0').returncode, 0)
+
+    def test_firewall_load_and_context_restore_errors_stop_before_mutation(self):
+        for package in ('firewall', 'qeli'):
+            result = self.run_shell('config_load() { [ "$1" != "$QELI_TEST_PACKAGE" ]; }; sync_firewall_device', PACKAGE=package)
+            self.assertNotEqual(result.returncode, 0); self.assertEqual(self.calls(), [])
+
+    def test_duplicate_qeli_firewall_zones_are_rejected_before_mutation(self):
+        result = self.run_shell('''
+config_foreach() { "$1" zone0; "$1" zone1; }
+sync_firewall_device
+''')
+        self.assertNotEqual(result.returncode, 0); self.assertEqual(self.calls(), [])
 
     def test_incomplete_defaults_block_start_before_live_sync_mutation(self):
         (self.root / 'run/firewall-install-pending').touch(mode=0o600)

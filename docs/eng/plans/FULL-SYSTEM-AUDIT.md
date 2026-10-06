@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v99 -->
+<!-- normative-sync: full-system-audit-v100 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1979,6 +1979,8 @@ UCI → INI escaping/shell injection, LuCI ACLs, flash secrets, init/procd and u
 
 
 **F314–F315 continuation, 6 October:** [Q31 report](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): retryable owned installation defaults and start guard; shared managed-source replacement with incomplete-sync build guard. Baseline ignored failures/stale inputs reproduced.21 shell tests per BusyBox/dash,7 filesystem source-sync tests,14 router-helper tests,12 shared lab tests,37 native recipes and10 JS fixtures PASS. Real libuci/fw4/procd/package/cross-build NOT_RUN,router USER_EXCLUDED; full upgrade/concurrency/provenance/review remain OPEN. Q31 IN_PROGRESS,28/37 unchanged.
+
+**F316–F319 continuation, 6 October:** [Q31 report](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): checked secret deletion, retryable legacy scrub, failed UCI/duplicate-zone admission, callback status through standard rc.common hooks. Baseline/isolated pre-hooks dispatcher false success reproduced.37 shell/saved-dispatcher cases per BusyBox/dash,11 JS fixtures/37 recipes/docs/bindings PASS. Saved rc.common uses fake lib/UCI/procd; real daemon/ubus/opkg/flock lifecycle unqualified. Q31 IN_PROGRESS,28/37 unchanged; full upgrade/concurrency/build review OPEN.
 
 ### 32. Metrics, usage, logs and notifications
 

@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v99 -->
+<!-- normative-sync: full-system-audit-v100 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1990,6 +1990,8 @@ UCI → INI escaping/shell injection, LuCI ACL, secrets на flash, init/procd, 
 
 
 **Продолжение F314–F315, 6 октября:** [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): восстанавливаемые собственные install defaults и start guard; общий managed-source sync с запретом сборки после обрыва. Baseline ignored failures/stale inputs воспроизведены.21 shell test на BusyBox/dash,7 filesystem source-sync tests,14 router-helper,12 shared lab,37 native recipes и10 JS fixtures PASS. Настоящие libuci/fw4/procd/package/cross-build NOT_RUN,router USER_EXCLUDED; полные upgrade/concurrency/provenance/review OPEN. Q31 IN_PROGRESS,28/37 без изменений.
+
+**Продолжение F316–F319, 6 октября:** [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): проверяемое удаление секретов, повтор legacy scrub, UCI/duplicate-zone admission, callback status через стандартные hooks rc.common. Baseline/изолированный pre-hooks dispatcher false success воспроизведён.37 shell/saved-dispatcher cases на BusyBox/dash,11 JS fixtures/37 recipes/docs/bindings PASS. Saved rc.common с подставными lib/UCI/procd; настоящий daemon/ubus/opkg/flock lifecycle не квалифицирован. Q31 IN_PROGRESS,28/37 без изменений; полный upgrade/concurrency/build review OPEN.
 
 ### 32. Метрики, usage, логи и уведомления
 

@@ -210,3 +210,15 @@ Cargo.lock while preserving target cache. An interrupted upload/close leaves
 including one without --sync, refuses that checkout until a successful --sync.
 The replacement is not atomic or locked; without --sync an unmarked remote
 checkout is reused. This does not establish complete build provenance.
+
+Secret deletion reports filesystem failure through both CLI and LuCI; an absent
+file is a successful no-op. Removing the stored file does not stop the current
+VPN or erase credentials already loaded by it; restart applies changes.
+Legacy UCI migration retains /var/run/qeli/secret-migration-pending through failed
+commit and retries on the next start even if staged options are already absent.
+After fixing the storage/UCI error, retry start; this does not guarantee reboot
+transactions or erase old flash blocks. Rotate migrated credentials.
+Failed UCI loads or multiple qeli firewall zones reject start preparation. Standard
+rc.common hooks return preparation/cleanup failures to the service caller; failed
+stop cleanup blocks the next start within the same restart/reload call. Daemon
+acceptance, join and connectivity are separate from this command result.

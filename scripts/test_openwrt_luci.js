@@ -116,5 +116,23 @@ async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
         assert.ok(!acl.read.ubus['luci.qeli'].includes('service_action'));
         assert.deepEqual(acl.write.uci, ['qeli']);
     });
+    await test('secret clear delegates to init and reports failure without direct unlink', async () => {
+        const rpcSource = fs.readFileSync(path.join(__dirname, '../qeli-openwrt/luci-app-qeli/root/usr/share/rpcd/ucode/qeli.uc'), 'utf8');
+        for (const code of [0, 1, 17, 127, null]) {
+            const calls = [];
+            const context = vm.createContext({ system: command => { calls.push(command); return code; },
+                exit: value => { throw new Error(`invalid:${value}`); }, UBUS_STATUS_INVALID_ARGUMENT: 2 });
+            const methods = vm.runInContext('(function(){' + rpcSource.replace(/^#![^\n]*\n/, '').replace("import * as fs from 'fs';", 'const fs = { unlink() { throw new Error("direct unlink forbidden"); } };') + '\n})()', context);
+            for (const name of ['pass', 'obfs_key']) {
+                const result = methods['luci.qeli'].clear_secret.call({ args: { name } });
+                assert.equal(result.result, code === 0); assert.equal(result.code, code);
+                assert.equal(calls.at(-1), `/etc/init.d/qeli clear_secrets ${name} >/dev/null 2>&1`);
+            }
+            const admitted = calls.length;
+            for (const name of ['all', '', 'pass;touch /tmp/bad', '../password'])
+                assert.throws(() => methods['luci.qeli'].clear_secret.call({ args: { name } }), /invalid:2/);
+            assert.equal(calls.length, admitted);
+        }
+    });
     console.log(`LuCI fixture tests: ${passed} PASS (not rpcd/procd device qualification)`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
