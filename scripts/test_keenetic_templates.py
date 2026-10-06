@@ -55,7 +55,7 @@ case "$2" in
    if [ -n "$QELI_FAIL" ]; then case "$2" in *"$QELI_FAIL"*) exit 17 ;; esac; fi ;;
 esac
 ''')
-        (self.bundle/'lifecycle.sh').write_text((ROOT/'release/keenetic/lifecycle.sh').read_text().replace('/var/run/qeli.lifecycle.lock',str(self.opt/'var/run/qeli.lifecycle.lock')))
+        (self.bundle/'lifecycle.sh').write_text((ROOT/'release/keenetic/lifecycle.sh').read_text().replace('/opt/',str(self.opt)+'/').replace('/var/run/qeli.lifecycle.lock',str(self.opt/'var/run/qeli.lifecycle.lock')))
         (self.bundle/'S99qeli').write_text('new init template')
         (self.bundle/'client.conf.example').write_text('[qeli]\nserver = fixture.invalid:443\n')
         (self.bundle/'qeli-client-keenetic-aarch64').write_text('canonical-aarch64')

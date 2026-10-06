@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v13 -->
+<!-- normative-sync: q31-openwrt-controls-v14 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -837,3 +837,61 @@ Q30 exclusions/drainOPEN,D06 сохранены. Q31 IN_PROGRESS;28/37(75.7%),9 
 целый checklist-пункт не закрыт.
 Основание политики: [rustup pins](https://rust-lang.github.io/rustup/concepts/toolchains.html),
 [Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
+
+## F340: ошибка публикации оставляла смешанное поколение installer
+
+Прежний installer отдельно заменял helper/binary/init. Ошибка последнего init
+rename либо TERM после публикации binary оставляли новый executable/helper со
+старым init. Теперь до публикации создаются backup старых файлов в тех же
+каталогах с сохранением bytes/modes и recovery record0600. Rollback intent задаётся
+до rename; неуспешный same-directory rename с сохранившимся source считается
+неопубликованным. Обычная ошибка/обработанный сигнал восстанавливают изменённый
+код в обратном порядке; отсутствовавшие прежде targets удаляются. Failed restore
+сохраняет оставшиеся backup/install-pending вместо потери recovery evidence.
+
+Общий qeli_install_ready проверяет retry, start обоих обновлённых init и активный
+wan.d hook. Stop разрешён. Lock освобождается после обработанного rollback.
+Pending record, включая dangling symlink, блокирует admission. Старые скрипты
+требуют ручной остановки/проверки и не обязательно соблюдают guard: старый init,
+восстановленный при частично неуспешном rollback, не считается защищённым.
+Crash atomicity всего bundle не заявлена: SIGKILL/power loss требуют owner review
+и manual recovery; fsync/automatic stale deletion нет. Существующий INI content
+сохраняется; ужесточённый mode600 и новая опубликованная болванка могут остаться
+после поздней ошибки. opkg/package changes и root/admin replacement вне code
+rollback. Именованный backup мог уже быть использован успешным частичным restore;
+проверяй комплект, не удаляй targets/marker вслепую.
+
+## F341: linked/special targets обходили предположения об обычных файлах
+
+Старая directory-проверка допускала symlink/FIFO. chmod600 client.conf проходил
+по symlink и менял внешний файл; chmod700 linked config directory менял внешний
+каталог. Теперь installed code/config targets — только regular или absent, без
+symlink; /opt/etc/qeli не должен быть linked. Отказ до package updates. Root/admin
+path races этим не закрываются.
+
+PASS176 tests на каждом BusyBox ash/dash:47 owned native process,44 state,14
+installer,17 hook,19 verifier,16 gateway owner,8 lifecycle и11 новых install
+rollback/admission methods. Проверены каждый code rename, old/absent/new code,
+restore/copy/marker failures, TERM после реального owned rename, regular/dangling
+linked targets,FIFO,linked config directory и pending guards обоих init/hook.
+Пять old/current сценариев дают10 записей на shell: init rename,TERM,config
+symlink,directory symlink,failed restore. Воспроизведены старые mixed code/outside
+chmod/отсутствующий recovery marker; новые restore/refusal/retained recovery PASS.
+
+Начальные11-method suites FAIL только из-за fixture assertion: read-only opkg
+print-architecture при отказе retry был посчитан как изменение зависимостей.
+Теперь сравниваются mutating package calls; все176 повторены на каждом interpreter.
+Исходные FAIL logs/inputs сохранены. State function fixtures явно source shared
+library, все library paths отображены в owned root; настоящий /opt не используется.
+Network/ndm/opkg/proc-sys — модели; выполняются настоящие owned shell/rename/signal/
+native helper и существующий host inspector. Reused helper/inspector hashes равны
+F330–F331; Rust/core/native inputs/artifacts/recipes неизменны.37 recipes,
+docs/bindings/diff PASS; новая Qeli/FFI/release/cross сборка и router runtime не заявлены.
+
+Пакет F340–F341: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-install-rollback-20261006.
+Evidence: release/certification/evidence/q31-keenetic-install-rollback-20261006.json.
+Ordinary executable-bundle failure recovery — scoped PASS. Power-loss transaction,
+старые scripts/admin,core/config generation/ABA/last-check,firmware/full ABI и
+cross-build qualification OPEN. Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 сохранены;
+real router USER_EXCLUDED. Q31 IN_PROGRESS;28/37(75.7%),9 осталось;
+целый checklist-пункт не закрыт.

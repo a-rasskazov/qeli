@@ -32,6 +32,7 @@ export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 qeli_lock_acquire || exit 1
 trap 'qeli_lock_release' 0
 trap 'exit 1' HUP INT TERM
+qeli_install_ready || exit 1
 
 [ -f "$STATE" ] || exit 0                 # OpkgTun-режим в S99qeli выключен — выходим тихо
 IF="$(cat "$STATE" 2>/dev/null)"          # имя kernel-tun (напр. opkgtun0)

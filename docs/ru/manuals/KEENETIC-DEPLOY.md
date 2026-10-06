@@ -375,3 +375,26 @@ Hook проверяет смену плана/marker перед L3/save и пе�
 откатываются. Публикация ядром не участвует в lock: это не атомарный протокол
 поколений. Firmware ordering и ABA старого поколения не квалифицированы.
 Directory publication targets отвергаются installer до работы с зависимостями.
+
+Installer сохраняет backup прежних binary/init/helper в тех же каталогах и
+recovery record0600 /opt/etc/qeli/install-pending на время публикации кода.
+Обычная ошибка публикации и обработанный сигнал завершения возвращают прежние
+bytes/modes либо удаляют новый код, которого раньше не было. Если restore не
+удался, оставшиеся backup и marker сохраняются. Retry installer, start обоих
+обновлённых init и обновлённый активный wan.d hook отказываются работать; stop
+доступен. Содержимое существующего INI сохраняется. Уже опубликованная болванка
+и ужесточённый mode600 конфига могут остаться после поздней ошибки; изменения
+пакетов/зависимостей не откатываются.
+
+Если install-pending остался, не запускай клиент: проверь record и оставшиеся
+backup. Перед восстановлением убедись, что init/hook/installer не владеют lifecycle
+action, затем восстанови согласованный комплект binary/init/helper. Пустое поле
+backup означает, что файла раньше не было; отсутствующий именованный backup мог
+уже быть восстановлен и не разрешает слепо удалять текущий файл. После проверки
+восстановления удали install-pending и, если SIGKILL оставил lock, только пустой
+lifecycle lock directory. PID/plan/forwarding recovery records не удаляй. Старые
+установленные скрипты могут не соблюдать marker: остановка/проверка обязательны.
+Автоматическое recovery после SIGKILL/power loss и fsync-backed transaction всего
+bundle не заявляются. Symlink/nonregular targets и linked /opt/etc/qeli отвергаются
+до package updates. Root/admin replacement путей во время установки остаётся вне
+этого cooperative protocol.

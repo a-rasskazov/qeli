@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v13 -->
+<!-- normative-sync: q31-openwrt-controls-v14 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -839,3 +839,61 @@ Q30 exclusions/drainOPEN,D06 retained. Q31 IN_PROGRESS;28/37(75.7%),9 remain;
 no whole checklist row is closed.
 Policy references: [rustup pins](https://rust-lang.github.io/rustup/concepts/toolchains.html),
 [Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
+
+## F340: failed code publication left a mixed installer generation
+
+The old installer replaced helper/binary/init independently. A failed final init
+rename or TERM after binary publication left new executable/helper with old init.
+The new installer prepares same-directory old-file backups, preserves bytes/modes
+and writes a0600 recovery record before publication. Rollback intent precedes
+each rename; a failed same-directory rename retaining its source is treated as
+unpublished. Ordinary failure/handled termination restores changed code in reverse
+order; targets originally absent are removed. Failed restore retains remaining
+backups and install-pending rather than silently retiring recovery evidence.
+
+One shared qeli_install_ready guards retry, both updated init starts and active
+wan.d callbacks. Stop is still allowed. The lock is released after handled
+rollback. A stale pending record, including a dangling symlink, refuses admission.
+Older scripts need manual stop/review and do not automatically honor the guard;
+an old init restored during a partially failed rollback cannot be called protected.
+Whole-bundle crash atomicity is not claimed: SIGKILL/power loss needs owner review
+and manual recovery; no fsync or automatic stale deletion is added. Existing INI
+contents remain; tightened config600 or a newly published example may remain after
+a late failure. opkg/package changes and external root/admin replacement are
+outside code rollback. Missing named backups may have been consumed by a successful
+partial restore; inspect the complete set, do not blindly delete targets/markers.
+
+## F341: linked/special targets bypassed regular-file installation assumptions
+
+The former directory check admitted symlinks/FIFO. In particular, chmod600 of
+client.conf followed a symlink and changed another file; chmod700 of a linked
+config directory changed the outside directory. Current installed code/config
+targets must be regular or absent, never symlink; /opt/etc/qeli must not be linked.
+Rejection occurs before package updates. This does not close root/admin path races.
+
+176 tests PASS per BusyBox ash/dash:47 owned native process,44 state,14 installer,
+17 hook,19 verifier,16 gateway owner,8 lifecycle and11 new install rollback/admission
+methods. New cases cover every code rename, old/absent/new code, restore/copy/marker
+failures, TERM after a real owned rename, regular/dangling linked targets,FIFO,
+linked config directory and both init/hook pending guards. Five old/current
+scenarios produce10 records per shell: init rename, TERM, config symlink, directory
+symlink and failed restore. Old mixed code/outside chmod/no recovery marker are
+reproduced; new restore/refusal/retained recovery assertions PASS.
+
+Initial11-method suites fail only on a fixture assertion counting read-only opkg
+print-architecture as a dependency mutation during refused retry. The assertion
+now compares mutating package calls, with full176 rerun per interpreter; original
+FAIL logs/inputs retained. State function fixtures explicitly source the shared
+library and all library paths map into their owned root. No fixture relies on a
+real /opt. Network/ndm/opkg/proc-sys remain models; actual owned shell/rename/signal/
+native helper and existing host inspector execute. Reused helper/inspector hashes
+match F330–F331; Rust/core/native inputs/artifacts/recipes unchanged.37 recipes,
+docs/bindings/diff PASS; no new Qeli/FFI/release/cross build or real router runtime.
+
+Packet F340–F341: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-install-rollback-20261006.
+Evidence: release/certification/evidence/q31-keenetic-install-rollback-20261006.json.
+Ordinary executable-bundle failure recovery is scoped PASS. Power-loss transaction,
+older scripts/admin, core/config generation/ABA/last-check, firmware/full ABI and
+cross-build qualification remain OPEN. Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,
+D06 retained; real router USER_EXCLUDED. Q31 IN_PROGRESS;28/37(75.7%),9 remain;
+no whole checklist row is closed.

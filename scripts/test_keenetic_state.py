@@ -64,7 +64,7 @@ p.write_text(json.dumps(rules))
         text,dispatch=text.rsplit('case "$1" in',1)
         self.dispatch='case "$1" in'+dispatch
         # Tests exercise legacy functions for both templates; never operate ndm.
-        self.body=text+'\nOPKGTUN=""; TUN=vpn0; GATEWAY_OWNER=legacy\n'
+        self.body=text+'\n. '+shlex.quote(str(self.opt/'etc/qeli/lifecycle.sh'))+'\nOPKGTUN=""; TUN=vpn0; GATEWAY_OWNER=legacy\n'
 
     def execute(self,expression,**env):
         script=self.root/'state-case.sh'

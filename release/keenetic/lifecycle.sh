@@ -18,3 +18,13 @@ qeli_lock_release() {
   }
   QELI_LOCK_HELD=0
 }
+
+# A failed installer may leave a mixed code bundle. Stop remains available;
+# admission is only for start/wan.d/install, and older scripts do not cooperate.
+QELI_INSTALL_PENDING=/opt/etc/qeli/install-pending
+qeli_install_ready() {
+  [ ! -e "$QELI_INSTALL_PENDING" ] && [ ! -L "$QELI_INSTALL_PENDING" ] || {
+    echo "qeli-client: installation pending; review recovery state ($QELI_INSTALL_PENDING)" >&2
+    return 1
+  }
+}

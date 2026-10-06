@@ -364,3 +364,25 @@ An observed change retains pending for retry; already completed ndm commands are
 not rolled back. Core publication is outside this lock, so this is not an atomic
 generation protocol. Real firmware ordering and stale-generation ABA remain
 unqualified. Directory publication targets fail installation before dependencies.
+
+Installation now keeps same-directory backups of the previous binary/init/helper
+and a0600 /opt/etc/qeli/install-pending recovery record while publishing code.
+Ordinary publication failures and a handled termination signal restore old bytes
+and modes (or remove new code that was originally absent). A failed restore keeps
+remaining backups and the marker. Installer retry, both updated init starts and
+the updated active wan.d hook refuse it; stop remains available. Existing INI
+contents are preserved. A newly published example and stricter600 config mode
+may remain after a late error; package/dependency changes are not rolled back.
+
+If install-pending remains, keep the client stopped and inspect the record and
+remaining backups before any start or retry. Verify no init/hook/installer owns
+the lifecycle action before repairing the complete compatible binary/init/helper
+set. Empty backup fields mean the target was originally absent; a missing named
+backup may already have been restored and does not authorize blind file deletion.
+After verifying recovery, remove install-pending and, if SIGKILL left it, only the
+empty lifecycle lock directory. Do not delete PID/plan/forwarding recovery records.
+Older installed scripts may not honor this marker: manual stop/review remains
+mandatory. No automatic SIGKILL/power-loss recovery or fsync-backed bundle
+transaction is claimed. Symlink/nonregular publication targets and a linked
+/opt/etc/qeli directory are rejected before package updates. Root/admin path
+replacement during installation remains outside this cooperative protocol.

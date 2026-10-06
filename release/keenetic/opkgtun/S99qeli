@@ -332,6 +332,7 @@ stop_process() {
 }
 
 start() {
+  qeli_install_ready || return 1
   if [ -e "$PIDFILE" ]; then
     read_pid || { echo "qeli-client: invalid/old PID record; start refused"; return 1; }
     owned_process_status; process_status=$?
