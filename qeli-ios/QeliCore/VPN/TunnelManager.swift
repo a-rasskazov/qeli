@@ -9,10 +9,13 @@ import NetworkExtension
 final class PreferenceMutationGate {
     private var held = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    var queuedOperationCount: Int { waiters.count }
 
-    func withLock<T>(_ operation: @MainActor () async throws -> T) async rethrows -> T {
+    func withLock<T>(_ operation: @MainActor () async throws -> T) async throws -> T {
+        try Task.checkCancellation()
         await acquire()
         defer { release() }
+        try Task.checkCancellation()
         return try await operation()
     }
 
@@ -81,8 +84,7 @@ final class TunnelManager: NSObject, ObservableObject {
 
     func prepare() async throws {
         if let manager {
-            systemStatus = manager.connection.status
-            consume(status: systemStatus)
+            consume(status: manager.connection.status)
             return
         }
         let task: Task<NETunnelProviderManager, Error>
@@ -103,8 +105,7 @@ final class TunnelManager: NSObject, ObservableObject {
             if manager == nil { manager = loaded }
             prepareTask = nil
             if let manager {
-                systemStatus = manager.connection.status
-                consume(status: systemStatus)
+                consume(status: manager.connection.status)
             }
         } catch {
             prepareTask = nil
@@ -181,18 +182,27 @@ final class TunnelManager: NSObject, ObservableObject {
     /// Persists the profile UUID used by future On-Demand/provider launches without
     /// starting or replacing the currently running tunnel. Managed app policy uses
     /// this so a background start cannot fall back to a previously selected profile.
-    func applyProfileConfiguration(profile: Profile, settings: AppSettings) async throws {
+    func applyProfileConfiguration(
+        profile: Profile,
+        settings: @MainActor () -> AppSettings
+    ) async throws {
         invalidatePendingOnDemandUpdates()
+        let generation = operationGeneration
         let config = try VPNConfig(parsing: profile.configText)
         try await prepare()
+        try ensureCurrent(generation)
         guard let manager else { throw TunnelManagerError.managerUnavailable }
         try await preferenceMutationGate.withLock {
-            Self.configure(manager, profile: profile, config: config, settings: settings)
+            try ensureCurrent(generation)
+            // Read settings at admission, after prepare/queue suspension. A newer UI edit
+            // may already have persisted while this managed profile update was waiting.
+            Self.configure(manager, profile: profile, config: config, settings: settings())
             try await Self.save(manager)
+            try ensureCurrent(generation)
             try await Self.load(manager)
+            try ensureCurrent(generation)
         }
-        systemStatus = manager.connection.status
-        consume(status: systemStatus)
+        consume(status: manager.connection.status)
     }
 
     /// Stops and disables a previously installed Qeli configuration when an
@@ -202,7 +212,9 @@ final class TunnelManager: NSObject, ObservableObject {
         snapshotResponseGate.invalidate()
         operationGeneration &+= 1
         invalidatePendingOnDemandUpdates()
+        let generation = operationGeneration
         try await prepare()
+        try ensureCurrent(generation)
         guard let manager else { throw TunnelManagerError.managerUnavailable }
 
         let qeliProtocol = manager.protocolConfiguration as? NETunnelProviderProtocol
@@ -211,7 +223,8 @@ final class TunnelManager: NSObject, ObservableObject {
             // its provider identifier changed. Preserve the original fail-closed contract:
             // stop the selected manager and remove automatic restart rules, but do not
             // disable or overwrite another provider's protocol configuration.
-            await preferenceMutationGate.withLock {
+            try await preferenceMutationGate.withLock {
+                try ensureCurrent(generation)
                 manager.connection.stopVPNTunnel()
                 manager.onDemandRules = []
                 manager.isOnDemandEnabled = false
@@ -225,15 +238,17 @@ final class TunnelManager: NSObject, ObservableObject {
         }
 
         try await preferenceMutationGate.withLock {
+            try ensureCurrent(generation)
             manager.connection.stopVPNTunnel()
             manager.onDemandRules = []
             manager.isOnDemandEnabled = false
             manager.isEnabled = false
             try await Self.save(manager)
+            try ensureCurrent(generation)
             try await Self.load(manager)
+            try ensureCurrent(generation)
         }
-        systemStatus = manager.connection.status
-        consume(status: systemStatus)
+        consume(status: manager.connection.status)
     }
 
     /// Reserves an ordering revision before the caller creates an asynchronous Task.
@@ -265,8 +280,7 @@ final class TunnelManager: NSObject, ObservableObject {
             // action (notably manual stop); the queued latest revision will replace it.
             try ensureCurrentOnDemandRevision(revision)
         }
-        systemStatus = manager.connection.status
-        consume(status: systemStatus)
+        consume(status: manager.connection.status)
     }
 
     func reloadProviderSettings() async throws {
@@ -421,10 +435,12 @@ final class TunnelManager: NSObject, ObservableObject {
     }
 
     private func ensureCurrent(_ generation: UInt64) throws {
+        try Task.checkCancellation()
         guard operationGeneration == generation else { throw CancellationError() }
     }
 
     private func ensureCurrentOnDemandRevision(_ revision: UInt64) throws {
+        try Task.checkCancellation()
         guard onDemandPreferenceRevision == revision else { throw CancellationError() }
     }
 

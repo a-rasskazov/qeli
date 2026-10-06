@@ -133,3 +133,9 @@ Stop terminal, fence provider effects by current engine and serialize OS operati
 across engines with callback-owned leases and a shared15s settings budget.13 new
 helper XCTest NOT_RUN; real OS callback drain, memory, native joins and Apple build
 remain unqualified. Never treat cancellation as an OS operation's completion.
+
+[Q30 application preference fixes](../docs/eng/reports/AUDIT-Q30-IOS-APP-PREFERENCES.md)
+remove five status/epoch bypasses and serialize full managed reconciliation. Profile
+settings are read at admission; connection generations and Task cancellation fence
+obsolete preference steps. Three gate XCTest NOT_RUN; Apple runtime excluded.
+Q30 remains IN_PROGRESS; provider-message/backup UI and final source review remain.

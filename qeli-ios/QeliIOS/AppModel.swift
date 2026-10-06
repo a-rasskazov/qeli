@@ -51,6 +51,7 @@ final class AppModel: ObservableObject {
     private var startupSigningInvalid = false
     private var profileStoreLoadRejected = false
     private var activeProbeCount = 0
+    private let managedPolicyGate = PreferenceMutationGate()
     private static let maximumConcurrentProbes = 4
 
     init(
@@ -434,6 +435,7 @@ final class AppModel: ObservableObject {
                 tunnelManager.disconnect()
                 return
             } catch is CancellationError {
+                if Task.isCancelled { return }
                 // A concurrent settings edit also captured connectionDesired=false. Retry
                 // its latest policy instead of restoring true and diverging from the rules
                 // that newer task is about to persist. An explicit Connect flips the bit and
@@ -681,6 +683,19 @@ final class AppModel: ObservableObject {
     }
 
     func refreshManagedConfiguration(forceVPNPolicy: Bool = false) async {
+        do {
+            try await managedPolicyGate.withLock {
+                // Load MDM inside the serialized transaction. Loading before the wait
+                // would allow an older captured policy to overwrite a newer refresh.
+                await reconcileManagedConfiguration(forceVPNPolicy: forceVPNPolicy)
+            }
+        } catch is CancellationError {
+        } catch {
+            present(error, title: "Managed VPN policy")
+        }
+    }
+
+    private func reconcileManagedConfiguration(forceVPNPolicy: Bool) async {
         let previous = managedConfiguration
         let previousEffectiveOnDemand = effectiveOnDemandEnabled
         let current = ManagedConfigurationReader().load()
@@ -724,7 +739,7 @@ final class AppModel: ObservableObject {
                 }
                 try await tunnelManager.applyProfileConfiguration(
                     profile: profile,
-                    settings: effectiveSettings
+                    settings: { self.effectiveSettings }
                 )
             } else {
                 let onDemandRevision = tunnelManager.reserveOnDemandUpdate()

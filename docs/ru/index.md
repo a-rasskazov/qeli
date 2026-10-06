@@ -454,3 +454,5 @@
 - [Q30: iOS Keychain / TOFU](reports/AUDIT-Q30-IOS-KEYCHAIN.md)
 
 - [Q30: iOS lifecycle / provider ownership](reports/AUDIT-Q30-IOS-LIFECYCLE.md)
+
+- [Q30: iOS app / managed preferences](reports/AUDIT-Q30-IOS-APP-PREFERENCES.md)
