@@ -60,6 +60,14 @@ SSH; ошибки подготовки/скачивания возвращают
 атомарно заменяют прежний файл. Свежий snapshot, reproducibility и настоящий router
 runtime этим не квалифицированы; см. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
+Maintainer --sync заменяет управляемые src/.cargo, manifests и lockfile, включая
+удалённые модули и текущий Cargo config, сохраняя target cache. Ошибка upload/close
+оставляет .router-sync-incomplete в удалённом source root. Сборка с --sync или без
+него запрещена, пока успешный --sync не восстановит входы. Замена не атомарна и не
+имеет lock; без --sync старый checkout без marker используется по-прежнему.
+Полные provenance и воспроизводимость этим не подтверждены.
+
+
 ---
 
 ## Шаг 2. Получить креды клиента от сервера (на сервере qeli)

@@ -20,11 +20,12 @@ client-only (`--no-default-features --features client-bin`) → без `ring` (�
     $env:QELI_LAB_PASS="..."; python scripts/build_keenetic.py
 """
 import argparse
-import os, sys, posixpath
+import os, sys
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(__file__))
 from native_lab import LabConnection, remote_sha256, pull_verified_artifact
+from router_source import sync_router_source, require_router_source_ready
 from lab_common import connect, LAB_SRV
 
 REMOTE_ROOT = "/opt/qeli-src"
@@ -88,41 +89,12 @@ def restore_router_manifest(c):
 
 
 def sync_tree(c):
-    """SFTP всего qeli/src + Cargo.toml/lock в /opt/qeli-src (как lab_sync_build).
-    Сначала стираем remote src/bin (точка входа теперь src/client_main.rs, иначе
-    cargo авто-обнаружит stale-бинарь). Возвращает число залитых файлов."""
-    checked(c, "rm -rf /opt/qeli-src/src/bin", timeout=30)
-    sf = c.open_sftp()
-    try:
-        made = set()
-        def ensure(d):
-            if d in made or d in ("", "/"):
-                return
-            ensure(posixpath.dirname(d))
-            try: sf.stat(d)
-            except IOError:
-                try: sf.mkdir(d)
-                except IOError:
-                    sf.stat(d)
-            made.add(d)
-        files = []
-        for dp, _dn, fn in os.walk(os.path.join(LOCAL_SRC, "src")):
-            for f in fn:
-                files.append(os.path.join(dp, f))
-        for extra in ("Cargo.toml", "Cargo.lock"):
-            p = os.path.join(LOCAL_SRC, extra)
-            if not os.path.isfile(p):
-                raise RuntimeError(f"missing router build input: {p}")
-            files.append(p)
-        n = 0
-        for lp in files:
-            rel = os.path.relpath(lp, LOCAL_SRC).replace("\\", "/")
-            rp = posixpath.join(REMOTE_ROOT, rel)
-            ensure(posixpath.dirname(rp))
-            sf.put(lp, rp); n += 1
-        return n
-    finally:
-        sf.close()
+    """Replace managed sources/assets/manifests/config; keep marker on failure."""
+    return sync_router_source(c, LOCAL_SRC, REMOTE_ROOT)
+
+
+def check_sync_ready(c):
+    require_router_source_ready(c, REMOTE_ROOT)
 
 
 def ensure_toolchain(c, targets):
@@ -206,7 +178,8 @@ def main():
         # Recover an interrupted previous manifest before --sync overwrites it.
         restore_router_manifest(c)
         if do_sync:
-            print("synced", sync_tree(c), "files")
+            print("synced", sync_tree(c), "source files")
+        check_sync_ready(c)
         ensure_toolchain(c, targets)
         restrict_router_crate_types(c)
         restricted = True

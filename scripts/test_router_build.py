@@ -28,7 +28,7 @@ class RouterBuildTests(unittest.TestCase):
     def invoke_main(self, module, argv, **overrides):
         client = Mock()
         changes = dict(connect=Mock(return_value=client), restore_router_manifest=Mock(),
-            sync_tree=Mock(return_value=1), ensure_toolchain=Mock(),
+            sync_tree=Mock(return_value=1), check_sync_ready=Mock(), ensure_toolchain=Mock(),
             restrict_router_crate_types=Mock(), build=Mock(return_value=0))
         if module is KEEN:
             changes['pull'] = Mock()
@@ -97,7 +97,7 @@ class RouterBuildTests(unittest.TestCase):
 
     def test_setup_and_sync_failure_always_close_connection(self):
         for module in MODULES:
-            for failed in ('restore_router_manifest', 'sync_tree', 'ensure_toolchain'):
+            for failed in ('restore_router_manifest', 'sync_tree', 'check_sync_ready', 'ensure_toolchain'):
                 client = Mock()
                 with self.subTest(module=module.__name__, failed=failed):
                     with self.assertRaisesRegex(RuntimeError, 'fixture failure'):
@@ -162,24 +162,23 @@ class RouterBuildTests(unittest.TestCase):
                     if mode == 'empty': client.open_sftp.assert_not_called()
                     else: sf.close.assert_called_once()
 
-    def test_sync_command_or_sftp_failure_propagates_and_closes_open_handle(self):
+    def test_both_helpers_delegate_sync_and_ready_check_to_shared_owner(self):
         for module in MODULES:
-            client = Mock(); sf = Mock(); client.open_sftp.return_value = sf
-            sf.put.side_effect = IOError('put failed')
-            with patch.object(module, 'run', return_value=(17, 'cleanup failed')):
-                with self.assertRaises(RuntimeError): module.sync_tree(client)
-            client.open_sftp.assert_not_called()
-            with patch.object(module, 'run', return_value=(0, '')):
-                with self.assertRaisesRegex(IOError, 'put failed'): module.sync_tree(client)
-            sf.close.assert_called_once()
+            client = Mock()
+            with patch.object(module, 'sync_router_source', return_value=9) as sync, patch.object(module, 'require_router_source_ready') as ready:
+                self.assertEqual(module.sync_tree(client), 9)
+                module.check_sync_ready(client)
+            sync.assert_called_once_with(client, module.LOCAL_SRC, module.REMOTE_ROOT)
+            ready.assert_called_once_with(client, module.REMOTE_ROOT)
 
-    def test_sync_mkdir_denied_is_not_silently_accepted(self):
+    def test_incomplete_cached_source_stops_before_setup_or_build_and_closes(self):
         for module in MODULES:
-            client = Mock(); sf = Mock(); client.open_sftp.return_value = sf
-            sf.stat.side_effect = IOError('stat denied'); sf.mkdir.side_effect = IOError('mkdir denied')
-            with patch.object(module, 'run', return_value=(0, '')):
-                with self.assertRaisesRegex(IOError, 'stat denied'): module.sync_tree(client)
-            sf.put.assert_not_called(); sf.close.assert_called_once()
+            client = Mock(); setup = Mock(); build = Mock()
+            with self.assertRaisesRegex(RuntimeError, 'incomplete'):
+                self.invoke_main(module, ['aarch64'], connect=Mock(return_value=client),
+                    check_sync_ready=Mock(side_effect=RuntimeError('incomplete')),
+                    ensure_toolchain=setup, build=build)
+            setup.assert_not_called(); build.assert_not_called(); client.close.assert_called_once()
 
     def test_build_uses_locked_client_graph_for_each_target(self):
         for module in MODULES:

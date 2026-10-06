@@ -87,6 +87,12 @@ class OpenWrtInitTests(unittest.TestCase):
         p = self.root / 'calls'
         return p.read_text().splitlines() if p.exists() else []
 
+    def test_incomplete_defaults_block_start_before_live_sync_mutation(self):
+        (self.root / 'run/firewall-install-pending').touch(mode=0o600)
+        result = self.run_shell('sync_firewall_device')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+
     def test_render_password_reference_permissions_and_router_dns(self):
         result = self.run_shell('render_conf', gateway='1', kill_switch='1', dns='tunnel',
             dns_servers='1.1.1.1 2606:4700:4700::1111', mtu='1280')

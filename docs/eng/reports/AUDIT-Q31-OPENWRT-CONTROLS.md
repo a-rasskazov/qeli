@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v2 -->
+<!-- normative-sync: q31-openwrt-controls-v3 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -171,3 +171,65 @@ source review, secret/lifecycle races and real available cross-build qualificati
 remain OPEN. The next installation pass must exercise interrupted creation and
 reload errors; the one-shot defaults have not been qualified by the live-sync tests.
 Q31 remains IN_PROGRESS, overall28/37(75.7%),9 remain.
+
+
+## F314: interrupted firewall defaults could report success
+
+The first-install defaults ignored individual UCI and reload errors, then exited0.
+If only the qeli zone name had been created, a later run saw that name and skipped
+repair. Baseline fixtures reproduce exit0 after commit/reload/input failures;
+commit failure leaves no persisted zone, reload is not retried, and an input failure
+leaves an incomplete zone. These are shell/UCI-model reproductions, not libuci/fw4.
+
+Defaults now check load, each mutation, commit and live-service reload. They create
+named package-owned zone/forwarding sections and a0600 pending marker in a0700 tmpfs
+runtime directory before mutation. Retry completes only those owned sections and
+replaces the device list without duplicates. Existing administrator zones remain
+unchanged; reserved-name collision, foreign pending ownership, multiple qeli zones
+and invalid devices fail before mutation. Image preparation without a firewall
+service remains supported. While firewall-install-pending exists, init refuses live
+sync/start and tells the administrator to rerun /etc/uci-defaults/99-qeli-firewall.
+
+This is recoverable installation, not automatic rollback or an interprocess
+transaction. Root CLI staged deltas, concurrent changes, process death and reboot
+are not qualified by the model. The temporary marker does not persist across boot;
+normal failed mutations remain visible and must be corrected/retried. Nine new
+installation cases plus12 init cases PASS in both BusyBox ash and dash on lab .11.
+All test paths/services are redirected into temporary fixture directories; no live
+/etc configuration, firewall or service is changed.
+
+## F315: --sync retained deleted sources and omitted Cargo config
+
+Both router helpers only removed src/bin and uploaded the remaining files additively.
+A deleted module survived and the old .cargo/config.toml continued to influence the
+build. Both baseline helper fixtures reproduce these stale inputs. A shared
+router_source wrapper now delegates to the existing native_lab sync owner: replace
+src and .cargo, upload current config/assets/sources/Cargo.toml/Cargo.lock, preserve
+target cache. Mandatory local inputs are checked before remote mutation.
+
+A0600 .router-sync-incomplete marker is written before replacement and removed only
+after all uploads and SFTP close succeed. Both helpers check it before toolchain/
+build admission, including a later invocation without --sync. Transfer/open/close/
+remote-command failures retain it; successful --sync repairs the managed inputs.
+Seven real-shell/filesystem adapter tests PASS in isolated Linux temporary roots,
+14 router helper fault tests and12 unchanged shared native-lab tests PASS. Repeated
+sync removes stale inputs and preserves target cache; missing local files cause no
+remote commands. Baseline proof uses a bounded adapter for its historical hardcoded
+cleanup, never the live /opt checkout.
+
+This replacement is not atomic and has no cross-process lock. Without --sync, an
+existing unmarked checkout is still intentionally reused. No claim is made for
+concurrent users, mutable local snapshots, complete provenance, reproducibility,
+ELF/ABI or a fresh real cross-build. Cargo config scope is the current single
+.cargo/config.toml. A failed initial baseline attempt due to absent Paramiko in the
+Linux fixture is retained; source-only imports were corrected with a connection-
+forbidden lab stub before the successful reproduction, without installing packages.
+
+Current packet F314–F315: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-install-source-sync-20261006.
+Evidence: release/certification/evidence/q31-install-source-sync-20261006.json.
+37 native recipe checks,10 Node caller/adapter cases and docs/bindings/diff checks
+also PASS. Real libuci/fw4/procd/ucode/rpcd/package install and cross-build NOT_RUN;
+router runtime USER_EXCLUDED. Earlier seals and runtime statuses/artifacts/dates/
+acceptance_basis are retained. Full upgrade/rollback, cross-process lifecycle/secret
+races, broader source review and actual build qualification remain OPEN.
+Q31 IN_PROGRESS, overall28/37(75.7%),9 remain.

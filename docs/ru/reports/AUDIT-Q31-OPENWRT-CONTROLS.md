@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v2 -->
+<!-- normative-sync: q31-openwrt-controls-v3 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -171,3 +171,61 @@ review, гонки секретов/службы и настоящие дост�
 Следующая проверка установки должна разобрать прерванное создание и ошибки reload;
 одноразовый defaults ещё не квалифицирован тестами live sync. Q31 IN_PROGRESS,
 всего28/37(75.7%),осталось9.
+
+
+## F314: прерванные firewall defaults выдавали успешную установку
+
+Скрипт первой установки игнорировал ошибки отдельных UCI-команд и reload, затем
+выходил с0. Если успело появиться лишь имя зоны qeli, следующий запуск видел его и
+пропускал восстановление. Baseline fixtures воспроизводят exit0 после ошибок
+commit/reload/input: зона не сохраняется при отказе commit, reload не повторяется,
+ошибка input оставляет неполную зону. Это shell/UCI model, не настоящие libuci/fw4.
+
+Теперь проверяются load, каждая мутация, commit и reload работающей службы. Перед
+изменением создаётся0600 pending marker в0700 tmpfs-каталоге; зона и forwarding
+имеют фиксированные package-owned имена. Повтор завершает только собственные
+секции, заменяя device list без дубликатов. Существующая зона администратора
+сохраняется; collision зарезервированного имени, чужое pending ownership, несколько
+зон qeli и неправильный device останавливают мутации. Подготовка образа без службы
+firewall допустима. Пока существует firewall-install-pending, init запрещает live
+sync/start и указывает повторить /etc/uci-defaults/99-qeli-firewall.
+
+Это восстановление установки, не автоматический rollback или interprocess
+transaction. Root CLI staged deltas, конкуренция, process death и reboot моделью не
+квалифицированы. Tmpfs marker не переживает boot; частичные изменения требуют
+устранить причину ошибки и повторить defaults. Девять новых installation cases и12
+init cases PASS отдельно в BusyBox ash и dash на .11. Пути и службы перенаправлены
+в temporary fixtures; настоящие /etc/firewall/службы не менялись.
+
+## F315: --sync оставлял удалённые исходники и старый Cargo config
+
+Оба helper удаляли только src/bin, остальные файлы загружались поверх старых.
+Удалённый локально модуль оставался на сервере, .cargo/config.toml не обновлялся.
+Оба baseline helper воспроизводят эти stale inputs. Общий router_source вызывает
+существующий native_lab sync: заменить src/.cargo, загрузить текущие config/assets/
+исходники/Cargo.toml/Cargo.lock, сохранить target cache. Обязательные локальные
+входы проверяются до первого изменения удалённого checkout.
+
+0600 .router-sync-incomplete появляется до замены и удаляется только после всех
+uploads и успешного SFTP close. Оба helper проверяют его до toolchain/build, включая
+следующий запуск без --sync. Ошибки open/transfer/close/remote command сохраняют
+marker; успешный --sync восстанавливает управляемые входы. Семь real-shell/filesystem
+adapter tests PASS в Linux temporary roots,14 router helper fault tests и12
+неизменённых shared native-lab tests PASS. Повтор удаляет stale inputs, сохраняет
+кэш; отсутствие локальных файлов не вызывает remote commands. Старый hardcoded
+cleanup воспроизводится ограниченным адаптером, без изменений настоящего /opt.
+
+Замена не атомарна и не имеет cross-process lock. Без --sync старый checkout без
+marker по-прежнему используется намеренно. Конкурирующие процессы, изменяемый
+локальный snapshot, полная provenance, воспроизводимость, ELF/ABI и свежая настоящая
+cross-build не подтверждены. Текущий Cargo config scope: один .cargo/config.toml.
+Первый baseline attempt с отсутствующим Paramiko в Linux fixture сохранён как FAIL;
+source-only импорт исправлен lab stub с запретом соединения, пакеты не устанавливались.
+
+Пакет F314–F315: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-install-source-sync-20261006.
+Evidence: release/certification/evidence/q31-install-source-sync-20261006.json.
+Также PASS37 native recipe checks,10 Node caller/adapter cases, docs/bindings/diff.
+Настоящие libuci/fw4/procd/ucode/rpcd/package install и cross-build NOT_RUN; router
+runtime USER_EXCLUDED. Старые seals/runtime statuses/artifacts/dates/acceptance_basis
+сохранены. Полные upgrade/rollback, lifecycle/secret races между процессами, широкий
+review и настоящая build qualification OPEN. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.

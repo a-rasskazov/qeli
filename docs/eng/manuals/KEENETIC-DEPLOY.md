@@ -62,6 +62,14 @@ setup/transfer errors return failure. Downloaded bytes are SHA256-checked and
 atomically replace the previous file. This does not qualify a fresh source snapshot,
 reproducibility or real router runtime; see [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
+The maintainer --sync now replaces managed src/.cargo, manifests and lockfile,
+including deleted modules and current Cargo config, and preserves target cache.
+An incomplete upload/close keeps .router-sync-incomplete in the remote source
+root. Builds with or without --sync reject that marker; rerun --sync successfully
+to repair. Replacement is not atomic or locked, and unmarked cached source is
+still reused without --sync. Full provenance and reproducibility remain unqualified.
+
+
 ---
 
 ## Step 2. Get the client credentials from the server (on the qeli server)

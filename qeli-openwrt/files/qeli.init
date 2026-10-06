@@ -280,6 +280,10 @@ render_conf() {
 # stops reaching the internet through it. Re-checked on every start, and only written when
 # it actually differs (a no-op start must not commit UCI or bounce the firewall). (C-25)
 sync_firewall_device() {
+	[ ! -f "$RUNDIR/firewall-install-pending" ] || {
+		logger -t qeli "ERROR: incomplete firewall installation; rerun /etc/uci-defaults/99-qeli-firewall"
+		return 1
+	}
 	local dev zone cur cur_masq6 changed pending
 	dev="$(uci -q get qeli.main.dev || echo qeli0)"
 

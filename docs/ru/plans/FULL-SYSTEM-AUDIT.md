@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v98 -->
+<!-- normative-sync: full-system-audit-v99 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1987,6 +1987,9 @@ UCI → INI escaping/shell injection, LuCI ACL, secrets на flash, init/procd, 
 **6 октября, F307–F310:** [пакет control/render/firewall](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md):7 Node и10 shell fixtures в каждом BusyBox/dash PASS;37 проверок рецептов PASS после сверки устаревшего Android assertion. Применённое UCI-намерение, очередь кнопок, атомарный0600 INI, проверяемый повтор firewall. Только scoped fixtures; полный review/install/upgrade/build открыт; реальный router runtime USER_EXCLUDED. Всего28/37(75.7%) без изменений.
 
 **Продолжение F311–F313, 6 октября:** тот же [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md),14 router-helper fault tests,10 JS caller/adapter fixtures и11 shell fixtures на interpreter PASS. Ошибки toolchain, ложный artifact PASS и утечки соединений исправлены; init-visible статус обходит кэш формы. Настоящие ucode/rpcd/rc.common и cross-build NOT_RUN; установка/upgrade/полный review OPEN. Статус целого раздела не повышен.
+
+
+**Продолжение F314–F315, 6 октября:** [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): восстанавливаемые собственные install defaults и start guard; общий managed-source sync с запретом сборки после обрыва. Baseline ignored failures/stale inputs воспроизведены.21 shell test на BusyBox/dash,7 filesystem source-sync tests,14 router-helper,12 shared lab,37 native recipes и10 JS fixtures PASS. Настоящие libuci/fw4/procd/package/cross-build NOT_RUN,router USER_EXCLUDED; полные upgrade/concurrency/provenance/review OPEN. Q31 IN_PROGRESS,28/37 без изменений.
 
 ### 32. Метрики, usage, логи и уведомления
 

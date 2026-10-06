@@ -193,3 +193,20 @@ Maintainer cross-build helpers reject target typos and setup/transfer failures;
 --sync is needed to upload this checkout. SHA256-verified atomic artifact transfer
 does not qualify source freshness, ABI or real router runtime. Current adapter
 fixtures do not execute an ucode interpreter/rpcd.
+
+
+The first-install firewall defaults use named package-owned sections. An existing
+qeli zone is preserved. Failed UCI creation/commit or live firewall reload returns
+failure and keeps /var/run/qeli/firewall-install-pending. Qeli start is blocked
+while it exists: fix the reported error, rerun
+`sh /etc/uci-defaults/99-qeli-firewall` successfully, then start qeli. Do not remove
+the marker as a substitute for repair. Retry completes those sections without
+duplicating devices/forwarding; this does not roll back partial UCI changes.
+The marker is tmpfs state, not a persistent reboot recovery guarantee.
+
+Maintainer --sync replaces the managed src/.cargo inputs and uploads Cargo.toml/
+Cargo.lock while preserving target cache. An interrupted upload/close leaves
+.router-sync-incomplete in the remote source root. Every later helper build,
+including one without --sync, refuses that checkout until a successful --sync.
+The replacement is not atomic or locked; without --sync an unmarked remote
+checkout is reused. This does not establish complete build provenance.
