@@ -306,3 +306,8 @@ KILL escalation нет. Status codes:0 running,3 stopped,4 unverified. Врем�
 executable, не authentication/connectivity. Shell/proc checks не дают atomic pidfd
 identity и сериализации всех операций. Linux native-helper tests проверяют порядок
 wrapper; настоящий router integration исключён. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+
+## Запись о применении плана OpkgTun
+
+Хук пишет `/opt/var/run/qeli.opkgtun.applied` (0600) только после всех успешных команд ndm и save. Изменение плана, включая один MTU, или отсутствие записи требует повторной настройки. Совпадения connected/адресов недостаточно для пропуска. Ошибка публикации/удаления сохраняет `.apply-pending`; устранить причину и повторить. Успешный stop удаляет обе записи после завершения клиента. Запись подтверждает команды, не является блокировкой или чтением всех настроек: параллельные события, внешние изменения и настоящая прошивка не квалифицированы. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).

@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v7 -->
+<!-- normative-sync: q31-openwrt-controls-v8 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -503,3 +503,56 @@ INI/core semantic parity, OpkgTun idempotence/generation/concurrency, packaging 
 broader source/build ABI/provenance remain OPEN. Earlier runtime statuses/artifacts/
 dates/acceptance_basis and Q29/Q30/D06 observations are retained. Router USER_EXCLUDED;
 Q31 IN_PROGRESS, overall28/37(75.7%),9 remain.
+
+## F326: optimistic OpkgTun no-op skipped changed MTU and incomplete application
+
+Connected status and address substring/regex matches did not establish a complete
+application. Original-source comparisons skip a changed MTU, accept IPv4 .20 for
+.2 or regex lookalikes and IPv6 ::20 for ::2, and silently return with no current
+plan. Matching addresses could also precede successful global/MSS/security/save.
+
+The hook now requires a private qeli.opkgtun.applied receipt containing the exact
+interface and complete captured plan. It publishes a0600 sibling by rename only
+after all mutations and save succeed. Missing/changed receipts force application;
+MTU-only changes reapply, and the next matching event is a no-op. Connected status
+and literal address tokens are checked, including show exit status. Empty plans
+cannot qualify no-op. Receipt publication or pending removal failure retains the
+retry marker and cannot log success. Stop removes the receipt after client exit.
+
+The receipt records successful commands; it is not a generation token, concurrency
+lock or readback of every ndm setting. External MTU/MSS/security changes, obsolete
+handlers after stop, address-family removal, equivalent IPv6 spelling and real
+firmware output/event behavior remain unqualified. No firmware syntax is invented
+to delete addresses or prove every applied setting. Existing snapshot consistency
+remains; applying a snapshot does not prove it is the latest concurrent plan.
+
+## F327: exit between proc stat and executable lookup was rejected as changed identity
+
+A matching live stat can become a zombie before readlink(exe). Its proc directory
+still exists while exe disappears. Old code returned unverified rather than exited,
+retaining state after successful termination. A deterministic direct-child helper
+keeps that zombie until the Python owner reaps it and reproduces failure in both
+init templates. A separate unreadable-live-exe case must continue to reject signals.
+
+On failed exe lookup, both templates reread stat and require the same start ticks
+before accepting Z/X as exited. A live, unreadable, replaced or unverified process
+still rejects ownership; disappearance retains the existing exited behavior. This
+does not close the general check-to-signal race or provide pidfd protection.
+
+Final120 cases per BusyBox ash/dash PASS:43 existing native-process cases plus four
+new race/live-exe checks,44 state models,12 installer and17 hook cases. Eight hook
+cases are new. Seven focused original/current hook methods reproduce eight old
+assertion failures including subtests; fixed methods PASS. Deterministic old race
+fails twice, fixed race and unreadable-live tests PASS on both shells. Initial dash
+suite FAIL is retained; its exact cause was not instrumented. The initial orphan
+race diagnostic did not reproduce because PID1 reaped it; direct-child qualification
+is separately recorded. Native recipes37/docs/bindings/diff PASS. Commands/files
+and network callbacks remain models; only owned Linux helper processes are real.
+Helper bytes are unchanged from F324/F325; no Qeli/router binary rebuilt. Router
+runtime USER_EXCLUDED, cross-build NOT_RUN.
+
+Packet F326–F327: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-opkgtun-receipt-20261006.
+Evidence: release/certification/evidence/q31-keenetic-opkgtun-receipt-20261006.json.
+INI/core parity, OpkgTun generations/concurrency and broader package/build/source
+review remain OPEN. Q29 FAIL/ENONET, Q30 skips/drain OPEN and D06 retained.
+Q31 IN_PROGRESS; overall28/37(75.7%),9 remain.

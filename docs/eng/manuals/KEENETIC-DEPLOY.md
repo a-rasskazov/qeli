@@ -296,3 +296,8 @@ A successful start confirms a live executable, not authentication or connectivit
 Shell/proc checks do not provide atomic pidfd identity or serialize all operations.
 Linux native-helper tests qualify the wrapper's order; actual router integration
 is excluded. See [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+
+## OpkgTun plan application receipt
+
+The hook writes `/opt/var/run/qeli.opkgtun.applied` (0600) only after all ndm commands and save succeed. A changed plan, including MTU alone, or missing receipt forces reapplication. Connected/address matches alone cannot skip it. Publication/removal errors preserve `.apply-pending`; correct the cause and retry. Successful stop clears both records after client exit. This is a command receipt, not a lock or full readback: concurrent events, external setting changes and real firmware remain unqualified. See [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).

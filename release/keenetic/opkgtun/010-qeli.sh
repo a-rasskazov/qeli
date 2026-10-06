@@ -21,7 +21,8 @@
 
 STATE=/opt/var/run/qeli.opkgtun          # маркер: S99qeli пишет сюда имя tun в OpkgTun-режиме
 TUNIP=/opt/var/run/qeli.tunip            # qeli пишет сюда выданный сервером IP (attach-режим)
-PENDING="$STATE.apply-pending"           # failed apply must bypass address-only no-op
+PENDING="$STATE.apply-pending"           # incomplete apply must always retry
+APPLIED="$STATE.applied"                 # complete IF + NetworkPlan after checked save
 LOG=/opt/var/log/qeli-client.log
 export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -48,12 +49,22 @@ read_plan() {
 }
 read_plan
 
-# Уже поднят, подключён и с нужным адресом? Тихо выходим — работы нет (идемпотентность +
-# защита от петли событий ndm: наш `... up`/`ip route` ниже сами генерят события wan.d).
-CUR="$(ndmc -c "show interface $NDM_IF" 2>/dev/null)"
-if [ ! -e "$PENDING" ] && echo "$CUR" | grep -q "connected: yes" \
-   && { [ -z "$WANT_IP" ] || echo "$CUR" | grep -q "address: $WANT_IP"; } \
-   && { [ -z "$WANT_IP6" ] || echo "$CUR" | grep -q "$WANT_IP6"; }; then
+# Only our last complete, saved application can qualify a no-op. Addresses alone
+# cannot prove that MTU/MSS/global/security/save completed, or that the plan is new.
+# Compare literal address tokens, never regexes or substrings (10.8.0.2 != .20).
+address_present() {
+  printf '%s\n' "$CUR" | awk -v want="$1" '
+    { for (i=1; i<=NF; i++) { split($i, token, "/"); if (token[1]==want) found=1 } }
+    END { exit !found }'
+}
+EXPECTED="$(printf '%s\n%s\n' "$IF" "$PLAN")"
+CUR="$(ndmc -c "show interface $NDM_IF" 2>/dev/null)"; SHOW_RC=$?
+if [ "$SHOW_RC" -eq 0 ] && [ ! -e "$PENDING" ] \
+   && { [ -n "$WANT_IP" ] || [ -n "$WANT_IP6" ]; } \
+   && [ "$(cat "$APPLIED" 2>/dev/null)" = "$EXPECTED" ] \
+   && printf '%s\n' "$CUR" | awk '$1=="connected:" && $2=="yes" && NF==2 {found=1} END {exit !found}' \
+   && { [ -z "$WANT_IP" ] || address_present "$WANT_IP"; } \
+   && { [ -z "$WANT_IP6" ] || address_present "$WANT_IP6"; }; then
   exit 0
 fi
 
@@ -112,5 +123,14 @@ ndm_apply "interface $NDM_IF ip tcp adjust-mss pmtu" || exit 1
 ndm_apply "interface $NDM_IF security-level public" || exit 1
 ndm_apply "interface $NDM_IF up" || exit 1
 ndm_apply "system configuration save" || exit 1
+# The private sibling is published only after every mutation and save succeeded.
+# A publication/removal failure retains PENDING so matching addresses cannot hide it.
+APPLIED_TMP="$(umask 077; mktemp "$APPLIED.XXXXXX")" || exit 1
+if [ -d "$APPLIED" ] || ! chmod 600 "$APPLIED_TMP" \
+   || ! printf '%s\n%s\n' "$IF" "$PLAN" > "$APPLIED_TMP" \
+   || ! mv -f "$APPLIED_TMP" "$APPLIED"; then
+  rm -f "$APPLIED_TMP"
+  exit 1
+fi
 rm -f "$PENDING" || exit 1
 echo "wan.d/010-qeli: $NDM_IF up (IPv4=${IP:-none}, IPv6=${IP6:-none}, mtu $MTU) — L3 держит ndm" >> "$LOG"

@@ -86,7 +86,10 @@ kill() { [ "$QELI_FAIL" != signal ] || return 17; command kill "$@"; }
         self.pidfile.write_text(record);self.assertEqual(self.service('stop').returncode,0)
     def test_real_exit_precedes_cleanup_with_plan_retained(self):
         pid=self.start(QELI_HELPER_DELAY_MS='100')
+        receipt=self.marker.with_name(self.marker.name+'.applied')
+        if 'opkgtun' in self.TEMPLATE:receipt.write_text('fixture receipt')
         self.assertEqual(self.service('stop').returncode,0);self.assert_joined(pid)
+        self.assertFalse(receipt.exists())
         self.assertFalse(self.pidfile.exists());self.assertFalse(self.plan.exists());self.assertFalse(self.marker.exists())
     def test_term_timeout_and_restart_retain_state(self):
         pid=self.start(QELI_HELPER_MODE='ignore');before=self.pidfile.read_text();plan=self.plan.read_text()
@@ -95,6 +98,41 @@ kill() { [ "$QELI_FAIL" != signal ] || return 17; command kill "$@"; }
             self.assertEqual(self.pidfile.read_text(),before);self.assertEqual(self.plan.read_text(),plan)
             self.assertEqual(self.helper_pids(),{pid});self.assertNotIn('CLEANUP',self.event_lines())
         if 'opkgtun' in self.TEMPLATE:self.assertTrue(self.marker.exists())
+    def test_exit_between_stat_and_exe_is_joined_without_false_identity_failure(self):
+        child=subprocess.Popen([str(self.native)],env=dict(self.env,QELI_TUNIP_FILE=str(self.plan)),
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        self.children.append(child);pid=child.pid
+        until=time.monotonic()+3
+        while pid not in self.helper_pids() and time.monotonic()<until:time.sleep(.01)
+        self.assertIn(pid,self.helper_pids())
+        self.pidfile.write_text(str(pid)+' '+start_ticks(pid))
+        real=shlex.quote(shutil.which('readlink'))
+        self.write_command('readlink',r'''
+if [ "$1" = "/proc/$QELI_OWNED_PID/exe" ] && [ ! -e "$QELI_FIXTURE_ROOT/race-fired" ]; then
+  touch "$QELI_FIXTURE_ROOT/race-fired"
+  # This PID is the helper just launched by this test, with a unique executable.
+  kill -TERM "$QELI_OWNED_PID" || exit 18
+  i=0
+  while '''+real+r''' "/proc/$QELI_OWNED_PID/exe" >/dev/null 2>&1 && [ "$i" -lt 100 ]; do
+    sleep .01; i=$((i+1))
+  done
+fi
+exec '''+real+' "$@"')
+        result=self.service('stop',QELI_OWNED_PID=str(pid))
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assert_joined(pid);self.assertTrue((self.root/'race-fired').exists())
+
+    def test_unreadable_live_exe_retains_state_and_refuses_signals(self):
+        pid=self.start();real=shlex.quote(shutil.which('readlink'))
+        self.write_command('readlink',r'''
+case "$1" in /proc/*/exe) exit 17 ;; esac
+exec '''+real+' "$@"')
+        self.assertNotEqual(self.service('stop').returncode,0)
+        self.assertTrue(running(pid));self.assertTrue(self.pidfile.exists())
+        self.assertNotIn('TERM '+str(pid)+' ', '\n'.join(self.event_lines()))
+        self.write_command('readlink','exec '+real+' "$@"')
+        self.assertEqual(self.service('stop').returncode,0)
+
     def test_signal_error_retains_state_until_retry(self):
         pid=self.start();self.assertNotEqual(self.service('stop',QELI_FAIL='signal').returncode,0)
         self.assertTrue(running(pid));self.assertTrue(self.pidfile.exists());self.assertTrue(self.plan.exists())

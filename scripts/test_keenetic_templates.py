@@ -253,9 +253,79 @@ exec '''+real+' "$@"')
         self.assertNotIn('OpkgTun0 up (',self.hook_log())
 
     def test_connected_matching_addresses_do_not_repeat_mutations(self):
-        self.hook_setup()
+        folder=self.hook_setup()
+        self.assertEqual(self.run_script(self.hook).returncode,0)
+        self.assertEqual((folder/'qeli.opkgtun.applied').stat().st_mode&0o777,0o600)
+        (self.root/'ndmc-calls').unlink()
         self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes').returncode,0)
         self.assertEqual(self.calls('ndmc-calls'),['show interface OpkgTun0'])
+
+    def saved_hook(self):
+        folder=self.hook_setup()
+        self.assertEqual(self.run_script(self.hook).returncode,0)
+        (self.root/'ndmc-calls').unlink()
+        (self.opt/'var/log/qeli-client.log').unlink()
+        return folder
+
+    def test_matching_addresses_without_complete_receipt_still_apply(self):
+        self.hook_setup()
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes').returncode,0)
+        self.assertEqual(self.calls('ndmc-calls')[-1],'system configuration save')
+
+    def test_mtu_only_plan_change_reapplies_and_next_event_is_noop(self):
+        folder=self.saved_hook();plan=folder/'qeli.tunip'
+        plan.write_text(plan.read_text().replace('mtu=1400','mtu=1280'))
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes').returncode,0)
+        self.assertIn('interface OpkgTun0 ip mtu 1280',self.calls('ndmc-calls'))
+        (self.root/'ndmc-calls').unlink()
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes').returncode,0)
+        self.assertEqual(self.calls('ndmc-calls'),['show interface OpkgTun0'])
+
+    def test_missing_plan_with_connected_interface_defers_and_logs_wait(self):
+        folder=self.saved_hook();(folder/'qeli.tunip').unlink()
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes').returncode,0)
+        self.assertNotIn('system configuration save',self.calls('ndmc-calls'))
+        self.assertIn('нет IP',self.hook_log())
+
+    def test_ipv4_substring_or_regex_lookalike_cannot_qualify_noop(self):
+        self.saved_hook()
+        for address in ('10.8.0.20','10x8x0x2'):
+            with self.subTest(address=address):
+                (self.root/'ndmc-calls').unlink(missing_ok=True)
+                self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes',QELI_CUR4=address).returncode,0)
+                self.assertEqual(self.calls('ndmc-calls')[-1],'system configuration save')
+
+    def test_ipv6_substring_cannot_qualify_noop(self):
+        self.saved_hook()
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes',QELI_CUR6='fd00::20').returncode,0)
+        self.assertEqual(self.calls('ndmc-calls')[-1],'system configuration save')
+
+    def test_failed_show_cannot_qualify_cached_noop(self):
+        self.saved_hook()
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes',QELI_SHOW_FAIL='1').returncode,0)
+        self.assertIn('interface OpkgTun0',self.calls('ndmc-calls'))
+        self.assertNotIn('system configuration save',self.calls('ndmc-calls'))
+
+    def test_receipt_directory_is_not_mistaken_for_successful_publication(self):
+        folder=self.hook_setup();(folder/'qeli.opkgtun.applied').mkdir()
+        self.assertNotEqual(self.run_script(self.hook).returncode,0)
+        self.assertTrue((folder/'qeli.opkgtun.apply-pending').exists())
+        self.assertFalse(list(folder.glob('qeli.opkgtun.applied.*')))
+        self.assertNotIn('OpkgTun0 up (',self.hook_log())
+
+    def test_receipt_publication_failure_retains_pending_and_retries(self):
+        folder=self.hook_setup();real=shlex.quote(shutil.which('mv'))
+        self.write_command('mv',r'''
+case "$QELI_FAIL:$*" in receipt-move:*.applied) exit 17 ;; esac
+exec '''+real+' "$@"')
+        self.assertNotEqual(self.run_script(self.hook,QELI_FAIL='receipt-move').returncode,0)
+        self.assertTrue((folder/'qeli.opkgtun.apply-pending').exists())
+        self.assertFalse((folder/'qeli.opkgtun.applied').exists())
+        self.assertFalse(list(folder.glob('qeli.opkgtun.applied.*')))
+        self.assertNotIn('OpkgTun0 up (',self.hook_log())
+        self.assertEqual(self.run_script(self.hook,QELI_CONNECTED='yes').returncode,0)
+        self.assertFalse((folder/'qeli.opkgtun.apply-pending').exists())
+        self.assertTrue((folder/'qeli.opkgtun.applied').exists())
 
     def rotate_plan_after_first_read(self):
         target=str(self.opt/'var/run/qeli.tunip')

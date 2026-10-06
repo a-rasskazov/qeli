@@ -271,7 +271,11 @@ owned_process_status() {
   [ "$seen_start" = "$PROC_START" ] || return 2
   case "$PROC_STATE" in Z|X) return 1 ;; esac
   exe="$(readlink "/proc/$PROC_PID/exe" 2>/dev/null)" || {
-    [ ! -d "/proc/$PROC_PID" ] && return 1; return 2;
+    [ ! -d "/proc/$PROC_PID" ] && return 1
+    # A live stat can become a zombie before exe lookup; reread identity/state.
+    read_proc_stat || { [ ! -d "/proc/$PROC_PID" ] && return 1; return 2; }
+    [ "$seen_start" = "$PROC_START" ] || return 2
+    case "$PROC_STATE" in Z|X) return 1 ;; *) return 2 ;; esac
   }
   expected_exe="$(readlink -f "$BIN")" || return 2
   case "$exe" in "$expected_exe"|"$expected_exe (deleted)") return 0 ;; *) return 2 ;; esac
