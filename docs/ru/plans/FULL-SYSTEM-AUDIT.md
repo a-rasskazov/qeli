@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v101 -->
+<!-- normative-sync: full-system-audit-v102 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1994,6 +1994,8 @@ UCI → INI escaping/shell injection, LuCI ACL, secrets на flash, init/procd, 
 **Продолжение F316–F319, 6 октября:** [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): проверяемое удаление секретов, повтор legacy scrub, UCI/duplicate-zone admission, callback status через стандартные hooks rc.common. Baseline/изолированный pre-hooks dispatcher false success воспроизведён.37 shell/saved-dispatcher cases на BusyBox/dash,11 JS fixtures/37 recipes/docs/bindings PASS. Saved rc.common с подставными lib/UCI/procd; настоящий daemon/ubus/opkg/flock lifecycle не квалифицирован. Q31 IN_PROGRESS,28/37 без изменений; полный upgrade/concurrency/build review OPEN.
 
 **Продолжение F320–F321, 6 октября:** [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): canonical Keenetic bundle names, checked required dependencies, подготовка per-file publication и сохранение INI; checked ndm mutations, strict OpkgTun suffix и единый snapshot плана.20 shell cases на BusyBox/dash,37 recipes/docs/bindings PASS; old names/dependency/false-up/mixed-plan воспроизведены. Настоящие opkg/ndm/ELF/cross-build NOT_RUN,router USER_EXCLUDED. Template process/legacy state/idempotence/concurrency и широкий review OPEN; Q31 IN_PROGRESS,28/37 без изменений.
+
+**Продолжение F322–F323, 6 октября:** [отчёт Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): проверяемые атомарные forwarding snapshots, checkpoints семейств/интерфейсов, tagged legacy firewall ownership и failure/retry gates в обоих шаблонах Keenetic.64 shell model tests на BusyBox/dash (44 новых),37 recipes/docs/bindings PASS. Воспроизведены старый плохой снимок, забытое восстановление, удаление совпадающих admin rules, скрытые firewall failures, смена режима и restart gating. Старые нетегированные checkpoints требуют ручной сверки; настоящие router/kernel/comment capability/cross-build NOT_RUN,router USER_EXCLUDED. PID/join/launch/INI parity/OpkgTun concurrency/широкий review OPEN; Q31 IN_PROGRESS,28/37 без изменений.
 
 ### 32. Метрики, usage, логи и уведомления
 

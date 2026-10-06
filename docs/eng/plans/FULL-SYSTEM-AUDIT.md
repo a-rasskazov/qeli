@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v101 -->
+<!-- normative-sync: full-system-audit-v102 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1983,6 +1983,8 @@ UCI → INI escaping/shell injection, LuCI ACLs, flash secrets, init/procd and u
 **F316–F319 continuation, 6 October:** [Q31 report](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): checked secret deletion, retryable legacy scrub, failed UCI/duplicate-zone admission, callback status through standard rc.common hooks. Baseline/isolated pre-hooks dispatcher false success reproduced.37 shell/saved-dispatcher cases per BusyBox/dash,11 JS fixtures/37 recipes/docs/bindings PASS. Saved rc.common uses fake lib/UCI/procd; real daemon/ubus/opkg/flock lifecycle unqualified. Q31 IN_PROGRESS,28/37 unchanged; full upgrade/concurrency/build review OPEN.
 
 **F320–F321 continuation, 6 October:** [Q31 report](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): Keenetic canonical bundle names, checked required dependencies, prepared per-file publication and preserved INI; checked ndm mutations, strict OpkgTun suffix and single plan snapshot.20 shell cases per BusyBox/dash,37 recipes/docs/bindings PASS; old name/dependency/false-up/mixed-plan behavior reproduced. Actual opkg/ndm/ELF/cross-build NOT_RUN,router USER_EXCLUDED. Template process/legacy state/idempotence/concurrency and broader review OPEN; Q31 IN_PROGRESS,28/37 unchanged.
+
+**F322–F323 continuation, 6 October:** [Q31 report](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): checked atomic forwarding snapshots, touched-family/interface checkpoints, tagged legacy firewall ownership and failure/retry gates in both Keenetic templates.64 shell model tests per BusyBox/dash (44 new),37 recipes/docs/bindings PASS. Original bad snapshot, forgotten restoration, lost matching admin rules, hidden firewall failures, mode-change and restart gating reproduced. Old untagged checkpoints require manual review; actual router/kernel/comment capability/cross-build NOT_RUN and router USER_EXCLUDED. PID/join/launch/INI parity/OpkgTun concurrency/broader review OPEN; Q31 IN_PROGRESS,28/37 unchanged.
 
 ### 32. Metrics, usage, logs and notifications
 

@@ -261,3 +261,19 @@ install -m755 qeli-client-<arch> /opt/bin/qeli-client
 rm -f /opt/etc/init.d/S99qeli /opt/bin/qeli-client
 rm -rf /opt/etc/qeli /opt/var/log/qeli-client.log
 ```
+
+## Legacy gateway recovery during template upgrades
+
+Development0.8.2 templates use tagged qeli-keenetic-legacy firewall rules and a
+version2 forwarding checkpoint with saved interfaces and touched families. Failed
+cleanup retains the checkpoint and blocks start/restart. Correct the cause and
+retry; recovery uses the saved interfaces even after template mode changes. The
+legacy path requires the iptables comment extension. Actual router compatibility
+is unqualified; the audit used isolated command/file models.
+
+Before replacing an active legacy template, stop it with its previous script and
+inspect the old rules and forwarding values. An old checkpoint without version2
+requires manual ownership review and recovery; the new script preserves it and
+refuses automatic cleanup. Keep its original values until recovery is verified.
+Do not delete it to bypass the failure. Matching untagged administrator rules are
+not automatically removed. See [Q31 evidence and remaining limits](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).

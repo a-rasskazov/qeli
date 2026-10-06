@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v5 -->
+<!-- normative-sync: q31-openwrt-controls-v6 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -361,3 +361,69 @@ implementation, OpenWrt adapters and build helpers are unchanged. Real opkg/ndm 
 cross-build NOT_RUN; routers USER_EXCLUDED. Previous sealed evidence and runtime
 statuses/artifacts/dates/acceptance_basis are retained; Q29/Q30/D06 observations
 unchanged. Q31 IN_PROGRESS, overall28/37(75.7%),9 remain.
+
+## F322: forwarding snapshots and failed restoration lost recovery state
+
+Both Keenetic init templates wrote an unchecked snapshot directly to the final
+file. A failed sysctl read could become an empty saved value; the original snapshot
+function still returned success. Upstream route-query errors were also hidden by a
+pipeline. Restoration ignored write errors and removed the checkpoint even when
+recovery was incomplete. Isolated original/current comparisons reproduce these
+cases; the failed read comparison calls the snapshot function, because the old
+nat_up subsequently failed at its write after already creating the bad snapshot.
+
+Both templates now check reads, allowed sysctl values and WAN query status, then
+publish a0600 sibling checkpoint by rename. Only negotiated families are read/probed: an IPv4-only plan does not require IPv6
+sysctl/WAN querying, and an IPv6-only plan does not require IPv4 sysctl/iptables. The version2 checkpoint records original values, TUN/LAN names and
+families and RA journalled before mutation. Apply rejects a checkpoint for different rule
+interfaces. Restoration validates saved fields, touches only journalled families
+and checks reads/writes. A failed restore retains the checkpoint for retry; only
+successful restoration removes it. Values changed away from the wrapper's1/2 are
+preserved, but same-value administrator changes cannot be distinguished. This is
+not a cross-process lock, fsync/power-loss transaction or ownership of kernel sysctls.
+
+## F323: legacy rule cleanup could delete administrator rules and hide failures
+
+Old rules had no owner tag: nat_up reused an administrator's matching rule, and
+nat_down deleted it. Cleanup ignored firewall errors and could then discard the
+saved state. Switching GATEWAY/OPKGTUN skipped recovery entirely. Original-source
+models reproduce lost matching admin rules, false completion after failed delete/
+check, retained stale state after mode change and restart reaching start after
+incomplete legacy-state recovery.
+
+New rules use comment qeli-keenetic-legacy. Checked add/delete helpers distinguish
+model check status1 (absent) from higher errors; add/delete errors propagate. Only
+tagged rules for journalled families and saved interfaces are cleaned. Recovery
+runs from the checkpoint even after GATEWAY/OPKGTUN/TUN/LAN changes; without a
+checkpoint no rules are deleted. Partial cleanup keeps retry state. Start rejects
+failed stale recovery before clearing the plan or launching, and stop/restart
+propagate cleanup failure. New legacy mode needs the iptables comment capability;
+actual Entware/kernel behavior, including error-code differences, is NOT_RUN.
+
+Versionless/unknown old checkpoints reject automatic cleanup and remain intact for
+manual review. Before replacing an active legacy template, stop it with its old
+script and inspect its rules/sysctls; if a checkpoint remains, keep its saved values
+and identify old rule ownership before manual recovery. Do not discard that state
+as an automatic migration. New code intentionally does not guess ownership of old
+untagged firewall rules. No such migration was performed on a real router.
+
+Twenty-two isolated state cases per template (44 new) cover capture/publication,
+WAN failure, family/interface admission, journal failures, exact matching admin
+rules, duplicate apply, check/add/delete/missing-command failures and retry,
+restoration read/write failure, corrupt/old checkpoints, mode changes and start/
+stop/actual dispatcher restart gating. Together with the20 prior installer/hook
+cases,64 tests per BusyBox ash/dash PASS. Shared forwarding/firewall helper blocks are kept
+identical by the scoped source review. Files replace proc/sys, all firewall/ip
+commands are models and every potential signal is intercepted. No actual client
+process, kernel forwarding, firewall or router service was operated. One initial
+fixture TUN expectation FAIL and one reproduction-scope assertion FAIL are retained
+and explained; final comparisons use corrected identical isolation for both sources.
+Native recipes37/docs/bindings/diff PASS.
+
+Packet F322–F323: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-forwarding-state-20261006.
+Evidence: release/certification/evidence/q31-keenetic-forwarding-state-20261006.json.
+Actual router/iptables/comment module/sysctl runtime and cross-build NOT_RUN;
+router USER_EXCLUDED. PID identity, TERM/join ordering, instant launch failure,
+INI/core semantic parity, OpkgTun idempotence/concurrency and broader build/source
+review remain OPEN. Earlier runtime statuses/artifacts/dates/acceptance_basis and
+Q29/Q30/D06 observations are retained. Q31 IN_PROGRESS, overall28/37(75.7%),9 remain.

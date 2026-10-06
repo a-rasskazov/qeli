@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v5 -->
+<!-- normative-sync: q31-openwrt-controls-v6 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -354,4 +354,72 @@ Evidence: release/certification/evidence/q31-keenetic-install-hook-20261006.json
 opkg/ndmc. Также PASS37 native recipes/docs/bindings/diff; native implementation,
 OpenWrt adapters и build helpers неизменны. Настоящие opkg/ndm/cross-build NOT_RUN;
 routers USER_EXCLUDED. Предыдущие seals/runtime statuses/artifacts/dates/acceptance_basis
+и Q29/Q30/D06 observations сохранены. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.
+
+## F322: снимок forwarding и ошибка восстановления теряли состояние для повтора
+
+Оба init-шаблона Keenetic записывали непроверенный снимок прямо в конечный файл.
+Ошибка чтения sysctl могла превратиться в пустое сохранённое значение, а функция
+сохранения всё равно возвращала успех. Ошибка запроса WAN-маршрута скрывалась
+pipeline. Восстановление игнорировало ошибки записи и удаляло checkpoint даже при
+незавершённой очистке. Сравнение старого и исправленного кода воспроизводит эти
+случаи на моделях. Проверка ошибки чтения вызывает функцию сохранения отдельно:
+старый nat_up впоследствии падал на записи, уже успев создать некорректный снимок.
+
+Теперь оба шаблона проверяют чтение, допустимые значения sysctl и результат запроса
+WAN, затем публикуют checkpoint0600 переименованием соседнего временного файла.
+Читаются только согласованные семейства: IPv4-only plan не требует IPv6 sysctl/WAN
+query, IPv6-only plan не требует IPv4 sysctl/iptables. Checkpoint version2 хранит исходные
+значения, имена TUN/LAN и семейства и RA, отмеченные до изменения. Применение отклоняет
+состояние для других интерфейсов. Восстановление проверяет сохранённые поля, меняет
+только отмеченные семейства и проверяет чтение/запись. После ошибки checkpoint
+остаётся для повтора; удаляется только после успешного восстановления. Значения,
+изменённые с установленных шаблоном1/2 на другие, сохраняются; изменения администратором
+на те же значения отличить невозможно. Это не межпроцессная блокировка, fsync/
+power-loss transaction или владение глобальными kernel sysctl.
+
+## F323: legacy-очистка удаляла правила администратора и скрывала отказы
+
+Старые правила не имели тега владельца: nat_up использовал совпадающее правило
+администратора, а nat_down удалял его. Ошибки firewall игнорировались, после чего
+сохранённое состояние могло удалиться. Смена GATEWAY/OPKGTUN полностью пропускала
+восстановление. Original-source модели воспроизводят удаление совпадающих admin
+rules, ложное завершение после ошибки delete/check, оставшийся checkpoint после
+смены режима и переход restart к start после незавершённого восстановления.
+
+Новые правила получают comment qeli-keenetic-legacy. Проверяемые add/delete helpers
+отличают модельный check status1 (правило отсутствует) от более высоких кодов ошибки;
+ошибки add/delete возвращаются вызывающему. Удаляются только правила с тегом для
+отмеченных семейств и сохранённых интерфейсов. Checkpoint определяет необходимость
+восстановления даже после смены GATEWAY/OPKGTUN/TUN/LAN; без него правила не удаляются.
+После частичной очистки состояние сохраняется для повтора. Start отклоняет неудачное
+восстановление до очистки плана и запуска; stop/restart передают отказ очистки.
+Новому legacy-режиму требуется iptables comment capability; настоящие Entware/kernel
+и особенности кодов ошибки NOT_RUN.
+
+Versionless/unknown старый checkpoint блокирует автоматическую очистку и сохраняется
+для ручной сверки. Перед заменой работающего legacy-шаблона остановить его старым
+скриптом и проверить правила/sysctl. Если checkpoint остался, сохранить исходные
+значения и установить владельца старых правил перед ручным восстановлением.
+Не удалять состояние как автоматическую миграцию: новый код намеренно не угадывает
+владельца старых нетегированных правил. На реальном роутере такая миграция не проводилась.
+
+По22 изолированных state cases на каждый шаблон (44 новых): capture/publication,
+WAN failure, family/interface admission, journal failures, точное совпадение admin
+rules, повторное применение, check/add/delete/missing-command failures и retry,
+ошибки чтения/записи восстановления, corrupt/old checkpoints, смена режима и gating
+start/stop/restart через настоящий dispatcher шаблона. Вместе с20 предыдущими cases
+установщика/хука64 теста на BusyBox ash/dash PASS. Общие блоки функций обоих шаблонов
+сверены на идентичность. Proc/sys заменены файлами, firewall/ip — модели, все возможные
+сигналы перехвачены. Настоящие процесс клиента, kernel forwarding/firewall и служба
+роутера не запускались. Начальные fixture TUN expectation FAIL и reproduction-scope
+assertion FAIL сохранены с объяснениями; финальное сравнение использует одинаковую
+исправленную изоляцию для обоих исходников. Native recipes37/docs/bindings/diff PASS.
+
+Пакет F322–F323: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-forwarding-state-20261006.
+Evidence: release/certification/evidence/q31-keenetic-forwarding-state-20261006.json.
+Настоящие router/iptables/comment module/sysctl runtime и cross-build NOT_RUN;
+router USER_EXCLUDED. PID identity, TERM/join ordering, мгновенный отказ запуска,
+INI/core semantic parity, OpkgTun idempotence/concurrency и широкий build/source
+review остаются OPEN. Предыдущие runtime statuses/artifacts/dates/acceptance_basis
 и Q29/Q30/D06 observations сохранены. Q31 IN_PROGRESS,28/37(75.7%),9 осталось.
