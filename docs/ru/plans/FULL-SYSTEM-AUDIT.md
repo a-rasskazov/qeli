@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v96 -->
+<!-- normative-sync: full-system-audit-v97 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1982,7 +1982,9 @@ UCI → INI escaping/shell injection, LuCI ACL, secrets на flash, init/procd, 
 - [ ] Интеграция и целевая платформа.
 - [ ] Исправления, повторная проверка и evidence.
 
-**Статус: TODO.**
+**Статус: IN_PROGRESS.**
+
+**6 октября, F307–F310:** [пакет control/render/firewall](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md):7 Node и10 shell fixtures в каждом BusyBox/dash PASS;37 проверок рецептов PASS после сверки устаревшего Android assertion. Применённое UCI-намерение, очередь кнопок, атомарный0600 INI, проверяемый повтор firewall. Только scoped fixtures; полный review/install/upgrade/build открыт; реальный router runtime USER_EXCLUDED. Всего28/37(75.7%) без изменений.
 
 ### 32. Метрики, usage, логи и уведомления
 

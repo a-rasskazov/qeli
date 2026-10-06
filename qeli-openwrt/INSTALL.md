@@ -170,3 +170,19 @@ Logs: `logread -e qeli`. Raise detail with `uci set qeli.main.log_level='debug';
 sends stderr to syslog, which already stamps each line, so any other value gives
 you two timestamps per line in `logread`. Set `rfc3339` only if you forward these
 logs off the router and need UTC that lines up with the server's.
+
+## Configuration and service failure handling (development0.8.2)
+
+Save & Apply edited fields before using the status controls. Connect/Disconnect
+await UCI commit/confirmation before changing service state; Restart joins the same
+queue in this page. Apply can include other staged UCI packages. A service error
+is reported; it does not undo already committed autostart intent.
+
+The init renderer publishes a complete0600 tmpfs INI by atomic rename. A normal
+render failure keeps the previous file; MTU must be0(auto) or576..16602. A failed
+firewall mutation/commit/reload stops startup and leaves a root-only tmpfs pending
+marker so the next start retries; a successful no-op does not reload firewall.
+Partial UCI changes are not rolled back automatically. After correcting the error,
+restart qeli. This behavior is covered by shell/JavaScript fixtures; the historical
+public0.8.0 hardware result above does not qualify these development changes on a
+real router. See [Q31 audit evidence](../docs/eng/reports/AUDIT-Q31-OPENWRT-CONTROLS.md).

@@ -334,7 +334,8 @@ class NativeRecipeTests(unittest.TestCase):
         )
 
         self.assertIn("as user '${logValue(config.username)}'", android)
-        self.assertIn("activeConfig?.username?.let(::logValue)", android)
+        self.assertIn("val config = activeConfig", android)
+        self.assertIn("val username = logValue(config.username)", android)
         self.assertIn("Auth OK: user='$username'", android)
         self.assertIn("plan.connectionLog.forEach(::broadcastLog)", android)
 

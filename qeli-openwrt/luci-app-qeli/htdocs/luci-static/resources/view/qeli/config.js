@@ -74,6 +74,28 @@ function clearSecret(name) {
 	});
 }
 
+// Save stages session-local UCI changes; apply resolves only after commit/confirmation.
+// Serialize all three controls so an overlapping Disconnect cannot be followed by
+// the remainder of an older Connect. Failure does not poison the next request.
+var serviceControlTail = Promise.resolve();
+
+function controlService(action) {
+	if (action !== 'connect' && action !== 'disconnect' && action !== 'restart')
+		return Promise.reject(new Error(_('Unknown qeli service action.')));
+	function operation() {
+		if (action === 'restart') return svc('restart');
+		var enabled = action === 'connect';
+		uci.set('qeli', 'main', 'enabled', enabled ? '1' : '0');
+		return uci.save()
+			.then(function () { return uci.apply(); })
+			.then(function () { return svc(enabled ? 'enable' : 'stop'); })
+			.then(function () { return svc(enabled ? 'start' : 'disable'); });
+	}
+	var result = serviceControlTail.then(operation);
+	serviceControlTail = result.catch(function () {});
+	return result;
+}
+
 // Autostart intent, as the init script actually reads it. `start_service` refuses to run
 // unless `qeli.main.enabled` is 1, so the rc.d symlink alone decides nothing here — the
 // UCI flag is the real switch, and the status line has to show it or a "stopped" tunnel
@@ -127,11 +149,7 @@ return view.extend({
 					// and the button appeared broken. (C-21)
 					E('button', { class: 'btn cbi-button-positive',
 						click: ui.createHandlerFn(this, function () {
-							uci.set('qeli', 'main', 'enabled', '1');
-							return uci.save()
-								.then(function () { return svc('enable'); })
-								.then(function () { return svc('start'); })
-								.then(L.bind(L.ui.changes.apply, L.ui.changes));
+							return controlService('connect');
 						}) }, _('Connect')),
 					' ',
 					// Disconnect clears the autostart intent as well. `stop` alone left
@@ -139,15 +157,11 @@ return view.extend({
 					// next boot while the UI had shown it as disconnected. (C-21)
 					E('button', { class: 'btn cbi-button-negative',
 						click: ui.createHandlerFn(this, function () {
-							uci.set('qeli', 'main', 'enabled', '0');
-							return uci.save()
-								.then(function () { return svc('stop'); })
-								.then(function () { return svc('disable'); })
-								.then(L.bind(L.ui.changes.apply, L.ui.changes));
+							return controlService('disconnect');
 						}) }, _('Disconnect')),
 					' ',
 					E('button', { class: 'btn',
-						click: ui.createHandlerFn(this, function () { return svc('restart'); }) }, _('Restart')),
+						click: ui.createHandlerFn(this, function () { return controlService('restart'); }) }, _('Restart')),
 				])
 			]);
 			// live status refresh

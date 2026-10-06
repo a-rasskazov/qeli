@@ -106,3 +106,19 @@ whether a volatile secret exists; an empty field leaves the current value unchan
 - Real-device validation has passed. OpenWrt models and releases can still differ in
   interface naming, flash layout and fw4 integration, so verify those platform details
   when deploying to a new router model or firmware line.
+
+## Configuration and service failure handling (development0.8.2)
+
+Save & Apply edited fields before using the status controls. Connect/Disconnect
+await UCI commit/confirmation before changing service state; Restart joins the same
+queue in this page. Apply can include other staged UCI packages. A service error
+is reported; it does not undo already committed autostart intent.
+
+The init renderer publishes a complete0600 tmpfs INI by atomic rename. A normal
+render failure keeps the previous file; MTU must be0(auto) or576..16602. A failed
+firewall mutation/commit/reload stops startup and leaves a root-only tmpfs pending
+marker so the next start retries; a successful no-op does not reload firewall.
+Partial UCI changes are not rolled back automatically. After correcting the error,
+restart qeli. This behavior is covered by shell/JavaScript fixtures; the historical
+public0.8.0 hardware result above does not qualify these development changes on a
+real router. See [Q31 audit evidence](../docs/eng/reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
