@@ -22,6 +22,13 @@ var callQeliServiceAction = rpc.declare({
 	expect: { result: false }
 });
 
+// Fresh init-visible intent without unloading the shared form's staged UCI cache.
+var callQeliServiceStatus = rpc.declare({
+	object: 'luci.qeli',
+	method: 'service_status',
+	expect: { '': {} }
+});
+
 var callQeliSecretStatus = rpc.declare({
 	object: 'luci.qeli',
 	method: 'secret_status',
@@ -101,13 +108,14 @@ function controlService(action) {
 // UCI flag is the real switch, and the status line has to show it or a "stopped" tunnel
 // that will silently come back on the next boot looks identical to one that will not. (C-21)
 function getEnabled() {
-	return uci.load('qeli').then(function () {
-		return uci.get('qeli', 'main', 'enabled') == '1';
-	}).catch(function () { return false; });
+	return callQeliServiceStatus().then(function (status) {
+		return status && typeof status.enabled === 'boolean' ? status.enabled : null;
+	}).catch(function () { return null; });
 }
 
 function statusText(running, enabled) {
 	if (running) return _('● connected / running');
+	if (enabled === null) return _('○ stopped (autostart state unavailable)');
 	return enabled ? _('○ stopped (autostart ON — starts again on boot)') : _('○ stopped');
 }
 

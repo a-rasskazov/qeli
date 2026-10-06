@@ -17,10 +17,11 @@ OBFS_KEY_FILE="$RUNDIR/obfs-key"
 FIREWALL_INIT=/etc/init.d/firewall
 STATEDIR=/etc/qeli              # persistent overlay — device-id + TOFU known_hosts survive reboot
 
-EXTRA_COMMANDS="set_secret clear_secrets"
+EXTRA_COMMANDS="set_secret clear_secrets status_enabled"
 EXTRA_HELP="
 	set_secret <pass|obfs_key>  Read one secret line from stdin into tmpfs
-	clear_secrets [name]        Remove one or all volatile secrets"
+	clear_secrets [name]        Remove one or all volatile secrets
+	status_enabled              Exit 0/1 for init-visible enabled/disabled intent"
 
 # Strip CR/LF (and every other control character) from a UCI value.
 #
@@ -87,6 +88,15 @@ write_runtime_secret_value() {
 		return 1
 	fi
 	logger -t qeli "$name secret installed in volatile tmpfs; restart qeli to apply it"
+}
+
+# Read init-visible UCI outside the LuCI session cache. Exit 0/1 means enabled/disabled;
+# load failure is distinct, so a disconnected UI does not invent autostart intent.
+status_enabled() {
+	local enabled
+	config_load qeli || return 2
+	config_get_bool enabled main enabled 0
+	[ "$enabled" = 1 ]
 }
 
 set_secret() {

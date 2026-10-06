@@ -148,6 +148,12 @@ class OpenWrtInitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls(), [])
 
+    def test_status_reads_current_committed_flag_and_distinguishes_load_error(self):
+        self.assertEqual(self.run_shell('status_enabled', enabled='1').returncode, 0)
+        self.assertEqual(self.run_shell('status_enabled', enabled='0').returncode, 1)
+        self.assertEqual(self.run_shell('status_enabled').returncode, 1)
+        self.assertEqual(self.run_shell('config_load() { return 17; }; status_enabled').returncode, 2)
+
     def test_firewall_noop_does_not_commit_or_reload(self):
         result = self.run_shell('sync_firewall_device')
         self.assertEqual(result.returncode, 0, result.stderr)

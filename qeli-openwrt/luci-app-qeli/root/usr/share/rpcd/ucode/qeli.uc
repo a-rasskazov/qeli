@@ -44,6 +44,13 @@ function writeSecret(name, value) {
 }
 
 const methods = {
+	service_status: {
+		call: function() {
+			const code = system('/etc/init.d/qeli status_enabled >/dev/null 2>&1');
+			return { enabled: code === 0 ? true : (code === 1 ? false : null) };
+		}
+	},
+
 	service_action: {
 		args: { action: '' },
 		call: function(request) {

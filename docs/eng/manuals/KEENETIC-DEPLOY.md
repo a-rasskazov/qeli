@@ -49,12 +49,18 @@ df -h /opt                                                 # space (need ~5-10 M
 ## Step 1. Build the binaries (on the dev/lab, not on the router)
 
 ```sh
-python scripts/build_keenetic.py
-# → release/keenetic/qeli-client-aarch64   (static ARM aarch64)
-# → release/keenetic/qeli-client-mipsel    (static-pie MIPS32r2)
+python scripts/build_keenetic.py --sync
+# → release/keenetic/qeli-client-keenetic-aarch64   (static ARM aarch64)
+# → release/keenetic/qeli-client-keenetic-mipsel    (static-pie MIPS32r2)
 ```
 
-You can build only the needed arch: `python scripts/build_keenetic.py mipsel`.
+You can build only the needed arch: `python scripts/build_keenetic.py --sync mipsel`.
+
+The helper is maintainer-internal; --sync uploads this checkout before building.
+Without it, the existing remote source is used. Target typos fail before SSH;
+setup/transfer errors return failure. Downloaded bytes are SHA256-checked and
+atomically replace the previous file. This does not qualify a fresh source snapshot,
+reproducibility or real router runtime; see [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
 ---
 

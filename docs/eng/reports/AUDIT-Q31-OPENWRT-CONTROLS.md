@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v1 -->
+<!-- normative-sync: q31-openwrt-controls-v2 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -104,3 +104,70 @@ source digest is rebound with this scoped qualification supplement only.
 
 Raw packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-controls-20261006.
 Evidence: release/certification/evidence/q31-openwrt-controls-20261006.json.
+
+## F311: preparation errors and manifest recovery were outside cleanup
+
+Router toolchain commands hid rustup failures behind tail/true; Zig exit status was
+also ignored. Both helpers now check each command and the installed cargo-zigbuild
+0.23.0 inventory. Only selected MIPS builds prepare nightly/rust-src; other selected
+targets do not install an unused nightly. Cargo builds use --locked. Unknown arch,
+extra argument and unknown flag are rejected before SSH rather than building all
+targets after a typo. These fixes do not pin the rolling nightly/stable toolchain
+or qualify reproducibility, ABI or current MIPS target support.
+
+The entire connected lifetime now has a finally-close barrier. An interrupted
+manifest backup is recovered before --sync, preventing a later restore from
+replacing the newly uploaded Cargo.toml with the previous version. A successfully
+restricted manifest is restored after build/transfer, and connection close still
+runs when restoration fails. SFTP sync closes on put/inventory failure, propagates
+cleanup/mkdir errors and requires Cargo.toml/Cargo.lock. This does not make source
+sync atomic or exact: deleted remote modules and .cargo/config.toml reconciliation,
+concurrent use of the shared checkout and full source provenance remain OPEN.
+
+## F312: a failed download could still print KEENETIC_BUILD PASS
+
+The Keenetic pull helper swallowed IOError and left build result zero. The original
+main path was reproduced with a failed SFTP download: exit0 and PASS. Preparation
+failure also left its SSH connection open; toolchain errors returned normally.
+The corrected main returns1 on transfer failure, closes the connection and checks
+setup failure. Both helpers reuse native_lab's verified atomic transfer: SHA256
+is read over strict SSH, downloaded bytes must match before destination replacement,
+and the empty digest is rejected before transfer/publication. Read failure, corrupt
+payload and empty artifact preserve the previous local file. An architecture failure
+is reported while the other selected architectures still run. This is transport
+identity, not ELF/ABI/device/reproducibility attestation. No real binary was built
+or published in this packet.
+
+Fourteen executable Python tests load both real helpers with fake SSH/SFTP/toolchain
+responses, exercising invalid CLI, toolchain/pin failures, non-MIPS admission,
+manifest/sync order, cleanup failures, per-arch result propagation, verified artifact
+publication and lockfile build commands. Current tests PASS; baseline reproduction
+records are separate. Mock responses are not a successful real toolchain install.
+
+## F313: repeated LuCI load read the same cached enabled flag
+
+LuCI uci.load caches the package. Polling it again never refreshed external edits;
+unloading it would discard staged form changes. A scoped read-only service_status
+RPC now calls the package's status_enabled init command. That command reads the same
+root UCI context used by service start, rather than the browser/session form cache.
+Root CLI deltas may still be visible before commit; this is init-visible intent, not
+a claim of a disk-only committed read. No form cache is loaded/unloaded by polling.
+Exit0/1 mean enabled/disabled; load error, missing service or invalid RPC response
+become unknown, displayed explicitly. The read ACL permits service_status only;
+service actions and secret writes remain in the write ACL. Service process liveness
+continues to come from procd and is not an authenticated connectivity measurement.
+
+The9 LuCI caller fixtures plus one status/ACL adapter fixture PASS. The latter parses
+the compatible adapter in JavaScript with mocked system/fs, not an ucode interpreter;
+real ucode/rpcd and rc.common dispatch are NOT_RUN. The added init status case and
+prior shell cases make11 tests per BusyBox ash/dash, both PASS in the isolated .11
+directory. Official sources: [LuCI cache semantics](https://openwrt.github.io/luci/jsapi/uci.js.html),
+[ucode system exit codes](https://ucode-lang.org/module-core.html).
+
+Current packet, F311–F313: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-build-failures-20261006.
+Evidence: release/certification/evidence/q31-router-build-failures-20261006.json.
+The previous packet/seal is unchanged. Install defaults/upgrade rollback, broader
+source review, secret/lifecycle races and real available cross-build qualification
+remain OPEN. The next installation pass must exercise interrupted creation and
+reload errors; the one-shot defaults have not been qualified by the live-sync tests.
+Q31 remains IN_PROGRESS, overall28/37(75.7%),9 remain.

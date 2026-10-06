@@ -47,12 +47,18 @@ df -h /opt                                                 # место (нуж�
 ## Шаг 1. Собрать бинари (на деве/лабе, не на роутере)
 
 ```sh
-python scripts/build_keenetic.py
-# → release/keenetic/qeli-client-aarch64   (static ARM aarch64)
-# → release/keenetic/qeli-client-mipsel    (static-pie MIPS32r2)
+python scripts/build_keenetic.py --sync
+# → release/keenetic/qeli-client-keenetic-aarch64   (static ARM aarch64)
+# → release/keenetic/qeli-client-keenetic-mipsel    (static-pie MIPS32r2)
 ```
 
-Можно собрать только нужную арку: `python scripts/build_keenetic.py mipsel`.
+Можно собрать только нужную арку: `python scripts/build_keenetic.py --sync mipsel`.
+
+Это внутренний скрипт мейнтейнера: --sync загружает текущий checkout перед сборкой,
+без него используется прежний remote source. Опечатка архитектуры отклоняется до
+SSH; ошибки подготовки/скачивания возвращают отказ. Байты сверяются по SHA256 и
+атомарно заменяют прежний файл. Свежий snapshot, reproducibility и настоящий router
+runtime этим не квалифицированы; см. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
 ---
 

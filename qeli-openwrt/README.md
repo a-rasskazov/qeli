@@ -122,3 +122,10 @@ Partial UCI changes are not rolled back automatically. After correcting the erro
 restart qeli. This behavior is covered by shell/JavaScript fixtures; the historical
 public0.8.0 hardware result above does not qualify these development changes on a
 real router. See [Q31 audit evidence](../docs/eng/reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+Development status polling reads init-visible UCI through the scoped service_status
+RPC; it preserves staged form edits and displays unknown when the read fails.
+Maintainer cross-build helpers reject target typos and setup/transfer failures;
+--sync is needed to upload this checkout. SHA256-verified atomic artifact transfer
+does not qualify source freshness, ABI or real router runtime. Current adapter
+fixtures do not execute an ucode interpreter/rpcd.

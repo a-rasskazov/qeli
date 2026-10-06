@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v1 -->
+<!-- normative-sync: q31-openwrt-controls-v2 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -105,3 +105,69 @@ Android/Apple/Windows клиентов не менялась. Реальные �
 
 Raw packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-controls-20261006.
 Evidence: release/certification/evidence/q31-openwrt-controls-20261006.json.
+
+## F311: ошибки подготовки и восстановления manifest обходили cleanup
+
+Команды toolchain скрывали ошибки rustup через tail/true; exit Zig тоже игнорировался.
+Оба скрипта теперь проверяют каждую команду и inventory cargo-zigbuild0.23.0. Nightly/
+rust-src готовятся только для выбранного MIPS; другим аркам лишний nightly не ставится.
+Cargo использует --locked. Неизвестная архитектура, лишний аргумент и неизвестный флаг
+отклоняются до SSH: опечатка больше не запускает все сборки. Rolling nightly/stable
+этим не закреплены; reproducibility, ABI и текущая поддержка MIPS не квалифицированы.
+
+Всё время жизни подключения теперь покрыто finally-close. Backup прерванной сборки
+восстанавливается до --sync: поздний restore больше не заменяет новый загруженный
+Cargo.toml прежней версией. После успешного ограничения crate-type manifest
+восстанавливается; даже ошибка восстановления не пропускает закрытие соединения.
+SFTP закрывается при сбое put/inventory; ошибки cleanup/mkdir пробрасываются,
+Cargo.toml/Cargo.lock обязательны. Sync ещё не атомарный и не точный: удалённые
+remote modules, .cargo/config.toml, параллельная работа в общем checkout и полная
+source provenance остаются OPEN.
+
+## F312: ошибка скачивания не мешала KEENETIC_BUILD PASS
+
+Keenetic pull проглатывал IOError, оставляя результат сборки0. Исходный main
+воспроизведён с отказом скачивания: exit0 и PASS. Ошибка подготовки также оставляла
+SSH открытым, а ошибки toolchain не возвращались вызывающему коду. Исправленный
+main даёт1 при отказе скачивания, закрывает соединение и отклоняет ошибку подготовки.
+Оба скрипта используют общий проверяемый атомарный transfer native_lab: SHA256
+получается по strict SSH, скачанные байты проверяются до замены файла. Пустой digest
+отклоняется до скачивания/публикации. Ошибка чтения, несовпадающий payload и пустой
+артефакт сохраняют прежний локальный файл. Ошибка одной арки отмечается, остальные
+выбранные арки продолжают работу. Это идентичность передачи, не ELF/ABI/device/
+reproducibility attestation. Реальные бинарники не собирались и не публиковались.
+
+Четырнадцать исполняемых Python-тестов загружают оба настоящих скрипта с mock
+SSH/SFTP/toolchain: CLI, ошибки toolchain/pin, non-MIPS, manifest/sync order, cleanup,
+ошибки отдельных арок, публикация проверенных артефактов и --locked команды. PASS;
+воспроизведения исходных ошибок сохранены отдельно. Mock не выдаётся за настоящую
+успешную установку toolchain.
+
+## F313: повторный LuCI load читал прежний enabled из кэша
+
+uci.load кэширует пакет: повторный опрос не видел внешних изменений, а unload
+уничтожил бы staged-правки формы. Новый read-only service_status RPC вызывает
+status_enabled собственного init. Команда читает root UCI, используемый запуском
+службы, а не браузерный/сессионный кэш формы. Root CLI deltas могут быть видимы до
+commit: это init-visible намерение, а не строгое чтение только применённого файла.
+Опрос не делает load/unload формы. Exit0/1 означают enabled/disabled; ошибка load,
+отсутствующая служба или неверный RPC дают unknown с явным сообщением. Read ACL
+разрешает только service_status; управление и запись секретов остаются write ACL.
+Liveness процесса по-прежнему берётся из procd и не означает аутентифицированную
+сетевую связность.
+
+Девять LuCI caller fixtures и один status/ACL adapter fixture PASS. Последний
+разбирает совместимый adapter в JavaScript с mock system/fs, не интерпретатором
+ucode; реальные ucode/rpcd и rc.common dispatch NOT_RUN. Новый init-status case
+вместе с прежними сценариями даёт11 тестов для каждого BusyBox ash/dash: оба PASS
+в отдельном каталоге .11. Первичные источники:
+[кэш LuCI](https://openwrt.github.io/luci/jsapi/uci.js.html),
+[exit-коды ucode system](https://ucode-lang.org/module-core.html).
+
+Текущий пакет F311–F313: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-build-failures-20261006.
+Evidence: release/certification/evidence/q31-router-build-failures-20261006.json.
+Прежний packet/seal не менялся. Install defaults/upgrade rollback, полный source
+review, гонки секретов/службы и настоящие доступные cross-build остаются OPEN.
+Следующая проверка установки должна разобрать прерванное создание и ошибки reload;
+одноразовый defaults ещё не квалифицирован тестами live sync. Q31 IN_PROGRESS,
+всего28/37(75.7%),осталось9.

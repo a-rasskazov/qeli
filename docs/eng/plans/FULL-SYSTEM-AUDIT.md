@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v97 -->
+<!-- normative-sync: full-system-audit-v98 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1974,6 +1974,8 @@ UCI → INI escaping/shell injection, LuCI ACLs, flash secrets, init/procd and u
 **Status: IN_PROGRESS.**
 
 **6 October, F307–F310:** [control/render/firewall packet](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md):7 Node fixtures and10 real-shell fixtures in each BusyBox/dash PASS;37 recipe checks PASS after preexisting stale Android assertion correction. Commit-confirmed UCI intent, serialized controls, atomic0600 INI and checked firewall retry. Scoped fixtures only; full review/install/upgrade/build qualification remain open; actual router runtime USER_EXCLUDED. Overall28/37(75.7%) unchanged.
+
+**F311–F313 continuation, 6 October:** same [Q31 report](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md),14 router-helper fault tests,10 JS caller/adapter fixtures and11 shell fixtures per interpreter PASS. Toolchain failure/false artifact PASS/connection leaks fixed; init-visible status bypasses form cache. Actual ucode/rpcd/rc.common and cross-build NOT_RUN; installation/upgrade and full review still OPEN. No section promoted.
 
 ### 32. Metrics, usage, logs and notifications
 

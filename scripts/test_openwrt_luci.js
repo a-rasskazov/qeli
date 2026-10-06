@@ -17,6 +17,10 @@ function fixture(options = {}) {
         view: { extend: v => v }, form: {}, poll: {},
         ui: { addNotification() {} }, E: () => ({}), _: v => v,
         rpc: { declare: spec => async action => {
+            if (spec.method === 'service_status') {
+                if (options.statusFailure) throw new Error('status unavailable');
+                return { enabled: options.backendEnabled };
+            }
             if (spec.method !== 'service_action') return {};
             events.push(`${action}:${committed}`);
             if (options.failService === action) return false;
@@ -35,8 +39,8 @@ function fixture(options = {}) {
         }
     });
     vm.runInContext("String.prototype.format = function(v) { return this.replace('%s',v); };", context);
-    vm.runInContext('(function(){' + source.replace('return view.extend({', 'globalThis.audit = { controlService }; return view.extend({') + '\n})()', context);
-    return { control: context.audit.controlService, events };
+    vm.runInContext('(function(){' + source.replace('return view.extend({', 'globalThis.audit = { controlService, getEnabled, statusText }; return view.extend({') + '\n})()', context);
+    return { control: context.audit.controlService, status: context.audit.getEnabled, text: context.audit.statusText, events };
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 (async () => {
@@ -84,6 +88,33 @@ async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
     await test('unknown action cannot mutate UCI or issue service commands', async () => {
         const f = fixture(); await assert.rejects(f.control('invalid'), /Unknown/);
         assert.deepEqual(f.events, []);
+    });
+    await test('fresh status does not load/unload the form cache', async () => {
+        const options = { backendEnabled: false }, f = fixture(options);
+        assert.equal(await f.status(), false);
+        options.backendEnabled = true;
+        assert.equal(await f.status(), true);
+        assert.deepEqual(f.events, []);
+    });
+    await test('status failure or invalid response is unknown, not disabled', async () => {
+        assert.equal(await fixture({ statusFailure: true }).status(), null);
+        assert.equal(await fixture({ backendEnabled: '1' }).status(), null);
+        assert.match(fixture().text(false, null), /unavailable/);
+    });
+    await test('status adapter maps only actual 0/1 exit codes and ACL stays scoped', async () => {
+        // Parse the compatible adapter in JS with system/fs mocks, not an ucode interpreter.
+        const rpcSource = fs.readFileSync(path.join(__dirname, '../qeli-openwrt/luci-app-qeli/root/usr/share/rpcd/ucode/qeli.uc'), 'utf8');
+        for (const [code, expected] of [[0, true], [1, false], [2, null], [127, null], [null, null]]) {
+            const calls = [];
+            const context = vm.createContext({ system: command => { calls.push(command); return code; } });
+            const methods = vm.runInContext('(function(){' + rpcSource.replace(/^#![^\n]*\n/, '').replace("import * as fs from 'fs';", 'const fs = {};') + '\n})()', context);
+            assert.equal(methods['luci.qeli'].service_status.call().enabled, expected);
+            assert.deepEqual(calls, ['/etc/init.d/qeli status_enabled >/dev/null 2>&1']);
+        }
+        const acl = JSON.parse(fs.readFileSync(path.join(__dirname, '../qeli-openwrt/luci-app-qeli/root/usr/share/rpcd/acl.d/luci-app-qeli.json'), 'utf8'))['luci-app-qeli'];
+        assert.deepEqual(acl.read.ubus['luci.qeli'], ['service_status']);
+        assert.ok(!acl.read.ubus['luci.qeli'].includes('service_action'));
+        assert.deepEqual(acl.write.uci, ['qeli']);
     });
     console.log(`LuCI fixture tests: ${passed} PASS (not rpcd/procd device qualification)`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
