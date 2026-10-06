@@ -386,3 +386,15 @@ mandatory. No automatic SIGKILL/power-loss recovery or fsync-backed bundle
 transaction is claimed. Symlink/nonregular publication targets and a linked
 /opt/etc/qeli directory are rejected before package updates. Root/admin path
 replacement during installation remains outside this cooperative protocol.
+
+Before start/restart the updated template checks configuration through the binary's
+shared parser: dev must match template TUN, and device_type must be tun. The normal
+template requires dev_attach=false; active OpkgTun requires dev_attach=true and
+dev matching OPKGTUN. Disable gateway_nat, forward and exit_node for OpkgTun because
+ndm owns L3/gateway. GATEWAY=no does not bypass this check.
+
+A mismatch rejects launch before process creation or old state changes. Align
+INI and template, then retry start. Upgrade binary and template together: an older
+binary does not understand --expect-router-device/--expect-router-attach and will
+reject inspection. Do not edit INI during start/restart: inspection reads one
+snapshot, but the later file open is not bound to it.

@@ -32,6 +32,12 @@ struct Cli {
     /// Validate INI and print core/legacy gateway ownership, then exit without connecting.
     #[arg(long)]
     print_gateway_owner: bool,
+    /// Require the configured TUN name to match the router wrapper before launch.
+    #[arg(long, requires_all = ["print_gateway_owner", "expect_router_attach"])]
+    expect_router_device: Option<String>,
+    /// Require the wrapper's owned/attached TUN lifecycle and gateway ownership.
+    #[arg(long, requires_all = ["print_gateway_owner", "expect_router_device"])]
+    expect_router_attach: Option<bool>,
 }
 
 fn init_logging(level: &str, file: Option<&str>, time_format: &str) {
@@ -80,7 +86,14 @@ fn init_logging(level: &str, file: Option<&str>, time_format: &str) {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if cli.print_gateway_owner {
-        println!("{}", qeli::client::inspect_gateway_owner(&cli.config)?);
+        let expected = cli
+            .expect_router_device
+            .as_deref()
+            .zip(cli.expect_router_attach);
+        println!(
+            "{}",
+            qeli::client::inspect_gateway_owner_with_router_expectation(&cli.config, expected)?
+        );
         return Ok(());
     }
 
@@ -131,6 +144,105 @@ mod gateway_owner_tests {
         .unwrap();
         assert!(args.print_gateway_owner);
         assert_eq!(args.config, PathBuf::from("fixture.ini"));
+    }
+    #[test]
+    fn router_cli_requires_both_expectations_and_metadata_mode() {
+        let args = Cli::try_parse_from([
+            "qeli-client",
+            "--print-gateway-owner",
+            "--expect-router-device",
+            "vpn0",
+            "--expect-router-attach",
+            "false",
+        ])
+        .unwrap();
+        assert_eq!(args.expect_router_device.as_deref(), Some("vpn0"));
+        assert_eq!(args.expect_router_attach, Some(false));
+        for arguments in [
+            vec!["qeli-client", "--expect-router-device", "vpn0"],
+            vec![
+                "qeli-client",
+                "--print-gateway-owner",
+                "--expect-router-attach",
+                "true",
+            ],
+            vec![
+                "qeli-client",
+                "--expect-router-device",
+                "vpn0",
+                "--expect-router-attach",
+                "false",
+            ],
+            vec![
+                "qeli-client",
+                "--print-gateway-owner",
+                "--expect-router-device",
+                "vpn0",
+                "--expect-router-attach",
+                "maybe",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_err());
+        }
+    }
+    #[test]
+    fn router_expectation_uses_default_quoted_case_and_canonical_attach() {
+        for text in [
+            BASE.to_string(),
+            format!("{BASE}dev = \"vpn0\"\ndev_attach = \"OFF\"\n"),
+            format!(
+                "\u{feff}{}DEV = vpn0\nDEV_ATTACH = NO\n",
+                BASE.replace("[qeli]", "[QELI]")
+            ),
+        ] {
+            let fixture = Fixture::new(&text);
+            assert_eq!(
+                qeli::client::inspect_gateway_owner_with_router_expectation(
+                    &fixture.0,
+                    Some(("vpn0", false))
+                )
+                .unwrap(),
+                "legacy"
+            );
+        }
+    }
+    #[test]
+    fn router_expectation_rejects_device_attach_and_tap_mismatch() {
+        for extra in ["dev = vpn1", "dev_attach = true", "device_type = tap"] {
+            let fixture = Fixture::new(&format!("{BASE}{extra}\n"));
+            assert!(
+                qeli::client::inspect_gateway_owner_with_router_expectation(
+                    &fixture.0,
+                    Some(("vpn0", false))
+                )
+                .is_err(),
+                "{extra}"
+            );
+        }
+    }
+    #[test]
+    fn attached_router_requires_ndm_gateway_ownership() {
+        let base = format!("{BASE}dev = opkgtun0\ndev_attach = ON\n");
+        let fixture = Fixture::new(&base);
+        assert_eq!(
+            qeli::client::inspect_gateway_owner_with_router_expectation(
+                &fixture.0,
+                Some(("opkgtun0", true))
+            )
+            .unwrap(),
+            "legacy"
+        );
+        for key in ["gateway_nat", "forward", "exit_node"] {
+            let fixture = Fixture::new(&format!("{base}{key}=true\n"));
+            assert!(
+                qeli::client::inspect_gateway_owner_with_router_expectation(
+                    &fixture.0,
+                    Some(("opkgtun0", true))
+                )
+                .is_err(),
+                "{key}"
+            );
+        }
     }
     #[test]
     fn all_core_gateway_flags_suppress_legacy_ownership() {

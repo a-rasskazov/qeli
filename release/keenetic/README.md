@@ -136,3 +136,15 @@ mandatory. No automatic SIGKILL/power-loss recovery or fsync-backed bundle
 transaction is claimed. Symlink/nonregular publication targets and a linked
 /opt/etc/qeli directory are rejected before package updates. Root/admin path
 replacement during installation remains outside this cooperative protocol.
+
+Перед start/restart обновлённый шаблон проверяет конфигурацию общим парсером
+бинарника: dev должен совпадать с TUN в шаблоне, device_type должен быть tun.
+Обычный шаблон требует dev_attach=false; активный OpkgTun — dev_attach=true
+и совпадение dev с OPKGTUN. В OpkgTun отключи gateway_nat, forward и exit_node:
+L3/gateway принадлежат ndm. Проверка действует и при GATEWAY=no.
+
+При несоответствии запуск отвергается до создания процесса и изменения старого
+состояния. Согласуй INI и шаблон, затем повтори start. Обновляй binary и template
+вместе: старый binary не понимает новые --expect-router-device/
+--expect-router-attach и откажет в проверке. Не меняй INI во время start/restart:
+проверка читает один снимок, но последующее открытие файла не привязано к нему.

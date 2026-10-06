@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v15 -->
+<!-- normative-sync: q31-openwrt-controls-v16 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -934,4 +934,57 @@ FFI/cross/firmware/ABI и сетевой obfs handshake не заявлены. �
 Evidence: release/certification/evidence/q31-openwrt-ini-roundtrip-20261006.json.
 Q31 IN_PROGRESS,28/37(75.7%),9 осталось; целый checklist-пункт не закрыт.
 Generation/ABA/last-check/firmware ordering и cross qualification остаются OPEN;
+Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 сохранены, router USER_EXCLUDED.
+
+## F343: wrapper не сверял dev и владельца L3 до запуска
+
+Оба init templates использовали своё TUN для legacy firewall и marker OpkgTun,
+но gateway inspection не проверял соответствие этому имени dev в INI. При
+GATEWAY=no или активном OpkgTun inspection вообще пропускался. Поэтому неверный
+dev/dev_attach мог запускать иной интерфейс или пытаться создать устройство,
+которым должен владеть ndm; gateway flags могли включать дополнительного владельца.
+
+Metadata CLI теперь принимает парные --expect-router-device и
+--expect-router-attach только вместе с --print-gateway-owner. Общий bounded loader
+и strict core parser одним чтением проверяют совпадение dev, device_type=tun и
+dev_attach. Attached router требует gateway_nat/forward/exit_node выключенными,
+поскольку ndm владеет L3/gateway. Старый metadata CLI без expectations сохраняет
+свою прежнюю функцию; обновлённые templates требуют новый бинарник. Неизвестные
+опции у старого binary дают отказ до launch, а не тихий unsafe fallback.
+
+Оба templates делают этот query один раз до cleanup старого state, удаления
+NetworkPlan/PID и создания процесса; даже GATEWAY=no не отменяет interface admission.
+Shell INI parser не добавлен. Проверка не фиксирует snapshot для дальнейшего
+запуска: изменение INI между inspection и startup, generation/ABA остаются OPEN.
+Не меняй client.conf во время start/restart. При исправлении имени/режима согласуй
+INI и template и повтори start; inspection сам не создаёт TUN и не запускает hooks.
+
+Свежий GNU client-bin debug build Rust1.97.0,12 целевых unit tests (4 новых),
+strict Clippy и fmt PASS. 184 shell tests на каждом BusyBox ash/dash PASS:
+47 process +44 state +14 installer +17 hook +19 verifier +24 gateway owner
++8 lifecycle +11 rollback. Восемь новых shell методов добавляют34 actual
+inspector cells; вместе с прежними22 это56, не сетевые подключения.
+Тот же новый test source, старые Git template bodies и старый host inspector
+дают20 false admission mismatches в восьми методах на каждом interpreter.
+
+Первый полный прогон с прежним вспомогательным C-процессом завис: argc==4 не
+распознал дополнительные CLI flags, metadata query перешёл в модельный lifetime.
+Timeout не засчитан как полный результат; собственные helper/suite остановлены
+после проверки exe hash/cwd, два своих temp roots очищены, финальный lookup пуст.
+Отдельный C helper теперь распознаёт только прежние4 и новые8 аргументов;
+его metadata reply остаётся моделью, процессные lifecycle проверки настоящие.
+Исходник/hash старого и нового helper сохранены; прежний executable не менялся.
+Без rustfmt в Windows PATH применён установленный pinned formatter на .11.
+
+317 compile inputs и17 fixture Git files сверены с фактически переданными
+байтами; только приватный Cargo.toml ограничен до rlib, исходный manifest сохранён.
+37 native recipes, docs/bindings/diff PASS. Изменения Rust ограничены Linux
+client-bin metadata admission/CLI; обычный data plane, FFI/JNI exports/config schema
+не менялись. Прежние native/release/router artifacts сохранены; свежая сборка
+FFI/release/cross/firmware или router ABI/runtime не заявлена. .10 не затронут,
+.11 выполнял только собственные files/compiler/process fixtures.
+
+Пакет: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-interface-admission-20261006.
+Evidence: release/certification/evidence/q31-keenetic-interface-admission-20261006.json.
+Q31 IN_PROGRESS,28/37(75.7%),9 осталось; целый checklist-пункт не закрыт.
 Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 сохранены, router USER_EXCLUDED.

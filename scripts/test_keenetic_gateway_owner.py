@@ -56,10 +56,10 @@ exit 99
         result=self.f.execute('GATEWAY_OWNER=""; nat_up')
         self.assertNotEqual(result.returncode,0);self.assertFalse(self.f.state.exists())
         self.assertFalse((self.f.root/'firewall-calls').exists())
-    def test_disabled_gateway_and_opkgtun_do_not_need_compatibility_query(self):
+    def test_disabled_gateway_and_opkgtun_still_require_interface_admission(self):
         for expression in ('GATEWAY=no; load_gateway_owner','OPKGTUN=opkgtun0; load_gateway_owner'):
-            self.assertEqual(self.f.execute(expression,QELI_TEST_GATEWAY_EXIT='17').returncode,0)
-        self.assertEqual(self.owner_calls(),[])
+            self.assertNotEqual(self.f.execute(expression,QELI_TEST_GATEWAY_EXIT='17').returncode,0)
+        self.assertEqual(self.owner_calls(),['inspect','inspect'])
     @unittest.skipUnless(INSPECTOR.is_file(),'requires freshly built actual Linux qeli-client inspector')
     def test_actual_core_parser_matrix_drives_legacy_admission(self):
         self.f.body+='\nBIN='+shlex.quote(str(INSPECTOR))+'\n'
@@ -85,6 +85,54 @@ exit 99
                     self.assertEqual(self.f.state.exists(),wanted=='legacy')
                     self.assertEqual(self.f.ip4.read_text().strip(),'1' if wanted=='legacy' else '0')
                     if wanted=='legacy':self.assertEqual(self.f.execute('nat_down').returncode,0)
+
+
+    @unittest.skipUnless(INSPECTOR.is_file(),'requires actual Linux qeli-client inspector')
+    def test_actual_mismatched_device_rejects_before_wrapper_recovery(self):
+        self.f.body+='\nBIN='+shlex.quote(str(INSPECTOR))+'\n'
+        for device in ('vpn1','opkgtun0','wan0'):
+            with self.subTest(device=device):
+                self.conf.write_text(BASE+'dev='+device+'\n')
+                before=self.f.plan.read_bytes()
+                result=self.f.execute('load_gateway_owner')
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertEqual(self.f.plan.read_bytes(),before)
+                self.assertFalse(self.f.state.exists())
+                self.assertFalse((self.f.root/'firewall-calls').exists())
+
+    @unittest.skipUnless(INSPECTOR.is_file(),'requires actual Linux qeli-client inspector')
+    def test_actual_opkgtun_requires_matching_attached_tun_and_external_gateway(self):
+        self.f.body+='\nBIN='+shlex.quote(str(INSPECTOR))+'\n'
+        base=BASE+'dev=opkgtun0\ndev_attach=ON\n'
+        expression='OPKGTUN=opkgtun0; TUN=opkgtun0; load_gateway_owner'
+        cases=[(base,True),(BASE+'dev=opkgtun0\n',False),
+               (base.replace('opkgtun0','opkgtun1'),False),
+               (base+'device_type=tap\n',False)]
+        cases.extend((base+key+'=true\n',False) for key in ('gateway_nat','forward','exit_node'))
+        for text,accepted in cases:
+            with self.subTest(text=text):
+                self.conf.write_text(text);before=self.f.plan.read_bytes()
+                result=self.f.execute(expression)
+                self.assertEqual(result.returncode==0,accepted,result.stdout+result.stderr)
+                self.assertEqual(self.f.plan.read_bytes(),before)
+                self.assertFalse(self.f.state.exists())
+
+    @unittest.skipUnless(INSPECTOR.is_file(),'requires actual Linux qeli-client inspector')
+    def test_actual_disabled_gateway_cannot_bypass_device_or_attach_check(self):
+        self.f.body+='\nBIN='+shlex.quote(str(INSPECTOR))+'\n'
+        for extra in ('dev=vpn1\n','dev_attach=true\n','device_type=tap\n'):
+            self.conf.write_text(BASE+extra)
+            self.assertNotEqual(self.f.execute('GATEWAY=no; load_gateway_owner').returncode,0)
+        self.conf.write_text(BASE)
+        self.assertEqual(self.f.execute('GATEWAY=no; load_gateway_owner').returncode,0)
+
+    @unittest.skipUnless(INSPECTOR.is_file(),'requires actual Linux qeli-client inspector')
+    def test_actual_interface_admission_keeps_shared_ini_parity(self):
+        self.f.body+='\nBIN='+shlex.quote(str(INSPECTOR))+'\n'
+        for text in (BASE,BASE+'dev="vpn0"\ndev_attach="OFF"\n',
+                     '\ufeff'+BASE.replace('[qeli]','[QELI]')+'DEV=vpn0\nDEV_ATTACH=NO\n'):
+            self.conf.write_text(text)
+            self.assertEqual(self.f.execute('load_gateway_owner').returncode,0)
 
 class KeeneticGatewayBaseTests(OwnerCases,unittest.TestCase):
     CASE=state.KeeneticBaseStateTests

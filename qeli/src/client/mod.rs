@@ -8358,9 +8358,40 @@ impl Drop for NetworkPlanApplyGuard<'_> {
 /// service used at Linux startup. This command performs no platform/network work.
 #[cfg(all(target_os = "linux", feature = "client-bin"))]
 pub fn inspect_gateway_owner(config_path: &std::path::Path) -> anyhow::Result<&'static str> {
+    inspect_gateway_owner_with_router_expectation(config_path, None)
+}
+
+/// Router wrappers can require the configured TUN and L3 owner without parsing INI.
+/// This checks one file snapshot before launch; it does not pin later reloads.
+#[cfg(all(target_os = "linux", feature = "client-bin"))]
+pub fn inspect_gateway_owner_with_router_expectation(
+    config_path: &std::path::Path,
+    expected: Option<(&str, bool)>,
+) -> anyhow::Result<&'static str> {
     let (snapshot, _) = crate::config_source::load_client(config_path)?;
     let (contents, _) = snapshot.into_parts();
     let config = crate::config::parse_client_config_strict(&contents)?;
+    if let Some((device, attach)) = expected {
+        anyhow::ensure!(
+            config.tun.name == device,
+            "router template TUN does not match configured dev"
+        );
+        anyhow::ensure!(
+            config.tun.device_type == "tun",
+            "router template requires device_type=tun"
+        );
+        anyhow::ensure!(
+            config.tun.attach_existing == attach,
+            "router template attachment mode does not match configured dev_attach"
+        );
+        anyhow::ensure!(
+            !attach
+                || !(config.routing.gateway_nat
+                    || config.routing.forward
+                    || config.routing.exit_node),
+            "attached router interface requires gateway_nat/forward/exit_node disabled"
+        );
+    }
     Ok(
         if config.routing.gateway_nat || config.routing.forward || config.routing.exit_node {
             "core"

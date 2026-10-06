@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v15 -->
+<!-- normative-sync: q31-openwrt-controls-v16 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -936,4 +936,57 @@ Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-i
 Evidence: release/certification/evidence/q31-openwrt-ini-roundtrip-20261006.json.
 Q31 IN_PROGRESS,28/37(75.7%),9 remain; no whole checklist row closed.
 Generation/ABA/last-check/firmware ordering and cross qualification remain OPEN;
+Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 retained, router USER_EXCLUDED.
+
+## F343: wrapper did not check dev and the L3 owner before launch
+
+Both init templates used their own TUN for legacy firewall and the OpkgTun marker,
+but gateway inspection did not check that name against INI dev. With GATEWAY=no
+or active OpkgTun it skipped inspection entirely. A mismatched dev/dev_attach
+could therefore launch another interface or attempt to create a device owned by
+ndm; gateway flags could introduce an additional owner.
+
+Metadata CLI now accepts paired --expect-router-device and --expect-router-attach
+only with --print-gateway-owner. One read through the shared bounded loader and
+strict core parser checks matching dev, device_type=tun and dev_attach. Attached
+router mode requires gateway_nat/forward/exit_node disabled because ndm owns
+L3/gateway. The old metadata CLI without expectations keeps its original function;
+updated templates require the new binary. Unsupported flags on an older binary
+reject before launch instead of silently falling back.
+
+Both templates perform this query once before old state cleanup, NetworkPlan/PID
+removal and process creation; GATEWAY=no still requires interface admission.
+No shell INI parser was added. The check does not pin the snapshot for later
+startup: edits between inspection and launch, generation/ABA remain OPEN.
+Do not edit client.conf during start/restart. After fixing names/modes, align INI
+and template and retry start; inspection itself creates no TUN and executes no hooks.
+
+Fresh GNU client-bin debug build Rust1.97.0,12 targeted units (4 new), strict
+Clippy and fmt PASS. 184 shell tests per BusyBox ash/dash PASS:
+47 process +44 state +14 installer +17 hook +19 verifier +24 gateway owner
++8 lifecycle +11 rollback. Eight new shell methods add34 actual inspector
+cells; with the previous22 this is56, not network connections.
+The same new tests with old Git template bodies and old host inspector produce
+20 false-admission mismatches across eight methods per interpreter.
+
+The first full suite hung with the older C process fixture: argc==4 did not
+recognize additional CLI flags and metadata inspection entered its modeled
+lifetime. This timeout is not a qualified full result; owned helper/suite
+processes were stopped after exe hash/cwd checks, two owned temp roots cleaned,
+final lookup empty. A separate C helper recognizes only old4 and new8 arguments;
+its metadata reply remains a model, process lifetime tests execute actual native
+processes. Old/new helper source/hashes are retained; the old executable is unchanged.
+Windows PATH lacked rustfmt; the installed pinned .11 formatter was used.
+
+317 compile inputs and17 fixture Git files match supplied bytes; only private
+Cargo.toml is restricted to rlib, with the original manifest retained.
+37 recipes, docs/bindings/diff PASS. Rust edits are confined to Linux client-bin
+metadata admission/CLI; normal data plane, FFI/JNI exports/config schema unchanged.
+Previous native/release/router artifacts remain; no fresh FFI/release/cross/
+firmware build or router ABI/runtime is claimed. .10 untouched; .11 executed
+only owned file/compiler/process fixtures.
+
+Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-interface-admission-20261006.
+Evidence: release/certification/evidence/q31-keenetic-interface-admission-20261006.json.
+Q31 IN_PROGRESS,28/37(75.7%),9 remain; no whole checklist row closed.
 Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 retained, router USER_EXCLUDED.

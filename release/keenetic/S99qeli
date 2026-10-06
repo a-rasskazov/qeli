@@ -28,9 +28,11 @@ export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 GATEWAY_OWNER=""
 load_gateway_owner() {
   GATEWAY_OWNER=""
-  [ "$GATEWAY" = yes ] && [ -z "$OPKGTUN" ] || return 0
-  GATEWAY_OWNER="$("$BIN" --config "$CONF" --print-gateway-owner)" || {
-    echo "qeli-client: cannot inspect gateway ownership; upgrade binary/template together"; return 1;
+  EXPECT_ROUTER_ATTACH=false
+  [ -z "$OPKGTUN" ] || EXPECT_ROUTER_ATTACH=true
+  GATEWAY_OWNER="$("$BIN" --config "$CONF" --print-gateway-owner \
+    --expect-router-device "$TUN" --expect-router-attach "$EXPECT_ROUTER_ATTACH")" || {
+    echo "qeli-client: cannot admit router interface/gateway ownership; check INI and upgrade binary/template together"; return 1;
   }
   case "$GATEWAY_OWNER" in
     core|legacy) return 0 ;;
