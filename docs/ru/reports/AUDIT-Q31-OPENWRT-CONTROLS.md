@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v17 -->
+<!-- normative-sync: q31-openwrt-controls-v18 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -1048,7 +1048,7 @@ default toolchains и работающие сервисы не изменяли�
 |---|---|
 | Реальная standalone cross-сборка четырёх targets/ELF | DONE в указанном scope |
 | UCI/INI, shell lifecycle/rollback и LuCI | Scoped suites PASS; сохранены модельные границы |
-| Настоящие ucode/rpcd/UCI/procd/package SDK | OPEN; fixtures не квалифицируют эти платформенные API |
+| Настоящие ucode/fs | Scoped PASS F347–F349 ниже; rpcd/UCI/procd/package SDK остаются OPEN |
 | Preflight→launch config snapshot, core plan generation/ABA | OPEN; текущий exclusion lock не устраняет эти гонки |
 | SIGKILL/power-loss installer recovery | Manual recovery; полная bundle transaction не подтверждена |
 | Firmware WAN/reboot/DNS/firewall/RSS/throughput | USER_EXCLUDED; cross-build не device test |
@@ -1058,5 +1058,75 @@ default toolchains и работающие сервисы не изменяли�
 их исходные evidence не переписаны. Пакет:
 C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-cross-matrix-20261006.
 Evidence: release/certification/evidence/q31-router-cross-matrix-20261006.json.
+Q31 IN_PROGRESS;28/37(75.7%),9 осталось. Q29 SIGKILL FAIL/auto-null ENONET,
+Q30 Apple exclusions/callback-drain OPEN и D06 ACCEPTED сохранены.
+
+## F347–F349: настоящий ucode/fs и передача volatile secrets
+
+На .11 собраны неизменённые upstream ucode и fs из двух pinned revisions,
+используемых OpenWrt: 24.10 — 3f64c8089bf3ea4847c96b91df09fbfcaec19e1d;
+25.12 — 85922056ef7abeace3cca3ab28bc1ac2d88e31b1. Это GNU host execution
+настоящего интерпретатора и filesystem/process API, без rpcd/ubus daemon,
+OpenWrt firmware, UCI/procd или package SDK. Их квалификация остаётся OPEN.
+
+F347: массив аргументов fs.popen не поддерживается этими revisions: возвращает
+null/EINVAL. После отдельного исправления regex обе версии всё ещё отказывали
+записи pass/obfs_key. Теперь запускается одна из двух буквальных команд init;
+секрет передаётся только через stdin. Caller-controlled name/value не входят
+в shell text или argv. Короткая запись/неуспешный close дают RPC unknown error,
+включая null вместо exit code; запись и close сравниваются строго.
+
+F348: regex с JavaScript escapes \x00..\x1f/\x7f отвергался настоящим ucode
+при проверке непустого секрета. Теперь каждый байт проверяется через ord:
+C0 и DEL запрещены, длина 1..4096 байт, Unicode и буквальные метасимволы сохраняются.
+JSON остаётся служебным RPC/test transport; формат конфигурации остаётся INI.
+
+F349: mv считал каталог назначения контейнером, помещал туда .secret.* и
+возвращал успех. linked runtime directory мог менять внешний mode/secret.
+Init теперь отвергает linked/non-directory runtime leaf и linked/non-regular
+secret target до публикации. Clear также отвергает linked runtime leaf,
+чтобы не удалять внешние файлы; отсутствие runtime dir остаётся успешным no-op. Статус true только для читаемого regular файла
+размером 1..4096 байт в нелинкованном каталоге. Пустой/oversize/каталог/FIFO/link
+не показываются как настроенный секрет. Это стабильные файловые состояния;
+root/admin replacement race между проверкой и rename не объявлена закрытой.
+
+14 новых методов test_openwrt_ucode.py PASS без skips на обеих версиях и в
+каждом BusyBox ash/dash: четыре сочетания. Проверены оба имени/точные bytes,
+Unicode byte boundary, все 33 control bytes, invalid types/names, stdin injection
+sentinel и отсутствие секрета в argv, child exit17/сохранение прежнего файла,
+четыре неверных publication targets, пять неверных status targets, linked
+runtime directory без записи/chmod, linked runtime clear refusal, clear filesystem failure и closed service
+verbs/status. Service responses — exit-code adapters, не настоящий procd.
+Полный OpenWrt набор55 (41 прежний +14 новых) PASS в ash/dash с ucode24.10,
+saved hash-checked rc.common и прежним exact-source Rust INI inspector.
+11 LuCI Node fixtures,37 recipes, docs/bindings/diff PASS.
+
+Старый Git module с исправленным loader fixture даёт40 assertion failures
+в11 методах на каждом из четырёх сочетаний. Intermediate regex-only fix
+воспроизводит отдельный array-popen failure; первый fix выявил directory false
+success. Три новых filesystem-status/runtime-link write/delete метода со старым init/status
+дают7 независимых failures на каждой версии. Initial include() loader и
+каскадные subtest cleanup errors являются harness errors, не дополнительными
+дефектами продукта; исходные файлы/FAIL logs сохранены. Final subtests очищают
+свои пути даже после assertion failure.
+
+Build dependencies скачаны/распакованы только в private0700 root, без системной
+установки: CMake3.31.6, json-c0.18 и recorded Debian library packages. Сборка
+одним job, только ucode/fs; остальные modules выключены. Source archives,
+commit/source/executable/shared-library SHA256, CMake config/runtime ldd и
+входные Qeli bytes сохранены. Первые private CMake dependency failures сохранены.
+.10 не изменялся; сервисы, /etc, firewall и сеть .11 не затронуты. Rust/native/
+router artifacts/recipes не менялись; повторная Qeli/FFI/cross сборка не нужна
+для этих shell/ucode правок и не заявлена.
+
+Источники API и pins: [OpenWrt24.10 recipe](https://github.com/openwrt/openwrt/blob/openwrt-24.10/package/utils/ucode/Makefile),
+[OpenWrt25.12 recipe](https://github.com/openwrt/openwrt/blob/openwrt-25.12/package/utils/ucode/Makefile),
+[pinned fs.popen](https://github.com/jow-/ucode/blob/85922056ef7abeace3cca3ab28bc1ac2d88e31b1/lib/fs.c),
+[ucode core API](https://ucode-lang.org/module-core.html).
+
+Пакет: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-ucode-runtime-20261006.
+Evidence: release/certification/evidence/q31-openwrt-ucode-runtime-20261006.json.
+ucode/fs platform API проверен в указанном scope; daemon/SDK/firmware,
+config preflight→launch generation/ABA и clean A/B остаются отдельно OPEN.
 Q31 IN_PROGRESS;28/37(75.7%),9 осталось. Q29 SIGKILL FAIL/auto-null ENONET,
 Q30 Apple exclusions/callback-drain OPEN и D06 ACCEPTED сохранены.

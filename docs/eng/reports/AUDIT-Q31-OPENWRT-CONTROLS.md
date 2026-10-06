@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v17 -->
+<!-- normative-sync: q31-openwrt-controls-v18 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -1047,7 +1047,7 @@ Current Q31 remainder:
 |---|---|
 | Actual standalone four-target cross builds/ELF | DONE in the stated scope |
 | UCI/INI, shell lifecycle/rollback and LuCI | Scoped suites PASS; model boundaries retained |
-| Actual ucode/rpcd/UCI/procd/package SDK | OPEN; fixtures do not qualify platform APIs |
+| Actual ucode/fs | Scoped PASS F347–F349 below; rpcd/UCI/procd/package SDK remain OPEN |
 | Preflight→launch config snapshot/core plan generation/ABA | OPEN; exclusion lock does not eliminate these races |
 | SIGKILL/power-loss installer recovery | Manual recovery; no full bundle transaction claim |
 | Firmware WAN/reboot/DNS/firewall/RSS/throughput | USER_EXCLUDED; cross-build is not a device test |
@@ -1059,3 +1059,72 @@ C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-cross-matr
 Evidence: release/certification/evidence/q31-router-cross-matrix-20261006.json.
 Q31 IN_PROGRESS;28/37(75.7%),9 remain. Q29 SIGKILL FAIL/auto-null ENONET,
 Q30 Apple exclusions/callback-drain OPEN and D06 ACCEPTED retained.
+
+## F347–F349: actual ucode/fs and volatile secret transport
+
+Unmodified upstream ucode and fs were built on .11 at the revisions used by
+OpenWrt24.10 (3f64c8089bf3ea4847c96b91df09fbfcaec19e1d) and25.12
+(85922056ef7abeace3cca3ab28bc1ac2d88e31b1). This is actual GNU host interpreter,
+filesystem and process execution, without rpcd/ubus daemons, firmware, UCI/procd
+or package SDK qualification. Those scopes remain OPEN.
+
+F347: array arguments to fs.popen are unsupported in these revisions, returning
+null/EINVAL. Fixing the regex alone still left both secret names unable to write.
+The RPC now selects one of two literal init commands and sends the secret only
+through stdin. Caller-controlled names/values never enter shell text or argv.
+Strict write/close comparisons reject short writes, nonzero exit and null status.
+
+F348: the JavaScript-escape regex \x00..\x1f/\x7f failed in actual ucode when
+checking a nonempty secret. An ord byte loop now rejects C0/DEL, preserves literal
+Unicode/metacharacters and enforces 1..4096 bytes. JSON remains internal RPC/test
+transport; configuration remains INI.
+
+F349: mv interpreted a directory destination as a container, placed .secret.*
+inside it and returned success. A linked runtime directory could change external
+permissions/credentials. Init now rejects linked/non-directory runtime leaves
+and linked/non-regular secret targets before publication. Clear also rejects a linked runtime leaf to
+prevent external deletion; an absent runtime directory remains a successful no-op. Status is true only
+for readable regular files of 1..4096 bytes in an unlinked runtime directory.
+Empty/oversize/directory/FIFO/link targets are not configured secrets. These are
+stable filesystem states; root/admin replacement between check and rename remains
+outside the guarantee.
+
+All 14 new test_openwrt_ucode.py methods PASS without skips on both versions,
+each with BusyBox ash and dash: four combinations. Cases cover both names/exact
+bytes, Unicode byte boundaries, all 33 controls, invalid types/names, stdin shell
+injection sentinel and argv secrecy, child exit17/preserved previous file, four
+invalid publication targets, five invalid status targets, linked runtime without
+write/chmod, linked runtime clear refusal, clear filesystem failure and closed service verbs/status. Service
+responses are exit-code adapters, not real procd. The full 55-method OpenWrt suite
+(41 existing +14 new) PASS in both shells with ucode24.10, hash-checked saved
+rc.common and the reused exact-source Rust INI inspector.11 LuCI Node fixtures,
+37 recipes, docs/bindings/diff PASS.
+
+The original Git module with corrected loader fixture produced40 assertion
+failures in11 methods for each of four combinations. A regex-only intermediate
+isolated the array-popen failure; the first fix exposed directory false success.
+Three new status/runtime-link write/delete methods against old init/status give 7 independent
+failures per version. Initial include() loader and cascading subtest cleanup
+errors are harness failures, not extra product defects; original inputs/logs are
+retained. Final subtests clean their owned paths even after failed assertions.
+
+Dependencies were downloaded/extracted only inside the private0700 root, without
+system installation: CMake3.31.6, json-c0.18 and recorded Debian library packages.
+Single-job builds enable only ucode/fs. Source archives, commit/source/executable/
+shared-library SHA256, CMake config/runtime ldd and exact Qeli inputs are saved.
+Initial private CMake dependency failures are retained. .10 was unchanged; no
+services, /etc, firewall or network on .11 were changed. Rust/native/router
+artifacts/recipes are unchanged; a new Qeli/FFI/cross build is unnecessary for
+these shell/ucode changes and is not claimed.
+
+API/pin sources: [OpenWrt24.10 recipe](https://github.com/openwrt/openwrt/blob/openwrt-24.10/package/utils/ucode/Makefile),
+[OpenWrt25.12 recipe](https://github.com/openwrt/openwrt/blob/openwrt-25.12/package/utils/ucode/Makefile),
+[pinned fs.popen](https://github.com/jow-/ucode/blob/85922056ef7abeace3cca3ab28bc1ac2d88e31b1/lib/fs.c),
+[ucode core API](https://ucode-lang.org/module-core.html).
+
+Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-openwrt-ucode-runtime-20261006.
+Evidence: release/certification/evidence/q31-openwrt-ucode-runtime-20261006.json.
+ucode/fs platform API is qualified in this scope; daemon/SDK/firmware,
+config preflight-to-launch generation/ABA and clean A/B remain separately OPEN.
+Q31 IN_PROGRESS;28/37(75.7%),9 remain. Q29 SIGKILL FAIL/auto-null ENONET,
+Q30 Apple exclusions/callback-drain OPEN and D06 ACCEPTED are preserved.

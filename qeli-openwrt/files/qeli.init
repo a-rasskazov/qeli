@@ -63,7 +63,13 @@ valid_qeli_dev() {
 	[ "${#value}" -le 15 ]
 }
 
+valid_runtime_dir() {
+	# A missing directory is allowed; linked/non-directory runtime leaves are not.
+	[ ! -L "$RUNDIR" ] && { [ ! -e "$RUNDIR" ] || [ -d "$RUNDIR" ]; }
+}
+
 ensure_runtime_dir() {
+	valid_runtime_dir || return 1
 	mkdir -p "$RUNDIR" || return 1
 	chmod 700 "$RUNDIR" || return 1
 }
@@ -89,6 +95,8 @@ write_runtime_secret_value() {
 	clean="$(ini_sanitize "$value")"
 	[ "$clean" = "$value" ] || { logger -t qeli "ERROR: $name secret contains a control character"; return 2; }
 	ensure_runtime_dir || return 1
+	# mv treats a directory (including a link to one) as a container, not a file.
+	[ ! -L "$path" ] && { [ ! -e "$path" ] || [ -f "$path" ]; } || return 1
 	umask 077
 	tmp="$(mktemp "$RUNDIR/.secret.XXXXXX")" || return 1
 	if ! printf '%s' "$value" > "$tmp" || ! chmod 600 "$tmp" || ! mv -f "$tmp" "$path"; then
@@ -116,10 +124,15 @@ set_secret() {
 
 clear_secrets() {
 	case "${1:-all}" in
+		pass|obfs_key|all) ;;
+		*) logger -t qeli "ERROR: secret name must be pass, obfs_key or all"; return 2 ;;
+	esac
+	# Do not unlink credentials outside the runtime leaf through a directory link.
+	valid_runtime_dir || return 1
+	case "${1:-all}" in
 		pass) rm -f "$PASS_FILE" || return 1 ;;
 		obfs_key) rm -f "$OBFS_KEY_FILE" || return 1 ;;
 		all) rm -f "$PASS_FILE" "$OBFS_KEY_FILE" || return 1 ;;
-		*) logger -t qeli "ERROR: secret name must be pass, obfs_key or all"; return 2 ;;
 	esac
 	logger -t qeli "volatile qeli secret(s) cleared"
 }

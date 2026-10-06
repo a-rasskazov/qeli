@@ -191,8 +191,8 @@ Development status polling reads init-visible UCI through the scoped service_sta
 RPC; it preserves staged form edits and displays unknown when the read fails.
 Maintainer cross-build helpers reject target typos and setup/transfer failures;
 Every run uploads this checkout into a fresh private directory. SHA256/ELF-checked
-atomic artifact transfer does not qualify full ABI or real router runtime. Current adapter
-fixtures do not execute an ucode interpreter/rpcd.
+atomic artifact transfer does not qualify full ABI or real router runtime. Development tests execute pinned OpenWrt24.10/25.12 ucode/fs on a Linux host;
+rpcd/ubus/procd and firmware runtime remain unqualified.
 
 
 The first-install firewall defaults use named package-owned sections. An existing
@@ -252,3 +252,17 @@ values through UCI/LuCI or the stdin secret command; do not add INI escaping the
 ASCII control characters remain rejected for secrets and stripped from ordinary
 UCI values. This formatting rule does not make an invalid endpoint, logging mode
 or other setting valid; the client still validates the resulting configuration.
+
+The development secret RPC uses fixed init commands and passes credentials only
+through stdin, compatible with the tested OpenWrt24.10/25.12 ucode revisions.
+Secrets must contain 1..4096 UTF-8 bytes and no ASCII C0/DEL controls; the limit
+counts bytes, not characters. Enter literal values without shell/INI escaping
+into LuCI. A secret status of configured requires a readable regular file of
+that size in the real runtime directory. Empty/oversize files, directories,
+FIFOs and symlinks do not count. Linked runtime directories and non-regular or
+linked secret destinations reject writes. Clearing secrets also rejects a linked
+runtime directory to avoid deleting outside files; an absent directory is a no-op. Correct the unexpected filesystem
+object before retrying; do not treat a failed write as an applied credential.
+Host tests cover real ucode/fs and isolated init file operations; they do not
+confirm rpcd/ubus/procd or router firmware behavior. Administrator path replacement
+between checks and publication is outside this guarantee.
