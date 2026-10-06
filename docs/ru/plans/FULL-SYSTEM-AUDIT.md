@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v95 -->
+<!-- normative-sync: full-system-audit-v96 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1909,7 +1909,7 @@ Exactly-once start/stop completion, generation/cancel, Keychain/app groups, exte
 
 **Имеющаяся обвязка/fixtures:** `qeli-ios/PARITY.md`, `scripts/test_verify_ios_ipa.py`.
 
-- [ ] Review и мёртвый код.
+- [x] Review и мёртвый код.
 - [ ] Штатные, граничные и негативные сценарии.
 - [ ] Отказы и конкуренция.
 - [ ] Интеграция и целевая платформа.
@@ -1955,6 +1955,18 @@ backup UI и итоговая source-сверка памяти/мёртвого 
 Очистка membership wire-crypto F302 исключает Swift cipher/HKDF из production
 и включает в XCTest; неиспользуемые X25519/auth-helper удалены. Membership проверен
 по исходникам, Xcode NOT_RUN; поведение native-бинарников не изменялось.
+
+### Итог source review Q30 — 6 октября
+
+[Текущая сверка F303–F306 исходников/памяти](../reports/AUDIT-Q30-IOS-SOURCE-MEMORY.md)
+закрывает Review/dead-code: классифицированы92 Swift inputs,12 single-reference
+framework entry points сохранены; дублирующие probe-owner удалены. Ограничены/
+защищены start/completion probe, владение ping, log1МиБ/message4КиБ и update collector1МиБ.
+11 XCTest NOT_RUN;6 IPA fixtures/docs/bindings PASS. Эта актуальная source-классификация
+заменяет прежние замечания об открытой source review; исходные execution evidence
+сохранены. Реальные Swift/Apple runtime/RSS/leaks/callback/native joins не подтверждены;
+остальные четыре критерия остаются открыты. Q30 IN_PROGRESS,итог28/37(75.7%).
+Платформенные наблюдения не переименованы в PASS.
 
 ### 31. OpenWrt, LuCI и Keenetic
 

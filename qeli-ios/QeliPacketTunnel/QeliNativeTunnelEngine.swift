@@ -101,8 +101,7 @@ private final class NativeDNSLimiter: @unchecked Sendable {
 ///
 /// The adapter owns no wire protocol. It applies authenticated network plans, enforces the
 /// iOS trust store and copies bounded IP batches between `NEPacketTunnelFlow` and the current
-/// ABI 1.15 core through the ABI 1.11 compatibility floor (using the packet seam introduced
-/// in ABI 1.7).
+/// ABI 1.16 compatibility floor (using the packet seam introduced in ABI 1.7).
 final class QeliNativeTunnelEngine: @unchecked Sendable {
     private static let settingsTimeoutMilliseconds = 15_000
     private static let pollNanoseconds: UInt64 = 10_000_000

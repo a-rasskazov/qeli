@@ -452,7 +452,8 @@ final class AppModel: ObservableObject {
     }
 
     func ping(_ profile: Profile) {
-        guard queuedOrActiveProbeIDs.insert(profile.id).inserted else { return }
+        guard profiles.contains(where: { $0.id == profile.id && $0.configText == profile.configText }),
+              queuedOrActiveProbeIDs.insert(profile.id).inserted else { return }
         reachability[profile.id] = .checking
         queuedProbes.append(profile)
         startQueuedProbes()
@@ -473,6 +474,7 @@ final class AppModel: ObservableObject {
     }
 
     private func runProbe(_ profile: Profile) async {
+        let result: ReachabilityState
         do {
             let config = try VPNConfig(parsing: profile.configText)
             // While THIS profile's tunnel is up, dialing the public endpoint measures a
@@ -511,10 +513,13 @@ final class AppModel: ObservableObject {
                     timeout: 4
                 )
             }
-            reachability[profile.id] = .reachable(milliseconds: milliseconds)
+            result = .reachable(milliseconds: milliseconds)
         } catch {
-            reachability[profile.id] = .unavailable(error.localizedDescription)
+            result = .unavailable(error.localizedDescription)
         }
+        guard !Task.isCancelled,
+              profiles.contains(where: { $0.id == profile.id && $0.configText == profile.configText }) else { return }
+        reachability[profile.id] = result
     }
 
     func pingAll() { profiles.forEach(ping) }
@@ -610,7 +615,17 @@ final class AppModel: ObservableObject {
         }
         try profileStore.save(archive)
         profileStoreLoadRejected = false
+        let previousConfigs = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.configText) })
         profiles = archive.profiles
+        let currentConfigs = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.configText) })
+        for id in Array(reachability.keys) where currentConfigs[id] == nil || currentConfigs[id] != previousConfigs[id] {
+            reachability.removeValue(forKey: id)
+        }
+        // Remove only queued IDs; an active native probe keeps its slot until its bounded
+        // call returns, so a replacement cannot exceed the four-worker limit.
+        let obsolete = queuedProbes.filter { currentConfigs[$0.id] != $0.configText }
+        queuedProbes.removeAll { currentConfigs[$0.id] != $0.configText }
+        for profile in obsolete { queuedOrActiveProbeIDs.remove(profile.id) }
         synchronizeActiveProfile()
         if managedConfiguration.hasActiveProfilePolicy {
             Task { [weak self] in
@@ -907,45 +922,40 @@ private enum ReachabilityProbe {
         }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: networkPort, using: .tcp)
         let start = DispatchTime.now().uptimeNanoseconds
-        return try await withCheckedThrowingContinuation { continuation in
-            let gate = ProbeGate()
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    let elapsed = DispatchTime.now().uptimeNanoseconds - start
-                    gate.resume {
-                        connection.cancel()
-                        continuation.resume(returning: Int(elapsed / 1_000_000))
-                    }
-                case .failed(let error):
-                    gate.resume { connection.cancel(); continuation.resume(throwing: error) }
-                default:
-                    break
-                }
-            }
-            connection.start(queue: DispatchQueue.global(qos: .utility))
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
-                gate.resume {
-                    connection.cancel()
-                    continuation.resume(throwing: URLError(.timedOut))
-                }
-            }
+        let completion = CancellableProbeCompletion<Int> {
+            connection.stateUpdateHandler = nil
+            connection.cancel()
         }
+        let outcome = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                completion.park(continuation)
+                completion.start {
+                    connection.stateUpdateHandler = { state in
+                        switch state {
+                        case .ready:
+                            let elapsed = DispatchTime.now().uptimeNanoseconds - start
+                            completion.finish(.success(Int(elapsed / 1_000_000)))
+                        case .failed(let error):
+                            completion.finish(.failure(error))
+                        case .cancelled:
+                            completion.finish(.failure(CancellationError()))
+                        default:
+                            break
+                        }
+                    }
+                    connection.start(queue: DispatchQueue.global(qos: .utility))
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                        completion.finish(.failure(URLError(.timedOut)))
+                    }
+                }
+            }
+        } onCancel: {
+            completion.finish(.failure(CancellationError()))
+        }
+        try Task.checkCancellation()
+        return try outcome.get()
     }
 
-}
-
-private final class ProbeGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var didResume = false
-
-    func resume(_ body: () -> Void) {
-        lock.lock()
-        guard !didResume else { lock.unlock(); return }
-        didResume = true
-        lock.unlock()
-        body()
-    }
 }
 
 private enum ManagedConfigurationError: LocalizedError {

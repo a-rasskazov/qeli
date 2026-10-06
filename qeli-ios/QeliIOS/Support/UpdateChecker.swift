@@ -15,6 +15,7 @@ enum UpdateCheckState: Equatable {
 }
 
 enum UpdateChecker {
+    static let maximumResponseBytes = 1024 * 1024
     private static let releasesURL = URL(string: "https://api.github.com/repos/litvinovtd/qeli/releases")!
     private static let releasesPage = URL(string: "https://github.com/litvinovtd/qeli/releases")!
 
@@ -41,10 +42,11 @@ enum UpdateChecker {
         configuration.multipathServiceType = .none
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw UpdateCheckerError.invalidResponse
         }
+        let data = try await boundedResponse(bytes, maximumBytes: maximumResponseBytes)
         let releases = try JSONDecoder().decode([Release].self, from: data)
         guard let release = releases.first(where: { !$0.draft && !$0.tagName.isEmpty }) else {
             throw UpdateCheckerError.noRelease
@@ -55,6 +57,21 @@ enum UpdateChecker {
             url: URL(string: release.htmlURL ?? "") ?? releasesPage,
             isNewer: try isNewer(latest, than: currentVersion)
         )
+    }
+
+    static func boundedResponse<S: AsyncSequence>(
+        _ bytes: S, maximumBytes: Int
+    ) async throws -> Data where S.Element == UInt8 {
+        try Task.checkCancellation()
+        guard maximumBytes > 0 else { throw UpdateCheckerError.responseTooLarge }
+        var data = Data()
+        data.reserveCapacity(min(maximumBytes, 16 * 1024))
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < maximumBytes else { throw UpdateCheckerError.responseTooLarge }
+            data.append(byte)
+        }
+        return data
     }
 
     static func normalize(_ value: String) throws -> String {
@@ -80,11 +97,13 @@ enum UpdateChecker {
 enum UpdateCheckerError: LocalizedError {
     case invalidResponse
     case noRelease
+    case responseTooLarge
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "The release service returned an invalid response."
         case .noRelease: return "No published Qeli release was found."
+        case .responseTooLarge: return "The release service response is too large."
         }
     }
 }

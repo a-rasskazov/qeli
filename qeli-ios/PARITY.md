@@ -150,3 +150,10 @@ F302 moves remaining Swift wire-crypto helpers out of the app target into XCTest
 alongside Protocol, and removes unreferenced X25519/auth helper code. Backup storage
 still uses CryptoKit directly; Rust/native transport crypto is unchanged. Actual
 Xcode compilation and binary-size effects remain NOT_RUN.
+
+[Q30 source/memory reconciliation](../docs/eng/reports/AUDIT-Q30-IOS-SOURCE-MEMORY.md)
+closes the source Review/dead-code criterion:92 Swift inputs,12 retained framework
+entry points. F303-F306 unify cancellable probe ownership, prune obsolete pings,
+bound log bytes (4KiB/message,1MiB encoded archive) and stream update data (1MiB).
+11 new XCTest NOT_RUN; actual Apple callbacks/RSS/leaks/worker joins unqualified.
+Q30 IN_PROGRESS; this source closure supersedes earlier open-review notes only.

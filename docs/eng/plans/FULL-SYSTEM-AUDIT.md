@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v95 -->
+<!-- normative-sync: full-system-audit-v96 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1898,7 +1898,7 @@ Exactly-once start/stop completion, generation/cancellation, Keychain/app groups
 
 **Existing harness/fixtures:** `qeli-ios/PARITY.md`, `scripts/test_verify_ios_ipa.py`.
 
-- [ ] Review and dead code.
+- [x] Review and dead code.
 - [ ] Positive, boundary and negative scenarios.
 - [ ] Failures and concurrency.
 - [ ] Integration and target platform.
@@ -1944,6 +1944,18 @@ remain callback-owned; final memory/dead-code inventory review remains. Q30IN_PR
 Wire-crypto membership cleanup F302 excludes remaining Swift cipher/HKDF helpers
 from production and includes them in XCTest; unreferenced X25519/auth helpers removed.
 Source membership verified, Xcode build NOT_RUN; native binary behavior unchanged.
+
+### Q30 source closure ledger — 6 October
+
+[Current F303–F306 source/memory reconciliation](../reports/AUDIT-Q30-IOS-SOURCE-MEMORY.md)
+completes the Review/dead-code criterion:92 Swift inputs classified;12 single-reference
+framework entry points retained; duplicate probe owners removed. Probe start/completion,
+profile ping ownership, actual encoded log1MiB/message4KiB and update collector1MiB
+are bounded/fenced in source.11 new XCTest NOT_RUN;6 IPA fixtures/docs/bindings PASS.
+This latest source disposition supersedes earlier notes that source review remained open;
+original execution evidence is unchanged. Actual Swift/Apple runtime/RSS/leaks/callback
+and native joins remain unqualified; the other four checklist criteria remain open.
+Q30 IN_PROGRESS,overall28/37(75.7%); no platform observation reclassified PASS.
 
 ### 31. OpenWrt, LuCI and Keenetic
 

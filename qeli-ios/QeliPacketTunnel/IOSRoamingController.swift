@@ -30,32 +30,6 @@ private struct IOSPathProbeResult: Sendable {
     }
 }
 
-private final class IOSPathProbeCompletion: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Result<IOSPathProbeResult, Error>, Never>?
-    private var result: Result<IOSPathProbeResult, Error>?
-
-    func park(_ value: CheckedContinuation<Result<IOSPathProbeResult, Error>, Never>) {
-        let immediate = lock.withLock { () -> Result<IOSPathProbeResult, Error>? in
-            if let result { return result }
-            continuation = value
-            return nil
-        }
-        if let immediate { value.resume(returning: immediate) }
-    }
-
-    func finish(_ value: Result<IOSPathProbeResult, Error>) {
-        let pending = lock.withLock {
-            () -> CheckedContinuation<Result<IOSPathProbeResult, Error>, Never>? in
-            guard result == nil else { return nil }
-            result = value
-            defer { continuation = nil }
-            return continuation
-        }
-        pending?.resume(returning: value)
-    }
-}
-
 private enum IOSPathProbe {
     private static let timeoutMilliseconds = 10_000
 
@@ -71,51 +45,54 @@ private enum IOSPathProbe {
             port: NWEndpoint.Port(rawValue: port)!,
             using: parameters)
         let queue = DispatchQueue(label: "ru.qeli.ios.roaming.probe")
-        let completion = IOSPathProbeCompletion()
+        let completion = CancellableProbeCompletion<IOSPathProbeResult> {
+            connection.stateUpdateHandler = nil
+            connection.cancel()
+        }
         return try await withTaskCancellationHandler {
             let outcome: Result<IOSPathProbeResult, Error> = await withCheckedContinuation {
                 continuation in
                 completion.park(continuation)
-                connection.stateUpdateHandler = { state in
-                    switch state {
-                    case .ready:
-                        do {
-                            guard let path = connection.currentPath,
-                                  path.status == .satisfied,
-                                  path.availableInterfaces.contains(where: {
-                                      $0.index == interface.index && $0.name == interface.name
-                                  }),
-                                  let local = endpointAddress(path.localEndpoint),
-                                  let remote = endpointAddress(path.remoteEndpoint) else {
-                                throw IOSRoamingError.unavailable(
-                                    "physical DNS probe exposed no exact endpoints")
-                            }
-                            completion.finish(.success(IOSPathProbeResult(
-                                interfaceName: interface.name,
-                                interfaceIndex: UInt32(interface.index),
-                                localAddress: local,
-                                remoteAddress: remote)))
-                        } catch { completion.finish(.failure(error)) }
-                        connection.cancel()
-                    case .waiting(let error), .failed(let error):
-                        completion.finish(.failure(error))
-                        connection.cancel()
-                    case .cancelled:
-                        completion.finish(.failure(CancellationError()))
-                    default:
-                        break
+                completion.start {
+                    connection.stateUpdateHandler = { state in
+                        switch state {
+                        case .ready:
+                            do {
+                                guard let path = connection.currentPath,
+                                      path.status == .satisfied,
+                                      path.availableInterfaces.contains(where: {
+                                          $0.index == interface.index && $0.name == interface.name
+                                      }),
+                                      let local = endpointAddress(path.localEndpoint),
+                                      let remote = endpointAddress(path.remoteEndpoint) else {
+                                    throw IOSRoamingError.unavailable(
+                                        "physical DNS probe exposed no exact endpoints")
+                                }
+                                completion.finish(.success(IOSPathProbeResult(
+                                    interfaceName: interface.name,
+                                    interfaceIndex: UInt32(interface.index),
+                                    localAddress: local,
+                                    remoteAddress: remote)))
+                            } catch { completion.finish(.failure(error)) }
+                        case .waiting(let error), .failed(let error):
+                            completion.finish(.failure(error))
+                        case .cancelled:
+                            completion.finish(.failure(CancellationError()))
+                        default:
+                            break
+                        }
+                    }
+                    connection.start(queue: queue)
+                    queue.asyncAfter(deadline: .now() + .milliseconds(timeoutMilliseconds)) {
+                        completion.finish(.failure(IOSRoamingError.unavailable(
+                            "physical DNS/path probe timed out")))
                     }
                 }
-                connection.start(queue: queue)
-                queue.asyncAfter(deadline: .now() + .milliseconds(timeoutMilliseconds)) {
-                    completion.finish(.failure(IOSRoamingError.unavailable(
-                        "physical DNS/path probe timed out")))
-                    connection.cancel()
-                }
             }
+            try Task.checkCancellation()
             return try outcome.get()
         } onCancel: {
-            connection.cancel()
+            completion.finish(.failure(CancellationError()))
         }
     }
 
