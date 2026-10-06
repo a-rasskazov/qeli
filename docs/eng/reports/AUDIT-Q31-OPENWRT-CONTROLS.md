@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v16 -->
+<!-- normative-sync: q31-openwrt-controls-v17 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -990,3 +990,72 @@ Packet: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-
 Evidence: release/certification/evidence/q31-keenetic-interface-admission-20261006.json.
 Q31 IN_PROGRESS,28/37(75.7%),9 remain; no whole checklist row closed.
 Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 retained, router USER_EXCLUDED.
+
+## F344–F346: actual router cross matrix and compile regressions
+
+Previous host/tiny-crate gates did not compile current Qeli against musl. All four
+actual baseline release client-only builds failed: musl statfs.f_type is unsigned
+while PROC_SUPER_MAGIC is signed. MIPS additionally lacks std AtomicU64 for the
+roaming RPF lease counter. F344 compares both through lossless i128, retaining the
+regular-procfs check. F345 uses existing portable-atomic;64-bit width, Relaxed
+fetch_update, checked_add and exhaustion refusal remain. Shared Linux code changes;
+no fresh FFI/native release artifact qualification.
+
+All four fixed locked/client-bin/jobs1 builds PASS in private0700 source/target,
+with a private rlib-only manifest. Rust1.97.0/MIPS nightly-2026-06-10,
+Zig0.13.0/cargo-zigbuild0.23.0. Each SHA-bound SFTP snapshot passed common ELF
+admission/readelf: little endian, matching class/machine, executable entry,
+no PT_INTERP/DT_NEEDED; ARM EABI5 hard-float. MIPS declares O32/MIPS32r2/soft-float.
+These are file declarations, not firmware/other-ISA/kernel runtime or clean A/B proof.
+
+| Target | Bytes | SHA-256 |
+|---|---:|---|
+| aarch64-unknown-linux-musl | 4818040 | 60641ddcdb447c347240e173a341923d3eadc34b9f72fb30954fc4ff00327351 |
+| x86_64-unknown-linux-musl | 5574984 | ec567377e46cd8a2ed629bccfb83318fba4e19bf26905df3f49ca77c254a5925 |
+| mipsel-unknown-linux-musl | 6846056 | b365638cfc715086052b04ee6a3f5ad3e826077a858387bfc28d3f0d3c8faeaa |
+| armv7-unknown-linux-musleabihf | 4981980 | ba223fb91a931aad1c631ae71b111f568cdcb8830a69ece684854e03c591910f |
+
+GNU build/strict Clippy/fmt PASS on .11;79 sysctl tests PASS with3 inherited ignored,
+plus1 real descriptor recreation test in a private network namespace. Fresh static
+x86_64-musl runs24 gateway tests each BusyBox ash/dash without skips,56 actual
+metadata cells per interpreter.52 Linux router helper tests without skips,
+37 recipe checks/docs/bindings PASS.
+
+F346 aligns the existing four-target CI with named pins instead of floating
+stable/nightly, explicit Cargo/rustup toolchains, jobs1, cleared compiler overrides
+and common static ELF admission instead of file alone. PyYAML6.0.3 installed only
+in the audit directory parsed the workflow;16 rendered shell steps pass bash -n.
+The exact Python ELF step passes4 actual binaries and rejects4 truncated copies,
+8 expected outcomes. GitHub Actions NOT_RUN.
+
+The first as _ cast revision failed compilation and is retained; it was replaced
+by lossless conversion. Initial library-test harness omitted conformance siblings;
+12 exact Git fixtures and the correct sysctl:: filter produce79 tests. Two zero-match
+filters are NOT_RUN, not PASS. Windows helper run had10 POSIX skips; qualification
+uses the fresh Linux run without skips. Verified inputs:317 compile/8 gateway files
+on .10; two317-input source layouts/12 conformance/16 helpers on .11. Only private
+Cargo manifests become rlib; reproduction scripts use environment credentials.
+
+.10 ran owned sequential compilation/metadata/filesystem fixtures and installed
+named nightly/rust-src/missing pinned std targets; defaults and live services stayed
+unchanged. .11 ran owned GNU/private-namespace checks. Repository binaries were
+not replaced or deployed.
+
+Current Q31 remainder:
+
+| Area | State |
+|---|---|
+| Actual standalone four-target cross builds/ELF | DONE in the stated scope |
+| UCI/INI, shell lifecycle/rollback and LuCI | Scoped suites PASS; model boundaries retained |
+| Actual ucode/rpcd/UCI/procd/package SDK | OPEN; fixtures do not qualify platform APIs |
+| Preflight→launch config snapshot/core plan generation/ABA | OPEN; exclusion lock does not eliminate these races |
+| SIGKILL/power-loss installer recovery | Manual recovery; no full bundle transaction claim |
+| Firmware WAN/reboot/DNS/firewall/RSS/throughput | USER_EXCLUDED; cross-build is not a device test |
+| Hermetic shared caches/config/PATH/clean A/B | OPEN; named pins do not imply reproducibility |
+
+This current table supersedes historical cross-build NOT_RUN statements without
+rewriting original evidence. Packet:
+C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-cross-matrix-20261006.
+Evidence: release/certification/evidence/q31-router-cross-matrix-20261006.json.
+Q31 IN_PROGRESS;28/37(75.7%),9 remain. Q29 SIGKILL FAIL/auto-null ENONET,
+Q30 Apple exclusions/callback-drain OPEN and D06 ACCEPTED retained.

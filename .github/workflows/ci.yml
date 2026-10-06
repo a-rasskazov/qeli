@@ -628,8 +628,8 @@ jobs:
             -destination "id=$dest" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
 
-  # Hard build gate: клиент для роутера (Keenetic) кросс-компилируется под обе арки —
-  # aarch64 (stable) и mipsel (tier-3: nightly + -Zbuild-std). Линкер/cc — zig через
+  # Hard build gate: клиент для роутера (Keenetic) кросс-компилируется под четыре арки.
+  # Rust 1.97.0; mipsel tier-3: nightly-2026-06-10 + -Zbuild-std. Линкер/cc — zig через
   # cargo-zigbuild (OpenWrt SDK не нужен). Только сборка; рантайм проверяется на устройстве.
   # Арк-специфичные TUNSETIFF (тип/значение) и float-ABI mipsel видны ТОЛЬКО здесь, не на
   # x86-гейте build-test выше — этот job ловит молчаливую поломку кросс-сборки.
@@ -641,23 +641,23 @@ jobs:
         include:
           - arch: aarch64
             target: aarch64-unknown-linux-musl
-            toolchain: stable
+            toolchain: 1.97.0
           - arch: mipsel
             target: mipsel-unknown-linux-musl
-            toolchain: nightly
+            toolchain: nightly-2026-06-10
           # armv7 is a shipped OpenWrt target but was missing from the matrix, so a
           # 32-bit-only break could still slip through even though mipsel is covered.
-          # Same soft-float / stable toolchain path as aarch64 (tier-2, no build-std).
+          # ARM EABI5 hard-float; tier-2 prebuilt std, no build-std.
           - arch: armv7
             target: armv7-unknown-linux-musleabihf
-            toolchain: stable
+            toolchain: 1.97.0
           # x86_64-musl was missing while `qeli-openwrt/dist/qeli-client-openwrt-x86_64`
           # is PUBLISHED — a shipped artifact with no build gate at all. It is also the
           # only musl target where the x86-specific code paths get compiled against musl
           # rather than glibc. (Audit 2026-07-27, G2)
           - arch: x86_64-musl
             target: x86_64-unknown-linux-musl
-            toolchain: stable
+            toolchain: 1.97.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -671,30 +671,45 @@ jobs:
           # mipsel is tier-3: no prebuilt std, so build-std needs rust-src. aarch64 and
           # armv7 are tier-2: install the prebuilt std target instead.
           if [ "${{ matrix.arch }}" = "mipsel" ]; then
-            rustup component add rust-src
+            rustup component add rust-src --toolchain ${{ matrix.toolchain }}
           else
-            rustup target add ${{ matrix.target }}
+            rustup target add --toolchain ${{ matrix.toolchain }} ${{ matrix.target }}
           fi
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: qeli
       - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --version 0.23.0 --locked
+        run: cargo +${{ matrix.toolchain }} install cargo-zigbuild --version 0.23.0 --locked --jobs 1
       - name: Cross-build qeli-client (${{ matrix.arch }})
         run: |
+          set -euo pipefail
+          unset CARGO_ENCODED_RUSTFLAGS RUSTC CARGO_BUILD_RUSTC CARGO_BUILD_RUSTFLAGS
+          export RUSTC_WRAPPER='' RUSTC_WORKSPACE_WRAPPER='' CARGO_INCREMENTAL=0
           sed -i 's/^crate-type = \["rlib", "cdylib", "staticlib"\]$/crate-type = ["rlib"]/' Cargo.toml
           grep -qxF 'crate-type = ["rlib"]' Cargo.toml
           if [ "${{ matrix.arch }}" = "mipsel" ]; then
-            RUSTFLAGS='-C link-arg=-msoft-float' cargo zigbuild --locked -Z build-std=std,panic_abort \
+            RUSTFLAGS='-C link-arg=-msoft-float' cargo +${{ matrix.toolchain }} zigbuild --locked --jobs 1 -Z build-std=std,panic_abort \
               --release --bin qeli-client --no-default-features --features client-bin \
               --target ${{ matrix.target }}
           else
-            cargo zigbuild --locked \
+            RUSTFLAGS='' cargo +${{ matrix.toolchain }} zigbuild --locked --jobs 1 \
               --release --bin qeli-client --no-default-features --features client-bin \
               --target ${{ matrix.target }}
           fi
-      - name: Artifact info
-        run: file target/${{ matrix.target }}/release/qeli-client
+      - name: Verify static target ELF
+        env:
+          QELI_ROUTER_TARGET: ${{ matrix.target }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, sys
+          from pathlib import Path
+          sys.path.insert(0, '../scripts')
+          from router_artifact import validate_router_elf
+          target = os.environ['QELI_ROUTER_TARGET']
+          data = (Path('target') / target / 'release/qeli-client').read_bytes()
+          print(validate_router_elf(data, target))
+          print('sha256:', hashlib.sha256(data).hexdigest(), 'bytes:', len(data))
+          PY
 
   # Hard gate: build the fuzz harnesses and run a short smoke on each. Catches a
   # build break / API drift in the untrusted-input parsers (ClientHello, packet

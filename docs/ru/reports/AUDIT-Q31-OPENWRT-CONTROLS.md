@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v16 -->
+<!-- normative-sync: q31-openwrt-controls-v17 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -988,3 +988,75 @@ FFI/release/cross/firmware или router ABI/runtime не заявлена. .10 
 Evidence: release/certification/evidence/q31-keenetic-interface-admission-20261006.json.
 Q31 IN_PROGRESS,28/37(75.7%),9 осталось; целый checklist-пункт не закрыт.
 Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 сохранены, router USER_EXCLUDED.
+
+## F344–F346: реальная router cross-matrix и compile-регрессии
+
+Прежние host/tiny-crate проверки не подтверждали сборку текущего Qeli на musl.
+Все четыре настоящие release client-only сборки старого Git-снимка упали:
+statfs.f_type у musl беззнаковый, а PROC_SUPER_MAGIC знаковый. На MIPS дополнительно
+не существует std::sync::atomic::AtomicU64 для roaming RPF lease counter.
+F344 сравнивает оба значения в lossless i128, сохраняя проверку regular procfs;
+F345 использует уже имеющийся portable-atomic. Ширина64бит, Relaxed fetch_update,
+checked_add и отказ при исчерпании lease IDs сохранены. Это изменение общего Linux
+кода, а не только metadata CLI; новые FFI/native release artifacts не заявлены.
+
+Повторные сборки всех четырёх targets PASS: locked/client-bin/jobs1, private
+source/target0700, manifest только rlib. Rust1.97.0; MIPS nightly-2026-06-10,
+Zig0.13.0/cargo-zigbuild0.23.0. Каждый полученный SHA-bound SFTP snapshot прошёл
+общий ELF admission и readelf: little endian, нужные class/machine, executable
+entry, без PT_INTERP/DT_NEEDED; ARM EABI5 hard-float. У MIPS readelf показывает
+O32/MIPS32r2/soft-float. Это декларация ABI полученного файла, не проверка исполнения
+на firmware, других ISA/ядрах или доказательство воспроизводимости A/B.
+
+| Target | Bytes | SHA-256 |
+|---|---:|---|
+| aarch64-unknown-linux-musl | 4818040 | 60641ddcdb447c347240e173a341923d3eadc34b9f72fb30954fc4ff00327351 |
+| x86_64-unknown-linux-musl | 5574984 | ec567377e46cd8a2ed629bccfb83318fba4e19bf26905df3f49ca77c254a5925 |
+| mipsel-unknown-linux-musl | 6846056 | b365638cfc715086052b04ee6a3f5ad3e826077a858387bfc28d3f0d3c8faeaa |
+| armv7-unknown-linux-musleabihf | 4981980 | ba223fb91a931aad1c631ae71b111f568cdcb8830a69ece684854e03c591910f |
+
+На .11 GNU build/strict Clippy/fmt PASS;79 sysctl tests PASS,3 inherited ignored,
+отдельно настоящий native descriptor recreation test PASS в private network
+namespace. Static x86_64-musl executable выполняет24 gateway admission tests на
+каждом BusyBox ash/dash без skips, включая56 actual metadata cells на interpreter.
+Все52 router helper tests на Linux без skips,37 recipe checks/docs/bindings PASS.
+
+F346 устраняет расхождение CI: четыре targets уже были в матрице, но использовали
+плавающие stable/nightly. Теперь те же named pins, явный toolchain в Cargo/rustup,
+один job, очищенные compiler overrides и общий static ELF gate вместо одного file.
+Workflow разобран PyYAML6.0.3 из отдельного audit-каталога;16 rendered shell steps
+прошли bash -n. Точный Python ELF step выполнен на четырёх настоящих binaries и
+четырёх усечённых negative copies:8 ожидаемых результатов. GitHub Actions NOT_RUN.
+
+Первый вариант inferred cast as _ не компилировался и сохранён как FAIL;
+он заменён lossless преобразованием. Initial library-test harness не передал
+conformance siblings; после загрузки12 Git fixtures правильный sysctl:: filter
+выполнил79 tests. Два пустых фильтра явно NOT_RUN, не PASS. Windows router helpers
+имели10 POSIX skips; квалифицированный итог взят из Linux прогона без пропусков.
+317 compile inputs/8 gateway fixture inputs проверены на .10; два317-input source
+layouts/12 conformance/16 helper inputs — на .11. Только private Cargo manifest
+изменён на rlib. Реквизиты не сохраняются в reproduction scripts.
+
+.10 выполнял собственную последовательную компиляцию и metadata/filesystem
+fixtures; добавлены named nightly/rust-src и недостающие pinned std targets,
+default toolchains и работающие сервисы не изменялись. .11 — собственная GNU
+сборка и private namespace test. Repo binaries/deployment не заменялись.
+
+Текущий остаток Q31 после этой матрицы:
+
+| Область | Состояние |
+|---|---|
+| Реальная standalone cross-сборка четырёх targets/ELF | DONE в указанном scope |
+| UCI/INI, shell lifecycle/rollback и LuCI | Scoped suites PASS; сохранены модельные границы |
+| Настоящие ucode/rpcd/UCI/procd/package SDK | OPEN; fixtures не квалифицируют эти платформенные API |
+| Preflight→launch config snapshot, core plan generation/ABA | OPEN; текущий exclusion lock не устраняет эти гонки |
+| SIGKILL/power-loss installer recovery | Manual recovery; полная bundle transaction не подтверждена |
+| Firmware WAN/reboot/DNS/firewall/RSS/throughput | USER_EXCLUDED; cross-build не device test |
+| Hermetic shared caches/config/PATH и clean A/B | OPEN; named pins не означают воспроизводимость |
+
+Эта таблица актуализирует исторические cross-build NOT_RUN в предыдущих разделах;
+их исходные evidence не переписаны. Пакет:
+C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-cross-matrix-20261006.
+Evidence: release/certification/evidence/q31-router-cross-matrix-20261006.json.
+Q31 IN_PROGRESS;28/37(75.7%),9 осталось. Q29 SIGKILL FAIL/auto-null ENONET,
+Q30 Apple exclusions/callback-drain OPEN и D06 ACCEPTED сохранены.

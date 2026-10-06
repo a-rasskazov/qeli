@@ -710,6 +710,19 @@ class NativeRecipeTests(unittest.TestCase):
             self.assertNotIn("run: cargo install cargo-zigbuild --locked", workflow)
         self.assertIn('crate-type = ["rlib"]', ci)
 
+        router_ci = ci.split("  keenetic-cross:", 1)[1].split("  fuzz-smoke:", 1)[0]
+        self.assertEqual(router_ci.count("toolchain: 1.97.0"), 3)
+        self.assertEqual(router_ci.count("toolchain: nightly-2026-06-10"), 1)
+        for target in ("aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl",
+                       "armv7-unknown-linux-musleabihf", "mipsel-unknown-linux-musl"):
+            self.assertIn("target: " + target, router_ci)
+        self.assertNotIn("toolchain: stable", router_ci)
+        self.assertNotIn("toolchain: nightly\n", router_ci)
+        self.assertEqual(router_ci.count("zigbuild --locked --jobs 1"), 2)
+        self.assertIn("unset CARGO_ENCODED_RUSTFLAGS RUSTC CARGO_BUILD_RUSTC CARGO_BUILD_RUSTFLAGS", router_ci)
+        self.assertIn("RUSTC_WRAPPER='' RUSTC_WORKSPACE_WRAPPER='' CARGO_INCREMENTAL=0", router_ci)
+        self.assertIn("validate_router_elf(data, target)", router_ci)
+
     def test_retired_root_ssh_scenarios_exit_before_network_or_mutation(self):
         root = Path(__file__).parent.parent
         retired = [

@@ -1319,7 +1319,8 @@ fn linux_path_command_outcome(execution: &anyhow::Result<()>) -> PathCommandOutc
 }
 
 #[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
-static NEXT_ROAM_RPF_LEASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+// MIPS has no native AtomicU64; preserve the lease width with the shared fallback.
+static NEXT_ROAM_RPF_LEASE: portable_atomic::AtomicU64 = portable_atomic::AtomicU64::new(1);
 
 #[cfg(all(feature = "experimental-roaming", target_os = "linux"))]
 struct CandidateRpfLease {

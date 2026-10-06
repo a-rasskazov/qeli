@@ -136,7 +136,9 @@ fn live_open(path: &str) -> io::Result<std::fs::File> {
         return Err(io::Error::last_os_error());
     }
     let fs = unsafe { fs.assume_init() };
-    if fs.f_type != libc::PROC_SUPER_MAGIC || !file.metadata()?.is_file() {
+    // libc exposes f_type as signed on glibc and unsigned on musl. A lossless
+    // common integer representation keeps the same check on 32- and 64-bit targets.
+    if i128::from(fs.f_type) != i128::from(libc::PROC_SUPER_MAGIC) || !file.metadata()?.is_file() {
         return Err(io::Error::other(
             "per-interface sysctl must be a regular procfs file",
         ));
