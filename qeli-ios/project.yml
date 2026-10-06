@@ -39,6 +39,9 @@ targets:
           # UI has no runtime caller and must not ship a second protocol implementation beside
           # the Rust core used by QeliPacketTunnel.
           - Protocol
+          # Swift wire crypto serves conformance tests only. Storage/BackupCrypto uses
+          # CryptoKit directly; production transport crypto belongs to the Rust core.
+          - Crypto
       - path: Config/PrivacyInfo.xcprivacy
         buildPhase: resources
     settings:
@@ -131,6 +134,7 @@ targets:
     sources:
       - path: QeliIOSTests
       - path: QeliCore/Protocol
+      - path: QeliCore/Crypto
     dependencies:
       - target: QeliIOS
     settings:

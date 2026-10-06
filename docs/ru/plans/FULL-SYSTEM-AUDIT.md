@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v94 -->
+<!-- normative-sync: full-system-audit-v95 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -1945,6 +1945,16 @@ source review остаётся.6 IPA fixture/docs/bindings PASS; прошлые 
 свежие настройки читаются после допуска, устаревшие/отменённые шаги отклоняются.
 Три gate XCTest NOT_RUN;6 IPA fixture/docs/bindings PASS. Остаются provider-message,
 backup UI и итоговая source-сверка памяти/мёртвого кода. Q30 IN_PROGRESS,28/37.
+
+[Source fixes F300–F302 сообщений/backup](../reports/AUDIT-Q30-IOS-MESSAGES-BACKUP.md):
+отменяемое ожидание settings-message20s с проверкой session/поколения/эпохи;
+один snapshot poll на эпоху, фиксированный пароль backup и имя по готовым байтам.
+11 XCTest NOT_RUN;6 IPA fixture/docs/bindings PASS. Реальные OS операции по-прежнему
+принадлежат callback; остаётся итоговая сверка памяти/мёртвого кода. Q30IN_PROGRESS.
+
+Очистка membership wire-crypto F302 исключает Swift cipher/HKDF из production
+и включает в XCTest; неиспользуемые X25519/auth-helper удалены. Membership проверен
+по исходникам, Xcode NOT_RUN; поведение native-бинарников не изменялось.
 
 ### 31. OpenWrt, LuCI и Keenetic
 

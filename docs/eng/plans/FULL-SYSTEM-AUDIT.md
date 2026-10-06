@@ -10,7 +10,7 @@ replace full-suite repetition after every fix. The levels below remain section c
 criteria; each small step needs no standalone report. New noncritical hypotheses wait
 for the full audit; existing obligations remain.
 
-<!-- normative-sync: full-system-audit-v94 -->
+<!-- normative-sync: full-system-audit-v95 -->
 
 **Current result, 6 October: 28/37 sections DONE/PASS (75.7%), 9 remain. Q28 complete within agreed scope: available managed/integration checks PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, service ownership and bounded API34 VPN matrices have scoped evidence. SIGKILL automatic recovery FAIL and auto/null DnsResolver ENONET are retained; the closure ledger below distinguishes completed checks from remaining work.**
 
@@ -1934,6 +1934,16 @@ five status preassignment bypasses removed; full managed reconciliation serializ
 latest settings read at admission and obsolete/cancelled preference work rejected.
 Three gate XCTest NOT_RUN;6 IPA fixture/docs/bindings PASS. Provider-message/backup
 UI and final memory/dead-code source review remain. Q30 IN_PROGRESS,28/37.
+
+[F300–F302 messages/backup source fixes](../reports/AUDIT-Q30-IOS-MESSAGES-BACKUP.md):
+20s cancellable settings-message wait with session/generation/epoch ownership;
+one unfinished snapshot poll per epoch; captured backup passwords and byte-derived
+filename.11 new XCTest NOT_RUN;6 IPA fixture/docs/bindings PASS. Actual OS operations
+remain callback-owned; final memory/dead-code inventory review remains. Q30IN_PROGRESS.
+
+Wire-crypto membership cleanup F302 excludes remaining Swift cipher/HKDF helpers
+from production and includes them in XCTest; unreferenced X25519/auth helpers removed.
+Source membership verified, Xcode build NOT_RUN; native binary behavior unchanged.
 
 ### 31. OpenWrt, LuCI and Keenetic
 

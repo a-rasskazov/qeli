@@ -139,3 +139,14 @@ remove five status/epoch bypasses and serialize full managed reconciliation. Pro
 settings are read at admission; connection generations and Task cancellation fence
 obsolete preference steps. Three gate XCTest NOT_RUN; Apple runtime excluded.
 Q30 remains IN_PROGRESS; provider-message/backup UI and final source review remain.
+
+[Q30 messages/backup fixes](../docs/eng/reports/AUDIT-Q30-IOS-MESSAGES-BACKUP.md)
+bound the settings-message caller wait to20s, fence response ownership and admit
+one unfinished snapshot poll per status epoch. Backup passwords are captured per
+request; filenames derive from actual bytes.11 new XCTest NOT_RUN. Timeout does
+not cancel/rollback an OS apply; final source memory/dead-code review remains open.
+
+F302 moves remaining Swift wire-crypto helpers out of the app target into XCTest,
+alongside Protocol, and removes unreferenced X25519/auth helper code. Backup storage
+still uses CryptoKit directly; Rust/native transport crypto is unchanged. Actual
+Xcode compilation and binary-size effects remain NOT_RUN.

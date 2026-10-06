@@ -288,20 +288,36 @@ final class TunnelManager: NSObject, ObservableObject {
               let session = manager?.connection as? NETunnelProviderSession else {
             throw TunnelManagerError.sessionUnavailable
         }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            do {
-                try session.sendProviderMessage(Data("reload-settings".utf8)) { data in
-                    guard let data, let response = String(data: data, encoding: .utf8) else {
-                        continuation.resume(throwing: TunnelManagerError.providerMessageRejected("empty response"))
-                        return
-                    }
-                    if response == "ok" { continuation.resume(returning: ()) }
-                    else { continuation.resume(throwing: TunnelManagerError.providerMessageRejected(response)) }
-                }
-            } catch {
-                continuation.resume(throwing: error)
+        let generation = operationGeneration
+        let token = snapshotResponseGate.issue()
+        let data: Data?
+        do {
+            // The provider's settings budget is 15s; allow 5s for IPC scheduling.
+            data = try await ProviderMessageRequest.send(timeoutNanoseconds: 20_000_000_000) { reply in
+                try session.sendProviderMessage(Data("reload-settings".utf8), responseHandler: reply)
             }
+        } catch {
+            try ensureCurrentProviderRequest(generation: generation, token: token, session: session)
+            if case ProviderMessageRequest.RequestError.timedOut = error {
+                throw TunnelManagerError.providerMessageTimedOut
+            }
+            throw error
         }
+        try ensureCurrentProviderRequest(generation: generation, token: token, session: session)
+        guard let data, let response = String(data: data, encoding: .utf8) else {
+            throw TunnelManagerError.providerMessageRejected("empty response")
+        }
+        guard response == "ok" else { throw TunnelManagerError.providerMessageRejected(response) }
+    }
+
+    private func ensureCurrentProviderRequest(
+        generation: UInt64,
+        token: ProviderSnapshotResponseGate.Token,
+        session: NETunnelProviderSession
+    ) throws {
+        try ensureCurrent(generation)
+        guard snapshotResponseGate.isCurrent(token), systemStatus == .connected,
+              manager?.connection === session else { throw CancellationError() }
     }
 
     func disconnect() {
@@ -409,13 +425,13 @@ final class TunnelManager: NSObject, ObservableObject {
         guard systemStatus == .connected || systemStatus == .reasserting,
               snapshot.phase != .disconnecting,
               let session = manager?.connection as? NETunnelProviderSession else { return }
-        let token = snapshotResponseGate.issue()
+        guard let token = snapshotResponseGate.beginPolling() else { return }
         do {
             try session.sendProviderMessage(Data("snapshot".utf8)) { [weak self] data in
-                guard let data,
-                      let value = try? JSONDecoder().decode(TunnelSnapshot.self, from: data) else { return }
+                let value = data.flatMap { try? JSONDecoder().decode(TunnelSnapshot.self, from: $0) }
                 Task { @MainActor [weak self] in
-                    guard let self,
+                    guard let self, self.snapshotResponseGate.finishPolling(token),
+                          let value,
                           self.systemStatus == .connected || self.systemStatus == .reasserting,
                           self.snapshot.phase != .disconnecting,
                           self.snapshotResponseGate.accept(token) else { return }
@@ -423,6 +439,7 @@ final class TunnelManager: NSObject, ObservableObject {
                 }
             }
         } catch {
+            _ = snapshotResponseGate.finishPolling(token)
             // A connection can transition between the status check and this message.
         }
     }
@@ -543,6 +560,7 @@ enum TunnelManagerError: LocalizedError {
     case sessionUnavailable
     case connectAlreadyInProgress
     case providerMessageRejected(String)
+    case providerMessageTimedOut
     case realityRequiresPinnedKey
 
     var errorDescription: String? {
@@ -552,6 +570,7 @@ enum TunnelManagerError: LocalizedError {
         case .connectAlreadyInProgress: return "A Qeli connection attempt is already in progress."
         case .realityRequiresPinnedKey:
             return "reality-tls needs both the pinned server key and reality_sid; add them to the profile."
+        case .providerMessageTimedOut: return "The Packet Tunnel did not respond to the settings update in time."
         case .providerMessageRejected(let message): return "The Packet Tunnel rejected the settings update: \(message)"
         }
     }
