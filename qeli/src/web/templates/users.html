@@ -544,6 +544,7 @@ function usersPage() {
     groups: [],   // [{name, bandwidth_limit_mbps, max_sessions, allowed_networks}]
     profiles: [], // [{name, transport, port}] for share + allowed-profiles
     publicHost: '', // default share host from web.public_host
+    refreshingUsers: false,
     loading: false, loaded: false, groupsLoaded: false,
     destroyed: false, loadSequence: 0, refreshTimer: null, visibilityHandler: null,
     readSequences: { users: 0, groups: 0, profiles: 0, usage: 0 },
@@ -784,8 +785,8 @@ function usersPage() {
     async init() {
       await this.load();
       if (this.destroyed) return;
-      this.refreshTimer = setInterval(() => { if (!document.hidden) this.loadUsage(true); }, 10000);
-      this.visibilityHandler = () => { if (!this.destroyed && !document.hidden) this.loadUsage(true); };
+      this.refreshTimer = setInterval(() => { if (!document.hidden) this.refreshLive(); }, 10000);
+      this.visibilityHandler = () => { if (!this.destroyed && !document.hidden) this.refreshLive(); };
       document.addEventListener('visibilitychange', this.visibilityHandler);
     },
     destroy() {
@@ -795,13 +796,32 @@ function usersPage() {
       if (this.visibilityHandler) document.removeEventListener('visibilitychange', this.visibilityHandler);
       this.refreshTimer = this.visibilityHandler = null;
     },
+    async refreshLive() {
+      if (this.destroyed || this.loading) return;
+      await Promise.all([this.refreshUsers(), this.loadUsage(true)]);
+    },
+    async refreshUsers() {
+      // Preserve the user's live refresh and keep the editor paired with its source row.
+      if (this.destroyed || this.refreshingUsers || this.modal) return;
+      this.refreshingUsers = true;
+      try {
+        await this.readSection('users', true, () => apiFetch('api/users', {cache:'no-store'}), d => {
+          if (this.modal) return;
+          if (!Array.isArray(d.users || [])) throw new Error(this.qeliT('Request failed'));
+          this.users = d.users || []; this.loaded = true;
+          const liveNames = new Set(this.users.map(u => u.username));
+          this.selected = this.selected.filter(name => liveNames.has(name));
+          this.refreshUserView();
+        });
+      } finally { this.refreshingUsers = false; }
+    },
     async load(background = false) {
       if (this.destroyed || (background && this.readPending.users)) return;
       const sequence = ++this.loadSequence;
       if (!background) this.loading = true;
       try {
         await Promise.all([
-          this.readSection('users', false, () => apiFetch('api/users'), d => {
+          this.readSection('users', false, () => apiFetch('api/users', {cache:'no-store'}), d => {
             if (!Array.isArray(d.users || [])) throw new Error(this.qeliT('Request failed'));
             this.users = d.users || []; this.loaded = true;
             const names = new Set(this.users.map(u => u.username));
