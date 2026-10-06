@@ -8,8 +8,8 @@ banner` / ошибку подключения — причина в этом (т
 
 Кросс-сборка client-only бинаря qeli под роутеры Keenetic — обе арки за прогон.
 
-  aarch64-unknown-linux-musl  — новые ARM-кинетики (Cortex-A53); stable + zig-линкер.
-  mipsel-unknown-linux-musl   — основной парк (MT7621/7628); tier-3 → nightly -Zbuild-std.
+  aarch64-unknown-linux-musl  — новые ARM-кинетики (Cortex-A53); Rust1.97.0 + Zig0.13.0.
+  mipsel-unknown-linux-musl   — основной парк (MT7621/7628); tier-3 → nightly-2026-06-10 -Zbuild-std.
 
 Линкер/cc для обеих арок — zig (уже стоит на .10) через cargo-zigbuild. Сборка
 client-only (`--no-default-features --features client-bin`) → без `ring` (нет MIPS).
@@ -25,6 +25,7 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(__file__))
 from router_artifact import pull_router_artifact
+from router_toolchain import ARCH_TARGETS, ensure_router_toolchain, router_build_command
 from router_source import (sync_router_source, require_router_source_ready,
                            create_router_checkout, restrict_router_crate_types as restrict_crate_types)
 from lab_common import connect, LAB_SRV
@@ -33,12 +34,7 @@ REMOTE_ROOT = None
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_SRC = REPO_ROOT / "qeli"
 LOCAL_OUT = REPO_ROOT / "release" / "keenetic"
-PINNED_CARGO_ZIGBUILD = "0.23.0"
-TARGETS = {
-    "aarch64": "aarch64-unknown-linux-musl",
-    "mipsel": "mipsel-unknown-linux-musl",
-}
-CLIENT_FEATURES = "--no-default-features --features client-bin"
+TARGETS = {arch: ARCH_TARGETS[arch] for arch in ("aarch64", "mipsel")}
 BIN = "qeli-client"
 
 
@@ -49,13 +45,6 @@ def run(c, cmd, t=120):
     out = o.read().decode("utf-8", "replace") + e.read().decode("utf-8", "replace")
     rc = o.channel.recv_exit_status()
     return rc, out.strip()
-
-
-def checked(c, command, timeout=120):
-    rc, output = run(c, command, t=timeout)
-    if rc != 0:
-        raise RuntimeError(f"router command failed (rc={rc}): {command}\n{output}")
-    return output
 
 
 def tail(s, n=25):
@@ -75,37 +64,13 @@ def check_sync_ready(c):
 
 
 def ensure_toolchain(c, targets):
-    if any(arch == "mipsel" for arch in targets):
-        installed = checked(c, "rustup toolchain list")
-        if not any(line.split()[0].startswith("nightly") for line in installed.splitlines() if line.split()):
-            checked(c, "rustup toolchain install nightly --profile minimal -c rust-src", timeout=900)
-        checked(c, "rustup component add rust-src --toolchain nightly", timeout=300)
-    for target in targets.values():
-        if target != "mipsel-unknown-linux-musl":
-            checked(c, f"rustup target add {target}", timeout=300)
-    expected = f"cargo-zigbuild v{PINNED_CARGO_ZIGBUILD}:"
-    installed = checked(c, "cargo install --list")
-    if expected not in installed.splitlines():
-        checked(c, f"cargo install cargo-zigbuild --version {PINNED_CARGO_ZIGBUILD} --locked --force", timeout=1200)
-    verified = checked(c, "cargo install --list")
-    if expected not in verified.splitlines():
-        raise RuntimeError(f"cargo-zigbuild pin mismatch: {verified}")
-    print("zig:", checked(c, "zig version"))
+    selected = targets.values()
+    print("router toolchain:", ensure_router_toolchain(c, selected))
 
 
 def build(c, arch, target):
     print(f"### Сборка {arch} ({target})")
-    if arch == "mipsel":
-        # tier-3: nightly + сборка std из исходников. Rust компилит mipsel в soft-float
-        # ABI, а zig по умолчанию линкует mips как fpxx → конфликт float-ABI на линковке.
-        # Принуждаем линковку к soft-float (бинарь не использует FPU — идёт на любом mips).
-        cmd = (f"cd {REMOTE_ROOT} && CARGO_TARGET_DIR={REMOTE_ROOT}/target CARGO_INCREMENTAL=0 RUSTFLAGS='-C link-arg=-msoft-float' "
-               f"cargo +nightly zigbuild "
-               f"-Z build-std=std,panic_abort --locked --jobs 1 --release --bin {BIN} "
-               f"{CLIENT_FEATURES} --target {target} 2>&1")
-    else:
-        cmd = (f"cd {REMOTE_ROOT} && CARGO_TARGET_DIR={REMOTE_ROOT}/target CARGO_INCREMENTAL=0 cargo zigbuild --locked --jobs 1 --release --bin {BIN} "
-               f"{CLIENT_FEATURES} --target {target} 2>&1")
+    cmd = router_build_command(REMOTE_ROOT, target, BIN)
     rc, out = run(c, cmd, t=1800)
     print(tail(out, 25))
     print(f"{arch} build rc:", rc)

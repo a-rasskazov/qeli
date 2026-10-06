@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v12 -->
+<!-- normative-sync: q31-openwrt-controls-v13 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -785,3 +785,57 @@ Q31 IN_PROGRESS;28/37(75.7%),9 remain; no whole Q31 checklist row is closed.
 Metadata references: [ELF program headers](https://refspecs.linuxfoundation.org/elf/gabi4%2B/ch5.pheader.html),
 [Arm ELF32 ABI](https://github.com/ARM-software/abi-aa/blob/main/aaelf32/aaelf32.rst),
 [Cargo install](https://doc.rust-lang.org/cargo/commands/cargo-install.html).
+
+## F338: default Rust, floating nightly and unverified Zig changed build identity
+
+Both helpers independently installed/selected toolchains. Ordinary builds used
+default Cargo/Rust, MIPS used +nightly and any Zig version was only printed. Current
+read-only inventory confirms both labs default to Rust1.96 while pinned native
+recipes use1.97.0. The new router_toolchain.py owns target aliases, setup and build
+commands for both helpers: Rust1.97.0, nightly-2026-06-10 for MIPS, Zig0.13.0 and
+cargo-zigbuild0.23.0. The nightly archive date is taken from the existing .10
+manifest (compiler commit date is June9); no new latest-nightly selection.
+
+Wrong Zig fails before installer work. Named Rust pins/versions, target std and
+nightly rust-src are verified after successful installers; missing results reject
+setup. cargo-zigbuild inventory and its top-level executable version both must
+match. Install uses explicit Rust and one job; default Rust is unchanged. Dead
+helper checked/feature definitions and duplicate OpenWrt build_std data/argument
+are removed. Architecture/toolchain/flags have one owner.
+
+## F339: inherited encoded/compiler flags shadowed the intended recipe
+
+CARGO_ENCODED_RUSTFLAGS takes precedence over RUSTFLAGS, including the old MIPS
+soft-float assignment. The shared Qeli command removes encoded flags, RUSTC,
+CARGO_BUILD_RUSTC and CARGO_BUILD_RUSTFLAGS; assigns its own RUSTFLAGS (empty for
+ordinary targets, explicit MIPS linker soft-float), disables Rust wrappers and
+uses the pin with a private target/noincremental/jobs1. This is a bounded ambient
+override fix, not a sanitization of every Cargo profile/config/PATH/cache input.
+
+52 Linux router tests PASS:12 helpers,10 shared policy,16 ELF,7 source and7 checkout.
+Four formerly duplicated setup test methods become one delegation method plus10
+shared semantic failure methods; coverage is moved, not discarded.12 old/current
+model records reproduce wrong Zig admission and unpinned/unisolated commands in
+both helpers. A real offline tiny host Cargo/Rust fixture runs old/new prefixes:
+old encoded cfg is active under default Rust1.96, new cfg is absent under Rust1.97.
+No cargo-zigbuild/musl/cross/MIPS/nightly/Qeli build is exercised by that fixture.
+37 recipes/docs/bindings/diff PASS. .10 inventory is read-only; execution uses .11.
+No global tools/defaults/service/network/installed binaries were changed.
+
+The initial draft used cargo +pin zigbuild --version, which the real tool rejects;
+the final check uses cargo-zigbuild --version. A transient uncommitted BIN removal
+was caught by helper tests and repaired. A test-only import context also unloaded the policy module and broke comparison
+mock identity; pre-importing it fixed the harness. These initial failed attempts
+are retained, do not qualify success, and final exact-source tests rerun. Version pinning does
+not prove hermeticity, full ABI/ISA, independent A/B reproducibility or router
+runtime. Shared tool installation/cache, global config/PATH and upload races
+remain. Real router USER_EXCLUDED; SDK Rust feed/source/mirror release obligations
+are separate. Core/native/Rust implementation inputs/artifacts unchanged.
+
+Packet F338–F339: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-toolchain-policy-20261006.
+Evidence: release/certification/evidence/q31-router-toolchain-policy-20261006.json.
+Generation/ABA/last-check/firmware/whole-bundle rollback OPEN. Q29 FAIL/ENONET,
+Q30 exclusions/drainOPEN,D06 retained. Q31 IN_PROGRESS;28/37(75.7%),9 remain;
+no whole checklist row is closed.
+Policy references: [rustup pins](https://rust-lang.github.io/rustup/concepts/toolchains.html),
+[Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).

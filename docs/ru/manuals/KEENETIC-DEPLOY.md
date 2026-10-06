@@ -71,8 +71,14 @@ little-endian нужной разрядности/архитектуры с ис
 PT_INTERP и DT_NEEDED; ARMv7 обязан объявлять EABI5 hard-float. Отказ сохраняет
 предыдущий локальный бинарник, в том числе при совпадении его hash с remote cache.
 Проверка не доказывает musl, CPU ISA, полный float ABI MIPS, воспроизводимость
-сборки или работу прошивки. Rust stable/nightly и Zig здесь ещё не полностью
-зафиксированы. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+сборки или работу прошивки. Общая политика выбирает Rust1.97.0, nightly-2026-06-10 для MIPS,
+Zig0.13.0 и cargo-zigbuild0.23.0. Неверная версия вызывает отказ; недостающие
+именованные Rust/target components устанавливаются без изменения default toolchain.
+Оба helper используют эту политику. Encoded/внешние RUSTFLAGS не подменяют recipe;
+MIPS сохраняет явный soft-float linker argument. Compiler overrides очищаются,
+Rust wrappers отключаются для компиляции Qeli. Global Cargo config, PATH, общие
+cache/tool installations и изменения файлов при upload пока не позволяют заявлять
+герметичную или воспроизводимую сборку. SDK использует собственный Rust feed. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
 
 ---

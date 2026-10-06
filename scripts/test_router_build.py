@@ -10,6 +10,7 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 import router_artifact
+import router_toolchain
 from test_router_artifact import elf_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,44 +61,12 @@ class RouterBuildTests(unittest.TestCase):
                     self.assertEqual(result.exception.code, 2)
                     connect.assert_not_called()
 
-    def test_target_toolchain_and_zig_failures_propagate(self):
+    def test_both_helpers_delegate_selected_targets_to_shared_toolchain(self):
         for module in MODULES:
-            for failed in ('rustup target add', 'cargo install --list', 'zig version'):
-                with self.subTest(module=module.__name__, failed=failed):
-                    def run(client, command, t=0):
-                        if command.startswith(failed): return 17, 'fixture failure'
-                        return 0, 'cargo-zigbuild v0.23.0:'
-                    with patch.object(module, 'run', side_effect=run), contextlib.redirect_stdout(io.StringIO()):
-                        with self.assertRaisesRegex(RuntimeError, 'rc=17'):
-                            module.ensure_toolchain(Mock(), self.selected(module))
-
-    def test_nightly_install_and_rust_src_failure_propagate(self):
-        for module in MODULES:
-            for failed in ('rustup toolchain install', 'rustup component add'):
-                with self.subTest(module=module.__name__, failed=failed):
-                    def run(client, command, t=0):
-                        if command.startswith(failed): return 17, 'fixture failure'
-                        return 0, 'stable-x86_64-unknown-linux-gnu'
-                    with patch.object(module, 'run', side_effect=run):
-                        with self.assertRaisesRegex(RuntimeError, 'rc=17'):
-                            module.ensure_toolchain(Mock(), self.selected(module, 'mipsel'))
-
-    def test_installer_failure_and_wrong_version_after_success_rejected(self):
-        for module in MODULES:
-            for failed_install in (True, False):
-                def run(client, command, t=0):
-                    if command.startswith('cargo install cargo-zigbuild'):
-                        return (17, 'fixture failure') if failed_install else (0, '')
-                    return 0, 'cargo-zigbuild v0.22.0:'
-                with self.subTest(module=module.__name__, failed_install=failed_install), patch.object(module, 'run', side_effect=run):
-                    with self.assertRaises(RuntimeError): module.ensure_toolchain(Mock(), self.selected(module))
-
-    def test_non_mips_target_does_not_install_nightly(self):
-        for module in MODULES:
-            run = Mock(return_value=(0, 'cargo-zigbuild v0.23.0:'))
-            with patch.object(module, 'run', run), contextlib.redirect_stdout(io.StringIO()):
-                module.ensure_toolchain(Mock(), self.selected(module))
-            self.assertFalse(any('nightly' in call.args[1] for call in run.call_args_list))
+            selected=self.selected(module)
+            with patch.object(module,'ensure_router_toolchain',return_value={'zig':'0.13.0'}) as shared,contextlib.redirect_stdout(io.StringIO()):
+                module.ensure_toolchain(Mock(),selected)
+            self.assertEqual(list(shared.call_args.args[1]),[module.TARGETS['aarch64']])
 
     def test_every_run_allocates_then_syncs_even_without_sync_option(self):
         for module in MODULES:
@@ -152,7 +121,7 @@ class RouterBuildTests(unittest.TestCase):
 
     def transfer(self, module, client):
         if module is KEEN: module.pull(client, 'aarch64', module.TARGETS['aarch64'])
-        else: module.build(client, 'aarch64', module.TARGETS['aarch64'][0], False)
+        else: module.build(client, 'aarch64', module.TARGETS['aarch64'])
 
     def test_verified_pull_success_mismatch_read_failure_and_empty_keep_previous(self):
         for module in MODULES:
@@ -208,9 +177,9 @@ class RouterBuildTests(unittest.TestCase):
         for module in MODULES:
             for arch, selected in module.TARGETS.items():
                 run = Mock(return_value=(17, 'build failed'))
-                with patch.object(module, 'run', run), contextlib.redirect_stdout(io.StringIO()):
+                with patch.object(module, 'run', run), patch.object(module,'REMOTE_ROOT','/var/tmp/qeli-router-keenetic-ABC123'), contextlib.redirect_stdout(io.StringIO()):
                     if module is KEEN: self.assertEqual(module.build(Mock(), arch, selected), 17)
-                    else: self.assertEqual(module.build(Mock(), arch, *selected), 17)
+                    else: self.assertEqual(module.build(Mock(), arch, selected), 17)
                 command = run.call_args.args[1]
                 self.assertIn('--locked', command)
                 self.assertIn('--jobs 1',command)

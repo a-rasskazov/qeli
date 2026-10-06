@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v12 -->
+<!-- normative-sync: q31-openwrt-controls-v13 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -783,3 +783,57 @@ Q29 FAIL/ENONET,Q30 exclusions/drainOPEN,D06 сохранены. Q31 IN_PROGRESS
 Основание metadata: [ELF program headers](https://refspecs.linuxfoundation.org/elf/gabi4%2B/ch5.pheader.html),
 [Arm ELF32 ABI](https://github.com/ARM-software/abi-aa/blob/main/aaelf32/aaelf32.rst),
 [Cargo install](https://doc.rust-lang.org/cargo/commands/cargo-install.html).
+
+## F338: default Rust, плавающий nightly и непроверенный Zig меняли сборку
+
+Оба helper отдельно настраивали toolchain. Обычные сборки использовали default
+Cargo/Rust, MIPS — +nightly; любая версия Zig только печаталась. Свежий read-only
+inventory подтверждает default Rust1.96 в обеих лабах, тогда как pinned native
+recipes используют1.97.0. router_toolchain.py теперь владеет aliases targets,
+настройкой и build commands обоих helper: Rust1.97.0, nightly-2026-06-10 для MIPS,
+Zig0.13.0, cargo-zigbuild0.23.0. Дата nightly взята из существующего manifest .10
+(compiler commit датирован June9); latest-nightly не выбирается.
+
+Неверный Zig отвергается до установки. Именованные Rust pins/версии, target std и
+nightly rust-src проверяются после успешных installer; отсутствие результата
+останавливает setup. Inventory cargo-zigbuild и версия его top-level executable
+должны совпадать. Install использует explicit Rust и один job; default не меняется.
+Удалены мёртвые checked/feature definitions helper и дублирующие OpenWrt build_std
+data/argument. У architecture/toolchain/flags теперь один owner.
+
+## F339: внешние encoded/compiler flags перекрывали recipe
+
+CARGO_ENCODED_RUSTFLAGS имеет приоритет над RUSTFLAGS, в том числе прежним MIPS
+soft-float assignment. Общая команда Qeli удаляет encoded flags, RUSTC,
+CARGO_BUILD_RUSTC и CARGO_BUILD_RUSTFLAGS, задаёт свои RUSTFLAGS (пустые для обычных
+targets, явный MIPS linker soft-float), отключает Rust wrappers и использует pin,
+приватный target/noincremental/jobs1. Это ограниченный фикс ambient overrides,
+а не полная очистка всех Cargo profile/config/PATH/cache inputs.
+
+PASS52 Linux router tests:12 helper,10 shared policy,16 ELF,7 source,7 checkout.
+Четыре дублирующих setup test methods заменены одним delegation method и10 общими
+semantic failure methods; покрытие перенесено.12 old/current model записей
+воспроизводят допуск неверного Zig и unpinned/unisolated команды в обоих helper.
+Реальный offline tiny host Cargo/Rust fixture выполняет старый/новый prefix:
+старый применяет encoded cfg с default Rust1.96, новый не применяет cfg и выбирает
+Rust1.97. Это не cargo-zigbuild/musl/cross/MIPS/nightly/Qeli сборка.37 recipes,
+docs/bindings/diff PASS. На .10 только read-only inventory; выполнение на .11.
+Global tools/defaults/service/network/установленные бинарники не менялись.
+
+Начальный draft использовал cargo +pin zigbuild --version, который реальный tool
+отвергает; итоговая проверка — cargo-zigbuild --version. Временное удаление BIN в
+незакоммиченном коде обнаружили helper tests, оно исправлено. Test-only import context также выгружал policy module и нарушал identity
+comparison mock; pre-import исправил harness. Начальные FAIL сохранены и не
+квалифицируют успех; проверки точного итогового source повторены.
+Pinning не доказывает hermeticity, полный ABI/ISA, независимую A/B reproducibility
+или router runtime. Shared tool installation/cache, global config/PATH/upload races
+остаются. Реальный router USER_EXCLUDED; SDK Rust feed/source/mirror release-cut
+проверяются отдельно. Core/native/Rust implementation inputs/artifacts неизменны.
+
+Пакет F338–F339: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-router-toolchain-policy-20261006.
+Evidence: release/certification/evidence/q31-router-toolchain-policy-20261006.json.
+Generation/ABA/last-check/firmware/whole-bundle rollback OPEN. Q29 FAIL/ENONET,
+Q30 exclusions/drainOPEN,D06 сохранены. Q31 IN_PROGRESS;28/37(75.7%),9 осталось;
+целый checklist-пункт не закрыт.
+Основание политики: [rustup pins](https://rust-lang.github.io/rustup/concepts/toolchains.html),
+[Cargo environment](https://doc.rust-lang.org/cargo/reference/environment-variables.html).

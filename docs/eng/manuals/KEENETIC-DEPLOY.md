@@ -73,8 +73,14 @@ ELF executable of the requested class/machine, with a file-backed executable ent
 no PT_INTERP or DT_NEEDED; ARMv7 must declare EABI5 hard-float. Failure preserves
 the previous local binary, including when its hash would match the remote cache.
 These checks do not prove musl identity, CPU ISA, full MIPS float ABI, reproducible
-builds or firmware runtime. Rust stable/nightly and Zig are not fully pinned by
-these helpers. See [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+builds or firmware runtime. The shared policy selects Rust1.97.0, nightly-2026-06-10 for MIPS,
+Zig0.13.0 and cargo-zigbuild0.23.0. Wrong versions fail; missing named Rust/target
+components are installed without changing the default toolchain. The same policy
+builds both helpers. Encoded/ambient RUSTFLAGS cannot override the recipe; MIPS
+keeps its explicit soft-float linker argument. Compiler overrides are cleared and
+Rust wrappers disabled for Qeli compilation. Global Cargo config, PATH, shared
+cache/tool installations and local changes during upload still prevent a claim
+of hermetic or reproducible builds. The SDK uses its own Rust feed policy. See [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
 
 
 ---

@@ -18,7 +18,7 @@ full OpenWrt SDK. The proper from-source build is the package `Makefile` (rust f
 
   aarch64-unknown-linux-musl   — ARM routers (Filogic, RPi, x86 ARM)
   x86_64-unknown-linux-musl    — x86_64 routers / VMs / x86 APUs
-  mipsel-unknown-linux-musl    — MT7621 / 7628 (tier-3 → nightly -Zbuild-std)
+  mipsel-unknown-linux-musl    — MT7621 / 7628 (tier-3 → nightly-2026-06-10 -Zbuild-std)
   armv7-unknown-linux-musleabihf — older ARMv7 routers (ipq40xx, mvebu v7)
 
 Client-only (`--no-default-features --features client-bin`) → no `ring`, builds on mips.
@@ -32,40 +32,27 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # Reuse the lab connection helpers from scripts/.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
 from router_artifact import pull_router_artifact
+from router_toolchain import ARCH_TARGETS, ensure_router_toolchain, router_build_command
 from router_source import (sync_router_source, require_router_source_ready,
                            create_router_checkout, restrict_router_crate_types as restrict_crate_types)
 from lab_common import connect, LAB_SRV  # noqa: E402
 
 REMOTE_ROOT = None
-PINNED_CARGO_ZIGBUILD = "0.23.0"
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LOCAL_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "qeli"))
 LOCAL_OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist"))
-CLIENT_FEATURES = "--no-default-features --features client-bin"
 # The client-only target is `qeli-client` (src/client_main.rs); the default `qeli`
 # bin requires server+client features. Invoked directly: `qeli-client --config <f>`.
 BIN = "qeli-client"
 
-# arch -> (rust target, needs -Zbuild-std nightly)
-TARGETS = {
-    "aarch64": ("aarch64-unknown-linux-musl", False),
-    "x86_64":  ("x86_64-unknown-linux-musl",  False),
-    "mipsel":  ("mipsel-unknown-linux-musl",  True),
-    "armv7":   ("armv7-unknown-linux-musleabihf", False),
-}
+# Architecture aliases use the shared target/toolchain policy.
+TARGETS = dict(ARCH_TARGETS)
 
 
 def run(c, cmd, t=1800):
     _i, o, e = c.exec_command(cmd, timeout=t)
     out = o.read().decode("utf-8", "replace") + e.read().decode("utf-8", "replace")
     return o.channel.recv_exit_status(), out.strip()
-
-
-def checked(c, command, timeout=120):
-    rc, output = run(c, command, t=timeout)
-    if rc != 0:
-        raise RuntimeError(f"router command failed (rc={rc}): {command}\n{output}")
-    return output
 
 
 def tail(s, n=25):
@@ -85,35 +72,13 @@ def check_sync_ready(c):
 
 
 def ensure_toolchain(c, targets):
-    if any(build_std for _target, build_std in targets.values()):
-        installed = checked(c, "rustup toolchain list")
-        if not any(line.split()[0].startswith("nightly") for line in installed.splitlines() if line.split()):
-            checked(c, "rustup toolchain install nightly --profile minimal -c rust-src", timeout=900)
-        checked(c, "rustup component add rust-src --toolchain nightly", timeout=300)
-    for target, build_std in targets.values():
-        if not build_std:
-            checked(c, f"rustup target add {target}", timeout=300)
-    expected = f"cargo-zigbuild v{PINNED_CARGO_ZIGBUILD}:"
-    installed = checked(c, "cargo install --list")
-    if expected not in installed.splitlines():
-        checked(c, f"cargo install cargo-zigbuild --version {PINNED_CARGO_ZIGBUILD} --locked --force", timeout=1200)
-    verified = checked(c, "cargo install --list")
-    if expected not in verified.splitlines():
-        raise RuntimeError(f"cargo-zigbuild pin mismatch: {verified}")
-    print("zig:", checked(c, "zig version"))
+    selected = targets.values()
+    print("router toolchain:", ensure_router_toolchain(c, selected))
 
 
-def build(c, arch, tgt, build_std):
+def build(c, arch, tgt):
     print(f"### {arch} ({tgt})")
-    if build_std:
-        # tier-3 mips: nightly + build std; force soft-float (zig links mips fpxx,
-        # rust emits soft-float → float-ABI clash on link). Same as keenetic.
-        cmd = (f"cd {REMOTE_ROOT} && CARGO_TARGET_DIR={REMOTE_ROOT}/target CARGO_INCREMENTAL=0 RUSTFLAGS='-C link-arg=-msoft-float' "
-               f"cargo +nightly zigbuild -Z build-std=std,panic_abort --locked --jobs 1 --release "
-               f"--bin {BIN} {CLIENT_FEATURES} --target {tgt} 2>&1")
-    else:
-        cmd = (f"cd {REMOTE_ROOT} && CARGO_TARGET_DIR={REMOTE_ROOT}/target CARGO_INCREMENTAL=0 cargo zigbuild --locked --jobs 1 --release --bin {BIN} "
-               f"{CLIENT_FEATURES} --target {tgt} 2>&1")
+    cmd = router_build_command(REMOTE_ROOT, tgt, BIN)
     rc, out = run(c, cmd, t=1800)
     print(tail(out, 20))
     print(f"{arch} rc: {rc}")
@@ -155,9 +120,9 @@ def main():
         check_sync_ready(c)
         ensure_toolchain(c, targets)
         restrict_router_crate_types(c)
-        for arch, (target, build_std) in targets.items():
+        for arch, target in targets.items():
             try:
-                results[arch] = build(c, arch, target, build_std)
+                results[arch] = build(c, arch, target)
             except (OSError, RuntimeError) as error:
                 results[arch] = 1
                 print(f"{arch} failed: {error}")

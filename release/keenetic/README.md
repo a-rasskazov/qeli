@@ -108,3 +108,9 @@ SHA256-bound ELF admission precedes atomic local publication; it checks class,
 machine, little endian and absence of interpreter/shared dependencies, not full
 ISA/musl/firmware compatibility or reproducibility. Old /opt/qeli-src is unused.
 See [deployment manual](../../docs/eng/manuals/KEENETIC-DEPLOY.md) for limits.
+
+Both router helpers now share target aliases, explicit Rust1.97.0/MIPS nightly-2026-06-10,
+Zig0.13.0/cargo-zigbuild0.23.0 admission and build commands. Encoded/ambient flags
+cannot shadow recipe RUSTFLAGS; MIPS soft-float remains explicit. Wrong identity
+stops setup; installer/target false success fails verification. Shared caches/global
+Cargo config/PATH and actual cross/firmware behavior remain separately qualified.
