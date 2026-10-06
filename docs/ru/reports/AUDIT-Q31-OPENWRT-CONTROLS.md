@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v8 -->
+<!-- normative-sync: q31-openwrt-controls-v9 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -553,3 +553,57 @@ Evidence: release/certification/evidence/q31-keenetic-opkgtun-receipt-20261006.j
 INI/core parity, поколения/параллелизм OpkgTun и остальная package/build/source
 проверка OPEN. Q29 FAIL/ENONET, Q30 skips/drain OPEN и D06 сохранены.
 Q31 IN_PROGRESS; общий итог28/37(75.7%),осталось9.
+
+## F328: скрипт проверки сборки останавливал сервисы и использовал общий исходный каталог
+
+keenetic_verify.py безусловно останавливал qeli-server и выполнял pkill -9 qeli,
+хотя компиляция и проверка зависимостей не требуют менять работающие сервисы.
+Отдельная additive-синхронизация сохраняла удалённые модули и старую Cargo config.
+Модели старого pipeline воспроизводят сервисные команды; настоящий file-adapter
+в собственном временном каталоге подтверждает stale inputs. Старые сервисные и
+компиляторные команды на действующей лабе не выполнялись.
+
+Новая проверка создаёт отдельный0700 mktemp checkout в /var/tmp на каждый запуск,
+проверяет путь, задаёт CARGO_TARGET_DIR внутри него и использует общий
+router_source/native_lab. Проверки incomplete-sync marker и завершения SFTP
+переиспользованы; отдельный sync или INI parser не добавляется. Сервисы не
+останавливаются, не убиваются и не перезапускаются. Сборки используют --locked и
+одну compiler job, серверный release требует jemalloc; клиент сохраняет client-only
+features. Каталог сохраняется для разбора; после использования его нужно удалить.
+Общий source/target каталог для параллельных запусков не используется. Pinning
+toolchain и полный provenance роутерного артефакта остаются OPEN.
+
+## F329: ошибки проверки могли давать exit0, а текст ошибки подтверждал отсутствие ring
+
+Старый main печатал FAIL, но возвращал None: после отказа сборки скрипт выходил0.
+Ненулевой reverse dependency query с текстом did-not-match принимался за отсутствие
+ring; отказ поиска артефакта игнорировался. При sync exception SSH не закрывался.
+Управляемые старые прогоны подтверждают ложный PASS и exit0 после failed summary.
+
+Каждый этап теперь проверяет exit status. Требуется успешный прямой граф normal/
+build dependencies: пакет ring, пустой/чужой root и текст ошибки отвергаются.
+Dev-only зависимости исключены. Обязательны nonempty/executable, readelf ELF magic
+и проверенный SHA256 артефакта. SSH закрывается в finally после успеха и ошибки,
+включая sync failure. Нет credentials — exit2; verification/connect/close failure
+— exit1; полный успех — exit0.
+
+19 новых gate-тестов PASS на Windows/Linux: отказ каждой команды, sync/readiness/
+hash/metadata/close и отсутствие операций над сервисами.7 shared-sync тестов
+используют настоящие shell/files с временным SFTP adapter в Linux и PASS. Настоящий
+установленный Cargo выполняет offline-графы локальных fixture crates: client
+normal/build исключает dev-only ring, положительный server-граф содержит ring и
+отвергается. Компилятор, загрузка зависимостей, настоящий Qeli host/cross build,
+артефакт клиента и прошивка этим не квалифицируются.37 recipes/docs/bindings/diff
+PASS. Исторические результаты11 июня остаются историческими и не подтверждают
+текущий исходник.
+
+Пакет F328–F329: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-verification-gate-20261006.
+Evidence: release/certification/evidence/q31-keenetic-verification-gate-20261006.json.
+INI/core gateway parity, поколения/параллелизм OpkgTun, packaging и остальная
+source/build ABI/provenance проверка OPEN. Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06
+сохранены. Router USER_EXCLUDED; Q31 IN_PROGRESS,28/37(75.7%),осталось9.
+
+Первый native-recipe FAIL сохранён: прежняя проверка литерала server_build= в
+исходнике не совпала с динамическим выводом этапа. Теперь recipe требует именованную
+locked server-команду, а execution test проверяет фактический server_build=OK после
+успеха. Итоговые recipes PASS; product-команда ради старого assertion не ослаблялась.

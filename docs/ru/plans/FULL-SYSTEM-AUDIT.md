@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v104 -->
+<!-- normative-sync: full-system-audit-v105 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -2341,3 +2341,6 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 
 
 **Продолжение F326–F327, 6 октября:** [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): exact saved-plan receipt for OpkgTun no-op/MTU changes, literal address matching; matching-zombie recheck after failed exe lookup.120 cases each BusyBox/dash (47 owned native-process,44 state,29 installer/hook),12 new;37 recipes/docs/bindings PASS. Old/current hook and deterministic zombie failures reproduced; initial dash FAIL and orphan NOT_REPRODUCED retained. No actual router/core network or generation/concurrency qualification; INI parity/package/build/source review OPEN. Q31 IN_PROGRESS,28/37 unchanged.
+
+
+**F328–F329, 6 October:** [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): isolated per-run verification checkout/target; shared source sync, no service operations; checked locked single-job host gate, forward normal/build graph, mandatory ELF/hash and meaningful exit/SSH-finally.19 gate tests Windows/Linux,7 real temp-file shared-sync,37 recipes/docs/bindings PASS; actual offline Cargo local-fixture positive/negative graphs PASS. Original forced-service calls, stale sync, false PASS/exit0 and connection leak reproduced with models/temp files. No Qeli build/router qualification; INI parity/OpkgTun concurrency/package/build provenance OPEN.Q31 IN_PROGRESS,28/37 unchanged.

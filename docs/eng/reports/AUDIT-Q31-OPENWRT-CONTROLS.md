@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v8 -->
+<!-- normative-sync: q31-openwrt-controls-v9 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -556,3 +556,57 @@ Evidence: release/certification/evidence/q31-keenetic-opkgtun-receipt-20261006.j
 INI/core parity, OpkgTun generations/concurrency and broader package/build/source
 review remain OPEN. Q29 FAIL/ENONET, Q30 skips/drain OPEN and D06 retained.
 Q31 IN_PROGRESS; overall28/37(75.7%),9 remain.
+
+## F328: a build verifier stopped live lab services and reused their source directory
+
+keenetic_verify.py unconditionally stopped qeli-server and issued pkill -9 qeli,
+even though compilation and dependency inspection need no running-service change.
+The old additive sync also preserved deleted modules and stale Cargo configuration.
+Modeled old pipeline calls reproduce the service commands; actual file-adapter
+comparison in an owned temporary directory reproduces retained stale inputs. No
+old service or compiler command was executed against the live lab.
+
+The verifier now uses a new0700 mktemp checkout under /var/tmp for each run, validates
+the returned path, pins CARGO_TARGET_DIR to that run and delegates replacement to
+router_source/native_lab. Its incomplete-sync marker and checked SFTP finalization
+are reused; no local INI parser or separate source-sync implementation is added.
+It never stops, kills or restarts services. Builds use --locked and one compiler
+job, require release server jemalloc, and keep client-only features isolated.
+The directory is retained for inspection; it must be removed when no longer needed.
+No simultaneous shared source/target checkout is used. Toolchain pinning and full
+router artifact provenance are separate OPEN criteria.
+
+## F329: verifier failures could return success, and error text qualified ring absence
+
+Old main printed FAIL but returned None, so the script exited0 after build failure.
+It accepted a nonzero reverse dependency query containing did-not-match text as
+ring absence, ignored missing-artifact inspection and could leave SSH unclosed on
+sync exception. Controlled old runs reproduce false PASS and failed-summary exit0.
+
+Every stage now uses checked commands. A successful forward normal/build dependency
+graph is required; ring as an exact package name, empty/wrong-root graphs and error
+text are rejected. Dev-only dependencies are excluded. Nonempty/executable artifact
+checks and readelf ELF magic are mandatory, followed by checked SHA256. Connection
+is closed in finally on success/failure, including sync failure. Missing credentials
+exit2, verification/connect/close failures exit1, full success exit0.
+
+Nineteen focused gate tests PASS on Windows and Linux, including failure injection
+at every command, sync/readiness/hash/metadata/close failures and service isolation.
+Seven shared-sync tests use actual shell/files with a temporary SFTP adapter on
+Linux and PASS. Actual installed Cargo executes offline fixture graphs with local
+crates: client normal/build graph excludes dev-only ring; positive server graph
+contains ring and is rejected. No compiler, network dependency download, Qeli
+host/cross build, client artifact or firmware is qualified by that fixture.37
+native recipe tests/docs/bindings/diff PASS. Historical June11 host/ABI results
+remain historical and do not certify current sources.
+
+Packet F328–F329: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-verification-gate-20261006.
+Evidence: release/certification/evidence/q31-keenetic-verification-gate-20261006.json.
+INI/core gateway parity, OpkgTun generation/concurrency, packaging and broader
+source/build ABI/provenance remain OPEN. Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06
+retained. Real router USER_EXCLUDED; Q31 IN_PROGRESS,28/37(75.7%),9 remain.
+
+Initial native-recipe FAIL is retained: its old literal server_build= source check
+no longer matched dynamic stage output. The recipe now requires the named locked
+server command, and the execution test asserts server_build=OK after success.
+Final recipes PASS; no product command was weakened to satisfy the old assertion.

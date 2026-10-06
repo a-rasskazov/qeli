@@ -50,9 +50,12 @@ class NativeRecipeTests(unittest.TestCase):
         self.assertIn("guard_ok = rc2 != 0", lab_gate)
         self.assertIn(error, lab_gate)
         self.assertIn(
-            "cargo build --release --features jemalloc --bin qeli", keenetic_gate
+            "cargo build --locked --release --features jemalloc --bin qeli", keenetic_gate
         )
-        self.assertIn("server_build=", keenetic_gate)
+        self.assertIn(
+            '("server_build", "cargo build --locked --release --features jemalloc --bin qeli --jobs 1")',
+            keenetic_gate,
+        )
 
 
     def test_release_stripping_is_cross_target_safe(self):

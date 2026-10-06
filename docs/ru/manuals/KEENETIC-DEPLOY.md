@@ -311,3 +311,8 @@ wrapper; настоящий router integration исключён. См. [Q31](../
 ## Запись о применении плана OpkgTun
 
 Хук пишет `/opt/var/run/qeli.opkgtun.applied` (0600) только после всех успешных команд ndm и save. Изменение плана, включая один MTU, или отсутствие записи требует повторной настройки. Совпадения connected/адресов недостаточно для пропуска. Ошибка публикации/удаления сохраняет `.apply-pending`; устранить причину и повторить. Успешный stop удаляет обе записи после завершения клиента. Запись подтверждает команды, не является блокировкой или чтением всех настроек: параллельные события, внешние изменения и настоящая прошивка не квалифицированы. См. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+
+## Проверка host-сборки для мейнтейнера
+
+`python scripts/keenetic_verify.py` использует `QELI_LAB_PASS`, необязательные `QELI_LAB_SERVER` (default10.66.116.11) и `QELI_LAB_USER` (defaultroot). Сборка идёт в новом приватном `/var/tmp/qeli-keenetic-verify.*` с собственным target, locked dependencies и одной compiler job; сервисы продолжают работать. Напечатанный каталог сохраняется для разбора, после использования его нужно удалить. Exit0 означает успех host build/tests/Clippy/graph/ELF/hash; exit1 — verification/connect/close failure; exit2 — нет credentials. Host success не подтверждает MIPS/ARM ABI или firmware. [Подробности аудита](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
