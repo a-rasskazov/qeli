@@ -10,7 +10,7 @@
 покрытия раздела; отдельный отчёт на каждый небольшой шаг не обязателен. Новые
 некритичные гипотезы ждут полного аудита, текущие обязательства сохраняются.
 
-<!-- normative-sync: full-system-audit-v106 -->
+<!-- normative-sync: full-system-audit-v107 -->
 
 **Текущий итог, 6 октября: 28/37 разделов DONE/PASS (75,7%), осталось 9. Q28 завершён в согласованном объёме: доступные managed/integration проверки PASS; Swift SOURCE REVIEW, Mac/Xcode/runtime USER SKIPPED. Q29 IN_PROGRESS: storage, владельцы службы и ограниченные API34 VPN-матрицы имеют scoped evidence. SIGKILL automatic recovery FAIL и auto/null DnsResolver ENONET сохранены; таблица завершения ниже отделяет выполненные проверки от остатка.**
 
@@ -2347,3 +2347,5 @@ D05/D09: [Q25-F114 — TOFU worker](../reports/AUDIT-Q25-IDENTITY-WORKER.md): ф
 
 
 **F330–F331, 6 October:** [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): removed both shell INI parsers; client-bin-only core metadata inspection uses bounded loader/strict common parser. Quoted/case/BOM/on parity and exit_node ownership; cached validated preflight, unknown/error reply fails before launch. Fresh Rust1.97 client-bin host debug build/8unit/Clippy/fmt PASS;155cases each BusyBox/dash,16new owners with22actual inspector subcases;16old/current records each shell.37recipes/docs/bindings PASS. Default core outside gated addition unchanged; no FFI/release/cross rebuild or real router networking. Binary/template upgrade together; configuration path is reloaded, generation/concurrency not closed. Q29/Q30/D06 retained,Q31 IN_PROGRESS28/37.
+
+**F332–F334, 6 October:** [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md): shared lifecycle.sh for both init variants, wan.d and installer; atomic mkdir exclusion across whole restart/internal cleanup, under-lock marker recheck, shared library delivery0600. Observed core plan replacement stops L3/save/receipt and retains retry; directory publication targets rejected.165cases per BusyBox/dash,8new concurrent lifecycle and2installer; three old hook/stop/save assertions and old directory publication reproduced.37recipes/docs/bindings PASS. Network/ndm/opkg modeled; owned shell/native helpers real; core/native inputs/artifacts unchanged. Busy events require retry; SIGKILL stale lock needs manual owner review, no auto deletion. Atomic core/config generations/ABA/firmware/build provenance remain OPEN. Q29/Q30/D06 retained,Q31 IN_PROGRESS28/37.

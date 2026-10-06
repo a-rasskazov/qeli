@@ -88,3 +88,15 @@ gateway_nat/forward/exit_node, legacy при выключенных flags. От�
 проверяются до запуска; старый binary без команды отказывает. Обновлять binary
 и шаблон вместе, сохранять config стабильным во время start. Для OpkgTun или
 GATEWAY=no этот compatibility query не нужен. [Подробности](../../docs/ru/manuals/KEENETIC-DEPLOY.md).
+
+## Общий lifecycle (development0.8.2)
+
+Базовый installer доставляет обязательную библиотеку
+/opt/etc/qeli/lifecycle.sh (0600). Обновляй её вместе с binary/init и установленным
+wan.d hook; старые скрипты общей блокировки не соблюдают. Init, hook и installer
+используют /var/run/qeli.lifecycle.lock. Занятый вызов возвращает ошибку — повторить
+после завершения владельца. Обычный выход/сигналы освобождают lock; после SIGKILL
+нужна сверка отсутствия init/hook/installer-владельца перед rmdir пустого каталога.
+Recovery-файлы PID/plan/forwarding/pending не удалять. Hook-события не очередятся;
+обнаруженная смена плана прерывает L3/save/receipt и оставляет pending. Атомарность
+core-поколений/ABA/firmware этим не доказана.

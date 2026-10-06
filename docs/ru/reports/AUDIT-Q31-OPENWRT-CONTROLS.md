@@ -1,6 +1,6 @@
 # Q31: управление LuCI, публикация INI и ошибки firewall
 
-<!-- normative-sync: q31-openwrt-controls-v10 -->
+<!-- normative-sync: q31-openwrt-controls-v11 -->
 
 6 октября 2026. Исправления продукта F307–F309 и сверка теста F310. Q31 переведён
 из TODO в IN_PROGRESS; ни полный критерий, ни роутерный runtime не закрыты.
@@ -663,3 +663,62 @@ Core gateway INI decision parity теперь scoped PASS. Config/generation con
 OpkgTun ownership, packaging и остальная source/build ABI/provenance проверка OPEN.
 Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06 сохранены; router USER_EXCLUDED.
 Q31 IN_PROGRESS;28/37(75.7%),осталось9.
+
+## F332: init, wan.d и установка выполнялись параллельно
+
+Два hook могли смешать команды ndm и публикацию pending/receipt. Stop удалял marker
+и план, пока уже запущенный hook продолжал настройку по старому снимку и заново
+создавал служебные файлы. Для start/stop/restart и установки общей блокировки не было.
+
+Теперь все три точки входа используют одну библиотеку lifecycle.sh. Атомарный mkdir
+/var/run/qeli.lifecycle.lock допускает одну операцию; конкурент возвращает ошибку
+до сетевой настройки, работы службы или публикации и требует повтора. Init держит
+lock весь restart и внутреннюю очистку. Hook повторно проверяет marker под lock.
+Installer использует библиотеку из комплекта, готовит установленную копию0600 и
+публикует её перед бинарником/init. Старые скрипты lock не соблюдают: обновлять
+библиотеку, соответствующие init и hook вместе после остановки/сверки старого клиента.
+
+Обычный выход и HUP/INT/TERM освобождают lock. После SIGKILL каталог остаётся для
+ручной сверки: автоматического удаления по PID/возрасту и убийства процессов нет.
+Lock находится во временном /var/run роутера, а не в постоянном /opt. Убедившись,
+что init/hook/installer-владельца больше нет, удалять только пустой каталог через
+rmdir, сохраняя PID/plan/forwarding/pending, затем повторять штатную операцию.
+Занятые hook-события не стоят в очереди: нужен следующий event или ручной повтор.
+Зависший ndmc может удерживать lock; новый firmware timeout здесь не квалифицирован.
+
+## F333: смена плана ядром допускала ложный complete receipt
+
+Hook сравнивает captured marker/целый план перед каждой проверяемой командой L3/save
+и после save перед публикацией receipt. Обнаруженная замена прерывает обработку и
+сохраняет pending для повтора. Snapshot-тест теперь проверяет отказ от старого плана
+и применение нового вместо подтверждения устаревшего результата. Ядро не участвует
+в shell-lock: замена после последней проверки, ABA с одинаковыми байтами, привязка
+к аутентифицированному поколению и удаление семейства остаются OPEN. Выполненные
+команды не откатываются; атомарность всей настройки не заявляется.
+
+## F334: mv в каталог выдавал ложный успех установки
+
+mv source destination-directory успешно помещает временный basename внутрь
+каталога. Installer отвергает directory targets бинарника/init/config/helper до
+работы с зависимостями. Ошибка подготовки/публикации библиотеки сохраняет старые
+binary/init и убирает временный sibling; rollback всего комплекта остаётся OPEN.
+
+Восемь новых lifecycle-методов (оба init внутри одного метода) и два installer-метода:
+165 тестов на каждом BusyBox ash/dash —47 owned native-process,44 state models,
+14 installer,17 hook,19 verifier,16 owner и8 lifecycle. Настоящие owned shell-процессы
+с барьерами воспроизводят три baseline-отказа на каждом shell: перемешивание hook,
+stop во время hook и смену плана при save. Исходный installer также проваливает
+новый directory admission assertion. Исправленные suites PASS. Network/ndm/opkg/
+sysctl — модели команд/файлов. Байты C helper и host debug inspector совпадают с
+F330/F331; Rust/core/native implementations, ABI/artifacts/recipes неизменны:
+новая Rust/FFI/release/cross-сборка не заявляется.37 recipes/docs/bindings/diff PASS.
+Настоящий router runtime USER_EXCLUDED.
+
+Packet F332–F334: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-lifecycle-lock-20261006.
+Evidence: release/certification/evidence/q31-keenetic-lifecycle-lock-20261006.json.
+Общее исключение cooperating shell-операций и отказ при обнаруженной смене плана —
+scoped PASS; core/config generations, firmware ordering, packaging/cross ABI/source
+provenance и широкий review OPEN. Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06 сохранены.
+Q31 IN_PROGRESS;28/37(75.7%),осталось9.
+
+Первый directory baseline дал также две ошибки фикстуры: успешная старая установка повлияла на следующие targets. Raw logs сохранены и не квалифицируют эти targets. Отдельные свежие фикстуры воспроизводят ложный старый успех для binary/init/config и отказ нового кода: шесть old/current records на shell PASS. Код продукта и входы финального165-suite для этого сравнения не менялись.

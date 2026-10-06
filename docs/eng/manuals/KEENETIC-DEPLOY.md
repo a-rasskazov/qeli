@@ -329,3 +329,25 @@ LAN NAT, including exit-node operation. Legacy ownership preserves the fallback
 when core flags are absent/false. This snapshot does not lock the config: keep it
 stable during start and use stop/update/start to change ownership. Actual router
 firmware and concurrent generation handling remain unqualified. [Q31](../reports/AUDIT-Q31-OPENWRT-CONTROLS.md).
+
+## Serialized lifecycle and upgrade (development0.8.2)
+
+Install the complete bundle: the installer also publishes
+/opt/etc/qeli/lifecycle.sh with0600 permissions. Both init variants and the OpkgTun
+wan.d hook require this shared library; copying a new template alone is incomplete.
+When upgrading an older deployment, stop/review the old client first, then replace
+library, binary, init and any installed hook together.
+
+Start/stop/restart, wan.d and installation share /var/run/qeli.lifecycle.lock.
+A busy operation returns an error without competing mutations; retry after the
+owner finishes. Restart holds one lock across stop and start. Hook events are not
+queued. Normal exit/signals release it; after SIGKILL, verify that no init/hook/
+installer owner remains before removing only the empty directory with rmdir.
+Retain PID/plan/forwarding/pending recovery files. No automatic stale-lock deletion
+or process killing is performed; router reboot normally clears volatile /var/run.
+
+Hook checks plan/marker replacement before L3/save and before its applied receipt.
+An observed change retains pending for retry; already completed ndm commands are
+not rolled back. Core publication is outside this lock, so this is not an atomic
+generation protocol. Real firmware ordering and stale-generation ABA remain
+unqualified. Directory publication targets fail installation before dependencies.

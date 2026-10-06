@@ -26,6 +26,13 @@ APPLIED="$STATE.applied"                 # complete IF + NetworkPlan after check
 LOG=/opt/var/log/qeli-client.log
 export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+# The initial absent-marker fast path is repeated under the common lock.
+[ -f "$STATE" ] || exit 0
+. /opt/etc/qeli/lifecycle.sh || exit 1
+qeli_lock_acquire || exit 1
+trap 'qeli_lock_release' 0
+trap 'exit 1' HUP INT TERM
+
 [ -f "$STATE" ] || exit 0                 # OpkgTun-режим в S99qeli выключен — выходим тихо
 IF="$(cat "$STATE" 2>/dev/null)"          # имя kernel-tun (напр. opkgtun0)
 case "$IF" in opkgtun*) ;; *) exit 1 ;; esac
@@ -106,7 +113,15 @@ esac
 # Глобальный default здесь не ставим: без отдельного bypass для адреса qeli-сервера
 # он заворачивает несущее соединение в сам туннель. Policy-routing включается в Keenetic UI,
 # где ndm может атомарно учесть приоритеты и исключения.
+plan_is_current() {
+  [ "$(cat "$STATE" 2>/dev/null)" = "$IF" ] &&
+    [ "$(cat "$TUNIP" 2>/dev/null)" = "$PLAN" ]
+}
 ndm_apply() {
+  plan_is_current || {
+    echo "wan.d/010-qeli: plan/marker changed for $NDM_IF; retry required" >> "$LOG"
+    return 1
+  }
   ndmc -c "$1" || {
     echo "wan.d/010-qeli: ndm rejected configuration for $NDM_IF; retry required" >> "$LOG"
     return 1
@@ -123,6 +138,9 @@ ndm_apply "interface $NDM_IF ip tcp adjust-mss pmtu" || exit 1
 ndm_apply "interface $NDM_IF security-level public" || exit 1
 ndm_apply "interface $NDM_IF up" || exit 1
 ndm_apply "system configuration save" || exit 1
+# The core can republish independently of shell lifecycle exclusion.
+# An observed replacement must not publish a complete application receipt.
+plan_is_current || exit 1
 # The private sibling is published only after every mutation and save succeeded.
 # A publication/removal failure retains PENDING so matching addresses cannot hide it.
 APPLIED_TMP="$(umask 077; mktemp "$APPLIED.XXXXXX")" || exit 1

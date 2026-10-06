@@ -388,6 +388,16 @@ stop() {
   rm -f "$PIDFILE"
 }
 
+# Serialize the whole action, including restart and internal failure cleanup.
+case "$1" in
+  start|stop|restart)
+    . /opt/etc/qeli/lifecycle.sh || exit 1
+    qeli_lock_acquire || exit 1
+    trap 'qeli_lock_release' 0
+    trap 'exit 1' HUP INT TERM
+    ;;
+esac
+
 case "$1" in
   start) start ;;
   stop) stop ;;

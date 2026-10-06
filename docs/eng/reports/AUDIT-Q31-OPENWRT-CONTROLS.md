@@ -1,6 +1,6 @@
 # Q31: LuCI control, INI publication and firewall failures
 
-<!-- normative-sync: q31-openwrt-controls-v10 -->
+<!-- normative-sync: q31-openwrt-controls-v11 -->
 
 6 October 2026. F307–F309 product fixes and F310 test reconciliation. Q31 moves
 from TODO to IN_PROGRESS; no full checklist criterion or router runtime is closed.
@@ -666,3 +666,62 @@ Core gateway INI decision parity is now scoped PASS. Config/generation concurren
 OpkgTun ownership, packaging and broader source/build ABI/provenance remain OPEN.
 Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06 retained; router USER_EXCLUDED.
 Q31 IN_PROGRESS;28/37(75.7%),9 remain.
+
+## F332: shell lifecycle operations and wan.d callbacks could overlap
+
+Two handlers could interleave ndm commands and pending/receipt publication. Stop
+could remove marker/plan while a captured old hook continued and recreated receipt
+files. Concurrent start/stop/restart and installation had no common exclusion.
+
+All three entry points now source one bundled lifecycle.sh. Atomic mkdir of
+/var/run/qeli.lifecycle.lock admits one action; competitors return nonzero before
+service/network/publication work and must retry. Init holds it across the whole
+restart and internal cleanup; hook rechecks the marker under the lock. Installer
+uses the same library from its bundle, prepares a0600 installed copy and publishes
+it before binary/init. Existing older scripts do not cooperate: upgrade library,
+both relevant templates and hook together after stopping/reviewing the old client.
+
+Normal exit and HUP/INT/TERM release the lock. SIGKILL leaves it for manual review;
+no stale-owner guessing, PID-based automatic deletion or process killing is added.
+The directory is in the router's volatile /var/run rather than persistent /opt.
+After verifying no init/hook/install owner remains, remove only the empty lock
+directory with rmdir; preserve PID/plan/forwarding/pending records and retry the
+normal action. Busy hook events are not queued and need a later event/manual retry.
+A hanging ndmc can retain exclusion; no new firmware timeout guarantee is claimed.
+
+## F333: a replaced core plan could still receive a complete applied receipt
+
+The hook now compares its captured marker/whole plan before each checked L3/save
+mutation and after save, before receipt publication. An observed replacement stops
+the sequence and retains pending for retry. The coherent-snapshot test now checks
+rejection and reapplication of the replacement, rather than qualifying old-plan
+success. Core publication does not share the shell lock: replacement after the
+last check, identical-byte ABA, generation authentication and family removal remain
+OPEN. Commands already completed are not rolled back or called atomic.
+
+## F334: installer rename into a directory falsely reported publication
+
+mv source destination-directory returns success while putting a temporary basename
+inside the directory. Binary/init/config/helper directory targets are rejected
+before dependency work. Library preparation/publication failure keeps binary/init
+unpublished and cleans its temporary sibling; whole-bundle rollback remains OPEN.
+
+Eight new concurrent lifecycle methods (both init variants inside one method) and
+two installer methods qualify165 total tests per BusyBox ash/dash:47 owned native
+helper process,44 state models,14 installer,17 hook,19 verifier,16 owner and8
+lifecycle. Actual owned shell barriers reproduce three baseline failures per shell:
+interleaved hooks, stop during hook and plan rotation during save; original installer
+directory publication also fails the new admission assertion. Current suites PASS.
+Network/ndm/opkg/sysctl remain command/file models. C helper and actual host debug
+inspector bytes match F330/F331; Rust/core/native implementations, ABI/artifacts and
+recipes are unchanged, so no new Rust/FFI/release/cross build is claimed.37 recipes,
+docs/bindings/diff PASS. Real router runtime USER_EXCLUDED.
+
+Packet F332–F334: C:/Users/litvi/OneDrive/Documents/qeli/audit-debt-20260924/q31-keenetic-lifecycle-lock-20261006.
+Evidence: release/certification/evidence/q31-keenetic-lifecycle-lock-20261006.json.
+Cooperating shell exclusion and observed replacement rejection are scoped PASS;
+core/config generations, firmware ordering, packaging/cross ABI/source provenance
+and broader review remain OPEN. Q29 FAIL/ENONET,Q30 skips/drain OPEN,D06 retained.
+Q31 IN_PROGRESS;28/37(75.7%),9 remain.
+
+Initial directory baseline subtests also produced two fixture errors because an earlier successful old installation affected later targets. Those raw logs are retained and do not qualify those targets. Separate fresh fixtures now reproduce false old success for binary/init/config and checked new rejection: six old/current records per shell PASS. No product implementation or final165-suite input changed for that comparison.

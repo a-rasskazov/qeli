@@ -22,7 +22,7 @@ class KeeneticFixture(unittest.TestCase):
         self.env=dict(os.environ,PATH=str(self.bin),QELI_FIXTURE_ROOT=str(self.root),QELI_FIXTURE_BIN=str(self.bin),
             QELI_ARCH='aarch64-3.10',QELI_FAIL='',QELI_SHOW_FAIL='0',QELI_CONNECTED='no',
             QELI_CUR4='10.8.0.2',QELI_CUR6='fd00::2')
-        for name in ('awk','grep','head','uname','mkdir','chmod','mktemp','mv','rm','dirname','cp','touch','cat','sed'):
+        for name in ('awk','grep','head','uname','mkdir','chmod','mktemp','mv','rm','dirname','cp','touch','cat','sed','rmdir'):
             command=shutil.which(name);self.assertIsNotNone(command)
             (self.bin/name).symlink_to(command)
         self.write_command('ip','exit 0')
@@ -42,6 +42,7 @@ case "$QELI_FAIL:$2" in
  install-bin:*/qeli-client*) exit 17 ;;
  install-init:*/S99qeli) exit 17 ;;
  install-conf:*/client.conf.example) exit 17 ;;
+ install-lib:*/lifecycle.sh) exit 17 ;;
 esac
 exec '''+install+' "$@"')
         self.write_command('ndmc',r'''
@@ -54,6 +55,7 @@ case "$2" in
    if [ -n "$QELI_FAIL" ]; then case "$2" in *"$QELI_FAIL"*) exit 17 ;; esac; fi ;;
 esac
 ''')
+        (self.bundle/'lifecycle.sh').write_text((ROOT/'release/keenetic/lifecycle.sh').read_text().replace('/var/run/qeli.lifecycle.lock',str(self.opt/'var/run/qeli.lifecycle.lock')))
         (self.bundle/'S99qeli').write_text('new init template')
         (self.bundle/'client.conf.example').write_text('[qeli]\nserver = fixture.invalid:443\n')
         (self.bundle/'qeli-client-keenetic-aarch64').write_text('canonical-aarch64')
@@ -65,6 +67,9 @@ esac
         p.write_text('#!/bin/sh\n'+body+'\n');p.chmod(0o700)
 
     def copy_template(self,source,target):
+        if Path(source).name in ('S99qeli','010-qeli.sh'):
+            helper=self.opt/'etc/qeli/lifecycle.sh';helper.parent.mkdir(parents=True,exist_ok=True)
+            helper.write_text((self.bundle/'lifecycle.sh').read_text())
         text=Path(source).read_text()
         text=text.replace('export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             'export PATH="$QELI_FIXTURE_BIN"')
@@ -73,7 +78,8 @@ esac
         target.write_text(text);return target
 
     def installer(self,**env):
-        self.copy_template(ROOT/'release/keenetic/install-keenetic.sh',self.bundle/'install.sh')
+        source=Path(os.environ.get('QELI_LIFECYCLE_BASELINE',str(ROOT/'release/keenetic')))/'install-keenetic.sh'
+        self.copy_template(source,self.bundle/'install.sh')
         return self.run_script(self.bundle/'install.sh',**env)
 
     def run_script(self,path,**env):
@@ -90,6 +96,8 @@ esac
         self.assertFalse(list(self.opt.rglob('.qeli-client.*')))
         self.assertFalse(list(self.opt.rglob('.S99qeli.*')))
         self.assertFalse(list(self.opt.rglob('.client.conf.*')))
+        self.assertFalse(list(self.opt.rglob('.lifecycle.*')))
+        self.assertFalse((self.opt/'var/run/qeli.lifecycle.lock').exists())
 
     def hook_setup(self,plan='10.8.0.2\nipv4=10.8.0.2/32\nipv6=fd00::2/128\nmtu=1400\n',state='opkgtun0'):
         folder=self.opt/'var/run';folder.mkdir(parents=True,exist_ok=True)
@@ -154,7 +162,7 @@ class KeeneticInstallerTests(KeeneticFixture):
         self.assertIn('opkg install ip6tables',self.calls())
 
     def test_empty_missing_bundle_inputs_fail_before_dependency_changes(self):
-        for name in ('qeli-client-keenetic-aarch64','S99qeli','client.conf.example'):
+        for name in ('qeli-client-keenetic-aarch64','S99qeli','client.conf.example','lifecycle.sh'):
             p=self.bundle/name;data=p.read_bytes();p.write_bytes(b'')
             result=self.installer();self.assertNotEqual(result.returncode,0)
             self.assertNotIn('opkg update',self.calls());p.write_bytes(data)
@@ -165,7 +173,7 @@ class KeeneticInstallerTests(KeeneticFixture):
 
     def test_preparation_errors_keep_old_binary_and_init_and_cleanup_temporary_files(self):
         self.seed_installed()
-        for fail in ('install-bin','install-init'):
+        for fail in ('install-bin','install-init','install-lib'):
             result=self.installer(QELI_FAIL=fail);self.assertNotEqual(result.returncode,0)
             self.assertEqual(self.installed('bin/qeli-client').read_text(),'old binary')
             self.assertEqual(self.installed('etc/init.d/S99qeli').read_text(),'old init')
@@ -187,6 +195,30 @@ exec '''+real+' "$@"')
         self.assertEqual(self.installed('bin/qeli-client').read_text(),'old binary');self.assert_no_temps()
         self.assertEqual(self.installer().returncode,0)
         self.assertEqual(self.installed('bin/qeli-client').read_text(),'canonical-aarch64')
+
+    def test_publication_directory_targets_fail_before_dependencies(self):
+        for target in ('bin/qeli-client','etc/init.d/S99qeli','etc/qeli/client.conf','etc/qeli/lifecycle.sh'):
+            with self.subTest(target=target):
+                path=self.installed(target);path.parent.mkdir(parents=True,exist_ok=True);path.mkdir()
+                self.assertNotEqual(self.installer().returncode,0)
+                self.assertNotIn('opkg update',self.calls())
+                self.assertEqual(list(path.iterdir()),[])
+                path.rmdir()
+                self.assert_no_temps()
+
+    def test_library_publication_failure_keeps_old_binary_init_and_library(self):
+        self.seed_installed();library=self.installed('etc/qeli/lifecycle.sh');library.write_text('old helper')
+        real=shlex.quote(shutil.which('mv'))
+        self.write_command('mv',r'''
+case "$QELI_FAIL:$*" in mv-lib:*/etc/qeli/lifecycle.sh) exit 17 ;; esac
+exec '''+real+' "$@"')
+        self.assertNotEqual(self.installer(QELI_FAIL='mv-lib').returncode,0)
+        self.assertEqual(self.installed('bin/qeli-client').read_text(),'old binary')
+        self.assertEqual(self.installed('etc/init.d/S99qeli').read_text(),'old init')
+        self.assertEqual(library.read_text(),'old helper');self.assert_no_temps()
+        self.assertEqual(self.installer().returncode,0)
+        self.assertEqual(library.read_text(),(self.bundle/'lifecycle.sh').read_text())
+        self.assertEqual(library.stat().st_mode&0o777,0o600)
 
 class KeeneticHookTests(KeeneticFixture):
     def test_dual_family_and_mtu_are_applied_and_success_follows_save(self):
@@ -340,11 +372,16 @@ for argument in "$@"; do
 done
 ''')
 
-    def test_plan_replacement_cannot_mix_families_and_mtu(self):
-        self.hook_setup();self.rotate_plan_after_first_read()
+    def test_observed_plan_replacement_cannot_publish_stale_receipt(self):
+        folder=self.hook_setup();self.rotate_plan_after_first_read()
+        self.assertNotEqual(self.run_script(self.hook).returncode,0)
+        self.assertNotIn('interface OpkgTun0 ip address 10.8.0.2 255.255.255.255',self.calls('ndmc-calls'))
+        self.assertNotIn('system configuration save',self.calls('ndmc-calls'))
+        self.assertFalse((folder/'qeli.opkgtun.applied').exists())
+        self.assertTrue((folder/'qeli.opkgtun.apply-pending').exists())
         self.assertEqual(self.run_script(self.hook).returncode,0)
-        self.assertIn('interface OpkgTun0 ip address 10.8.0.2 255.255.255.255',self.calls('ndmc-calls'))
-        self.assertIn('interface OpkgTun0 ipv6 address fd00::2/128',self.calls('ndmc-calls'))
-        self.assertIn('interface OpkgTun0 ip mtu 1400',self.calls('ndmc-calls'))
+        self.assertIn('interface OpkgTun0 ip address 10.8.0.9 255.255.255.255',self.calls('ndmc-calls'))
+        self.assertIn('interface OpkgTun0 ipv6 address fd00::9/128',self.calls('ndmc-calls'))
+        self.assertIn('interface OpkgTun0 ip mtu 1280',self.calls('ndmc-calls'))
 
 if __name__=='__main__':unittest.main()
