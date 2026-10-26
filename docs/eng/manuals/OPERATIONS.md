@@ -465,11 +465,26 @@ table; verify the origin of an exact entry before removing it manually.
 ## Client physical route recovery
 
 The Linux managed-TUN client persists physical bypass/exclude and blackhole routes in
-`/var/lib/qeli/client-routes.state`. This requires `SO_NETNS_COOKIE` and a trusted
+`$STATE_DIRECTORY/client-routes.state` (default `/var/lib/qeli/client-routes.state`). This requires `SO_NETNS_COOKIE` and a trusted
 state directory writable by the process owner, without symlinks or group/world write.
-This also applies with `dns = off`/`system`. `STATE_DIRECTORY` does not change the path.
+This also applies with `dns = off`/`system`. DNS, sysctl and firewall journals share this root.
 All clients sharing a network must see the same directory and `client-routes.state.lock`.
 Configuration remains INI; the journal is internal recovery state.
+
+OpenWrt and both Keenetic launchers resolve the firmware-owned `/var` alias before
+appending `/lib/qeli` (`/tmp/lib/qeli` when `/var -> /tmp`). Only this system alias is
+resolved; the core still rejects links and unsafe owners/modes inside the resulting
+path. The physical directory is unchanged, so pending journals remain visible.
+For a manual router launch, resolve successfully before exporting the path:
+
+```sh
+var_root="$(readlink -f /var)" || exit 1
+export STATE_DIRECTORY="${var_root%/}/lib/qeli"
+```
+
+Do not move to an unrelated empty state directory to bypass recovery. Before changing
+a custom root, stop all clients/server workers and complete recovery using the old root.
+No journal import, deletion or permission repair is performed automatically.
 
 Stop the old client cleanly before upgrading. After SIGKILL, restart with the original
 `dev`, network namespace and state directory. Recovery precedes DNS resolution/handshake.

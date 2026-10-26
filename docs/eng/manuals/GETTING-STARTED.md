@@ -829,7 +829,7 @@ dns         = tunnel
 
 On Linux, `dns = tunnel` requires `busctl`, active systemd-resolved and its stub in `/etc/resolv.conf`. Client and resolved must share a network namespace, and client and D-Bus broker a PID namespace. For platform-managed DNS, use `dns = off`/`system`. [Exact contract](CONFIG.md#linux-tun-and-dns-system-commands).
 
-Managed DNS on Linux also requires `SO_NETNS_COOKIE` and trusted `/var/lib/qeli` without symlinks or group/world write. `STATE_DIRECTORY` does not relocate per-link DNS state. Stop the old client cleanly before upgrading; retained v1 markers require administrator recovery when they match the new link. [V2 format and recovery](TROUBLESHOOTING.md#650-linux-dns-lease-ownership-and-recovery-markers).
+Managed DNS on Linux also requires `SO_NETNS_COOKIE` and a trusted state directory without symlinks or group/world write: `$STATE_DIRECTORY`, otherwise `/var/lib/qeli`. Routes, DNS, sysctls and server firewall journals share this root. Stop the old client cleanly before upgrading; retained v1 markers require administrator recovery when they match the new link. [V2 format and recovery](TROUBLESHOOTING.md#650-linux-dns-lease-ownership-and-recovery-markers).
 
 Legacy global `dns-backup.json`/`dns-holders` are not restored automatically: startup preserves them and requires administrator recovery even with `dns = off`/`system`. Stop the old client cleanly before upgrading. [Procedure §6.20](TROUBLESHOOTING.md#620-linux-legacy-resolver-recovery-failed-backup-kept).
 

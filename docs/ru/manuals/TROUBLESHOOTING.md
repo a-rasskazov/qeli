@@ -1731,7 +1731,7 @@ DNS и route cleanup дополнительно проверяют исходн�
 `DNS link already has an active owner` означает lock другого поколения на этом интерфейсе.
 `unrecovered DNS ownership marker` означает оставшуюся запись; она не перезаписывается.
 Новые файлы — `dns-link-v2-<boot>-<netns-device>-<netns-inode>-<cookie>-<ifindex>.state` и `.lock`
-в `/var/lib/qeli`; `STATE_DIRECTORY` не переносит per-link DNS state. Cookie берётся из
+в `$STATE_DIRECTORY` (по умолчанию `/var/lib/qeli`), общем с route/sysctl/firewall state. Cookie берётся из
 `SO_NETNS_COOKIE`; его отсутствие запрещает managed DNS. Каталог должен быть без symlink,
 чужих владельцев и group/world write. Новые файлы получают 0600; небезопасные существующие
 права или владелец вызывают ошибку без автоматического исправления. Не снимайте эти проверки

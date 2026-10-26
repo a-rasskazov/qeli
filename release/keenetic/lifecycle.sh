@@ -4,6 +4,19 @@
 QELI_LOCK_DIR=/var/run/qeli.lifecycle.lock
 QELI_LOCK_HELD=0
 
+# Firmware may expose /var as a symlink (and /opt may itself be linked).
+# Resolve only /var; the core still refuses links/foreign owners below it and
+# creates its journal directory privately. Never chmod a pre-existing state path.
+# Keeping the physical /var/lib/qeli location also keeps pending recovery state.
+qeli_export_state_directory() {
+  local root
+  root="$(readlink -f /var)" || return 1
+  case "$root" in /*) ;; *) return 1 ;; esac
+  [ -d "$root" ] || return 1
+  STATE_DIRECTORY="${root%/}/lib/qeli"
+  export STATE_DIRECTORY
+}
+
 QELI_PLAN_LOCK_HELD=0
 # Independent of lifecycle: start waits for the client to publish its first plan.
 # The core uses the same atomic mkdir and holds it only around file publication.

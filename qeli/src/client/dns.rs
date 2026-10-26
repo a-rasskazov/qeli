@@ -13,7 +13,6 @@ use crate::transport_core::NetworkDns;
 use std::path::Path;
 
 const RESOLV_PATH: &str = "/etc/resolv.conf";
-const STATE_DIR: &str = "/var/lib/qeli";
 const DNS_SETUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
 #[path = "dns/resolver_context.rs"]
 mod resolver_context;
@@ -108,8 +107,9 @@ pub(crate) fn setup_network_plan_dns(
         index,
         name,
     };
-    let lease = crate::dns_lease::Lease::acquire(Path::new(STATE_DIR), link)
-        .map_err(|e| anyhow::anyhow!("DNS ownership in {STATE_DIR}: {e}"))?;
+    let directory = crate::state_storage::default_state_dir();
+    let lease = crate::dns_lease::Lease::acquire(&directory, link)
+        .map_err(|e| anyhow::anyhow!("DNS ownership in {}: {e}", directory.display()))?;
     // Transfer ownership BEFORE the first resolver mutation, including partial failures.
     *owned = Some(DnsLease { lease, resolver });
     let lease = owned.as_ref().expect("lease just installed");
@@ -153,7 +153,8 @@ fn revert_link_with(
 /// Startup never reverts a live link from a durable marker alone. Only the generation
 /// holding the original TUN descriptor and DNS lease may issue a resolver mutation.
 pub fn recover_stale() -> anyhow::Result<()> {
-    let directory = crate::dns_lease::Directory::existing(Path::new(STATE_DIR))?;
+    let root = crate::state_storage::default_state_dir();
+    let directory = crate::dns_lease::Directory::existing(&root)?;
     let namespace = crate::network_namespace::Namespace::capture()?;
     let mut errors = Vec::new();
     let mut scope = None;
@@ -170,7 +171,7 @@ pub fn recover_stale() -> anyhow::Result<()> {
                 }
             };
             let name = entry.file_name();
-            let visible = Path::new(STATE_DIR).join(&name);
+            let visible = root.join(&name);
             let name = name.to_string_lossy();
             if crate::dns_lease::is_legacy_marker(&name) {
                 log::warn!("Legacy DNS v1 marker {} lacks namespace generation; retained for administrator recovery", visible.display());

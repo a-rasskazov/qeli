@@ -17,6 +17,18 @@ OBFS_KEY_FILE="$RUNDIR/obfs-key"
 FIREWALL_INIT=/etc/init.d/firewall
 STATEDIR=/etc/qeli              # persistent overlay — device-id + TOFU known_hosts survive reboot
 
+# Resolve only the firmware-owned /var alias, not the journal directory itself.
+# OpenWrt uses /var -> /tmp. The core opens/creates lib/qeli with openat NOFOLLOW
+# and checks ownership/modes; shell mkdir/chmod must never adopt a planted link.
+# This names the SAME physical directory as /var/lib/qeli, retaining old state.
+qeli_state_directory() {
+	local root
+	root="$(readlink -f /var)" || return 1
+	case "$root" in /*) ;; *) return 1 ;; esac
+	[ -d "$root" ] || return 1
+	printf '%s/lib/qeli' "${root%/}"
+}
+
 EXTRA_COMMANDS="set_secret clear_secrets status_enabled"
 EXTRA_HELP="
 	set_secret <pass|obfs_key>  Read one secret line from stdin into tmpfs
@@ -437,6 +449,8 @@ qeli_start_service() {
 
 	[ -x "$BIN" ] || { logger -t qeli "ERROR: $BIN missing"; return 1; }
 	[ -e /dev/net/tun ] || { logger -t qeli "ERROR: /dev/net/tun missing — install kmod-tun"; return 1; }
+	local journal_dir
+	journal_dir="$(qeli_state_directory)" || { logger -t qeli "ERROR: cannot resolve firmware /var state root"; return 1; }
 
 	render_conf || return 1
 	mkdir -p "$STATEDIR" || return 1
@@ -448,7 +462,7 @@ qeli_start_service() {
 	# bytes. procd compares file contents; identical renders keep the process.
 	procd_set_param file "$CONF" "$PASS_FILE"
 	# Persistent identity/pinning across reboots (/etc and overlay survive; /var is tmpfs).
-	procd_set_param env QELI_DEVICE_ID_FILE="$STATEDIR/device-id" QELI_KNOWN_HOSTS="$STATEDIR/known_hosts"
+	procd_set_param env STATE_DIRECTORY="$journal_dir" QELI_DEVICE_ID_FILE="$STATEDIR/device-id" QELI_KNOWN_HOSTS="$STATEDIR/known_hosts"
 	procd_set_param respawn 3600 5 0      # respawn: threshold 3600s, 5s delay, unlimited
 	procd_set_param stdout 1              # → logread -e qeli
 	procd_set_param stderr 1

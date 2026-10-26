@@ -114,6 +114,31 @@ class OpenWrtInitTests(unittest.TestCase):
         p = self.root / 'calls'
         return p.read_text().splitlines() if p.exists() else []
 
+    def test_journal_root_resolves_only_firmware_var_without_chmod_or_mkdir(self):
+        real = self.root / 'firmware-var'
+        real.mkdir()
+        # Even a planted child must not be canonicalized or modified by shell.
+        target = self.root / 'protected'
+        target.mkdir(mode=0o755)
+        (real / 'lib').symlink_to(target)
+        result = self.run_shell(r'''
+readlink() { [ "$*" = '-f /var' ] || return 19; printf '%s' "$QELI_TEST_ROOT/firmware-var"; }
+chmod() { return 21; }
+mkdir() { return 22; }
+qeli_state_directory
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, str(real / 'lib/qeli'))
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(list(target.iterdir()), [])
+
+    def test_journal_root_resolution_failure_does_not_fall_back_to_symlink(self):
+        for body in ["return 17", "printf relative", "printf /missing-qeli-fixture-dir"]:
+            with self.subTest(body=body):
+                result = self.run_shell('readlink() { ' + body + '; }; qeli_state_directory')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '')
+
     def seed_legacy(self, name='pass', value='legacy-fixture'):
         for prefix in ('stage-', 'disk-'):
             (self.root / (prefix + name)).write_text(value)

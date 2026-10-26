@@ -154,11 +154,7 @@ impl JournalTransaction<'_> {
 }
 
 fn journal_path() -> PathBuf {
-    std::env::var_os("STATE_DIRECTORY")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/qeli"))
-        .join(JOURNAL_NAME)
+    crate::state_storage::default_state_dir().join(JOURNAL_NAME)
 }
 
 fn current_boot_id() -> anyhow::Result<String> {

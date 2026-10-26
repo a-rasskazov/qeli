@@ -1,5 +1,14 @@
 # qeli for OpenWrt (client)
 
+> **0.8.3 router state fix (issue #205).** Update the binary and init script together.
+> Init resolves only the firmware `/var` alias and passes `STATE_DIRECTORY` (normally
+> `/tmp/lib/qeli`); the core safely opens/creates the same physical journal directory
+> without following child symlinks or changing unsafe permissions. Identity and TOFU
+> pins remain persistent in `/etc/qeli`. For manual launch and recovery, see
+> [state storage](../docs/eng/manuals/OPERATIONS.md#client-physical-route-recovery).
+> The firmware kernel must support `SO_NETNS_COOKIE` for managed route recovery,
+> including `dns=off`; a successful cross-build or license export does not prove this.
+
 > **0.8.2 audit scope.** Physical router tests were excluded from the agreed audit.
 > Source/SDK and isolated lifecycle checks do not certify the package on your hardware;
 > earlier hardware results do not qualify this revision. Use artifacts from an exact

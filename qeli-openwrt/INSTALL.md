@@ -1,5 +1,12 @@
 # Installing the qeli client on OpenWrt
 
+> **0.8.3 / issue #205:** install the updated binary **and** init script. The service
+> passes the real `/var` target plus `/lib/qeli` as `STATE_DIRECTORY`; on standard
+> OpenWrt this is `/tmp/lib/qeli`, not a new location. No unsafe directory is chmodded
+> or adopted by init. Direct launches need the same environment; see
+> [state storage and recovery](../docs/eng/manuals/OPERATIONS.md#client-physical-route-recovery).
+> Managed routing requires kernel `SO_NETNS_COOKIE` support even with `dns=off`.
+
 > **0.8.2 audit scope.** Physical router tests were excluded from the agreed audit.
 > SDK and isolated lifecycle evidence does not replace testing on your firmware.
 > Install an artifact from an exact published release tag and verify architecture,

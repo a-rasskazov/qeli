@@ -49,7 +49,7 @@ impl Drop for Guard {
 }
 impl Session {
     pub(crate) fn open(interface: &str) -> anyhow::Result<Arc<Self>> {
-        Self::at(Path::new("/var/lib/qeli"), interface)
+        Self::at(&crate::state_storage::default_state_dir(), interface)
     }
     pub(crate) fn at(path: &Path, interface: &str) -> anyhow::Result<Arc<Self>> {
         anyhow::ensure!(

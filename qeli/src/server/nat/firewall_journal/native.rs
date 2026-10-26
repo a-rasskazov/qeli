@@ -16,10 +16,7 @@ pub(crate) struct Session {
 }
 impl Session {
     pub(crate) fn open() -> anyhow::Result<Self> {
-        let directory = std::env::var_os("STATE_DIRECTORY")
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "/var/lib/qeli".into());
-        Self::at(Path::new(&directory))
+        Self::at(&crate::state_storage::default_state_dir())
     }
     fn at(path: &Path) -> anyhow::Result<Self> {
         let namespace = Namespace::capture()?;

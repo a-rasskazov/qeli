@@ -2,6 +2,10 @@
 
 **Draft / Черновик. Not published / Не опубликован.**
 
+> Preparation status: router state fixes below require a refreshed release candidate
+> and qualification before publication. / Подготовка: описанные ниже исправления
+> состояния роутеров требуют обновления кандидата и проверок перед публикацией.
+
 ## English
 
 Qeli 0.8.3 strengthens the behaviour of the network core and clients under real
@@ -28,6 +32,11 @@ and the diagnostics needed to understand connection problems.
   have been eliminated.
 
 ### Routing, IPv6 and configuration
+
+- OpenWrt and Keenetic startup no longer fails merely because the firmware exposes
+  `/var` as a symlink. Routes, DNS, sysctls and firewall share `STATE_DIRECTORY`;
+  updated launchers use the real path to the same existing journals. Child symlinks,
+  unsafe permissions and ambiguous recovery are still refused (issue #205).
 
 - `pull_routes=false` declines routes supplied by the server while preserving local
   routes, independent full-tunnel policy and protected tunnel DNS routes. The setting
@@ -83,7 +92,8 @@ firewall or daemon shutdown are not disguised as a successful disconnect.
   Developer-ID-signed per-app Network Extension; such profiles fail closed.
 - The distribution also includes the signed Android APK, portable Linux binary and
   `.deb`, Keenetic/OpenWrt clients and installation files. Every payload is covered
-  by `SHA256SUMS`. OpenWrt source pin and SDK archive hash match the current Rust tree.
+  by `SHA256SUMS`. The OpenWrt source pin and SDK archive hash must be refreshed
+  together with this candidate before publication.
 
 ### Updating
 
@@ -144,6 +154,10 @@ Qeli 0.8.3 повышает устойчивость сетевого ядра �
 
 ### Маршрутизация, IPv6 и конфигурация
 
+- OpenWrt/Keenetic: запуск больше не ломается лишь из-за системного `/var`-симлинка.
+  Маршруты, DNS, sysctl и firewall используют общий `STATE_DIRECTORY`; обновлённые
+  шаблоны указывают реальный путь к прежним журналам. Дочерние symlink, небезопасные
+  права и неоднозначный recovery по-прежнему отвергаются (issue #205).
 - `pull_routes=false` позволяет отказаться от маршрутов сервера, сохранив локальные
   маршруты, независимую full-tunnel-политику и защищённые маршруты tunnel DNS.
   Настройка сохраняется в редакторах клиентов, INI, резервных копиях и новых ссылках.
@@ -203,7 +217,8 @@ TCP-данные в очереди, в работе, локально запис
   отказывают в запуске, а не расширяют выбранный трафик до общего туннеля.
 - В комплект также входят подписанный Android APK, переносимый Linux-бинарник и
   `.deb`, клиенты Keenetic/OpenWrt и установочные файлы. Все payload-файлы покрыты
-  `SHA256SUMS`. OpenWrt source pin и SHA256 SDK-архива соответствуют текущему Rust-дереву.
+  `SHA256SUMS`. Перед публикацией нужно обновить OpenWrt source pin и SHA256
+  SDK-архива вместе с этим кандидатом.
 
 ### Порядок обновления
 

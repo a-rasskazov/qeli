@@ -1,5 +1,13 @@
 # qeli-client on Keenetic — step-by-step deployment
 
+> **0.8.3, issue #205:** update the binary and init/lifecycle bundle together.
+> Both ordinary and OpkgTun launchers pass the real `/var` target + `/lib/qeli`
+> as `STATE_DIRECTORY`. The physical journal directory stays unchanged, with no
+> `O_NOFOLLOW` bypass, unsafe chmod or hidden recovery state. Identity/TOFU remain
+> in `/opt/etc/qeli`. [Storage and manual launch](OPERATIONS.md#client-physical-route-recovery).
+> The firmware kernel must support `SO_NETNS_COOKIE`, including with `dns=off`;
+> CPU architecture and a successful build do not qualify this requirement.
+
 > **Benchmark scope:** any Reality speed or double-framing estimate in this document comes from
 > the legacy carrier through 0.7.16. The current genuine H2 carrier needs a separate router benchmark.
 

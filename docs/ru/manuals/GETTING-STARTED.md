@@ -832,7 +832,7 @@ dns         = tunnel
 
 На Linux `dns = tunnel` требует `busctl`, активный systemd-resolved и его stub в `/etc/resolv.conf`. Клиент и resolved должны находиться в одной сети, клиент и брокер D-Bus — в одном PID namespace. Для DNS, которым управляет внешняя платформа, используйте `dns = off`/`system`. [Точный контракт](CONFIG.md#системные-команды-tun-и-dns-на-linux).
 
-Managed DNS на Linux также требует `SO_NETNS_COOKIE` и доверенного `/var/lib/qeli` без symlink и group/world write. Per-link DNS state не переносится через `STATE_DIRECTORY`. Перед обновлением штатно остановите старый клиент; оставшиеся v1-маркеры требуют ручного разбора, если совпадают с новым link. [Формат v2 и восстановление](TROUBLESHOOTING.md#650-linux-владение-dns-lease-и-восстановление-маркеров).
+Managed DNS на Linux также требует `SO_NETNS_COOKIE` и доверенного state-каталога без symlink и group/world write: `$STATE_DIRECTORY`, иначе `/var/lib/qeli`. Журналы маршрутов, DNS, sysctl и серверного firewall используют общий корень. Перед обновлением штатно остановите старый клиент; оставшиеся v1-маркеры требуют ручного разбора, если совпадают с новым link. [Формат v2 и восстановление](TROUBLESHOOTING.md#650-linux-владение-dns-lease-и-восстановление-маркеров).
 
 Старые глобальные `dns-backup.json`/`dns-holders` не восстанавливаются автоматически: startup сохраняет их и требует ручного разбора даже при `dns = off`/`system`. Перед обновлением штатно остановите старый клиент. [Процедура §6.20](TROUBLESHOOTING.md#620-linux-восстановление-старого-dns-не-удалось-снимок-сохранён).
 

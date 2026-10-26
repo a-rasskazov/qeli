@@ -546,7 +546,7 @@ if [ -n "$DNS_UPSTREAM" ]; then
   DNS_BOOT=$(cat /proc/sys/kernel/random/boot_id)
   DNS_NAMESPACE=$(ip netns exec "$CLI_NS" stat -Lc '%d-%i' /proc/self/ns/net)
   DNS_COOKIE=$(ip netns exec "$CLI_NS" python3 -c 'import socket,struct; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); print(struct.unpack("=Q",s.getsockopt(socket.SOL_SOCKET,getattr(socket,"SO_NETNS_COOKIE",71),8))[0])')
-  DNS_MARKER="/var/lib/qeli/dns-link-v2-$DNS_BOOT-$DNS_NAMESPACE-$DNS_COOKIE-$DNS_INDEX.state"
+  DNS_MARKER="$STATE_DIRECTORY/dns-link-v2-$DNS_BOOT-$DNS_NAMESPACE-$DNS_COOKIE-$DNS_INDEX.state"
   check_eventually "DNS owns the current link marker" "test -f $DNS_MARKER"
   RESOLVER_PID=$(cat "$WORK/resolved.pid")
   check_eventually "real resolved reports both tunnel DNS servers" \
@@ -698,8 +698,8 @@ if [ "${QELI_ROUTE_CRASH_CHECK:-0}" = 1 ] && [ "$ROUTING" = full ] && [ -z "$DNS
   check_eventually "$TUN_RELEASE_CAUSE releases the original TUN" "! ip netns exec $CLI_NS ip link show $TUN_IF"
   check "SIGKILL leaves the physical carrier bypass" "ip netns exec $CLI_NS ip -$OUTER route show exact $BIND_ADDRESS | grep -q 'dev $CLI_IF'"
   if [ "${QELI_EXPECT_ROUTE_JOURNAL:-1}" = 1 ]; then
-    check "SIGKILL retains the durable client route journal" "test -s /var/lib/qeli/client-routes.state && grep -Fq '\"interface\":\"$TUN_IF\"' /var/lib/qeli/client-routes.state"
-    cp /var/lib/qeli/client-routes.state "$WORK/routes-after-crash.state"
+    check "SIGKILL retains the durable client route journal" "test -s '$STATE_DIRECTORY/client-routes.state' && grep -Fq '\"interface\":\"$TUN_IF\"' '$STATE_DIRECTORY/client-routes.state'"
+    cp "$STATE_DIRECTORY/client-routes.state" "$WORK/routes-after-crash.state"
   fi
   ip netns exec "$CLI_NS" env QELI_KNOWN_HOSTS="$WORK/known-hosts" \
     QELI_DEVICE_ID_FILE="$WORK/device-id" \
@@ -762,7 +762,7 @@ PYDNS
   check_eventually "restart retires only the absent original DNS marker" "test ! -e $CRASH_DNS_MARKER"
   check_eventually "restart creates a new client TUN" "ip netns exec $CLI_NS ip link show $TUN_IF"
   DNS_INDEX=$(ip netns exec "$CLI_NS" ip -j link show dev "$TUN_IF" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["ifindex"])')
-  DNS_MARKER="/var/lib/qeli/dns-link-v2-$DNS_BOOT-$DNS_NAMESPACE-$DNS_COOKIE-$DNS_INDEX.state"
+  DNS_MARKER="$STATE_DIRECTORY/dns-link-v2-$DNS_BOOT-$DNS_NAMESPACE-$DNS_COOKIE-$DNS_INDEX.state"
   check_eventually "restart owns a new v2 DNS marker" "test -f $DNS_MARKER"
   check_eventually "restart restores tunnel DNS in real resolved" \
     "nsenter -t $RESOLVER_PID -m -n env DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/qeli-matrix-bus $RESOLVECTL_REAL dns $DNS_INDEX | grep -Fq '10.86.0.1 fd86::1'"
@@ -808,7 +808,7 @@ if [ "$ROUTE_CRASH_CHECK" = 1 ]; then
   check "stop after route recovery removes IPv6 blackholes" "test -z \"\$(ip netns exec $CLI_NS ip -6 route show type blackhole)\""
   check "route recovery preserves the unrelated operator route" "ip netns exec $CLI_NS ip route show exact 203.0.113.77 > $WORK/operator-route-after-crash.txt && cmp $WORK/operator-route-before-crash.txt $WORK/operator-route-after-crash.txt"
   if [ "${QELI_EXPECT_ROUTE_JOURNAL:-1}" = 1 ]; then
-    check "clean stop retires the recovered route records" "! grep -Fq '\"interface\":\"$TUN_IF\"' /var/lib/qeli/client-routes.state"
+    check "clean stop retires the recovered route records" "! grep -Fq '\"interface\":\"$TUN_IF\"' '$STATE_DIRECTORY/client-routes.state'"
   fi
 fi
 if [ "$ROUTE_IDENTITY_CHECK" = 1 ]; then

@@ -1730,7 +1730,7 @@ An active lease is retained through setup rollback and disconnect; DNS errors re
 `DNS link already has an active owner` means another generation holds this link's lock.
 `unrecovered DNS ownership marker` means a prior record remains; it is not overwritten.
 New state uses `dns-link-v2-<boot>-<netns-device>-<netns-inode>-<cookie>-<ifindex>.state` plus `.lock`
-in `/var/lib/qeli`; `STATE_DIRECTORY` does not relocate per-link DNS state. The cookie comes
+in `$STATE_DIRECTORY` (default `/var/lib/qeli`), shared with route/sysctl/firewall state. The cookie comes
 from `SO_NETNS_COOKIE`; missing support refuses managed DNS. The directory must have no
 symlinks, untrusted owners or group/world write. New files use 0600; unsafe existing modes
 or ownership fail without automatic repair. Do not bypass these checks by deleting evidence;

@@ -114,7 +114,7 @@ class ProcdIntegrationTests(unittest.TestCase):
         pid=self.start()
         receipt=(self.fixture/('started-'+str(pid))).read_text().splitlines()
         self.assertEqual(receipt, ['--config', '/var/run/qeli/client.conf',
-                                  '/etc/qeli/device-id', '/etc/qeli/known_hosts'])
+                                  '/etc/qeli/device-id', '/etc/qeli/known_hosts', '/tmp/lib/qeli'])
         self.assertEqual((self.run/'client.conf').stat().st_mode & 0o777, 0o600)
         self.assertIn('server = "vpn.example:443"', (self.fixture/('config-'+str(pid))).read_text())
         self.assertEqual(self.invoke('running').returncode, 0)
@@ -226,7 +226,7 @@ class ProcdIntegrationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, action+': '+result.stderr)
 
 CLIENT = r"""#!/bin/sh
-printf '%s\n' "$@" "$QELI_DEVICE_ID_FILE" "$QELI_KNOWN_HOSTS" > /fixture/started-$$
+printf '%s\n' "$@" "$QELI_DEVICE_ID_FILE" "$QELI_KNOWN_HOSTS" "$STATE_DIRECTORY" > /fixture/started-$$
 cp /var/run/qeli/client.conf /fixture/config-$$ || exit 17
 cp /var/run/qeli/password /fixture/password-$$ || exit 17
 exec /bin/sleep 600

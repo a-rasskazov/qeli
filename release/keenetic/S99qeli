@@ -339,6 +339,7 @@ start() {
     echo "qeli-client: executable/config/readlink missing"; return 1;
   }
   [ -e /dev/net/tun ] || { echo "нет /dev/net/tun — включи компонент VPN в KeeneticOS"; return 1; }
+  qeli_export_state_directory || { echo "qeli-client: cannot resolve firmware /var state root"; return 1; }
   mkdir -p /opt/var/run /opt/var/log || return 1
   qeli_prepare_launch_config "$CONF" || return 1
   load_gateway_owner || return 1
