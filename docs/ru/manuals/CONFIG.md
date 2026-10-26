@@ -1,9 +1,10 @@
 # Конфигурация qeli
 
 > **Статус документации:** текущая ветка разработки **0.8.3**; планируемый full-IPv6 релиз **0.8.3**;
-> версия пакетов в этом руководстве **0.8.2**. Публичного релиза 0.7.17 не будет.
+> версия пакетов в этом руководстве **0.8.3**.
 > Фактическую версию установленного бинарника показывает `qeli --version`.
-> **0.8.2 Beta** опубликован. Готовые файлы и актуальный статус — в [GitHub Releases](https://github.com/litvinovtd/qeli/releases).
+> Готовые файлы и статус публикации нужной версии — в [GitHub Releases](https://github.com/litvinovtd/qeli/releases).
+> Ссылки на файлы этой версии работают после её публикации.
 
 ## Формат: flat-INI (единственный; TOML/JSON выпилены)
 
@@ -1818,7 +1819,7 @@ Windows перехватывает и классифицирует пакеты 
 подписанное system extension с `NETransparentProxyProvider` и `NEDNSProxyProvider`; поэтому
 ad-hoc или кросс-собранный архив macOS отклоняет per-app-профиль, пока не установлена и не
 одобрена Developer-ID сборка с требуемыми Network Extension entitlement. Сами API есть
-в macOS 13+, но приложение 0.8.2 на .NET 10 требует macOS 15 или новее.
+в macOS 13+, но приложение 0.8.3 на .NET 10 требует macOS 15 или новее.
 Для публичной поставки также нужны Apple notarization и stapling; `qeli-mac/build_app.sh`
 выполняет их при заданном `QELI_MAC_NOTARY_PROFILE`.
 

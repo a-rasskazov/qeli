@@ -106,6 +106,13 @@ firewall or daemon shutdown are not disguised as a successful disconnect.
    and connect explicitly after migration.
 4. On macOS choose the archive matching the processor; a separate .NET installation
    is not required. Installation guidance and platform limitations are in the setup guide.
+5. On OpenWrt/Keenetic, update the init/lifecycle scripts from the supplied installation
+   archive as well as the client binary. Replacing only the ELF leaves an old launcher
+   selecting the wrong state root. Stop the old client cleanly and retain its recovery
+   journals; do not delete them or move state to a new empty directory to bypass checks.
+6. Docker images are published separately after release-tag admission and multi-arch
+   checks. Use `ghcr.io/litvinovtd/qeli:0.8.3` only once that workflow succeeds;
+   publishing this Beta does not automatically update `latest`.
 
 ### Verification and scope
 
@@ -233,6 +240,13 @@ TCP-данные в очереди, в работе, локально запис
    и подключитесь явно.
 4. На macOS выберите архив для своего процессора; отдельно устанавливать .NET
    не требуется. Инструкция установки и ограничения платформ описаны в руководстве.
+5. На OpenWrt/Keenetic обновите не только клиентский бинарник, но и init/lifecycle
+   из установочного архива. Замена одного ELF оставляет старый launcher с неверным
+   корнем состояния. Штатно остановите старый клиент и сохраните recovery-журналы;
+   не удаляйте их и не выбирайте новый пустой каталог ради обхода проверок.
+6. Docker-образы публикуются отдельно после допуска тега и multi-arch проверок.
+   Используйте `ghcr.io/litvinovtd/qeli:0.8.3` после успешного завершения workflow;
+   публикация этой Beta не переключает `latest` автоматически.
 
 ### Проверки и границы утверждений
 

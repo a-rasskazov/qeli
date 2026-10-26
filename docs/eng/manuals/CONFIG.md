@@ -1,9 +1,10 @@
 # qeli configuration
 
 > **Documentation status:** current development tree **0.8.3**; planned full-IPv6 release **0.8.3**;
-> package version covered by this guide **0.8.2**. There will be no public 0.7.17 release.
+> package version covered by this guide **0.8.3**.
 > `qeli --version` reports the version of the binary actually installed.
-> **0.8.2 Beta** is published. Downloads and current availability are in [GitHub Releases](https://github.com/litvinovtd/qeli/releases).
+> See [GitHub Releases](https://github.com/litvinovtd/qeli/releases) for package availability and publication status.
+> Links to this version's files work after its publication.
 
 ## Format: flat-INI (the only one; TOML/JSON have been dropped)
 
@@ -1858,7 +1859,7 @@ Windows captures/classifies with the bundled WinDivert driver. macOS uses a sign
 extension containing both `NETransparentProxyProvider` and `NEDNSProxyProvider`; an ad-hoc or
 cross-built macOS archive therefore rejects an app-filtered profile until a Developer-ID build
 with the required Network Extension entitlements is installed and approved. The underlying
-APIs exist on macOS 13+, but the 0.8.2 .NET 10 application requires macOS 15 or newer.
+APIs exist on macOS 13+, but the 0.8.3 .NET 10 application requires macOS 15 or newer.
 Public distribution also requires Apple notarization and stapling; `qeli-mac/build_app.sh`
 performs it when `QELI_MAC_NOTARY_PROFILE` is supplied.
 

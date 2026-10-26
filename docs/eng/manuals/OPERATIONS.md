@@ -1,9 +1,10 @@
 # Qeli — operations: compatibility, upgrades, rollback, backup
 
 > **Documentation status:** current development tree **0.8.3**; planned full-IPv6 release **0.8.3**;
-> package version covered by this guide **0.8.2**. There will be no public 0.7.17 release.
+> package version covered by this guide **0.8.3**.
 > `qeli --version` reports the version of the binary actually installed.
-> **0.8.2 Beta** is published. Downloads and current availability are in [GitHub Releases](https://github.com/litvinovtd/qeli/releases).
+> See [GitHub Releases](https://github.com/litvinovtd/qeli/releases) for package availability and publication status.
+> Links to this version's files work after its publication.
 
 Installation is covered in [GETTING-STARTED.md](GETTING-STARTED.md), config keys in
 [CONFIG.md](CONFIG.md), error decoding in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
@@ -128,18 +129,18 @@ SHA256SUMS from the same release establish integrity against its metadata, not i
 To verify a downloaded amd64 package before manual installation, use GitHub CLI against this repository. The filename below refers to the version covered by this guide; availability depends on publication. Failed verification means the package has not passed this provenance check.
 
 ```bash
-gh attestation verify qeli_0.8.2_amd64.deb --repo litvinovtd/qeli
+gh attestation verify qeli_0.8.3_amd64.deb --repo litvinovtd/qeli
 ```
 
-The 0.8.2 prerelease preserves its qualified candidate package without a new
+The 0.8.3 prerelease preserves its qualified candidate package without a new
 release-build attestation. The command above is therefore expected to refuse
 that package unless a matching attestation is separately published. Its
 `SHA256SUMS` describes the integrity of the downloads. The source-side
-[release certification](../../../release/certification/0.8.2.json) and
+[release certification](../../../release/certification/0.8.3.json) and
 [native build provenance](../../../native-libs/PROVENANCE) record their respective
 qualification scopes; they do not replace a GitHub build attestation.
 Separate `PROVENANCE.json` and `QUALIFICATION.json` downloads are not included in
-the final 0.8.2 asset set.
+the final 0.8.3 asset set.
 An installation requiring `QELI_VERIFY_ATTESTATION=1` must remain blocked when
 the required attestation is unavailable.
 
@@ -208,6 +209,14 @@ docker compose -f release/docker/docker-compose.yml up -d
 ```
 
 To roll back, put the previous image tag back in `docker-compose.yml` and `up -d` again.
+
+For 0.8.3 Beta, select `ghcr.io/litvinovtd/qeli:0.8.3` only after the Docker image
+has been published successfully. Publishing the GitHub Release files does not mean
+the multi-arch image build has finished. Automatic `latest` promotion is reserved
+for a published stable release, not a Beta; updating a client does not require a
+manual `latest` promotion. Select the container tag in `image:`; it is not inferred
+from the version of an installed `.deb` or APK.
+See [release/docker/README.md](../../../release/docker/README.md) for details.
 
 > **`update-qeli-server.sh` does handle Docker — with one caveat.** It finds the container
 > under either name, `qeli` or `qeli-server` (the latter is what the bundled compose
@@ -437,7 +446,7 @@ Stop the old worker before upgrading.
 
 ## Client DNS recovery
 
-Managed DNS on Linux also requires `SO_NETNS_COOKIE` and trusted `/var/lib/qeli` without symlinks or group/world write. `STATE_DIRECTORY` does not relocate per-link DNS state. Stop the old client cleanly before upgrading; retained v1 markers require administrator recovery when they match the new link. [V2 format and recovery](TROUBLESHOOTING.md#650-linux-dns-lease-ownership-and-recovery-markers).
+Managed DNS on Linux also requires `SO_NETNS_COOKIE` and a trusted state directory without symlinks or group/world write: `$STATE_DIRECTORY`, otherwise `/var/lib/qeli`. DNS lease markers share this root with route, sysctl and server firewall journals. Selecting another path does not automatically copy or recover existing state. Stop the old client cleanly before upgrading; retained v1 markers require administrator recovery when they match the new link. [V2 format and recovery](TROUBLESHOOTING.md#650-linux-dns-lease-ownership-and-recovery-markers).
 
 Legacy global `dns-backup.json`/`dns-holders` are not restored automatically: startup preserves them and requires administrator recovery even with `dns = off`/`system`. Stop the old client cleanly before upgrading. [Procedure §6.20](TROUBLESHOOTING.md#620-linux-legacy-resolver-recovery-failed-backup-kept).
 
