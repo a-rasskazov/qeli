@@ -67,7 +67,7 @@ core did not read. All of these gaps were closed before release:
 - `allow_unpinned_tofu` is uniform and can never bypass a mismatch with an existing pin;
 - Android `kill_switch` now means verified system lockdown instead of an ineffective profile flag.
 
-The `[logging]` section adds **3 fields** to the 82 `[qeli]` keys and survives every GUI.
+The `[logging]` section adds **3 fields** to the 84 `[qeli]` keys and survives every GUI.
 The CLI applies `level`, `file`, and `time_format`. Windows/macOS use `level` in service/
 daemon profiles; the GUI can supply it from application settings. Desktop preserves
 `file` and `time_format` in the document without applying them. Android/iOS preserve

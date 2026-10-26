@@ -1,13 +1,21 @@
-# Qeli 0.8.3 Beta — resilient connections, network policy and useful diagnostics
+# Qeli 0.8.3 Beta — fixes for 0.8.2 and more resilient connections
 
 **Draft / Черновик. Not published / Не опубликован.**
 
 ## English
 
-Qeli 0.8.3 strengthens the behaviour of the network core and clients under real
-network changes: long RTT, stalled connections, changing UDP path MTU and temporary
-loss of connectivity. It also improves Windows upgrade handling, macOS compatibility
-and the diagnostics needed to understand connection problems.
+Qeli 0.8.3 is a maintenance and bug-fix release for 0.8.2, focused on reliability
+and recovery rather than a new feature generation. Its main purpose is to make
+connections more predictable under long RTT, stalled carriers, changing UDP path
+MTU and temporary loss of connectivity — and to make an interrupted upgrade easier
+to diagnose and recover safely. It also closes concrete Windows storage-upgrade,
+macOS service and router-startup failures. This is not a new VPN protocol or a
+claim that every network or device limitation has been resolved.
+
+For users and operators, the changes mean fewer indefinitely stuck paths, clearer
+routing and transport state, and safer handling of existing profiles and recovery
+journals. The performance-related changes remove specific bottlenecks; they are
+not a promised speed increase on every network.
 
 ### Transport stability and network efficiency
 
@@ -26,6 +34,9 @@ and the diagnostics needed to understand connection problems.
   full. Additional queue, pool and batch-send metrics help locate congestion without
   increasing the existing memory budgets. This is not a claim that overload losses
   have been eliminated.
+- The existing transport-status page now receives typed per-profile UDP receive-queue
+  metrics. Missing or incompatible worker data remains unavailable rather than
+  appearing as a misleading zero; unknown worker fields are not forwarded to the API.
 
 ### Routing, IPv6 and configuration
 
@@ -43,6 +54,10 @@ and the diagnostics needed to understand connection problems.
 - Unused SNI no longer rejects legacy UDP-obfs or non-WebSocket TCP-obfs profiles.
   Validation remains strict where TLS actually uses SNI. Desktop WebSocket profiles
   expose their HTTP Host override; explicit `gateway=false` survives INI serialization.
+- Client configuration checks now cover the complete 87-field shared contract:
+  84 `[qeli]` keys plus 3 `[logging]` fields, including non-default values in Rust,
+  C#, Kotlin and Swift models. Known fields from another platform can survive an
+  edit without being applied there; unknown keys are still rejected.
 
 ### Client improvements
 
@@ -74,7 +89,7 @@ firewall or daemon shutdown are not disguised as a successful disconnect.
 
 - Updated crypto/TLS dependencies include ML-KEM 0.3.3, ctutils 0.4.4,
   rustls-webpki 0.103.16 and webpki-roots 1.0.10. The changes address secret-dependent
-  operations and the relevant certificate-trust advisories. Tokio is 1.54.1,
+  operations and the relevant certificate-trust advisories. libc is 0.2.191, Tokio is 1.54.1,
   Gradle Wrapper is 9.8.2, Android Tink is 1.24.0; dependency locks and original
   license inventories are synchronized.
 - Windows, macOS and Android native cores were rebuilt from the current development
@@ -116,6 +131,14 @@ firewall or daemon shutdown are not disguised as a successful disconnect.
 
 ### Verification and scope
 
+At the preparation snapshot
+[`5aaca5db`](https://github.com/litvinovtd/qeli/compare/v0.8.2...5aaca5dba6efb70233ffcccca5eac2f78326a4d9),
+development since 0.8.2 comprised **69 commits**: 61 non-merge and 8 merge commits.
+That includes code, dependencies, tests, documentation and packaging, not 69 new
+features. The current certification records **20 passed automated Linux
+cases** and **21 unavailable device, router or rollout cases**; the latter are
+not passes.
+
 Current release admission is recorded in the
 [0.8.3 runtime certification manifest](https://github.com/litvinovtd/qeli/blob/v0.8.3/release/certification/0.8.3.json),
 including the exact tested artifact hashes and retained evidence. Unavailable physical
@@ -127,14 +150,26 @@ and [the twelve-profile laboratory comparison](https://github.com/litvinovtd/qel
 retain their original candidate hashes, initial failures and interpretation limits.
 They are not new measurements of the final packages or a guaranteed speed increase.
 The previously documented Android API34 ENONET limitation is not declared fixed.
+New [technology](https://github.com/litvinovtd/qeli/blob/v0.8.3/docs/eng/reference/TECHNOLOGIES.md)
+and [Recordizer](https://github.com/litvinovtd/qeli/blob/v0.8.3/docs/eng/reference/RECORDIZER.md)
+references explain existing mechanisms and link to dated measurements; Recordizer
+itself did not first appear in 0.8.3.
 Links pinned to `v0.8.3` become public when that tag is published.
 
 ## Русский
 
-Qeli 0.8.3 повышает устойчивость сетевого ядра и клиентов в реальных условиях:
-при большом RTT, зависших соединениях, изменении UDP path MTU и временной потере
-сети. Одновременно доработаны обновление Windows-клиента, совместимость macOS
-и диагностика, которая помогает понять причину проблем с подключением.
+Qeli 0.8.3 — исправляющий релиз для 0.8.2, посвящённый устойчивости и
+восстановлению, а не новому поколению функций. Его главная задача — сделать
+соединения предсказуемее при большом RTT, зависании носителей, изменении UDP path
+MTU и временной потере сети, а прерванное обновление — безопаснее и понятнее для
+диагностики. Закрыты конкретные ошибки обновления хранилища Windows, работы службы
+macOS и запуска на роутерах. Это не новый VPN-протокол и не заявление об устранении
+всех ограничений сетей и устройств.
+
+Для пользователя и администратора это означает меньше путей, застревающих без
+прогресса, более ясное состояние маршрутов и транспорта, а также бережное обращение
+со старыми профилями и журналами восстановления. Изменения производительности
+устраняют конкретные узкие места, но не обещают прирост скорости в любой сети.
 
 ### Устойчивость транспорта и работа с сетью
 
@@ -154,6 +189,9 @@ Qeli 0.8.3 повышает устойчивость сетевого ядра �
   ожидание при заполнении очереди. Новые метрики очередей, пула и пакетной UDP-отправки
   помогают найти перегрузку без увеличения лимитов памяти. Это не утверждение об
   устранении всех потерь при насыщении канала.
+- Существующая страница состояния транспорта получает типизированные метрики UDP-очереди
+  по профилям. Отсутствующие или несовместимые данные worker остаются недоступными,
+  а не показываются как нулевая нагрузка; неизвестные поля worker не проходят в API.
 
 ### Маршрутизация, IPv6 и конфигурация
 
@@ -171,6 +209,11 @@ Qeli 0.8.3 повышает устойчивость сетевого ядра �
   без WebSocket. Там, где SNI действительно используется TLS, строгая проверка
   сохраняется. В desktop-редакторах WebSocket доступен HTTP Host override;
   явное `gateway=false` корректно сохраняется в INI.
+- Проверки конфигурации клиентов охватывают все 87 полей общего контракта:
+  84 ключа `[qeli]` и 3 поля `[logging]`, включая нестандартные значения в моделях
+  Rust, C#, Kotlin и Swift. Известное поле другой платформы может сохраниться при
+  редактировании, но это не означает, что оно применяется; неизвестные ключи
+  по-прежнему отклоняются.
 
 ### Доработки клиентов
 
@@ -205,7 +248,8 @@ TCP-данные в очереди, в работе, локально запис
 - Обновлены криптографические и TLS-зависимости: ML-KEM 0.3.3, ctutils 0.4.4,
   rustls-webpki 0.103.16 и webpki-roots 1.0.10. Изменения закрывают зависимые от
   секрета операции и соответствующие предупреждения о доверии сертификатам.
-  Tokio обновлён до 1.54.1, Gradle Wrapper — до 9.8.2, Android Tink — до 1.24.0.
+  libc обновлён до 0.2.191, Tokio — до 1.54.1, Gradle Wrapper — до 9.8.2,
+  Android Tink — до 1.24.0.
   Lock-файлы и оригинальные лицензионные тексты согласованы.
 - Нативные ядра Windows, macOS и Android пересобраны из актуальных исходников.
   Независимые A/B-сборки дали побайтово одинаковые артефакты; используемые приложениями
@@ -250,6 +294,14 @@ TCP-данные в очереди, в работе, локально запис
 
 ### Проверки и границы утверждений
 
+На срезе подготовки
+[`5aaca5db`](https://github.com/litvinovtd/qeli/compare/v0.8.2...5aaca5dba6efb70233ffcccca5eac2f78326a4d9)
+разработка после 0.8.2 включает **69 коммитов**: 61 обычный и 8 merge-коммитов.
+Это код, зависимости, тесты, документация и упаковка, а не 69 новых функций.
+В текущей сертификации **20 автоматизированных Linux-проверок
+прошли**, а **21 проверка на устройствах, роутерах или при развёртывании
+недоступна** и не засчитана как успешная.
+
 Актуальный допуск фиксируется в
 [runtime-сертификации 0.8.3](https://github.com/litvinovtd/qeli/blob/v0.8.3/release/certification/0.8.3.json):
 с точными SHA проверенных артефактов и сохранёнными результатами. Недоступные проверки
@@ -262,4 +314,8 @@ CI и Linux namespace-проверки не заменяют роуминг на
 сохраняют исходные хеши кандидатов, неудачные попытки и ограничения интерпретации.
 Это не новые замеры финальных пакетов и не гарантия прироста скорости.
 Ранее описанное ограничение Android API34 ENONET не объявляется исправленным.
+Новые справочники по [технологиям](https://github.com/litvinovtd/qeli/blob/v0.8.3/docs/ru/reference/TECHNOLOGIES.md)
+и [Recordizer](https://github.com/litvinovtd/qeli/blob/v0.8.3/docs/ru/reference/RECORDIZER.md)
+объясняют существующие механизмы и ведут к датированным измерениям; сам Recordizer
+появился раньше 0.8.3.
 Ссылки на `v0.8.3` станут публично доступными при публикации соответствующего тега.
