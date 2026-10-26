@@ -2,10 +2,6 @@
 
 **Draft / Черновик. Not published / Не опубликован.**
 
-> Preparation status: router state fixes below require a refreshed release candidate
-> and qualification before publication. / Подготовка: описанные ниже исправления
-> состояния роутеров требуют обновления кандидата и проверок перед публикацией.
-
 ## English
 
 Qeli 0.8.3 strengthens the behaviour of the network core and clients under real
@@ -92,8 +88,8 @@ firewall or daemon shutdown are not disguised as a successful disconnect.
   Developer-ID-signed per-app Network Extension; such profiles fail closed.
 - The distribution also includes the signed Android APK, portable Linux binary and
   `.deb`, Keenetic/OpenWrt clients and installation files. Every payload is covered
-  by `SHA256SUMS`. The OpenWrt source pin and SDK archive hash must be refreshed
-  together with this candidate before publication.
+  by `SHA256SUMS`. The OpenWrt source pin includes the router fixes; its source
+  archive was generated twice with the OpenWrt SDK and verified against its SHA256.
 
 ### Updating
 
@@ -217,8 +213,8 @@ TCP-данные в очереди, в работе, локально запис
   отказывают в запуске, а не расширяют выбранный трафик до общего туннеля.
 - В комплект также входят подписанный Android APK, переносимый Linux-бинарник и
   `.deb`, клиенты Keenetic/OpenWrt и установочные файлы. Все payload-файлы покрыты
-  `SHA256SUMS`. Перед публикацией нужно обновить OpenWrt source pin и SHA256
-  SDK-архива вместе с этим кандидатом.
+  `SHA256SUMS`. OpenWrt source pin включает исправления роутеров; исходный архив
+  дважды сформирован OpenWrt SDK и проверен по SHA256.
 
 ### Порядок обновления
 
